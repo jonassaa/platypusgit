@@ -1,14 +1,34 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+pub mod commands;
+pub mod error;
+pub mod git;
+pub mod state;
+
+use std::sync::Arc;
+
+use crate::{git::libgit2::Libgit2Backend, state::AppState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let backend = Arc::new(Libgit2Backend::new());
+
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState::new(backend))
+        .invoke_handler(tauri::generate_handler![
+            commands::repo::open_repo,
+            commands::repo::get_status,
+            commands::commits::get_log,
+            commands::commits::commit,
+            commands::diff::get_diff,
+            commands::diff::stage_paths,
+            commands::diff::unstage_paths,
+            commands::branches::list_branches,
+            commands::branches::checkout_branch,
+            commands::branches::create_branch,
+            commands::branches::fetch,
+            commands::branches::pull,
+            commands::branches::push,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
