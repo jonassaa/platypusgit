@@ -1,51 +1,51 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { GitBranch } from "lucide-react";
+import { OpenRepoButton } from "@/features/repo/OpenRepoButton";
+import { StatusList } from "@/features/repo/StatusList";
+import { useRepoStore } from "@/features/repo/useRepoStore";
+import { appErrorMessage } from "@/lib/errors";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+export default function App() {
+  const current = useRepoStore((s) => s.current);
+  const error = useRepoStore((s) => s.error);
+  const clearError = useRepoStore((s) => s.clearError);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <div className="min-h-full flex flex-col">
+      <header className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)]">
+        <GitBranch size={18} className="text-[var(--color-accent)]" />
+        <span className="font-semibold">platypusgit</span>
+        <span className="text-[var(--color-text-dim)] text-sm font-mono truncate flex-1">
+          {current?.path ?? "no repository open"}
+        </span>
+        <OpenRepoButton />
+      </header>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+      <main className="flex-1 p-4 overflow-auto">
+        {error && (
+          <div
+            className="mb-3 px-3 py-2 rounded-md border border-red-500/40 bg-red-500/10 text-red-200 text-sm flex items-center justify-between"
+            role="alert"
+          >
+            <span>
+              <strong>{error.kind}:</strong> {appErrorMessage(error)}
+            </span>
+            <button
+              className="text-red-200/70 hover:text-red-100 text-xs"
+              onClick={clearError}
+            >
+              dismiss
+            </button>
+          </div>
+        )}
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        {!current && !error && (
+          <div className="flex items-center justify-center h-full text-[var(--color-text-dim)]">
+            Open a repository to get started.
+          </div>
+        )}
+
+        {current && <StatusList />}
+      </main>
+    </div>
   );
 }
-
-export default App;
