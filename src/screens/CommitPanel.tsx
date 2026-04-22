@@ -1,0 +1,540 @@
+import React from "react";
+import {
+  PGAvatar,
+  PGBadge,
+  PGButton,
+  PGButtonGroup,
+  PGChangeRow,
+  PGCheckbox,
+  PGEmpty,
+  PGHunk,
+  PGIconButton,
+  PGInput,
+  PGSpinner,
+  PGStatusMark,
+  PGTextarea,
+  fileMenuItems,
+  pgFlash,
+  useContextMenu,
+  type DiffLineData,
+} from "@/design";
+import { useRepoStore } from "@/features/repo/useRepoStore";
+import { isStaged, isUnstaged, statusMark } from "@/lib/derive";
+import { getDiff } from "@/lib/tauri";
+import type { DiffKind, FileDiff, FileStatus } from "@/lib/types";
+
+interface FileSlot {
+  path: string;
+  status: FileStatus;
+  side: "staged" | "unstaged";
+}
+
+export function CommitPanelScreen() {
+  const repo = useRepoStore((s) => s.current);
+  const status = useRepoStore((s) => s.status);
+  const loading = useRepoStore((s) => s.loading);
+  const [message, setMessage] = React.useState("");
+  const [body, setBody] = React.useState("");
+  const [amend, setAmend] = React.useState(false);
+  const [signoff, setSignoff] = React.useState(false);
+  const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
+  const [diff, setDiff] = React.useState<FileDiff | null>(null);
+  const [diffLoading, setDiffLoading] = React.useState(false);
+  const [diffError, setDiffError] = React.useState<string | null>(null);
+
+  const { onContextMenu: onFileCtx, menu: fileMenu } = useContextMenu<FileSlot>(
+    (f) =>
+      fileMenuItems({
+        path: f?.path,
+        staged: f?.side === "staged",
+      }),
+  );
+
+  const staged = React.useMemo(
+    () =>
+      status
+        .filter(isStaged)
+        .map((s) => ({ path: s.path, status: s, side: "staged" as const })),
+    [status],
+  );
+  const unstaged = React.useMemo(
+    () =>
+      status
+        .filter(isUnstaged)
+        .map((s) => ({ path: s.path, status: s, side: "unstaged" as const })),
+    [status],
+  );
+
+  const selected = React.useMemo(() => {
+    if (!selectedKey) return unstaged[0] ?? staged[0] ?? null;
+    return (
+      [...staged, ...unstaged].find((f) => keyOf(f) === selectedKey) ??
+      unstaged[0] ??
+      staged[0] ??
+      null
+    );
+  }, [selectedKey, staged, unstaged]);
+
+  React.useEffect(() => {
+    if (!selected || !repo) {
+      setDiff(null);
+      return;
+    }
+    const kind: DiffKind =
+      selected.side === "staged" ? "IndexToHead" : "WorktreeToIndex";
+    let cancelled = false;
+    setDiffLoading(true);
+    setDiffError(null);
+    getDiff(repo.id, selected.path, kind)
+      .then((d) => {
+        if (!cancelled) setDiff(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setDiffError(String(e?.message ?? e));
+      })
+      .finally(() => {
+        if (!cancelled) setDiffLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.path, selected?.side, repo]);
+
+  const stagedAdd = React.useMemo(
+    () => staged.reduce((s, f) => s + countAdd(f.status), 0),
+    [staged],
+  );
+  const stagedDel = React.useMemo(
+    () => staged.reduce((s, f) => s + countDel(f.status), 0),
+    [staged],
+  );
+
+  if (!loading && staged.length === 0 && unstaged.length === 0) {
+    return (
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <PGEmpty icon="check" title="Working tree clean">
+          No changes to commit.
+        </PGEmpty>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+      {/* Column 1: change list */}
+      <div
+        style={{
+          width: 320,
+          background: "var(--bg-1)",
+          borderRight: "1px solid var(--border-0)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div style={{ borderBottom: "1px solid var(--border-0)" }}>
+          <Header
+            title="STAGED"
+            badge={<PGBadge tone="success">{staged.length}</PGBadge>}
+            action={
+              <PGButton
+                size="xs"
+                variant="ghost"
+                onClick={() => pgFlash("unstage is not wired up yet")}
+                disabled={staged.length === 0}
+              >
+                Unstage all
+              </PGButton>
+            }
+          />
+          {staged.length === 0 && (
+            <div
+              style={{
+                padding: 12,
+                color: "var(--fg-3)",
+                fontSize: "var(--fs-11)",
+                textAlign: "center",
+              }}
+            >
+              Nothing staged
+            </div>
+          )}
+          {staged.map((f) => (
+            <PGChangeRow
+              key={`s:${f.path}`}
+              path={f.path}
+              status={statusMark(f.status)}
+              staged
+              additions={countAdd(f.status)}
+              deletions={countDel(f.status)}
+              selected={selectedKey === keyOf(f)}
+              onClick={() => setSelectedKey(keyOf(f))}
+              onContextMenu={(e) => onFileCtx(e, f)}
+              onToggle={() => pgFlash("stage toggle is not wired up yet")}
+            />
+          ))}
+        </div>
+        <div style={{ flex: 1, overflow: "auto" }}>
+          <Header
+            title="CHANGES"
+            badge={<PGBadge tone="warn">{unstaged.length}</PGBadge>}
+            action={
+              <PGButton
+                size="xs"
+                variant="ghost"
+                onClick={() => pgFlash("stage is not wired up yet")}
+                disabled={unstaged.length === 0}
+              >
+                Stage all
+              </PGButton>
+            }
+            border
+          />
+          {unstaged.map((f) => (
+            <PGChangeRow
+              key={`u:${f.path}`}
+              path={f.path}
+              status={statusMark(f.status)}
+              staged={false}
+              additions={countAdd(f.status)}
+              deletions={countDel(f.status)}
+              selected={selectedKey === keyOf(f)}
+              onClick={() => setSelectedKey(keyOf(f))}
+              onContextMenu={(e) => onFileCtx(e, f)}
+              onToggle={() => pgFlash("stage toggle is not wired up yet")}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Column 2: diff */}
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          style={{
+            height: 32,
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "var(--bg-1)",
+            borderBottom: "1px solid var(--border-0)",
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-12)",
+          }}
+        >
+          {selected && <PGStatusMark kind={statusMark(selected.status)} />}
+          <span>{selected?.path ?? "no file selected"}</span>
+          <div style={{ flex: 1 }} />
+          <PGButtonGroup
+            value="unified"
+            onChange={() => {}}
+            options={[
+              { value: "unified", label: "Unified" },
+              { value: "split", label: "Split" },
+            ]}
+            size="sm"
+          />
+          <PGIconButton icon="more" size="sm" />
+        </div>
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {diffLoading && (
+            <div
+              style={{
+                padding: 20,
+                textAlign: "center",
+                color: "var(--fg-2)",
+              }}
+            >
+              <PGSpinner size={14} />
+            </div>
+          )}
+          {!diffLoading && diffError && (
+            <div
+              style={{
+                padding: 20,
+                color: "var(--git-removed)",
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--fs-12)",
+              }}
+            >
+              {diffError}
+            </div>
+          )}
+          {!diffLoading && !diffError && diff && diff.binary && (
+            <PGEmpty icon="file" title="Binary file">
+              Binary diffs aren&apos;t shown.
+            </PGEmpty>
+          )}
+          {!diffLoading && !diffError && diff && !diff.binary &&
+            diff.hunks.length === 0 && (
+              <PGEmpty icon="file" title="No diff">
+                File is tracked but no hunks were produced.
+              </PGEmpty>
+            )}
+          {!diffLoading && !diffError && diff && !diff.binary &&
+            diff.hunks.map((h, i) => (
+              <PGHunk
+                key={i}
+                header={h.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
+                lines={h.lines.map(toUiLine)}
+                expanded={true}
+                staged={selected?.side === "staged"}
+                onStage={() => pgFlash("stage hunk is not wired up yet")}
+                onDiscard={() => pgFlash("discard hunk is not wired up yet")}
+              />
+            ))}
+        </div>
+      </div>
+
+      {/* Column 3: message composer */}
+      <div
+        style={{
+          width: 360,
+          background: "var(--bg-1)",
+          borderLeft: "1px solid var(--border-0)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <Header title="COMMIT MESSAGE" />
+        <div
+          style={{
+            padding: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            flex: 1,
+          }}
+        >
+          <div>
+            <LabelRow
+              label="Subject"
+              right={
+                <span
+                  style={{
+                    fontSize: "var(--fs-10)",
+                    color:
+                      message.length > 50
+                        ? "var(--git-modified)"
+                        : "var(--fg-3)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  {message.length}/50
+                </span>
+              }
+            />
+            <PGInput value={message} onChange={setMessage} mono size="lg" />
+          </div>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <LabelRow
+              label="Body"
+              right={
+                <span
+                  style={{
+                    fontSize: "var(--fs-10)",
+                    color: "var(--fg-3)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  wrap at 72
+                </span>
+              }
+            />
+            <PGTextarea
+              value={body}
+              onChange={setBody}
+              rows={8}
+              mono
+              style={{ flex: 1 }}
+            />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              padding: "8px 0",
+              borderTop: "1px solid var(--border-0)",
+              borderBottom: "1px solid var(--border-0)",
+            }}
+          >
+            <PGCheckbox
+              checked={amend}
+              onChange={setAmend}
+              label="Amend previous commit"
+            />
+            <PGCheckbox
+              checked={signoff}
+              onChange={setSignoff}
+              label="Add Signed-off-by trailer"
+            />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 4,
+              alignItems: "center",
+              fontSize: "var(--fs-11)",
+              color: "var(--fg-2)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            <PGAvatar name="you" size={14} />
+            (signature will come from git config)
+          </div>
+          <div
+            style={{
+              fontSize: "var(--fs-11)",
+              color: "var(--fg-2)",
+              fontFamily: "var(--font-mono)",
+              padding: "6px 8px",
+              background: "var(--bg-2)",
+              borderRadius: "var(--r-3)",
+            }}
+          >
+            {staged.length} file{staged.length !== 1 ? "s" : ""},{" "}
+            <span style={{ color: "var(--git-added)" }}>+{stagedAdd}</span>{" "}
+            <span style={{ color: "var(--git-removed)" }}>−{stagedDel}</span>
+          </div>
+
+          <div style={{ display: "flex", gap: 6 }}>
+            <PGButton
+              variant="default"
+              fullWidth
+              disabled
+              onClick={() => pgFlash("commit is not wired up yet")}
+            >
+              Commit
+            </PGButton>
+            <PGButton
+              variant="primary"
+              icon="push"
+              fullWidth
+              disabled
+              onClick={() => pgFlash("commit & push is not wired up yet")}
+            >
+              Commit & Push
+            </PGButton>
+          </div>
+        </div>
+      </div>
+      {fileMenu}
+    </div>
+  );
+}
+
+function keyOf(f: FileSlot): string {
+  return `${f.side}:${f.path}`;
+}
+
+function countAdd(s: FileStatus): number {
+  // We don't have per-file adds/dels from the status list — surface 0
+  // unless the diff viewer exposes it. Keeping the slot keeps the UI tidy.
+  return s.worktree.kind === "Added" || s.index.kind === "Added" ? 0 : 0;
+}
+
+function countDel(s: FileStatus): number {
+  return s.worktree.kind === "Deleted" || s.index.kind === "Deleted" ? 0 : 0;
+}
+
+function toUiLine(l: {
+  kind: { kind: string };
+  oldLineno: number | null;
+  newLineno: number | null;
+  content: string;
+}): DiffLineData {
+  const k = l.kind.kind;
+  if (k === "Addition")
+    return { kind: "add", lnR: l.newLineno ?? undefined, text: l.content };
+  if (k === "Deletion")
+    return { kind: "rem", lnL: l.oldLineno ?? undefined, text: l.content };
+  return {
+    kind: "ctx",
+    lnL: l.oldLineno ?? undefined,
+    lnR: l.newLineno ?? undefined,
+    text: l.content,
+  };
+}
+
+function Header({
+  title,
+  badge,
+  action,
+  border,
+}: {
+  title: string;
+  badge?: React.ReactNode;
+  action?: React.ReactNode;
+  border?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        height: 28,
+        padding: "0 10px",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "var(--bg-2)",
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--fs-11)",
+        color: "var(--fg-1)",
+        textTransform: "uppercase",
+        letterSpacing: "0.05em",
+        borderBottom: border ? "1px solid var(--border-0)" : undefined,
+      }}
+    >
+      <span>{title}</span>
+      {badge}
+      <div style={{ flex: 1 }} />
+      {action}
+    </div>
+  );
+}
+
+function LabelRow({
+  label,
+  right,
+}: {
+  label: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        marginBottom: 4,
+      }}
+    >
+      <span
+        style={{
+          fontSize: "var(--fs-11)",
+          color: "var(--fg-2)",
+          fontFamily: "var(--font-mono)",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        {label}
+      </span>
+      {right}
+    </div>
+  );
+}
