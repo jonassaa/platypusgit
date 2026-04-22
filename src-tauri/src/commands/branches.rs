@@ -66,12 +66,16 @@ pub async fn checkout_branch(
 
 #[tauri::command]
 pub async fn create_branch(
-    _state: State<'_, AppState>,
-    _repo_id: String,
-    _name: String,
-    _from: Option<String>,
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    from: Option<String>,
 ) -> AppResult<()> {
-    Err(AppError::NotImplemented)
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.create_branch(&repo_id, &name, from.as_deref()))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]

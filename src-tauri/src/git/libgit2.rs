@@ -618,8 +618,26 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn create_branch(&self, _repo_id: &RepoId, _name: &str, _from: Option<&str>) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn create_branch(&self, repo_id: &RepoId, name: &str, from: Option<&str>) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let target_commit = match from {
+                Some(rev) => {
+                    let obj = repo
+                        .revparse_single(rev)
+                        .map_err(|_| AppError::InvalidRef(rev.to_string()))?;
+                    obj.peel_to_commit()?
+                }
+                None => match repo.head() {
+                    Ok(h) => h.peel_to_commit()?,
+                    Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {
+                        return Err(AppError::Unborn)
+                    }
+                    Err(e) => return Err(e.into()),
+                },
+            };
+            repo.branch(name, &target_commit, false)?;
+            Ok(())
+        })
     }
     fn delete_branch(&self, _repo_id: &RepoId, _name: &str, _force: bool) -> AppResult<()> {
         Err(AppError::NotImplemented)
