@@ -102,6 +102,24 @@ impl GitBackend for CliBackend {
     fn stash_drop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn repo_path(&self, _repo_id: &RepoId) -> AppResult<PathBuf> {
+        Err(AppError::NotImplemented)
+    }
+    fn add_remote(&self, _repo_id: &RepoId, _name: &str, _url: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn remove_remote(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn rename_remote(&self, _repo_id: &RepoId, _from: &str, _to: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn set_remote_url(&self, _repo_id: &RepoId, _name: &str, _url: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn prune_remote(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }

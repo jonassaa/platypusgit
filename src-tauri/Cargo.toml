@@ -25,7 +25,7 @@ git2 = "0.20.4"
 thiserror = "2.0.18"
 tauri-plugin-dialog = "2.7.0"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
-tokio = { version = "1.52.1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1.52.1", features = ["rt-multi-thread", "macros", "sync", "process"] }
 
 [dev-dependencies]
 tempfile = "3"

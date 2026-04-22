@@ -832,6 +832,66 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
+    fn repo_path(&self, repo_id: &RepoId) -> AppResult<PathBuf> {
+        self.with_repo(repo_id, |repo| {
+            repo.workdir()
+                .map(PathBuf::from)
+                .ok_or_else(|| AppError::InvalidPath("bare repository has no workdir".into()))
+        })
+    }
+
+    fn add_remote(&self, repo_id: &RepoId, name: &str, url: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            repo.remote(name, url)?;
+            Ok(())
+        })
+    }
+
+    fn remove_remote(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            repo.remote_delete(name)?;
+            Ok(())
+        })
+    }
+
+    fn rename_remote(&self, repo_id: &RepoId, from: &str, to: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            // remote_rename returns a list of refspecs that were not renamed
+            // (e.g. custom ones); we ignore them — standard push/fetch refspecs
+            // are always updated.
+            repo.remote_rename(from, to)?;
+            Ok(())
+        })
+    }
+
+    fn set_remote_url(&self, repo_id: &RepoId, name: &str, url: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            repo.remote_set_url(name, url)?;
+            Ok(())
+        })
+    }
+
+    /// Prune stale remote-tracking refs by shelling out to `git remote prune`.
+    /// libgit2 lacks a first-class prune API that handles all edge cases, so we
+    /// delegate to the CLI — same as how `git fetch --prune` works under the hood.
+    fn prune_remote(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
+        // We need the path synchronously here (called from spawn_blocking context).
+        let path = self.repo_path(repo_id)?;
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&path)
+            .arg("remote")
+            .arg("prune")
+            .arg(name)
+            .output()
+            .map_err(|e| AppError::Io(e.to_string()))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(AppError::Network(format!("prune failed: {}", stderr)));
+        }
+        Ok(())
+    }
+
     fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }

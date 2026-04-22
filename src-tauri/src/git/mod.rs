@@ -22,6 +22,10 @@ pub trait GitBackend: Send + Sync {
     fn stashes(&self, repo_id: &RepoId) -> AppResult<Vec<StashInfo>>;
     fn remotes(&self, repo_id: &RepoId) -> AppResult<Vec<RemoteInfo>>;
 
+    /// Return the working-directory path for a given open repo.
+    /// Used by network commands that shell out to git CLI.
+    fn repo_path(&self, repo_id: &RepoId) -> AppResult<PathBuf>;
+
     // === index writes ===
     fn stage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
     fn unstage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
@@ -49,7 +53,14 @@ pub trait GitBackend: Send + Sync {
     fn stash_pop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
     fn stash_drop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
 
-    // === network (implemented in Plan B) ===
+    // === remote management ===
+    fn add_remote(&self, repo_id: &RepoId, name: &str, url: &str) -> AppResult<()>;
+    fn remove_remote(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
+    fn rename_remote(&self, repo_id: &RepoId, from: &str, to: &str) -> AppResult<()>;
+    fn set_remote_url(&self, repo_id: &RepoId, name: &str, url: &str) -> AppResult<()>;
+    fn prune_remote(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
+
+    // === network (shells out to git CLI via Tauri commands) ===
     fn fetch(&self, repo_id: &RepoId, remote: &str) -> AppResult<()>;
     fn pull(&self, repo_id: &RepoId, remote: &str, branch: &str) -> AppResult<()>;
     fn push(&self, repo_id: &RepoId, remote: &str, branch: &str) -> AppResult<()>;
