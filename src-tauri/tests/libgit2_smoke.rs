@@ -18,7 +18,13 @@ fn opens_this_repo_and_lists_status() {
         .open(&root)
         .unwrap_or_else(|e| panic!("open({}) failed: {:?}", root.display(), e));
 
-    assert!(handle.path.ends_with("platypusgit"));
+    // The workdir should be the same path we opened from (canonicalized may
+    // differ by trailing slash, so compare the file name component).
+    assert_eq!(
+        handle.path.file_name(),
+        root.file_name(),
+        "workdir name should match the opened dir",
+    );
     // We committed everything before running this; HEAD should exist.
     assert!(handle.head.is_some(), "expected head branch, got None");
 
