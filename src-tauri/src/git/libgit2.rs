@@ -589,8 +589,34 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn checkout_branch(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            // Refuse to checkout when the worktree is dirty and would be overwritten.
+            let statuses = repo.statuses(None)?;
+            let dirty = statuses.iter().any(|s| {
+                let bits = s.status();
+                bits.is_wt_modified()
+                    || bits.is_wt_new()
+                    || bits.is_wt_deleted()
+                    || bits.is_wt_typechange()
+                    || bits.is_wt_renamed()
+                    || bits.is_index_modified()
+                    || bits.is_index_new()
+                    || bits.is_index_deleted()
+            });
+            if dirty {
+                return Err(AppError::DirtyWorktree(
+                    "commit or stash before switching branches".into(),
+                ));
+            }
+            let refname = format!("refs/heads/{}", name);
+            let obj = repo
+                .revparse_single(&refname)
+                .map_err(|_| AppError::InvalidRef(name.to_string()))?;
+            repo.checkout_tree(&obj, None)?;
+            repo.set_head(&refname)?;
+            Ok(())
+        })
     }
     fn create_branch(&self, _repo_id: &RepoId, _name: &str, _from: Option<&str>) -> AppResult<()> {
         Err(AppError::NotImplemented)

@@ -53,11 +53,15 @@ pub async fn list_remotes(
 
 #[tauri::command]
 pub async fn checkout_branch(
-    _state: State<'_, AppState>,
-    _repo_id: String,
-    _name: String,
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
 ) -> AppResult<()> {
-    Err(AppError::NotImplemented)
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.checkout_branch(&repo_id, &name))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]
