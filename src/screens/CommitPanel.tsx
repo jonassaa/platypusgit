@@ -457,7 +457,7 @@ export function CommitPanelScreen() {
             <PGButton
               variant="default"
               fullWidth
-              disabled={staged.length === 0 || !message.trim()}
+              disabled={(!amend && staged.length === 0) || !message.trim()}
               onClick={async () => {
                 const full = body.trim() ? `${message}\n\n${body}` : message;
                 const oid = await commitAction(full, amend);
