@@ -639,11 +639,42 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn delete_branch(&self, _repo_id: &RepoId, _name: &str, _force: bool) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn delete_branch(&self, repo_id: &RepoId, name: &str, force: bool) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            // Refuse to delete the currently checked-out branch.
+            if let Ok(head) = repo.head() {
+                if head.shorthand() == Some(name) {
+                    return Err(AppError::InvalidRef(
+                        "cannot delete the currently checked-out branch".into(),
+                    ));
+                }
+            }
+            let mut branch = repo.find_branch(name, git2::BranchType::Local)?;
+            if !force {
+                // git's default safety: if the branch isn't merged into HEAD, refuse.
+                let branch_commit = branch.get().peel_to_commit()?.id();
+                if let Ok(head) = repo.head() {
+                    let head_commit = head.peel_to_commit()?.id();
+                    let base = repo.merge_base(head_commit, branch_commit).ok();
+                    if base != Some(branch_commit) {
+                        return Err(AppError::DirtyWorktree(format!(
+                            "branch {} is not fully merged",
+                            name
+                        )));
+                    }
+                }
+            }
+            branch.delete()?;
+            Ok(())
+        })
     }
-    fn rename_branch(&self, _repo_id: &RepoId, _from: &str, _to: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+
+    fn rename_branch(&self, repo_id: &RepoId, from: &str, to: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let mut branch = repo.find_branch(from, git2::BranchType::Local)?;
+            branch.rename(to, false)?;
+            Ok(())
+        })
     }
     fn create_tag(&self, _repo_id: &RepoId, _name: &str, _target: TagTarget) -> AppResult<()> {
         Err(AppError::NotImplemented)

@@ -79,6 +79,34 @@ pub async fn create_branch(
 }
 
 #[tauri::command]
+pub async fn delete_branch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    force: bool,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.delete_branch(&repo_id, &name, force))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn rename_branch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    from: String,
+    to: String,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.rename_branch(&repo_id, &from, &to))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
 pub async fn fetch(
     _state: State<'_, AppState>,
     _repo_id: String,
