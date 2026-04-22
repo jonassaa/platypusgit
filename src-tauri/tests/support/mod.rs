@@ -65,4 +65,34 @@ impl TempRepo {
         let handle = backend.open(self.path()).expect("open");
         (backend, handle)
     }
+
+    /// Make an additional commit to this repo (useful to get a commit to push).
+    pub fn add_commit(&self, filename: &str, contents: &str, message: &str) {
+        self::fs::write_file(self.path(), filename, contents);
+        let mut index = self.repo.index().unwrap();
+        index.add_path(std::path::Path::new(filename)).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = self.repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+        let head = self.repo.head().unwrap().peel_to_commit().unwrap();
+        self.repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, &[&head])
+            .unwrap();
+    }
+}
+
+/// A bare git repository in a tempdir — acts as a "remote" for network tests.
+pub struct BareTempRepo {
+    pub dir: TempDir,
+    pub path: PathBuf,
+}
+
+impl BareTempRepo {
+    pub fn new() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_path_buf();
+        Repository::init_bare(&path).expect("init bare");
+        BareTempRepo { dir, path }
+    }
 }
