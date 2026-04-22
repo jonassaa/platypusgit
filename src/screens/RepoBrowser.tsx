@@ -186,6 +186,7 @@ export function RepoBrowserScreen() {
               }
               selected={selected ?? undefined}
               onSelect={(k) => setSelected(k)}
+              onActivate={(k) => setSelected(k)}
             />
           </div>
         </div>

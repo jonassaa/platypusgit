@@ -134,7 +134,36 @@ export interface PGFileTreeProps {
   onToggle?: (key: string) => void;
   selected?: string;
   onSelect?: (key: string, node: PGFileTreeNode) => void;
+  /** Fired on Enter or double-click. For folders, toggles; for files, caller decides. */
+  onActivate?: (key: string, node: PGFileTreeNode) => void;
   showStatus?: boolean;
+}
+
+interface FlatNode {
+  key: string;
+  node: PGFileTreeNode;
+  indent: number;
+  hasChildren: boolean;
+  isExpanded: boolean;
+}
+
+function flattenTree(
+  nodes: PGFileTreeNode[],
+  expanded: Record<string, boolean>,
+): FlatNode[] {
+  const out: FlatNode[] = [];
+  const walk = (list: PGFileTreeNode[], indent: number, parentKey: string) => {
+    for (const node of list) {
+      const key = parentKey + "/" + node.name;
+      const hasChildren = !!node.children && node.children.length > 0;
+      const isExpanded =
+        expanded[key] !== undefined ? expanded[key] : !!node.defaultExpanded;
+      out.push({ key, node, indent, hasChildren, isExpanded });
+      if (hasChildren && isExpanded) walk(node.children!, indent + 1, key);
+    }
+  };
+  walk(nodes, 0, "");
+  return out;
 }
 
 export function PGFileTree({
@@ -143,34 +172,95 @@ export function PGFileTree({
   onToggle,
   selected,
   onSelect,
+  onActivate,
   showStatus = true,
 }: PGFileTreeProps) {
-  const renderNode = (node: PGFileTreeNode, indent = 0, pathKey = ""): ReactNode => {
-    const key = pathKey + "/" + node.name;
-    const isExpanded =
-      expanded[key] !== undefined ? expanded[key] : !!node.defaultExpanded;
-    const hasChildren = !!node.children && node.children.length > 0;
-    return (
-      <React.Fragment key={key}>
-        <PGFileTreeRow
-          name={node.name}
-          indent={indent}
-          kind={hasChildren ? "folder" : "file"}
-          status={node.status}
-          hideStatus={!showStatus}
-          expanded={isExpanded}
-          hasChildren={hasChildren}
-          selected={selected === key}
-          onClick={() => onSelect?.(key, node)}
-          onToggle={() => onToggle?.(key)}
-          extra={node.extra}
-        />
-        {hasChildren && isExpanded &&
-          node.children!.map((c) => renderNode(c, indent + 1, key))}
-      </React.Fragment>
-    );
+  const flat = flattenTree(nodes, expanded);
+  const selectedIdx = selected
+    ? flat.findIndex((f) => f.key === selected)
+    : -1;
+
+  const focus = (idx: number) => {
+    const n = flat[idx];
+    if (!n) return;
+    onSelect?.(n.key, n.node);
   };
-  return <div>{nodes.map((n) => renderNode(n))}</div>;
+
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (flat.length === 0) return;
+    const cur = selectedIdx >= 0 ? selectedIdx : 0;
+    const node = flat[cur];
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        focus(Math.min(cur + 1, flat.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        focus(Math.max(cur - 1, 0));
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        if (node?.hasChildren) {
+          if (!node.isExpanded) onToggle?.(node.key);
+          else focus(Math.min(cur + 1, flat.length - 1));
+        }
+        break;
+      case "ArrowLeft":
+        e.preventDefault();
+        if (node?.hasChildren && node.isExpanded) {
+          onToggle?.(node.key);
+        } else {
+          // move to parent if any
+          const parentKey = node?.key
+            .split("/")
+            .slice(0, -1)
+            .join("/");
+          const parentIdx = flat.findIndex((f) => f.key === parentKey);
+          if (parentIdx >= 0) focus(parentIdx);
+        }
+        break;
+      case "Enter":
+        e.preventDefault();
+        if (node) {
+          if (node.hasChildren) {
+            onToggle?.(node.key);
+          } else {
+            onActivate?.(node.key, node.node);
+          }
+        }
+        break;
+    }
+  };
+
+  return (
+    <div
+      tabIndex={0}
+      onKeyDown={handleKey}
+      style={{ outline: "none" }}
+      className="focusable"
+    >
+      {flat.map((f) => (
+        <PGFileTreeRow
+          key={f.key}
+          name={f.node.name}
+          indent={f.indent}
+          kind={f.hasChildren ? "folder" : "file"}
+          status={f.node.status}
+          hideStatus={!showStatus}
+          expanded={f.isExpanded}
+          hasChildren={f.hasChildren}
+          selected={selected === f.key}
+          onClick={() => {
+            onSelect?.(f.key, f.node);
+            if (f.hasChildren) onToggle?.(f.key);
+          }}
+          onToggle={() => onToggle?.(f.key)}
+          extra={f.node.extra}
+        />
+      ))}
+    </div>
+  );
 }
 
 // ═════════════════════════════════════════════════════════
