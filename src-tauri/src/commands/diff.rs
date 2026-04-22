@@ -50,3 +50,17 @@ pub async fn unstage_paths(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+#[tauri::command]
+pub async fn discard_paths(
+    state: State<'_, AppState>,
+    repo_id: String,
+    paths: Vec<String>,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    tokio::task::spawn_blocking(move || backend.discard(&repo_id, &paths))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}

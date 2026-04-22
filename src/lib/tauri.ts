@@ -65,3 +65,7 @@ export async function commit(
 ): Promise<string> {
   return invoke<string>("commit", { repoId, message, amend });
 }
+
+export async function discardPaths(repoId: string, paths: string[]): Promise<void> {
+  return invoke<void>("discard_paths", { repoId, paths });
+}

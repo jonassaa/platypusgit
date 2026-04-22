@@ -1,6 +1,7 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PGIcon, type IconName } from "./icons";
+import { useRepoStore } from "@/features/repo/useRepoStore";
 
 export interface ContextMenuItem {
   label?: ReactNode;
@@ -611,7 +612,9 @@ export function fileMenuItems(
       label: "Discard changes",
       danger: true,
       disabled: staged,
-      onClick: () => pgFlash(`discarded ${path}`),
+      onClick: () => {
+        if (path) useRepoStore.getState().discard([path]);
+      },
     },
     {
       icon: "trash",

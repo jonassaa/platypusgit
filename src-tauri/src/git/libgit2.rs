@@ -416,8 +416,16 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn discard(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn discard(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let mut opts = git2::build::CheckoutBuilder::new();
+            opts.force();
+            for p in paths {
+                opts.path(p);
+            }
+            repo.checkout_index(None, Some(&mut opts))?;
+            Ok(())
+        })
     }
     fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String> {
         use crate::git::signature::default_signature;

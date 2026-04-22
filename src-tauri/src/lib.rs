@@ -22,6 +22,7 @@ pub fn run() {
             commands::diff::get_diff,
             commands::diff::stage_paths,
             commands::diff::unstage_paths,
+            commands::diff::discard_paths,
             commands::branches::list_branches,
             commands::branches::list_tags,
             commands::branches::list_stashes,

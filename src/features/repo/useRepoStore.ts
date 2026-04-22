@@ -12,6 +12,7 @@ import type { AppError } from "@/lib/errors";
 import { isAppError } from "@/lib/errors";
 import {
   commit as commitFn,
+  discardPaths,
   getLog,
   getStatus,
   listBranches,
@@ -40,6 +41,7 @@ interface RepoState {
   closeRepo: () => void;
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
+  discard: (paths: string[]) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<string | null>;
 }
 
@@ -130,6 +132,17 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     if (!repo) return;
     try {
       await unstagePaths(repo.id, paths);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async discard(paths) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await discardPaths(repo.id, paths);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
