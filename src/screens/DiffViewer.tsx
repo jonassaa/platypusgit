@@ -5,12 +5,14 @@ import {
   PGEmpty,
   PGHunk,
   PGIconButton,
+  PGResizeHandle,
   PGSearchInput,
   PGSideBySideDiff,
   PGSpinner,
   PGStatusMark,
   PGToggle,
   PGToolbar,
+  usePaneWidth,
   type DiffLineData,
   type SideLine,
 } from "@/design";
@@ -28,6 +30,11 @@ export function DiffViewerScreen() {
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
+  const listPane = usePaneWidth(280, {
+    min: 180,
+    max: 600,
+    storageKey: "pg-diff-list-w",
+  });
 
   const filtered = React.useMemo(
     () =>
@@ -142,10 +149,12 @@ export function DiffViewerScreen() {
       >
         <div
           style={{
-            width: 280,
+            width: listPane.width,
+            flexShrink: 0,
             borderRight: "1px solid var(--border-0)",
             background: "var(--bg-1)",
             overflow: "auto",
+            minWidth: 0,
           }}
         >
           {filtered.map((f) => (
@@ -185,6 +194,7 @@ export function DiffViewerScreen() {
             </div>
           ))}
         </div>
+        <PGResizeHandle onDrag={listPane.resize} />
         <div
           style={{
             flex: 1,

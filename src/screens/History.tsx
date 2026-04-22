@@ -7,12 +7,14 @@ import {
   PGCommitRow,
   PGEmpty,
   PGIconButton,
+  PGResizeHandle,
   PGSearchInput,
   PGSelect,
   PGSpinner,
   PGToolbar,
   commitMenuItems,
   useContextMenu,
+  usePaneWidth,
   type GraphLane,
   type GraphNode,
 } from "@/design";
@@ -26,6 +28,11 @@ export function HistoryScreen() {
   const loading = useRepoStore((s) => s.loading);
   const [selected, setSelected] = React.useState(0);
   const [filter, setFilter] = React.useState("");
+  const detailPane = usePaneWidth(440, {
+    min: 280,
+    max: 720,
+    storageKey: "pg-history-detail-w",
+  });
 
   // Reset selection when the commit list changes shape.
   React.useEffect(() => {
@@ -165,13 +172,16 @@ export function HistoryScreen() {
           </div>
         </div>
 
+        <PGResizeHandle onDrag={(d) => detailPane.resize(-d)} side="left" />
         <div
           style={{
-            width: 440,
+            width: detailPane.width,
+            flexShrink: 0,
             borderLeft: "1px solid var(--border-0)",
             background: "var(--bg-1)",
             display: "flex",
             flexDirection: "column",
+            minWidth: 0,
           }}
         >
           <PGCommitDetail

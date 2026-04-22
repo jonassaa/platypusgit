@@ -5,10 +5,12 @@ import {
   PGEmpty,
   PGIcon,
   PGProgressBar,
+  PGResizeHandle,
   PGSectionHeader,
   conflictMenuItems,
   pgFlash,
   useContextMenu,
+  usePaneWidth,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch } from "@/lib/derive";
@@ -28,6 +30,11 @@ export function ConflictScreen() {
   );
 
   const [selected, setSelected] = React.useState(0);
+  const listPane = usePaneWidth(340, {
+    min: 220,
+    max: 600,
+    storageKey: "pg-conflict-list-w",
+  });
   const { onContextMenu: onConflictCtx, menu: conflictMenu } =
     useContextMenu<{ path: string }>(conflictMenuItems);
 
@@ -54,11 +61,13 @@ export function ConflictScreen() {
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <div
           style={{
-            width: 340,
+            width: listPane.width,
+            flexShrink: 0,
             background: "var(--bg-1)",
             borderRight: "1px solid var(--border-0)",
             display: "flex",
             flexDirection: "column",
+            minWidth: 0,
           }}
         >
           <PGSectionHeader>
@@ -101,6 +110,7 @@ export function ConflictScreen() {
             style={{ borderRadius: 0 }}
           />
         </div>
+        <PGResizeHandle onDrag={listPane.resize} />
 
         <div
           style={{

@@ -9,11 +9,13 @@ import {
   PGHunk,
   PGIconButton,
   PGPanel,
+  PGResizeHandle,
   PGSearchInput,
   PGSpinner,
   PGStatusMark,
   PGToolbar,
   KV,
+  usePaneWidth,
   type DiffLineData,
   type PGFileTreeNode,
 } from "@/design";
@@ -69,6 +71,16 @@ export function RepoBrowserScreen() {
   const [selected, setSelected] = React.useState<string | null>(null);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
+  const treePane = usePaneWidth(280, {
+    min: 180,
+    max: 600,
+    storageKey: "pg-repo-tree-w",
+  });
+  const inspectorPane = usePaneWidth(260, {
+    min: 200,
+    max: 520,
+    storageKey: "pg-repo-inspector-w",
+  });
 
   const head = currentBranch(branches);
 
@@ -137,11 +149,13 @@ export function RepoBrowserScreen() {
         {/* File tree */}
         <div
           style={{
-            width: 280,
+            width: treePane.width,
+            flexShrink: 0,
             borderRight: "1px solid var(--border-0)",
             display: "flex",
             flexDirection: "column",
             background: "var(--bg-1)",
+            minWidth: 0,
           }}
         >
           <div
@@ -190,6 +204,7 @@ export function RepoBrowserScreen() {
             />
           </div>
         </div>
+        <PGResizeHandle onDrag={treePane.resize} />
 
         {/* Preview + meta */}
         <div
@@ -289,14 +304,21 @@ export function RepoBrowserScreen() {
           </div>
         </div>
 
+        <PGResizeHandle
+          onDrag={(d) => inspectorPane.resize(-d)}
+          side="left"
+        />
+
         {/* Right inspector */}
         <div
           style={{
-            width: 260,
+            width: inspectorPane.width,
+            flexShrink: 0,
             borderLeft: "1px solid var(--border-0)",
             background: "var(--bg-1)",
             display: "flex",
             flexDirection: "column",
+            minWidth: 0,
           }}
         >
           <PGPanel

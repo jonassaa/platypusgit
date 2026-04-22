@@ -5,6 +5,7 @@ import {
   PGButton,
   PGIconButton,
   PGPrimarySidebar,
+  PGResizeHandle,
   PGSearchInput,
   PGSidebarGroup,
   PGSidebarRow,
@@ -12,6 +13,7 @@ import {
   PGStatusItem,
   PGTitlebar,
   pgFlash,
+  usePaneWidth,
   usePreventBrowserContextMenu,
   type ActivityBarItem,
 } from "@/design";
@@ -132,29 +134,49 @@ export function AppShell() {
         </div>
       )}
       {repo ? (
-        <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-          <PGActivityBar
-            value={screen}
-            onChange={(id) => setScreen(id as ScreenId)}
-            items={ACTIVITY_ITEMS}
-          />
-          <AppSidebar />
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              display: "flex",
-              flexDirection: "column",
-              background: "var(--bg-0)",
-            }}
-          >
-            {screens[screen]}
-          </div>
-        </div>
+        <AppBody screen={screen} screens={screens} setScreen={setScreen} />
       ) : (
         <WelcomeScreen />
       )}
       <AppStatusBar />
+    </div>
+  );
+}
+
+function AppBody({
+  screen,
+  screens,
+  setScreen,
+}: {
+  screen: ScreenId;
+  screens: Record<ScreenId, React.ReactNode>;
+  setScreen: (s: ScreenId) => void;
+}) {
+  const sidebar = usePaneWidth(260, {
+    min: 180,
+    max: 520,
+    storageKey: "pg-sidebar-w",
+  });
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+      <PGActivityBar
+        value={screen}
+        onChange={(id) => setScreen(id as ScreenId)}
+        items={ACTIVITY_ITEMS}
+      />
+      <AppSidebar width={sidebar.width} />
+      <PGResizeHandle onDrag={sidebar.resize} />
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          background: "var(--bg-0)",
+        }}
+      >
+        {screens[screen]}
+      </div>
     </div>
   );
 }
@@ -266,7 +288,7 @@ function AppTitlebar() {
   );
 }
 
-function AppSidebar() {
+function AppSidebar({ width }: { width: number }) {
   const [branchFilter, setBranchFilter] = React.useState("");
   const branches = useRepoStore((s) => s.branches);
   const tags = useRepoStore((s) => s.tags);
@@ -277,7 +299,7 @@ function AppSidebar() {
   const remote = branches.filter((b) => b.isRemote);
 
   return (
-    <PGPrimarySidebar width={260}>
+    <PGPrimarySidebar width={width}>
       <div
         style={{
           padding: 8,

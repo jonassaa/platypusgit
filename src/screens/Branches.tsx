@@ -6,6 +6,7 @@ import {
   PGEmpty,
   PGIcon,
   PGIconButton,
+  PGResizeHandle,
   PGSearchInput,
   PGToolbar,
   KV,
@@ -13,6 +14,7 @@ import {
   remoteBranchMenuItems,
   tagMenuItems,
   useContextMenu,
+  usePaneWidth,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import type { BranchInfo, TagInfo } from "@/lib/types";
@@ -48,6 +50,11 @@ export function BranchesScreen() {
 
   const [widths, setWidths] = React.useState(() => COLS.map((c) => c.initial));
   const gridTemplate = widths.map((w) => `${w}px`).join(" ");
+  const inspectorPane = usePaneWidth(320, {
+    min: 220,
+    max: 560,
+    storageKey: "pg-branches-inspector-w",
+  });
   const totalWidth = widths.reduce((a, b) => a + b, 0);
 
   const startResize = (i: number, e: React.MouseEvent) => {
@@ -356,14 +363,19 @@ export function BranchesScreen() {
           </div>
         </div>
 
+        <PGResizeHandle
+          onDrag={(d) => inspectorPane.resize(-d)}
+          side="left"
+        />
         <div
           style={{
-            width: 320,
+            width: inspectorPane.width,
             borderLeft: "1px solid var(--border-0)",
             background: "var(--bg-1)",
             display: "flex",
             flexDirection: "column",
             flexShrink: 0,
+            minWidth: 0,
           }}
         >
           <div
