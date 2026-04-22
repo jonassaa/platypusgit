@@ -18,3 +18,42 @@ pub async fn stash_save(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+#[tauri::command]
+pub async fn stash_apply(
+    state: State<'_, AppState>,
+    repo_id: String,
+    index: usize,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.stash_apply(&repo_id, index))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn stash_pop(
+    state: State<'_, AppState>,
+    repo_id: String,
+    index: usize,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.stash_pop(&repo_id, index))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn stash_drop(
+    state: State<'_, AppState>,
+    repo_id: String,
+    index: usize,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.stash_drop(&repo_id, index))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}

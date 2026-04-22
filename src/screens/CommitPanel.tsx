@@ -195,14 +195,32 @@ export function CommitPanelScreen() {
             title="CHANGES"
             badge={<PGBadge tone="warn">{unstaged.length}</PGBadge>}
             action={
-              <PGButton
-                size="xs"
-                variant="ghost"
-                onClick={() => stage(unstaged.map((f) => f.path))}
-                disabled={unstaged.length === 0}
-              >
-                Stage all
-              </PGButton>
+              <div style={{ display: "flex", gap: 4 }}>
+                <PGButton
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => stage(unstaged.map((f) => f.path))}
+                  disabled={unstaged.length === 0}
+                >
+                  Stage all
+                </PGButton>
+                <PGButton
+                  size="xs"
+                  variant="ghost"
+                  disabled={unstaged.length === 0 && staged.length === 0}
+                  onClick={async () => {
+                    const message = window.prompt("Stash message (optional)");
+                    if (message === null) return;
+                    await useRepoStore.getState().stashSave({
+                      message: message || null,
+                      includeUntracked: true,
+                      keepIndex: false,
+                    });
+                  }}
+                >
+                  Stash
+                </PGButton>
+              </div>
             }
             border
           />

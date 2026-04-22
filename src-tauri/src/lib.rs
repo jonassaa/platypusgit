@@ -40,6 +40,9 @@ pub fn run() {
             commands::history::cherry_pick,
             commands::history::revert,
             commands::stash::stash_save,
+            commands::stash::stash_apply,
+            commands::stash::stash_pop,
+            commands::stash::stash_drop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

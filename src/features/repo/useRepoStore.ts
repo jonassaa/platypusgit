@@ -30,8 +30,13 @@ import {
   reset as resetFn,
   revert as revertFn,
   stagePaths,
+  stashApply,
+  stashDrop,
+  stashPop,
+  stashSave,
   unstagePaths,
   type ResetMode,
+  type StashSaveOptions,
   type TagTarget,
 } from "@/lib/tauri";
 import { useRecentsStore } from "./useRecentsStore";
@@ -63,6 +68,10 @@ interface RepoState {
   deleteTag: (name: string) => Promise<void>;
   cherryPick: (oid: string) => Promise<void>;
   revert: (oid: string) => Promise<void>;
+  stashSave: (opts: StashSaveOptions) => Promise<string | null>;
+  stashApply: (index: number) => Promise<void>;
+  stashPop: (index: number) => Promise<void>;
+  stashDrop: (index: number) => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -276,6 +285,52 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     if (!repo) return;
     try {
       await revertFn(repo.id, oid);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async stashSave(opts) {
+    const repo = get().current;
+    if (!repo) return null;
+    try {
+      const oid = await stashSave(repo.id, opts);
+      await get().refreshAll();
+      return oid;
+    } catch (e) {
+      set({ error: toAppError(e) });
+      return null;
+    }
+  },
+
+  async stashApply(index) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stashApply(repo.id, index);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async stashPop(index) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stashPop(repo.id, index);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async stashDrop(index) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stashDrop(repo.id, index);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });

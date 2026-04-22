@@ -132,3 +132,28 @@ export async function createTag(
 export async function deleteTag(repoId: string, name: string): Promise<void> {
   return invoke<void>("delete_tag", { repoId, name });
 }
+
+export interface StashSaveOptions {
+  message: string | null;
+  includeUntracked: boolean;
+  keepIndex: boolean;
+}
+
+export async function stashSave(
+  repoId: string,
+  opts: StashSaveOptions,
+): Promise<string | null> {
+  return invoke<string | null>("stash_save", { repoId, opts });
+}
+
+export async function stashApply(repoId: string, index: number): Promise<void> {
+  return invoke<void>("stash_apply", { repoId, index });
+}
+
+export async function stashPop(repoId: string, index: number): Promise<void> {
+  return invoke<void>("stash_pop", { repoId, index });
+}
+
+export async function stashDrop(repoId: string, index: number): Promise<void> {
+  return invoke<void>("stash_drop", { repoId, index });
+}

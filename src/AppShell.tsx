@@ -13,6 +13,8 @@ import {
   PGStatusItem,
   PGTitlebar,
   pgFlash,
+  stashMenuItems,
+  useContextMenu,
   usePaneWidth,
   usePreventBrowserContextMenu,
   type ActivityBarItem,
@@ -448,6 +450,11 @@ function AppSidebar({
   const stashes = useRepoStore((s) => s.stashes);
   const remotes = useRepoStore((s) => s.remotes);
 
+  const { onContextMenu: onStashCtx, menu: stashMenu } = useContextMenu<{
+    index: number;
+    name: string;
+  }>((s) => stashMenuItems(s));
+
   const local = branches.filter((b) => !b.isRemote);
   const remote = branches.filter((b) => b.isRemote);
 
@@ -589,9 +596,16 @@ function AppSidebar({
               icon="stash"
               label={`stash@{${s.index}}`}
               meta={s.message.slice(0, 20)}
+              onContextMenu={(e) =>
+                onStashCtx(e, {
+                  index: s.index,
+                  name: `stash@{${s.index}}`,
+                })
+              }
             />
           ))}
         </PGSidebarGroup>
+        {stashMenu}
 
         <PGSidebarGroup
           title="Remotes"

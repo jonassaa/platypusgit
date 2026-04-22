@@ -647,6 +647,47 @@ export function fileMenuItems(
   ];
 }
 
+export function stashMenuItems(
+  stash: { name?: string; index?: number } | null,
+): ContextMenuItem[] {
+  const name = stash?.name ?? `stash@{${stash?.index ?? 0}}`;
+  return [
+    { __menuTitle: name },
+    {
+      icon: "check",
+      label: "Apply (keep stash)",
+      onClick: () => {
+        if (stash?.index != null) useRepoStore.getState().stashApply(stash.index);
+      },
+    },
+    {
+      icon: "check",
+      label: "Pop (apply + drop)",
+      onClick: () => {
+        if (stash?.index != null) useRepoStore.getState().stashPop(stash.index);
+      },
+    },
+    {
+      icon: "branch",
+      label: "Branch from stash…",
+      onClick: () => pgFlash(`branch from ${name}`),
+    },
+    { divider: true },
+    {
+      icon: "trash",
+      label: "Drop",
+      danger: true,
+      onClick: () => {
+        if (
+          stash?.index != null &&
+          window.confirm(`Drop ${name}?`)
+        )
+          useRepoStore.getState().stashDrop(stash.index);
+      },
+    },
+  ];
+}
+
 export function conflictMenuItems(conflict: { path?: string } | null): ContextMenuItem[] {
   return [
     { __menuTitle: conflict?.path || "conflict" },
