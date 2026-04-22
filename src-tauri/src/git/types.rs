@@ -169,3 +169,25 @@ pub struct StashSaveOptions {
     pub include_untracked: bool,
     pub keep_index: bool,
 }
+
+/// How to integrate fetched changes during a pull.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PullMode {
+    /// `--ff-only`: refuse if not a fast-forward.
+    FastForward,
+    /// Default merge commit.
+    Merge,
+    /// `--rebase`: rebase local commits on top of upstream.
+    Rebase,
+}
+
+/// Whether to force-push and what safety level.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PushForce {
+    /// No force flag — reject if remote has diverged.
+    None,
+    /// `--force-with-lease`: safe force; aborts if someone else pushed.
+    WithLease,
+    /// `--force`: unconditional overwrite. Use with care.
+    Force,
+}

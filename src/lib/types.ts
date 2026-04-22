@@ -65,6 +65,12 @@ export interface RemoteInfo {
 
 export type DiffKind = "WorktreeToIndex" | "IndexToHead" | "WorktreeToHead";
 
+/** Mirrors Rust PullMode enum. */
+export type PullMode = "FastForward" | "Merge" | "Rebase";
+
+/** Mirrors Rust PushForce enum. */
+export type PushForce = "None" | "WithLease" | "Force";
+
 export type DiffLineKind =
   | { kind: "Context" }
   | { kind: "Addition" }

@@ -41,6 +41,9 @@ pub enum AppError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error("network error: {0}")]
+    Network(String),
 }
 
 impl From<git2::Error> for AppError {

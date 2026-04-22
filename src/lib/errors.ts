@@ -11,7 +11,8 @@ export type AppError =
   | { kind: "NotMerged"; message: string }
   | { kind: "ConflictsDetected"; message: string }
   | { kind: "NoSignature"; message?: string }
-  | { kind: "Internal"; message: string };
+  | { kind: "Internal"; message: string }
+  | { kind: "Network"; message: string };
 
 export function isAppError(e: unknown): e is AppError {
   return (
