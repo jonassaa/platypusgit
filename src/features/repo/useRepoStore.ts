@@ -19,6 +19,7 @@ import {
   listTags,
   openRepo,
 } from "@/lib/tauri";
+import { useRecentsStore } from "./useRecentsStore";
 
 interface RepoState {
   current: RepoHandle | null;
@@ -55,6 +56,7 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const handle = await openRepo(path);
+      useRecentsStore.getState().addRecent(handle.path);
       set({
         current: handle,
         status: [],
