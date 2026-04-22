@@ -49,3 +49,19 @@ export async function getDiff(
 ): Promise<FileDiff> {
   return invoke<FileDiff>("get_diff", { repoId, path, kind });
 }
+
+export async function stagePaths(repoId: string, paths: string[]): Promise<void> {
+  return invoke<void>("stage_paths", { repoId, paths });
+}
+
+export async function unstagePaths(repoId: string, paths: string[]): Promise<void> {
+  return invoke<void>("unstage_paths", { repoId, paths });
+}
+
+export async function commit(
+  repoId: string,
+  message: string,
+  amend = false,
+): Promise<string> {
+  return invoke<string>("commit", { repoId, message, amend });
+}

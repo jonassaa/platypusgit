@@ -11,6 +11,7 @@ import type {
 import type { AppError } from "@/lib/errors";
 import { isAppError } from "@/lib/errors";
 import {
+  commit as commitFn,
   getLog,
   getStatus,
   listBranches,
@@ -18,6 +19,8 @@ import {
   listStashes,
   listTags,
   openRepo,
+  stagePaths,
+  unstagePaths,
 } from "@/lib/tauri";
 import { useRecentsStore } from "./useRecentsStore";
 
@@ -35,6 +38,9 @@ interface RepoState {
   refreshAll: () => Promise<void>;
   clearError: () => void;
   closeRepo: () => void;
+  stage: (paths: string[]) => Promise<void>;
+  unstage: (paths: string[]) => Promise<void>;
+  commit: (message: string, amend?: boolean) => Promise<string | null>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -106,5 +112,40 @@ export const useRepoStore = create<RepoState>((set, get) => ({
       commits: [],
       error: null,
     });
+  },
+
+  async stage(paths) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stagePaths(repo.id, paths);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async unstage(paths) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await unstagePaths(repo.id, paths);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async commit(message, amend = false) {
+    const repo = get().current;
+    if (!repo) return null;
+    try {
+      const oid = await commitFn(repo.id, message, amend);
+      await get().refreshAll();
+      return oid;
+    } catch (e) {
+      set({ error: toAppError(e) });
+      return null;
+    }
   },
 }));
