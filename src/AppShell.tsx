@@ -12,6 +12,7 @@ import {
   PGStatusItem,
   PGTitlebar,
   pgFlash,
+  usePreventBrowserContextMenu,
   type ActivityBarItem,
 } from "@/design";
 
@@ -62,6 +63,7 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
 ];
 
 export function AppShell() {
+  usePreventBrowserContextMenu();
   const repo = useRepoStore((s) => s.current);
   const error = useRepoStore((s) => s.error);
   const clearError = useRepoStore((s) => s.clearError);
