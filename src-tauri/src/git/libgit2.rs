@@ -4,15 +4,17 @@ use std::{
     sync::Mutex,
 };
 
-use git2::{Repository, Status, StatusOptions};
+use git2::{
+    BranchType, DiffFindOptions, DiffFormat, DiffOptions, Repository, Sort, Status, StatusOptions,
+};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BranchInfo, CommitInfo, CommitOptions, DiffHunks, DiffKind, FileStatus, RepoHandle,
-        RepoId, StatusFlag,
+        BranchInfo, CommitInfo, CommitOptions, DiffHunk, DiffKind, DiffLine, DiffLineKind,
+        FileDiff, FileStatus, RemoteInfo, RepoHandle, RepoId, StashInfo, StatusFlag, TagInfo,
     },
     GitBackend,
 };
@@ -43,6 +45,23 @@ impl Libgit2Backend {
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
         f(&repo)
+    }
+
+    fn with_repo_mut<F, T>(&self, repo_id: &RepoId, f: F) -> AppResult<T>
+    where
+        F: FnOnce(&mut Repository) -> AppResult<T>,
+    {
+        let map = self
+            .repos
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let repo_cell = map
+            .get(repo_id)
+            .ok_or_else(|| AppError::UnknownRepo(repo_id.0.clone()))?;
+        let mut repo = repo_cell
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        f(&mut repo)
     }
 }
 
@@ -94,6 +113,30 @@ fn map_status_flag(s: Status, side: StatusSide) -> StatusFlag {
             }
         }
     }
+}
+
+/// Map git2's per-ref lookup by target OID. Scans once per log call.
+fn collect_ref_map(repo: &Repository) -> Vec<(git2::Oid, String)> {
+    let mut out = Vec::new();
+    if let Ok(refs) = repo.references() {
+        for r in refs.flatten() {
+            let name = match r.shorthand() {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            // Peel annotated tags to the commit they point at.
+            if let Ok(peeled) = r.peel(git2::ObjectType::Commit) {
+                if let Some(c) = peeled.as_commit() {
+                    out.push((c.id(), name));
+                    continue;
+                }
+            }
+            if let Some(oid) = r.target() {
+                out.push((oid, name));
+            }
+        }
+    }
+    out
 }
 
 impl GitBackend for Libgit2Backend {
@@ -160,12 +203,177 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn log(&self, _repo_id: &RepoId, _limit: usize) -> AppResult<Vec<CommitInfo>> {
-        Err(AppError::NotImplemented)
+    fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let ref_map = collect_ref_map(repo);
+            let mut walk = repo.revwalk()?;
+            walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
+            // If HEAD is unborn we have no commits to walk.
+            match walk.push_head() {
+                Ok(()) => {}
+                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(Vec::new()),
+                Err(e) => return Err(e.into()),
+            }
+
+            let mut out = Vec::with_capacity(limit.min(4096));
+            for oid in walk.take(limit) {
+                let oid = oid?;
+                let commit = repo.find_commit(oid)?;
+                let summary = commit.summary().unwrap_or("").to_string();
+                let full_message = commit.message().unwrap_or("").to_string();
+                let body = full_message
+                    .split_once("\n\n")
+                    .map(|(_, rest)| rest.trim_end().to_string())
+                    .filter(|s| !s.is_empty());
+                let author = commit.author();
+                let refs: Vec<String> = ref_map
+                    .iter()
+                    .filter(|(o, _)| *o == oid)
+                    .map(|(_, name)| name.clone())
+                    .collect();
+                out.push(CommitInfo {
+                    oid: oid.to_string(),
+                    short_oid: oid.to_string()[..7].to_string(),
+                    summary,
+                    body,
+                    author: author.name().unwrap_or("").to_string(),
+                    email: author.email().unwrap_or("").to_string(),
+                    timestamp: commit.time().seconds(),
+                    parents: commit.parent_ids().map(|p| p.to_string()).collect(),
+                    refs,
+                });
+            }
+            Ok(out)
+        })
     }
-    fn diff(&self, _repo_id: &RepoId, _path: &Path, _kind: DiffKind) -> AppResult<DiffHunks> {
-        Err(AppError::NotImplemented)
+
+    fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff> {
+        self.with_repo(repo_id, |repo| {
+            let mut opts = DiffOptions::new();
+            opts.pathspec(path);
+            opts.context_lines(3);
+
+            let mut diff = match kind {
+                DiffKind::WorktreeToIndex => repo.diff_index_to_workdir(None, Some(&mut opts))?,
+                DiffKind::IndexToHead => {
+                    let head_tree = match repo.head() {
+                        Ok(h) => Some(h.peel_to_tree()?),
+                        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+                        Err(e) => return Err(e.into()),
+                    };
+                    repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?
+                }
+                DiffKind::WorktreeToHead => {
+                    let head_tree = match repo.head() {
+                        Ok(h) => Some(h.peel_to_tree()?),
+                        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+                        Err(e) => return Err(e.into()),
+                    };
+                    repo.diff_tree_to_workdir(head_tree.as_ref(), Some(&mut opts))?
+                }
+            };
+
+            let mut find = DiffFindOptions::new();
+            find.renames(true).copies(true);
+            diff.find_similar(Some(&mut find))?;
+
+            let path_str = path.to_string_lossy().to_string();
+            let mut current_path: Option<String> = None;
+            let mut old_path: Option<String> = None;
+            let mut binary = false;
+            let mut additions: u32 = 0;
+            let mut deletions: u32 = 0;
+            let mut hunks: Vec<DiffHunk> = Vec::new();
+
+            diff.print(DiffFormat::Patch, |delta, hunk, line| {
+                let new_path = delta
+                    .new_file()
+                    .path()
+                    .map(|p| p.to_string_lossy().to_string());
+                if current_path.is_none() {
+                    current_path = new_path.clone();
+                    old_path = delta
+                        .old_file()
+                        .path()
+                        .map(|p| p.to_string_lossy().to_string());
+                }
+                if delta.flags().contains(git2::DiffFlags::BINARY) {
+                    binary = true;
+                    return true;
+                }
+                let origin = line.origin();
+                let content = std::str::from_utf8(line.content())
+                    .unwrap_or("")
+                    .trim_end_matches('\n')
+                    .to_string();
+
+                match origin {
+                    'H' | 'F' => return true,
+                    'B' => {
+                        binary = true;
+                        return true;
+                    }
+                    _ => {}
+                }
+
+                if let Some(h) = hunk {
+                    if hunks
+                        .last()
+                        .map(|last| last.header.as_bytes() != h.header())
+                        .unwrap_or(true)
+                    {
+                        let header_str = std::str::from_utf8(h.header())
+                            .unwrap_or("")
+                            .trim_end_matches('\n')
+                            .to_string();
+                        hunks.push(DiffHunk {
+                            header: header_str,
+                            old_start: h.old_start(),
+                            old_lines: h.old_lines(),
+                            new_start: h.new_start(),
+                            new_lines: h.new_lines(),
+                            lines: Vec::new(),
+                        });
+                    }
+                }
+
+                let Some(current_hunk) = hunks.last_mut() else {
+                    // no hunk context — skip
+                    return true;
+                };
+
+                let kind = match origin {
+                    '+' => {
+                        additions += 1;
+                        DiffLineKind::Addition
+                    }
+                    '-' => {
+                        deletions += 1;
+                        DiffLineKind::Deletion
+                    }
+                    _ => DiffLineKind::Context,
+                };
+
+                current_hunk.lines.push(DiffLine {
+                    kind,
+                    old_lineno: line.old_lineno(),
+                    new_lineno: line.new_lineno(),
+                    content,
+                });
+                true
+            })?;
+
+            Ok(FileDiff {
+                path: current_path.unwrap_or(path_str),
+                old_path,
+                binary,
+                additions,
+                deletions,
+                hunks,
+            })
+        })
     }
+
     fn stage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
@@ -175,9 +383,118 @@ impl GitBackend for Libgit2Backend {
     fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<String> {
         Err(AppError::NotImplemented)
     }
-    fn branches(&self, _repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
-        Err(AppError::NotImplemented)
+
+    fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let head_ref = repo.head().ok();
+            let head_name = head_ref.as_ref().and_then(|r| r.shorthand()).map(String::from);
+
+            let mut out = Vec::new();
+            let branches = repo.branches(None)?;
+            for b in branches {
+                let (branch, btype) = b?;
+                let name = match branch.name()? {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                let is_remote = matches!(btype, BranchType::Remote);
+                let is_head = !is_remote && head_name.as_deref() == Some(name.as_str());
+
+                let tip = branch
+                    .get()
+                    .target()
+                    .map(|o| o.to_string()[..7].to_string());
+
+                let (upstream, ahead, behind) = if !is_remote {
+                    match branch.upstream() {
+                        Ok(up) => {
+                            let up_name = up.name().ok().flatten().map(String::from);
+                            let counts = match (branch.get().target(), up.get().target()) {
+                                (Some(local), Some(remote)) => repo
+                                    .graph_ahead_behind(local, remote)
+                                    .unwrap_or((0, 0)),
+                                _ => (0, 0),
+                            };
+                            (up_name, counts.0, counts.1)
+                        }
+                        Err(_) => (None, 0, 0),
+                    }
+                } else {
+                    (None, 0, 0)
+                };
+
+                out.push(BranchInfo {
+                    name,
+                    is_head,
+                    is_remote,
+                    upstream,
+                    ahead,
+                    behind,
+                    tip,
+                });
+            }
+            Ok(out)
+        })
     }
+
+    fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let mut out = Vec::new();
+            repo.tag_foreach(|oid, name_bytes| {
+                let name = std::str::from_utf8(name_bytes)
+                    .unwrap_or("")
+                    .trim_start_matches("refs/tags/")
+                    .to_string();
+                // Peel annotated tags to the commit.
+                let tip_oid = repo
+                    .find_object(oid, None)
+                    .ok()
+                    .and_then(|o| o.peel(git2::ObjectType::Commit).ok())
+                    .map(|c| c.id())
+                    .unwrap_or(oid);
+                out.push(TagInfo {
+                    name,
+                    short_oid: tip_oid.to_string()[..7].to_string(),
+                    oid: tip_oid.to_string(),
+                });
+                true
+            })?;
+            Ok(out)
+        })
+    }
+
+    fn stashes(&self, repo_id: &RepoId) -> AppResult<Vec<StashInfo>> {
+        self.with_repo_mut(repo_id, |repo| {
+            let mut out = Vec::new();
+            repo.stash_foreach(|index, message, oid| {
+                out.push(StashInfo {
+                    index,
+                    short_oid: oid.to_string()[..7].to_string(),
+                    message: message.to_string(),
+                });
+                true
+            })?;
+            Ok(out)
+        })
+    }
+
+    fn remotes(&self, repo_id: &RepoId) -> AppResult<Vec<RemoteInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let mut out = Vec::new();
+            for name in repo.remotes()?.iter().flatten() {
+                let url = repo
+                    .find_remote(name)
+                    .ok()
+                    .and_then(|r| r.url().map(String::from));
+                out.push(RemoteInfo {
+                    name: name.to_string(),
+                    url,
+                });
+            }
+            Ok(out)
+        })
+    }
+
     fn checkout_branch(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }

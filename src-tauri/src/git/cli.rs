@@ -4,8 +4,8 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BranchInfo, CommitInfo, CommitOptions, DiffHunks, DiffKind, FileStatus, RepoHandle,
-        RepoId,
+        BranchInfo, CommitInfo, CommitOptions, DiffKind, FileDiff, FileStatus, RemoteInfo,
+        RepoHandle, RepoId, StashInfo, TagInfo,
     },
     GitBackend,
 };
@@ -36,7 +36,7 @@ impl GitBackend for CliBackend {
     fn log(&self, _repo_id: &RepoId, _limit: usize) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
-    fn diff(&self, _repo_id: &RepoId, _path: &Path, _kind: DiffKind) -> AppResult<DiffHunks> {
+    fn diff(&self, _repo_id: &RepoId, _path: &Path, _kind: DiffKind) -> AppResult<FileDiff> {
         Err(AppError::NotImplemented)
     }
     fn stage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
@@ -49,6 +49,15 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn branches(&self, _repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn tags(&self, _repo_id: &RepoId) -> AppResult<Vec<TagInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn stashes(&self, _repo_id: &RepoId) -> AppResult<Vec<StashInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn remotes(&self, _repo_id: &RepoId) -> AppResult<Vec<RemoteInfo>> {
         Err(AppError::NotImplemented)
     }
     fn checkout_branch(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {

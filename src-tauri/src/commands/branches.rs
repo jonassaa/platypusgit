@@ -2,16 +2,53 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::BranchInfo,
+    git::types::{BranchInfo, RemoteInfo, RepoId, StashInfo, TagInfo},
     state::AppState,
 };
 
 #[tauri::command]
 pub async fn list_branches(
-    _state: State<'_, AppState>,
-    _repo_id: String,
+    state: State<'_, AppState>,
+    repo_id: String,
 ) -> AppResult<Vec<BranchInfo>> {
-    Err(AppError::NotImplemented)
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.branches(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn list_tags(state: State<'_, AppState>, repo_id: String) -> AppResult<Vec<TagInfo>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.tags(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn list_stashes(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> AppResult<Vec<StashInfo>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.stashes(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn list_remotes(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> AppResult<Vec<RemoteInfo>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.remotes(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]

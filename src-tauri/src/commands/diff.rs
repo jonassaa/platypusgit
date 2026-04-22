@@ -1,19 +1,26 @@
+use std::path::PathBuf;
+
 use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{DiffHunks, DiffKind},
+    git::types::{DiffKind, FileDiff, RepoId},
     state::AppState,
 };
 
 #[tauri::command]
 pub async fn get_diff(
-    _state: State<'_, AppState>,
-    _repo_id: String,
-    _path: String,
-    _kind: DiffKind,
-) -> AppResult<DiffHunks> {
-    Err(AppError::NotImplemented)
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    kind: DiffKind,
+) -> AppResult<FileDiff> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.diff(&repo_id, &path, kind))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]
