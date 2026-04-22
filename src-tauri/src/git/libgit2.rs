@@ -391,8 +391,30 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn unstage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn unstage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            // Resetting paths to HEAD is the equivalent of `git reset HEAD -- paths`.
+            // If HEAD is unborn, just clear the entries from the index.
+            let head = match repo.head() {
+                Ok(h) => Some(h.peel_to_commit()?),
+                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+                Err(e) => return Err(e.into()),
+            };
+            match head {
+                Some(commit) => {
+                    let paths: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+                    repo.reset_default(Some(commit.as_object()), paths)?;
+                }
+                None => {
+                    let mut index = repo.index()?;
+                    for p in paths {
+                        let _ = index.remove_path(p);
+                    }
+                    index.write()?;
+                }
+            }
+            Ok(())
+        })
     }
     fn discard(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)

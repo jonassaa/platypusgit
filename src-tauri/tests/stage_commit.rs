@@ -52,3 +52,29 @@ fn stage_a_new_untracked_file_marks_it_added() {
         platypusgit_lib::git::types::StatusFlag::Added
     ));
 }
+
+#[test]
+fn unstage_moves_index_change_back_to_worktree() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    write_file(tr.path(), "README.md", "hello world\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .stage(&handle.id, &[PathBuf::from("README.md")])
+        .unwrap();
+
+    backend
+        .unstage(&handle.id, &[PathBuf::from("README.md")])
+        .expect("unstage");
+
+    let after = backend.status(&handle.id).unwrap();
+    let entry = after.iter().find(|f| f.path == "README.md").unwrap();
+    assert!(matches!(
+        entry.worktree,
+        platypusgit_lib::git::types::StatusFlag::Modified
+    ));
+    assert!(matches!(
+        entry.index,
+        platypusgit_lib::git::types::StatusFlag::Unmodified
+    ));
+}
