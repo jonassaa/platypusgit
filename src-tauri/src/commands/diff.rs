@@ -25,18 +25,28 @@ pub async fn get_diff(
 
 #[tauri::command]
 pub async fn stage_paths(
-    _state: State<'_, AppState>,
-    _repo_id: String,
-    _paths: Vec<String>,
+    state: State<'_, AppState>,
+    repo_id: String,
+    paths: Vec<String>,
 ) -> AppResult<()> {
-    Err(AppError::NotImplemented)
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    tokio::task::spawn_blocking(move || backend.stage(&repo_id, &paths))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]
 pub async fn unstage_paths(
-    _state: State<'_, AppState>,
-    _repo_id: String,
-    _paths: Vec<String>,
+    state: State<'_, AppState>,
+    repo_id: String,
+    paths: Vec<String>,
 ) -> AppResult<()> {
-    Err(AppError::NotImplemented)
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    tokio::task::spawn_blocking(move || backend.unstage(&repo_id, &paths))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }

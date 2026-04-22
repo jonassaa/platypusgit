@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{CommitInfo, RepoId},
+    git::types::{CommitInfo, CommitOptions, RepoId},
     state::AppState,
 };
 
@@ -22,10 +22,19 @@ pub async fn get_log(
 
 #[tauri::command]
 pub async fn commit(
-    _state: State<'_, AppState>,
-    _repo_id: String,
-    _message: String,
-    _amend: bool,
+    state: State<'_, AppState>,
+    repo_id: String,
+    message: String,
+    amend: bool,
 ) -> AppResult<String> {
-    Err(AppError::NotImplemented)
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let opts = CommitOptions {
+        message,
+        amend,
+        author_override: None,
+    };
+    tokio::task::spawn_blocking(move || backend.commit(&repo_id, opts))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }
