@@ -7,14 +7,21 @@ import React from "react";
  */
 export function PGResizeHandle({
   onDrag,
+  onActiveChange,
   side = "right",
 }: {
   onDrag: (deltaPx: number) => void;
+  /** Called when the drag starts/stops. Useful to suspend CSS transitions. */
+  onActiveChange?: (active: boolean) => void;
   /** Which side of the owning pane the handle sits on. Affects cursor only. */
   side?: "left" | "right";
 }) {
   const [active, setActive] = React.useState(false);
   const startX = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    onActiveChange?.(active);
+  }, [active, onActiveChange]);
 
   React.useEffect(() => {
     if (!active) return;

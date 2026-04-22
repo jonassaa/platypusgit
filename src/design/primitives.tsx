@@ -333,13 +333,16 @@ export function PGSearchInput({
   style,
 }: PGSearchInputProps) {
   return (
-    <div style={{ position: "relative", ...style }}>
+    <div style={{ position: "relative", width: "100%", ...style }}>
       <PGInput
         value={value}
         onChange={onChange}
         placeholder={placeholder}
         icon="search"
-        style={{ paddingRight: shortcut ? 48 : undefined }}
+        style={{
+          width: "100%",
+          paddingRight: shortcut ? 48 : undefined,
+        }}
       />
       {shortcut && (
         <div

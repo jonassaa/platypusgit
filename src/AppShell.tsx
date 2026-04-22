@@ -3,7 +3,6 @@ import React from "react";
 import {
   PGActivityBar,
   PGButton,
-  PGIcon,
   PGIconButton,
   PGPrimarySidebar,
   PGResizeHandle,
@@ -79,6 +78,29 @@ export function AppShell() {
   React.useEffect(() => {
     localStorage.setItem("pg-screen", screen);
   }, [screen]);
+
+  React.useEffect(() => {
+    if (!repo) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.shiftKey || e.altKey) return;
+      const n = parseInt(e.key, 10);
+      if (!Number.isFinite(n) || n < 1 || n > ACTIVITY_ITEMS.length) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      setScreen(ACTIVITY_ITEMS[n - 1].id as ScreenId);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [repo]);
 
   const screens: Record<ScreenId, React.ReactNode> = {
     repo: <RepoBrowserScreen />,
@@ -197,6 +219,33 @@ function AppBody({
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleCollapsed]);
 
+  const [dragging, setDragging] = React.useState(false);
+  const [hovering, setHovering] = React.useState(false);
+  const leaveTimer = React.useRef<number | null>(null);
+
+  const onHoverEnter = React.useCallback(() => {
+    if (leaveTimer.current !== null) {
+      window.clearTimeout(leaveTimer.current);
+      leaveTimer.current = null;
+    }
+    setHovering(true);
+  }, []);
+  const onHoverLeave = React.useCallback(() => {
+    if (leaveTimer.current !== null) window.clearTimeout(leaveTimer.current);
+    leaveTimer.current = window.setTimeout(() => setHovering(false), 150);
+  }, []);
+
+  React.useEffect(() => {
+    if (!collapsed) setHovering(false);
+  }, [collapsed]);
+
+  const HOVER_STRIP_W = 6;
+  const dockedWidth = collapsed ? HOVER_STRIP_W : sidebar.width;
+  const widthTransition = dragging
+    ? "none"
+    : "width 220ms cubic-bezier(0.4, 0, 0.2, 1)";
+  const overlayVisible = !collapsed || hovering;
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
       <PGActivityBar
@@ -204,55 +253,74 @@ function AppBody({
         onChange={(id) => setScreen(id as ScreenId)}
         items={ACTIVITY_ITEMS}
       />
-      {collapsed ? (
-        <CollapsedSidebarStrip onExpand={toggleCollapsed} />
-      ) : (
-        <>
-          <AppSidebar width={sidebar.width} onCollapse={toggleCollapsed} />
-          <PGResizeHandle onDrag={sidebar.resize} />
-        </>
-      )}
       <div
         style={{
           flex: 1,
           minWidth: 0,
+          minHeight: 0,
           display: "flex",
-          flexDirection: "column",
-          background: "var(--bg-0)",
+          position: "relative",
         }}
       >
-        {screens[screen]}
+        {/* Docked placeholder: reserves layout space; narrow strip when collapsed */}
+        <div
+          onMouseEnter={collapsed ? onHoverEnter : undefined}
+          onMouseLeave={collapsed ? onHoverLeave : undefined}
+          onClick={collapsed ? toggleCollapsed : undefined}
+          title={collapsed ? "Expand sidebar (⌘B)" : undefined}
+          style={{
+            width: dockedWidth,
+            flexShrink: 0,
+            background: "var(--bg-1)",
+            borderRight: "1px solid var(--border-0)",
+            transition: widthTransition,
+            cursor: collapsed ? "pointer" : "default",
+          }}
+        />
+        {!collapsed && (
+          <PGResizeHandle
+            onDrag={sidebar.resize}
+            onActiveChange={setDragging}
+          />
+        )}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            background: "var(--bg-0)",
+          }}
+        >
+          {screens[screen]}
+        </div>
+        {/* Sidebar body. Docked when expanded; floating overlay on hover when collapsed. */}
+        <div
+          onMouseEnter={collapsed ? onHoverEnter : undefined}
+          onMouseLeave={collapsed ? onHoverLeave : undefined}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            width: sidebar.width,
+            display: "flex",
+            zIndex: 5,
+            transform: overlayVisible ? "translateX(0)" : "translateX(-100%)",
+            transition: dragging
+              ? "none"
+              : "transform 220ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 220ms ease",
+            pointerEvents: overlayVisible ? "auto" : "none",
+            boxShadow: collapsed && hovering ? "var(--shadow-3)" : "none",
+          }}
+        >
+          <AppSidebar
+            width={sidebar.width}
+            onCollapse={toggleCollapsed}
+            floating={collapsed && hovering}
+          />
+        </div>
       </div>
-    </div>
-  );
-}
-
-function CollapsedSidebarStrip({ onExpand }: { onExpand: () => void }) {
-  return (
-    <div
-      onClick={onExpand}
-      title="Expand sidebar (⌘B)"
-      style={{
-        width: 16,
-        flexShrink: 0,
-        background: "var(--bg-1)",
-        borderRight: "1px solid var(--border-0)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        color: "var(--fg-3)",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "var(--bg-2)";
-        e.currentTarget.style.color = "var(--fg-0)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "var(--bg-1)";
-        e.currentTarget.style.color = "var(--fg-3)";
-      }}
-    >
-      <PGIcon name="chevronRight" size={12} />
     </div>
   );
 }
@@ -367,10 +435,13 @@ function AppTitlebar() {
 function AppSidebar({
   width,
   onCollapse,
+  floating = false,
 }: {
   width: number;
   onCollapse: () => void;
+  floating?: boolean;
 }) {
+  void floating;
   const [branchFilter, setBranchFilter] = React.useState("");
   const branches = useRepoStore((s) => s.branches);
   const tags = useRepoStore((s) => s.tags);

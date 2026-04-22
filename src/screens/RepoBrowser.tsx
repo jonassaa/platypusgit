@@ -71,6 +71,9 @@ export function RepoBrowserScreen() {
   const [selected, setSelected] = React.useState<string | null>(null);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
+  const [filterMode, setFilterMode] = React.useState<
+    "all" | "changes" | "conflicts"
+  >("changes");
   const treePane = usePaneWidth(280, {
     min: 180,
     max: 600,
@@ -84,8 +87,36 @@ export function RepoBrowserScreen() {
 
   const head = currentBranch(branches);
 
+  const filteredStatus = React.useMemo<FileStatus[]>(() => {
+    switch (filterMode) {
+      case "conflicts":
+        return status.filter(
+          (s) =>
+            s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted",
+        );
+      case "changes":
+        return status.filter(
+          (s) =>
+            s.worktree.kind !== "Unmodified" ||
+            s.index.kind !== "Unmodified",
+        );
+      case "all":
+      default:
+        return status;
+    }
+  }, [status, filterMode]);
+
   const tree = React.useMemo<PGFileTreeNode[]>(
-    () => buildStatusTree(status),
+    () => buildStatusTree(filteredStatus),
+    [filteredStatus],
+  );
+
+  const conflictCount = React.useMemo(
+    () =>
+      status.filter(
+        (s) =>
+          s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted",
+      ).length,
     [status],
   );
 
@@ -132,12 +163,20 @@ export function RepoBrowserScreen() {
         right={
           <>
             <PGButtonGroup
-              value="changes"
-              onChange={() => {}}
+              value={filterMode}
+              onChange={(v) =>
+                setFilterMode(v as "all" | "changes" | "conflicts")
+              }
               options={[
                 { value: "all", label: "All", icon: "folder" },
                 { value: "changes", label: "Changes", icon: "edit" },
-                { value: "conflicts", label: "Conflicts", icon: "conflict" },
+                {
+                  value: "conflicts",
+                  label: conflictCount > 0
+                    ? `Conflicts (${conflictCount})`
+                    : "Conflicts",
+                  icon: "conflict",
+                },
               ]}
             />
             <PGIconButton icon="filter" size="md" title="Filter" />
@@ -166,7 +205,11 @@ export function RepoBrowserScreen() {
               gap: 4,
             }}
           >
-            <PGSearchInput placeholder="Find in tree…" shortcut="⌘⇧F" />
+            <PGSearchInput
+              placeholder="Find in tree…"
+              shortcut="⌘⇧F"
+              style={{ flex: 1, minWidth: 0 }}
+            />
           </div>
           <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
             {tree.length === 0 && !loading && (
