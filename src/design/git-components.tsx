@@ -341,31 +341,81 @@ export function PGChangeRow({
         />
       )}
       <PGStatusMark kind={status} size={14} />
-      <PGIcon name="file" size={11} style={{ color: "var(--fg-3)" }} />
-      <span style={{ color: "var(--fg-0)" }}>{file}</span>
-      {dir && (
-        <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-11)" }}>
-          — {dir}
+      <PGIcon
+        name="file"
+        size={11}
+        style={{ color: "var(--fg-3)", flexShrink: 0 }}
+      />
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          alignItems: "baseline",
+          gap: 6,
+          overflow: "hidden",
+        }}
+        title={path}
+      >
+        <span
+          style={{
+            color: "var(--fg-0)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            flexShrink: 0,
+            maxWidth: "60%",
+          }}
+        >
+          {file}
         </span>
-      )}
+        {dir && (
+          <span
+            style={{
+              color: "var(--fg-3)",
+              fontSize: "var(--fs-11)",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              direction: "rtl",
+              textAlign: "left",
+              minWidth: 0,
+              flex: 1,
+            }}
+          >
+            {dir}
+          </span>
+        )}
+      </span>
       {renamed && (
         <span
-          style={{ color: "var(--git-renamed)", fontSize: "var(--fs-11)" }}
+          style={{
+            color: "var(--git-renamed)",
+            fontSize: "var(--fs-11)",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
         >
           ← {renamed}
         </span>
       )}
-      <div style={{ flex: 1 }} />
-      {(additions != null || deletions != null) && (
-        <div style={{ display: "flex", gap: 4, fontSize: "var(--fs-10)" }}>
-          {additions != null && (
+      {(additions || deletions) ? (
+        <div
+          style={{
+            display: "flex",
+            gap: 4,
+            fontSize: "var(--fs-10)",
+            flexShrink: 0,
+          }}
+        >
+          {additions ? (
             <span style={{ color: "var(--git-added)" }}>+{additions}</span>
-          )}
-          {deletions != null && (
+          ) : null}
+          {deletions ? (
             <span style={{ color: "var(--git-removed)" }}>−{deletions}</span>
-          )}
+          ) : null}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

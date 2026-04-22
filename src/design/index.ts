@@ -6,3 +6,4 @@ export * from "./context-menu";
 export * from "./ui-helpers";
 export * from "./empty-state";
 export * from "./use-prevent-browser-context-menu";
+export * from "./resizable";

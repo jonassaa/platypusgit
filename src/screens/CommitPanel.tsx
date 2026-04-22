@@ -12,10 +12,12 @@ import {
   PGInput,
   PGSpinner,
   PGStatusMark,
+  PGResizeHandle,
   PGTextarea,
   fileMenuItems,
   pgFlash,
   useContextMenu,
+  usePaneWidth,
   type DiffLineData,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -38,6 +40,16 @@ export function CommitPanelScreen() {
   const [amend, setAmend] = React.useState(false);
   const [signoff, setSignoff] = React.useState(false);
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
+  const changesPane = usePaneWidth(320, {
+    min: 220,
+    max: 720,
+    storageKey: "pg-commit-changes-w",
+  });
+  const composerPane = usePaneWidth(360, {
+    min: 280,
+    max: 640,
+    storageKey: "pg-commit-composer-w",
+  });
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [diffError, setDiffError] = React.useState<string | null>(null);
@@ -124,11 +136,13 @@ export function CommitPanelScreen() {
       {/* Column 1: change list */}
       <div
         style={{
-          width: 320,
+          width: changesPane.width,
+          flexShrink: 0,
           background: "var(--bg-1)",
           borderRight: "1px solid var(--border-0)",
           display: "flex",
           flexDirection: "column",
+          minWidth: 0,
         }}
       >
         <div style={{ borderBottom: "1px solid var(--border-0)" }}>
@@ -205,6 +219,7 @@ export function CommitPanelScreen() {
           ))}
         </div>
       </div>
+      <PGResizeHandle onDrag={changesPane.resize} />
 
       {/* Column 2: diff */}
       <div
@@ -292,14 +307,18 @@ export function CommitPanelScreen() {
         </div>
       </div>
 
+      <PGResizeHandle onDrag={(d) => composerPane.resize(-d)} side="left" />
+
       {/* Column 3: message composer */}
       <div
         style={{
-          width: 360,
+          width: composerPane.width,
+          flexShrink: 0,
           background: "var(--bg-1)",
           borderLeft: "1px solid var(--border-0)",
           display: "flex",
           flexDirection: "column",
+          minWidth: 0,
         }}
       >
         <Header title="COMMIT MESSAGE" />
