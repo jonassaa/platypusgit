@@ -5,7 +5,7 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BranchInfo, CommitInfo, CommitOptions, DiffKind, FileDiff, FileStatus, RemoteInfo,
-        RepoHandle, RepoId, StashInfo, TagInfo,
+        RepoHandle, RepoId, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -45,6 +45,9 @@ impl GitBackend for CliBackend {
     fn unstage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn discard(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<String> {
         Err(AppError::NotImplemented)
     }
@@ -64,6 +67,39 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn create_branch(&self, _repo_id: &RepoId, _name: &str, _from: Option<&str>) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn delete_branch(&self, _repo_id: &RepoId, _name: &str, _force: bool) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn rename_branch(&self, _repo_id: &RepoId, _from: &str, _to: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn create_tag(&self, _repo_id: &RepoId, _name: &str, _target: TagTarget) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn delete_tag(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn reset(&self, _repo_id: &RepoId, _target: &str, _mode: ResetMode) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn cherry_pick(&self, _repo_id: &RepoId, _oid: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn revert(&self, _repo_id: &RepoId, _oid: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn stash_save(&self, _repo_id: &RepoId, _opts: StashSaveOptions) -> AppResult<Option<String>> {
+        Err(AppError::NotImplemented)
+    }
+    fn stash_apply(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn stash_pop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn stash_drop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
     fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {

@@ -146,3 +146,26 @@ pub struct AuthorOverride {
     pub name: String,
     pub email: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ResetMode {
+    Soft,
+    Mixed,
+    Hard,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagTarget {
+    pub oid: String,
+    /// None = lightweight tag; Some = annotated tag with this message.
+    pub annotation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StashSaveOptions {
+    pub message: Option<String>,
+    pub include_untracked: bool,
+    pub keep_index: bool,
+}
