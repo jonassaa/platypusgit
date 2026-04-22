@@ -97,6 +97,36 @@ fn rename_branch_moves_the_ref() {
 }
 
 #[test]
+fn checkout_is_ok_with_untracked_files_that_dont_conflict() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    let head_commit = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    tr.repo.branch("feature", &head_commit, false).unwrap();
+
+    // A completely untracked file unrelated to anything on either branch.
+    support::fs::write_file(tr.path(), "scratch.txt", "junk\n");
+
+    backend
+        .checkout_branch(&handle.id, "feature")
+        .expect("untracked file should not block checkout");
+}
+
+#[test]
+fn checkout_refuses_with_modified_tracked_file() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    let head_commit = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    tr.repo.branch("feature", &head_commit, false).unwrap();
+
+    support::fs::write_file(tr.path(), "README.md", "modified\n");
+
+    let err = backend
+        .checkout_branch(&handle.id, "feature")
+        .unwrap_err();
+    assert!(matches!(err, platypusgit_lib::error::AppError::DirtyWorktree(_)));
+}
+
+#[test]
 fn delete_unmerged_branch_is_refused_without_force() {
     let tr = TempRepo::with_initial_commit("hello\n");
     let (backend, handle) = tr.open_with_backend();

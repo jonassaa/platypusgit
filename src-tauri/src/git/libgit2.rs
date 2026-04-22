@@ -591,18 +591,21 @@ impl GitBackend for Libgit2Backend {
 
     fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
-            // Refuse to checkout when the worktree is dirty and would be overwritten.
+            // Refuse only when tracked paths have pending modifications or staged
+            // changes; untracked files are fine unless they would be overwritten by
+            // the target tree (that's checked by checkout_tree's conflict detection).
             let statuses = repo.statuses(None)?;
             let dirty = statuses.iter().any(|s| {
                 let bits = s.status();
                 bits.is_wt_modified()
-                    || bits.is_wt_new()
                     || bits.is_wt_deleted()
                     || bits.is_wt_typechange()
                     || bits.is_wt_renamed()
                     || bits.is_index_modified()
                     || bits.is_index_new()
                     || bits.is_index_deleted()
+                    || bits.is_index_renamed()
+                    || bits.is_index_typechange()
             });
             if dirty {
                 return Err(AppError::DirtyWorktree(
@@ -613,7 +616,12 @@ impl GitBackend for Libgit2Backend {
             let obj = repo
                 .revparse_single(&refname)
                 .map_err(|_| AppError::InvalidRef(name.to_string()))?;
-            repo.checkout_tree(&obj, None)?;
+            repo.checkout_tree(&obj, None).map_err(|e| match e.code() {
+                git2::ErrorCode::Conflict => AppError::DirtyWorktree(
+                    "untracked files would be overwritten by checkout".into(),
+                ),
+                _ => AppError::from(e),
+            })?;
             repo.set_head(&refname)?;
             Ok(())
         })
