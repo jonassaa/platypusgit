@@ -35,6 +35,9 @@ export function CommitPanelScreen() {
   const repo = useRepoStore((s) => s.current);
   const status = useRepoStore((s) => s.status);
   const loading = useRepoStore((s) => s.loading);
+  const stage = useRepoStore((s) => s.stage);
+  const unstage = useRepoStore((s) => s.unstage);
+  const commitAction = useRepoStore((s) => s.commit);
   const [message, setMessage] = React.useState("");
   const [body, setBody] = React.useState("");
   const [amend, setAmend] = React.useState(false);
@@ -153,7 +156,7 @@ export function CommitPanelScreen() {
               <PGButton
                 size="xs"
                 variant="ghost"
-                onClick={() => pgFlash("unstage is not wired up yet")}
+                onClick={() => unstage(staged.map((f) => f.path))}
                 disabled={staged.length === 0}
               >
                 Unstage all
@@ -183,7 +186,7 @@ export function CommitPanelScreen() {
               selected={selectedKey === keyOf(f)}
               onClick={() => setSelectedKey(keyOf(f))}
               onContextMenu={(e) => onFileCtx(e, f)}
-              onToggle={() => pgFlash("stage toggle is not wired up yet")}
+              onToggle={() => unstage([f.path])}
             />
           ))}
         </div>
@@ -195,7 +198,7 @@ export function CommitPanelScreen() {
               <PGButton
                 size="xs"
                 variant="ghost"
-                onClick={() => pgFlash("stage is not wired up yet")}
+                onClick={() => stage(unstaged.map((f) => f.path))}
                 disabled={unstaged.length === 0}
               >
                 Stage all
@@ -214,7 +217,7 @@ export function CommitPanelScreen() {
               selected={selectedKey === keyOf(f)}
               onClick={() => setSelectedKey(keyOf(f))}
               onContextMenu={(e) => onFileCtx(e, f)}
-              onToggle={() => pgFlash("stage toggle is not wired up yet")}
+              onToggle={() => stage([f.path])}
             />
           ))}
         </div>
@@ -436,17 +439,25 @@ export function CommitPanelScreen() {
             <PGButton
               variant="default"
               fullWidth
-              disabled
-              onClick={() => pgFlash("commit is not wired up yet")}
+              disabled={staged.length === 0 || !message.trim()}
+              onClick={async () => {
+                const full = body.trim() ? `${message}\n\n${body}` : message;
+                const oid = await commitAction(full, amend);
+                if (oid) {
+                  setMessage("");
+                  setBody("");
+                  setAmend(false);
+                }
+              }}
             >
-              Commit
+              {amend ? "Amend" : "Commit"}
             </PGButton>
             <PGButton
               variant="primary"
               icon="push"
               fullWidth
               disabled
-              onClick={() => pgFlash("commit & push is not wired up yet")}
+              title="Push will arrive in Plan B (network)"
             >
               Commit & Push
             </PGButton>
