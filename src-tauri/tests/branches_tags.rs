@@ -144,3 +144,27 @@ fn delete_tag_removes_it() {
     let names: Vec<_> = backend.tags(&handle.id).unwrap().into_iter().map(|t| t.name).collect();
     assert!(!names.iter().any(|n| n == "v0.1.0"));
 }
+
+#[test]
+fn create_tag_from_abbreviated_sha() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    let full_oid = tr.repo.head().unwrap().target().unwrap().to_string();
+    let short_oid = full_oid[..7].to_string();
+
+    backend
+        .create_tag(
+            &handle.id,
+            "v0.1.0-short",
+            TagTarget { oid: short_oid, annotation: None },
+        )
+        .expect("should resolve abbreviated sha");
+
+    let names: Vec<_> = backend
+        .tags(&handle.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(names.iter().any(|n| n == "v0.1.0-short"));
+}
