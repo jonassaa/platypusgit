@@ -79,3 +79,31 @@ export async function reset(
 ): Promise<void> {
   return invoke<void>("reset", { repoId, target, mode });
 }
+
+export async function checkoutBranch(repoId: string, name: string): Promise<void> {
+  return invoke<void>("checkout_branch", { repoId, name });
+}
+
+export async function createBranch(
+  repoId: string,
+  name: string,
+  from?: string,
+): Promise<void> {
+  return invoke<void>("create_branch", { repoId, name, from });
+}
+
+export async function deleteBranch(
+  repoId: string,
+  name: string,
+  force = false,
+): Promise<void> {
+  return invoke<void>("delete_branch", { repoId, name, force });
+}
+
+export async function renameBranch(
+  repoId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  return invoke<void>("rename_branch", { repoId, from, to });
+}

@@ -11,7 +11,10 @@ import type {
 import type { AppError } from "@/lib/errors";
 import { isAppError } from "@/lib/errors";
 import {
+  checkoutBranch,
   commit as commitFn,
+  createBranch,
+  deleteBranch,
   discardPaths,
   getLog,
   getStatus,
@@ -20,6 +23,7 @@ import {
   listStashes,
   listTags,
   openRepo,
+  renameBranch,
   reset as resetFn,
   stagePaths,
   unstagePaths,
@@ -46,6 +50,10 @@ interface RepoState {
   discard: (paths: string[]) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<string | null>;
   reset: (target: string, mode: ResetMode) => Promise<void>;
+  checkoutBranch: (name: string) => Promise<void>;
+  createBranch: (name: string, from?: string) => Promise<void>;
+  deleteBranch: (name: string, force?: boolean) => Promise<void>;
+  renameBranch: (from: string, to: string) => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -173,6 +181,51 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     } catch (e) {
       set({ error: toAppError(e) });
       return null;
+    }
+  },
+
+  async checkoutBranch(name) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await checkoutBranch(repo.id, name);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async createBranch(name, from) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await createBranch(repo.id, name, from);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async deleteBranch(name, force = false) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await deleteBranch(repo.id, name, force);
+    } catch (e) {
+      set({ error: toAppError(e) });
+      return;
+    }
+    await get().refreshAll();
+  },
+
+  async renameBranch(from, to) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await renameBranch(repo.id, from, to);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
     }
   },
 }));

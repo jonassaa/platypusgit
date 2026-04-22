@@ -485,6 +485,10 @@ export function BranchesScreen() {
               variant="primary"
               icon="check"
               disabled={!selectedBranch || selectedBranch.isHead}
+              onClick={() =>
+                selectedBranch &&
+                useRepoStore.getState().checkoutBranch(selectedBranch.name)
+              }
             >
               Check out
             </PGButton>
@@ -492,6 +496,7 @@ export function BranchesScreen() {
               variant="outline"
               icon="merge"
               disabled={!selectedBranch || selectedBranch.isHead}
+              title="merge will land in Plan C"
             >
               Merge into current
             </PGButton>
@@ -499,6 +504,7 @@ export function BranchesScreen() {
               variant="outline"
               icon="rebase"
               disabled={!selectedBranch || selectedBranch.isHead}
+              title="rebase will land in Plan E"
             >
               Rebase current onto this
             </PGButton>
@@ -507,6 +513,11 @@ export function BranchesScreen() {
               tone="danger"
               icon="trash"
               disabled={!selectedBranch || selectedBranch.isHead}
+              onClick={() => {
+                if (!selectedBranch) return;
+                if (window.confirm(`Delete ${selectedBranch.name}?`))
+                  useRepoStore.getState().deleteBranch(selectedBranch.name);
+              }}
             >
               Delete branch
             </PGButton>
@@ -557,7 +568,15 @@ function BranchesToolbar({
           <PGButton size="sm" variant="outline" icon="fetch" disabled>
             Fetch all
           </PGButton>
-          <PGButton size="sm" variant="primary" icon="plus" disabled>
+          <PGButton
+            size="sm"
+            variant="primary"
+            icon="plus"
+            onClick={() => {
+              const name = window.prompt("New branch name");
+              if (name) useRepoStore.getState().createBranch(name);
+            }}
+          >
             New branch
           </PGButton>
         </>

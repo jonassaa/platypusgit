@@ -428,7 +428,7 @@ export function branchMenuItems(branch: { name?: string; current?: boolean } | n
       label: "Check out",
       shortcut: "⌘⇧O",
       disabled: isCurrent,
-      onClick: () => pgFlash(`checked out ${name}`),
+      onClick: () => useRepoStore.getState().checkoutBranch(name),
     },
     {
       icon: "merge",
@@ -451,7 +451,10 @@ export function branchMenuItems(branch: { name?: string; current?: boolean } | n
       icon: "edit",
       label: "Rename…",
       shortcut: "F2",
-      onClick: () => pgFlash(`rename ${name}`),
+      onClick: () => {
+        const to = window.prompt("New name", name);
+        if (to && to !== name) useRepoStore.getState().renameBranch(name, to);
+      },
     },
     {
       icon: "copy",
@@ -468,14 +471,20 @@ export function branchMenuItems(branch: { name?: string; current?: boolean } | n
       shortcut: "⌫",
       danger: true,
       disabled: isCurrent,
-      onClick: () => pgFlash(`deleted ${name}`),
+      onClick: () => {
+        if (window.confirm(`Delete ${name}?`))
+          useRepoStore.getState().deleteBranch(name);
+      },
     },
     {
       icon: "trash",
       label: "Force delete (-D)",
       danger: true,
       disabled: isCurrent,
-      onClick: () => pgFlash(`force-deleted ${name}`),
+      onClick: () => {
+        if (window.confirm(`Force-delete ${name}? This will discard unmerged commits.`))
+          useRepoStore.getState().deleteBranch(name, true);
+      },
     },
   ];
 }
