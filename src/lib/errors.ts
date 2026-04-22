@@ -5,6 +5,11 @@ export type AppError =
   | { kind: "Io"; message: string }
   | { kind: "Git"; message: string }
   | { kind: "NotImplemented"; message?: string }
+  | { kind: "Unborn"; message?: string }
+  | { kind: "InvalidRef"; message: string }
+  | { kind: "DirtyWorktree"; message: string }
+  | { kind: "ConflictsDetected"; message: string }
+  | { kind: "NoSignature"; message?: string }
   | { kind: "Internal"; message: string };
 
 export function isAppError(e: unknown): e is AppError {

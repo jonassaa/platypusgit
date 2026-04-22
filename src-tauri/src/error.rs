@@ -21,6 +21,21 @@ pub enum AppError {
     #[error("not implemented")]
     NotImplemented,
 
+    #[error("repository has no HEAD yet")]
+    Unborn,
+
+    #[error("invalid reference: {0}")]
+    InvalidRef(String),
+
+    #[error("worktree is dirty: {0}")]
+    DirtyWorktree(String),
+
+    #[error("operation produced conflicts: {0}")]
+    ConflictsDetected(String),
+
+    #[error("no signature configured (set user.name and user.email)")]
+    NoSignature,
+
     #[error("internal error: {0}")]
     Internal(String),
 }
