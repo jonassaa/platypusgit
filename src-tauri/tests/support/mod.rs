@@ -41,11 +41,13 @@ impl TempRepo {
         index.add_path(Path::new("README.md")).unwrap();
         index.write().unwrap();
         let tree_oid = index.write_tree().unwrap();
-        let tree = tr.repo.find_tree(tree_oid).unwrap();
-        let sig = Signature::now("Test User", "test@example.com").unwrap();
-        tr.repo
-            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-            .unwrap();
+        {
+            let tree = tr.repo.find_tree(tree_oid).unwrap();
+            let sig = Signature::now("Test User", "test@example.com").unwrap();
+            tr.repo
+                .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+                .unwrap();
+        }
         tr
     }
 

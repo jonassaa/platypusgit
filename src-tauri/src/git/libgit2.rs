@@ -375,8 +375,21 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn stage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn stage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let mut index = repo.index()?;
+            for p in paths {
+                // `add_path` treats paths as repo-relative; it handles creates and modifications.
+                // For deletions from the worktree, we need `remove_path` instead.
+                if repo.workdir().map(|w| w.join(p).exists()).unwrap_or(false) {
+                    index.add_path(p)?;
+                } else {
+                    index.remove_path(p)?;
+                }
+            }
+            index.write()?;
+            Ok(())
+        })
     }
     fn unstage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)
