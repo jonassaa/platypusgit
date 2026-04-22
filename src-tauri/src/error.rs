@@ -30,6 +30,9 @@ pub enum AppError {
     #[error("worktree is dirty: {0}")]
     DirtyWorktree(String),
 
+    #[error("branch not fully merged: {0}")]
+    NotMerged(String),
+
     #[error("operation produced conflicts: {0}")]
     ConflictsDetected(String),
 

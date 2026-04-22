@@ -8,6 +8,7 @@ export type AppError =
   | { kind: "Unborn"; message?: string }
   | { kind: "InvalidRef"; message: string }
   | { kind: "DirtyWorktree"; message: string }
+  | { kind: "NotMerged"; message: string }
   | { kind: "ConflictsDetected"; message: string }
   | { kind: "NoSignature"; message?: string }
   | { kind: "Internal"; message: string };

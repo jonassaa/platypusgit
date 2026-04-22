@@ -657,7 +657,7 @@ impl GitBackend for Libgit2Backend {
                     let head_commit = head.peel_to_commit()?.id();
                     let base = repo.merge_base(head_commit, branch_commit).ok();
                     if base != Some(branch_commit) {
-                        return Err(AppError::DirtyWorktree(format!(
+                        return Err(AppError::NotMerged(format!(
                             "branch {} is not fully merged",
                             name
                         )));

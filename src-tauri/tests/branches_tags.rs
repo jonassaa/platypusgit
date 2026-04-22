@@ -96,6 +96,34 @@ fn rename_branch_moves_the_ref() {
     assert!(!names.iter().any(|n| n == "old"));
 }
 
+#[test]
+fn delete_unmerged_branch_is_refused_without_force() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    // Create a branch, check it out, commit a change on it, go back to main.
+    backend.create_branch(&handle.id, "feature", None).unwrap();
+    backend.checkout_branch(&handle.id, "feature").unwrap();
+    support::fs::write_file(tr.path(), "NOTES.md", "notes\n");
+    backend.stage(&handle.id, &[std::path::PathBuf::from("NOTES.md")]).unwrap();
+    backend
+        .commit(
+            &handle.id,
+            platypusgit_lib::git::types::CommitOptions {
+                message: "feature work".into(),
+                amend: false,
+                author_override: None,
+            },
+        )
+        .unwrap();
+    backend.checkout_branch(&handle.id, "main").unwrap();
+
+    let err = backend.delete_branch(&handle.id, "feature", false).unwrap_err();
+    assert!(matches!(err, platypusgit_lib::error::AppError::NotMerged(_)));
+
+    // Force delete should succeed.
+    backend.delete_branch(&handle.id, "feature", true).unwrap();
+}
+
 use platypusgit_lib::git::types::TagTarget;
 
 #[test]
