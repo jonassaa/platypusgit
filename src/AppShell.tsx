@@ -3,6 +3,7 @@ import React from "react";
 import {
   PGActivityBar,
   PGButton,
+  PGIcon,
   PGIconButton,
   PGPrimarySidebar,
   PGResizeHandle,
@@ -157,6 +158,45 @@ function AppBody({
     max: 520,
     storageKey: "pg-sidebar-w",
   });
+  const [collapsed, setCollapsed] = React.useState<boolean>(() => {
+    try {
+      return localStorage.getItem("pg-sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleCollapsed = React.useCallback(() => {
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem("pg-sidebar-collapsed", next ? "1" : "0");
+      } catch {
+        // non-fatal
+      }
+      return next;
+    });
+  }, []);
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        const t = e.target as HTMLElement | null;
+        if (
+          t &&
+          (t.tagName === "INPUT" ||
+            t.tagName === "TEXTAREA" ||
+            t.isContentEditable)
+        ) {
+          return;
+        }
+        e.preventDefault();
+        toggleCollapsed();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleCollapsed]);
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
       <PGActivityBar
@@ -164,8 +204,14 @@ function AppBody({
         onChange={(id) => setScreen(id as ScreenId)}
         items={ACTIVITY_ITEMS}
       />
-      <AppSidebar width={sidebar.width} />
-      <PGResizeHandle onDrag={sidebar.resize} />
+      {collapsed ? (
+        <CollapsedSidebarStrip onExpand={toggleCollapsed} />
+      ) : (
+        <>
+          <AppSidebar width={sidebar.width} onCollapse={toggleCollapsed} />
+          <PGResizeHandle onDrag={sidebar.resize} />
+        </>
+      )}
       <div
         style={{
           flex: 1,
@@ -177,6 +223,36 @@ function AppBody({
       >
         {screens[screen]}
       </div>
+    </div>
+  );
+}
+
+function CollapsedSidebarStrip({ onExpand }: { onExpand: () => void }) {
+  return (
+    <div
+      onClick={onExpand}
+      title="Expand sidebar (⌘B)"
+      style={{
+        width: 16,
+        flexShrink: 0,
+        background: "var(--bg-1)",
+        borderRight: "1px solid var(--border-0)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        color: "var(--fg-3)",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--bg-2)";
+        e.currentTarget.style.color = "var(--fg-0)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "var(--bg-1)";
+        e.currentTarget.style.color = "var(--fg-3)";
+      }}
+    >
+      <PGIcon name="chevronRight" size={12} />
     </div>
   );
 }
@@ -288,7 +364,13 @@ function AppTitlebar() {
   );
 }
 
-function AppSidebar({ width }: { width: number }) {
+function AppSidebar({
+  width,
+  onCollapse,
+}: {
+  width: number;
+  onCollapse: () => void;
+}) {
   const [branchFilter, setBranchFilter] = React.useState("");
   const branches = useRepoStore((s) => s.branches);
   const tags = useRepoStore((s) => s.tags);
@@ -304,13 +386,24 @@ function AppSidebar({ width }: { width: number }) {
         style={{
           padding: 8,
           borderBottom: "1px solid var(--border-0)",
+          display: "flex",
+          gap: 6,
+          alignItems: "center",
         }}
       >
-        <PGSearchInput
-          value={branchFilter}
-          onChange={setBranchFilter}
-          placeholder="Filter branches…"
-          shortcut="⌘P"
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <PGSearchInput
+            value={branchFilter}
+            onChange={setBranchFilter}
+            placeholder="Filter branches…"
+            shortcut="⌘P"
+          />
+        </div>
+        <PGIconButton
+          icon="chevronLeft"
+          size="sm"
+          title="Collapse sidebar (⌘B)"
+          onClick={onCollapse}
         />
       </div>
 
