@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod libgit2;
+pub mod signature;
 pub mod types;
 
 use std::path::{Path, PathBuf};
