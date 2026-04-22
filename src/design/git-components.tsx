@@ -502,6 +502,139 @@ export function PGDiffLine({ kind = "ctx", lnL, lnR, text }: DiffLineData) {
   );
 }
 
+interface DiffChunk {
+  kind: DiffLineKind;
+  lines: DiffLineData[];
+}
+
+function chunkDiffLines(lines: DiffLineData[]): DiffChunk[] {
+  const chunks: DiffChunk[] = [];
+  for (const ln of lines) {
+    const last = chunks[chunks.length - 1];
+    if (last && last.kind === ln.kind) {
+      last.lines.push(ln);
+    } else {
+      chunks.push({ kind: ln.kind, lines: [ln] });
+    }
+  }
+  return chunks;
+}
+
+function PGDiffChunk({ chunk }: { chunk: DiffChunk }) {
+  const { kind, lines } = chunk;
+  const bg: Partial<Record<DiffLineKind, string>> = {
+    add: "var(--git-added-bg)",
+    rem: "var(--git-removed-bg)",
+    hunk: "oklch(0.72 0.15 235 / 0.1)",
+    info: "var(--bg-2)",
+  };
+  const borderColor: Partial<Record<DiffLineKind, string>> = {
+    add: "var(--git-added-gutter)",
+    rem: "var(--git-removed-gutter)",
+  };
+  const marker: Record<DiffLineKind, string> = {
+    add: "+",
+    rem: "−",
+    ctx: " ",
+    hunk: "@",
+    info: "i",
+    empty: "",
+  };
+  const textColor: Record<DiffLineKind, string> = {
+    ctx: "var(--fg-0)",
+    add: "var(--git-added)",
+    rem: "var(--git-removed)",
+    hunk: "var(--accent)",
+    info: "var(--fg-2)",
+    empty: "var(--fg-3)",
+  };
+
+  if (kind === "hunk" || kind === "info") {
+    return (
+      <>
+        {lines.map((ln, i) => (
+          <PGDiffLine key={i} {...ln} />
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        background: bg[kind] ?? "transparent",
+        borderLeft:
+          borderColor[kind] !== undefined
+            ? `2px solid ${borderColor[kind]}`
+            : "2px solid transparent",
+      }}
+    >
+      {lines.map((ln, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-12)",
+            lineHeight: "var(--lh-code)",
+            minHeight: 18,
+          }}
+        >
+          <span
+            style={{
+              width: 40,
+              flexShrink: 0,
+              textAlign: "right",
+              paddingRight: 6,
+              color: "var(--fg-3)",
+              userSelect: "none",
+              borderRight: "1px solid var(--border-0)",
+              background: "var(--bg-1)",
+            }}
+          >
+            {ln.lnL ?? ""}
+          </span>
+          <span
+            style={{
+              width: 40,
+              flexShrink: 0,
+              textAlign: "right",
+              paddingRight: 6,
+              color: "var(--fg-3)",
+              userSelect: "none",
+              borderRight: "1px solid var(--border-0)",
+              background: "var(--bg-1)",
+            }}
+          >
+            {ln.lnR ?? ""}
+          </span>
+          <span
+            style={{
+              width: 20,
+              flexShrink: 0,
+              textAlign: "center",
+              color: textColor[kind],
+              userSelect: "none",
+            }}
+          >
+            {marker[kind]}
+          </span>
+          <span
+            style={{
+              flex: 1,
+              whiteSpace: "pre-wrap",
+              color: kind === "ctx" ? "var(--fg-0)" : textColor[kind],
+              paddingRight: 10,
+            }}
+          >
+            {ln.text}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export interface PGHunkProps {
   header: string;
   lines?: DiffLineData[];
@@ -557,8 +690,8 @@ export function PGHunk({
       </div>
       {expanded && (
         <div>
-          {lines.map((ln, i) => (
-            <PGDiffLine key={i} {...ln} />
+          {chunkDiffLines(lines).map((c, i) => (
+            <PGDiffChunk key={i} chunk={c} />
           ))}
         </div>
       )}
