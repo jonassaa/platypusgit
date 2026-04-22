@@ -785,17 +785,44 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn stash_save(&self, _repo_id: &RepoId, _opts: StashSaveOptions) -> AppResult<Option<String>> {
-        Err(AppError::NotImplemented)
+    fn stash_save(&self, repo_id: &RepoId, opts: StashSaveOptions) -> AppResult<Option<String>> {
+        self.with_repo_mut(repo_id, |repo| {
+            // Build the signature before taking `&mut repo` for stash_save2.
+            // default_signature borrows `&Repository`, so we must call to_owned()
+            // to release the shared borrow before the mutable borrow below.
+            let sig = crate::git::signature::default_signature(repo)?.to_owned();
+            let mut flags = git2::StashFlags::DEFAULT;
+            if opts.include_untracked {
+                flags |= git2::StashFlags::INCLUDE_UNTRACKED;
+            }
+            if opts.keep_index {
+                flags |= git2::StashFlags::KEEP_INDEX;
+            }
+            let message = opts.message.as_deref();
+            match repo.stash_save2(&sig, message, Some(flags)) {
+                Ok(oid) => Ok(Some(oid.to_string())),
+                Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+                Err(e) => Err(e.into()),
+            }
+        })
     }
-    fn stash_apply(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn stash_apply(&self, repo_id: &RepoId, index: usize) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            repo.stash_apply(index, None)?;
+            Ok(())
+        })
     }
-    fn stash_pop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn stash_pop(&self, repo_id: &RepoId, index: usize) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            repo.stash_pop(index, None)?;
+            Ok(())
+        })
     }
-    fn stash_drop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn stash_drop(&self, repo_id: &RepoId, index: usize) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            repo.stash_drop(index)?;
+            Ok(())
+        })
     }
     fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
