@@ -107,3 +107,20 @@ export async function renameBranch(
 ): Promise<void> {
   return invoke<void>("rename_branch", { repoId, from, to });
 }
+
+export interface TagTarget {
+  oid: string;
+  annotation: string | null;
+}
+
+export async function createTag(
+  repoId: string,
+  name: string,
+  target: TagTarget,
+): Promise<void> {
+  return invoke<void>("create_tag", { repoId, name, target });
+}
+
+export async function deleteTag(repoId: string, name: string): Promise<void> {
+  return invoke<void>("delete_tag", { repoId, name });
+}

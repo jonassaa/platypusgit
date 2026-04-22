@@ -676,11 +676,28 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn create_tag(&self, _repo_id: &RepoId, _name: &str, _target: TagTarget) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn create_tag(&self, repo_id: &RepoId, name: &str, target: TagTarget) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let oid = git2::Oid::from_str(&target.oid)
+                .map_err(|_| AppError::InvalidRef(target.oid.clone()))?;
+            let obj = repo.find_object(oid, None)?;
+            match target.annotation {
+                Some(msg) => {
+                    let sig = crate::git::signature::default_signature(repo)?;
+                    repo.tag(name, &obj, &sig, &msg, false)?;
+                }
+                None => {
+                    repo.tag_lightweight(name, &obj, false)?;
+                }
+            }
+            Ok(())
+        })
     }
-    fn delete_tag(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn delete_tag(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            repo.tag_delete(name)?;
+            Ok(())
+        })
     }
     fn reset(&self, repo_id: &RepoId, target: &str, mode: ResetMode) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {

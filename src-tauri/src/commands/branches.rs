@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{BranchInfo, RemoteInfo, RepoId, StashInfo, TagInfo},
+    git::types::{BranchInfo, RemoteInfo, RepoId, StashInfo, TagInfo, TagTarget},
     state::AppState,
 };
 
@@ -133,4 +133,31 @@ pub async fn push(
     _branch: String,
 ) -> AppResult<()> {
     Err(AppError::NotImplemented)
+}
+
+#[tauri::command]
+pub async fn create_tag(
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    target: TagTarget,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.create_tag(&repo_id, &name, target))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn delete_tag(
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.delete_tag(&repo_id, &name))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }

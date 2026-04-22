@@ -34,6 +34,8 @@ pub fn run() {
             commands::branches::fetch,
             commands::branches::pull,
             commands::branches::push,
+            commands::branches::create_tag,
+            commands::branches::delete_tag,
             commands::history::reset,
         ])
         .run(tauri::generate_context!())

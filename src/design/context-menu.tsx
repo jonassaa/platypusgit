@@ -339,7 +339,14 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "tag",
       label: "Create tag here…",
-      onClick: () => pgFlash(`tag at ${sha}`),
+      onClick: () => {
+        const name = window.prompt("Tag name");
+        if (!name || !commit) return;
+        useRepoStore.getState().createTag(name, {
+          oid: commit.sha ?? "",
+          annotation: null,
+        });
+      },
     },
     { divider: true },
     {
@@ -555,7 +562,10 @@ export function tagMenuItems(tag: { name?: string; sha?: string } | null): Conte
       icon: "trash",
       label: "Delete tag",
       danger: true,
-      onClick: () => pgFlash(`deleted ${name}`),
+      onClick: () => {
+        if (name && window.confirm(`Delete tag ${name}?`))
+          useRepoStore.getState().deleteTag(name);
+      },
     },
   ];
 }

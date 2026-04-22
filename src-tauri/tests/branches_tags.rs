@@ -95,3 +95,52 @@ fn rename_branch_moves_the_ref() {
     assert!(names.iter().any(|n| n == "new"));
     assert!(!names.iter().any(|n| n == "old"));
 }
+
+use platypusgit_lib::git::types::TagTarget;
+
+#[test]
+fn create_lightweight_tag() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    let head_oid = tr.repo.head().unwrap().target().unwrap().to_string();
+
+    backend
+        .create_tag(
+            &handle.id,
+            "v0.1.0",
+            TagTarget {
+                oid: head_oid,
+                annotation: None,
+            },
+        )
+        .unwrap();
+
+    let names: Vec<_> = backend
+        .tags(&handle.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(names.iter().any(|n| n == "v0.1.0"));
+}
+
+#[test]
+fn delete_tag_removes_it() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    let head_oid = tr.repo.head().unwrap().target().unwrap().to_string();
+    backend
+        .create_tag(
+            &handle.id,
+            "v0.1.0",
+            TagTarget {
+                oid: head_oid,
+                annotation: None,
+            },
+        )
+        .unwrap();
+
+    backend.delete_tag(&handle.id, "v0.1.0").unwrap();
+    let names: Vec<_> = backend.tags(&handle.id).unwrap().into_iter().map(|t| t.name).collect();
+    assert!(!names.iter().any(|n| n == "v0.1.0"));
+}

@@ -14,7 +14,9 @@ import {
   checkoutBranch,
   commit as commitFn,
   createBranch,
+  createTag,
   deleteBranch,
+  deleteTag,
   discardPaths,
   getLog,
   getStatus,
@@ -28,6 +30,7 @@ import {
   stagePaths,
   unstagePaths,
   type ResetMode,
+  type TagTarget,
 } from "@/lib/tauri";
 import { useRecentsStore } from "./useRecentsStore";
 
@@ -54,6 +57,8 @@ interface RepoState {
   createBranch: (name: string, from?: string) => Promise<void>;
   deleteBranch: (name: string, force?: boolean) => Promise<void>;
   renameBranch: (from: string, to: string) => Promise<void>;
+  createTag: (name: string, target: TagTarget) => Promise<void>;
+  deleteTag: (name: string) => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -223,6 +228,28 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     if (!repo) return;
     try {
       await renameBranch(repo.id, from, to);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async createTag(name, target) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await createTag(repo.id, name, target);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async deleteTag(name) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await deleteTag(repo.id, name);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
