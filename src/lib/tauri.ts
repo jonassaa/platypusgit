@@ -5,6 +5,8 @@ import type {
   DiffKind,
   FileDiff,
   FileStatus,
+  PullMode,
+  PushForce,
   RemoteInfo,
   RepoHandle,
   StashInfo,
@@ -157,3 +159,81 @@ export async function stashPop(repoId: string, index: number): Promise<void> {
 export async function stashDrop(repoId: string, index: number): Promise<void> {
   return invoke<void>("stash_drop", { repoId, index });
 }
+
+// ─── Network operations ──────────────────────────────────────────────────────
+
+/** Fetch a single remote, pruning deleted remote refs. */
+export async function fetch(repoId: string, remote: string): Promise<void> {
+  return invoke<void>("fetch", { repoId, remote });
+}
+
+/** Fetch all remotes, pruning deleted remote refs. */
+export async function fetchAll(repoId: string): Promise<void> {
+  return invoke<void>("fetch_all", { repoId });
+}
+
+/**
+ * Pull from remote/branch.
+ * Default mode is `Merge` (same as git default). Use `FastForward` or
+ * `Rebase` for stricter semantics. Pull-mode UI will land in a later
+ * iteration; the groundwork is here so it only needs UI, not backend changes.
+ */
+export async function pull(
+  repoId: string,
+  remote: string,
+  branch: string,
+  mode: PullMode = "Merge",
+): Promise<void> {
+  return invoke<void>("pull", { repoId, remote, branch, mode });
+}
+
+/**
+ * Push local branch to remote.
+ * `force` defaults to `None` (reject on diverge). Use `WithLease` for safe
+ * force-push or `Force` to unconditionally overwrite.
+ */
+export async function push(
+  repoId: string,
+  remote: string,
+  branch: string,
+  force: PushForce = "None",
+): Promise<void> {
+  return invoke<void>("push", { repoId, remote, branch, force });
+}
+
+// ─── Remote management ───────────────────────────────────────────────────────
+
+export async function addRemote(
+  repoId: string,
+  name: string,
+  url: string,
+): Promise<void> {
+  return invoke<void>("add_remote", { repoId, name, url });
+}
+
+export async function removeRemote(repoId: string, name: string): Promise<void> {
+  return invoke<void>("remove_remote", { repoId, name });
+}
+
+export async function renameRemote(
+  repoId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  return invoke<void>("rename_remote", { repoId, from, to });
+}
+
+export async function setRemoteUrl(
+  repoId: string,
+  name: string,
+  url: string,
+): Promise<void> {
+  return invoke<void>("set_remote_url", { repoId, name, url });
+}
+
+export async function pruneRemote(repoId: string, name: string): Promise<void> {
+  return invoke<void>("prune_remote", { repoId, name });
+}
+
+// Re-export types for consumers who only import from tauri.ts
+export type { PullMode, PushForce };

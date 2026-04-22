@@ -11,6 +11,7 @@ import type {
 import type { AppError } from "@/lib/errors";
 import { isAppError } from "@/lib/errors";
 import {
+  addRemote,
   checkoutBranch,
   cherryPick,
   commit as commitFn,
@@ -19,6 +20,8 @@ import {
   deleteBranch,
   deleteTag,
   discardPaths,
+  fetch as fetchRemote,
+  fetchAll,
   getLog,
   getStatus,
   listBranches,
@@ -26,15 +29,23 @@ import {
   listStashes,
   listTags,
   openRepo,
+  pruneRemote,
+  pull as pullRemote,
+  push as pushRemote,
   renameBranch,
+  renameRemote,
   reset as resetFn,
   revert as revertFn,
+  removeRemote,
+  setRemoteUrl,
   stagePaths,
   stashApply,
   stashDrop,
   stashPop,
   stashSave,
   unstagePaths,
+  type PullMode,
+  type PushForce,
   type ResetMode,
   type StashSaveOptions,
   type TagTarget,
@@ -72,6 +83,17 @@ interface RepoState {
   stashApply: (index: number) => Promise<void>;
   stashPop: (index: number) => Promise<void>;
   stashDrop: (index: number) => Promise<void>;
+  // network
+  fetch: (remote: string) => Promise<void>;
+  fetchAll: () => Promise<void>;
+  pull: (remote: string, branch: string, mode?: PullMode) => Promise<void>;
+  push: (remote: string, branch: string, force?: PushForce) => Promise<void>;
+  // remote management
+  addRemote: (name: string, url: string) => Promise<void>;
+  removeRemote: (name: string) => Promise<void>;
+  renameRemote: (from: string, to: string) => Promise<void>;
+  setRemoteUrl: (name: string, url: string) => Promise<void>;
+  pruneRemote: (name: string) => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -331,6 +353,105 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     if (!repo) return;
     try {
       await stashDrop(repo.id, index);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async fetch(remote) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await fetchRemote(repo.id, remote);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async fetchAll() {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await fetchAll(repo.id);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async pull(remote, branch, mode = "Merge") {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await pullRemote(repo.id, remote, branch, mode);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async push(remote, branch, force = "None") {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await pushRemote(repo.id, remote, branch, force);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async addRemote(name, url) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await addRemote(repo.id, name, url);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async removeRemote(name) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await removeRemote(repo.id, name);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async renameRemote(from, to) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await renameRemote(repo.id, from, to);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async setRemoteUrl(name, url) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await setRemoteUrl(repo.id, name, url);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async pruneRemote(name) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await pruneRemote(repo.id, name);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
