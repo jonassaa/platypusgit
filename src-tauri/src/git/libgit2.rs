@@ -419,8 +419,55 @@ impl GitBackend for Libgit2Backend {
     fn discard(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<String> {
-        Err(AppError::NotImplemented)
+    fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String> {
+        use crate::git::signature::default_signature;
+
+        self.with_repo(repo_id, |repo| {
+            let sig = match opts.author_override {
+                Some(o) => git2::Signature::now(&o.name, &o.email)?,
+                None => default_signature(repo)?,
+            };
+
+            let mut index = repo.index()?;
+            let tree_oid = index.write_tree()?;
+            let tree = repo.find_tree(tree_oid)?;
+
+            let head = match repo.head() {
+                Ok(h) => Some(h),
+                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+                Err(e) => return Err(e.into()),
+            };
+
+            if opts.amend {
+                let head_ref = head.ok_or(AppError::Unborn)?;
+                let tip = head_ref.peel_to_commit()?;
+                let new_oid = tip.amend(
+                    Some("HEAD"),
+                    Some(&sig),
+                    Some(&sig),
+                    None,
+                    Some(&opts.message),
+                    Some(&tree),
+                )?;
+                return Ok(new_oid.to_string());
+            }
+
+            let parents: Vec<git2::Commit> = match head {
+                Some(h) => vec![h.peel_to_commit()?],
+                None => Vec::new(),
+            };
+            let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+
+            let oid = repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                &opts.message,
+                &tree,
+                &parent_refs,
+            )?;
+            Ok(oid.to_string())
+        })
     }
 
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
