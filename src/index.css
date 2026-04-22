@@ -141,6 +141,17 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: "cv11", "ss01", "ss03";
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.pg-selectable {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .mono { font-family: var(--font-mono); font-feature-settings: "calt", "liga"; }
