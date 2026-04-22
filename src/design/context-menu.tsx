@@ -366,18 +366,18 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
         {
           icon: "dot",
           label: "Soft (keep changes staged)",
-          onClick: () => pgFlash(`reset --soft ${sha}`),
+          onClick: () => useRepoStore.getState().reset(sha, "Soft"),
         },
         {
           icon: "dot",
           label: "Mixed (keep changes unstaged)",
-          onClick: () => pgFlash(`reset --mixed ${sha}`),
+          onClick: () => useRepoStore.getState().reset(sha, "Mixed"),
         },
         {
           icon: "trash",
           label: "Hard (discard changes)",
           danger: true,
-          onClick: () => pgFlash(`reset --hard ${sha}`),
+          onClick: () => useRepoStore.getState().reset(sha, "Hard"),
         },
       ],
     },

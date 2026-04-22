@@ -32,6 +32,7 @@ pub fn run() {
             commands::branches::fetch,
             commands::branches::pull,
             commands::branches::push,
+            commands::history::reset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

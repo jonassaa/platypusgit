@@ -20,8 +20,10 @@ import {
   listStashes,
   listTags,
   openRepo,
+  reset as resetFn,
   stagePaths,
   unstagePaths,
+  type ResetMode,
 } from "@/lib/tauri";
 import { useRecentsStore } from "./useRecentsStore";
 
@@ -43,6 +45,7 @@ interface RepoState {
   unstage: (paths: string[]) => Promise<void>;
   discard: (paths: string[]) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<string | null>;
+  reset: (target: string, mode: ResetMode) => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -143,6 +146,17 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     if (!repo) return;
     try {
       await discardPaths(repo.id, paths);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async reset(target, mode) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await resetFn(repo.id, target, mode);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });

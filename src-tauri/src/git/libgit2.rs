@@ -607,8 +607,19 @@ impl GitBackend for Libgit2Backend {
     fn delete_tag(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn reset(&self, _repo_id: &RepoId, _target: &str, _mode: ResetMode) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn reset(&self, repo_id: &RepoId, target: &str, mode: ResetMode) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let obj = repo
+                .revparse_single(target)
+                .map_err(|_| AppError::InvalidRef(target.to_string()))?;
+            let reset_type = match mode {
+                ResetMode::Soft => git2::ResetType::Soft,
+                ResetMode::Mixed => git2::ResetType::Mixed,
+                ResetMode::Hard => git2::ResetType::Hard,
+            };
+            repo.reset(&obj, reset_type, None)?;
+            Ok(())
+        })
     }
     fn cherry_pick(&self, _repo_id: &RepoId, _oid: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)

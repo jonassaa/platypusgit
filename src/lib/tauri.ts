@@ -69,3 +69,13 @@ export async function commit(
 export async function discardPaths(repoId: string, paths: string[]): Promise<void> {
   return invoke<void>("discard_paths", { repoId, paths });
 }
+
+export type ResetMode = "Soft" | "Mixed" | "Hard";
+
+export async function reset(
+  repoId: string,
+  target: string,
+  mode: ResetMode,
+): Promise<void> {
+  return invoke<void>("reset", { repoId, target, mode });
+}
