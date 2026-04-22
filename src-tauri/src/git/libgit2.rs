@@ -713,11 +713,77 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn cherry_pick(&self, _repo_id: &RepoId, _oid: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn cherry_pick(&self, repo_id: &RepoId, oid: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let target = repo
+                .revparse_single(oid)
+                .map_err(|_| AppError::InvalidRef(oid.to_string()))?;
+            let commit = target.peel_to_commit()?;
+
+            // Apply changes into the index + worktree.
+            repo.cherrypick(&commit, None)?;
+
+            // If there are conflicts, leave them for the user to resolve (Plan C).
+            let statuses = repo.statuses(None)?;
+            let has_conflict = statuses.iter().any(|s| s.status().is_conflicted());
+            if has_conflict {
+                return Err(AppError::ConflictsDetected(format!(
+                    "cherry-pick of {} produced conflicts",
+                    &commit.id().to_string()[..7]
+                )));
+            }
+
+            // Build the commit.
+            let sig = crate::git::signature::default_signature(repo)?;
+            let mut index = repo.index()?;
+            let tree_oid = index.write_tree()?;
+            let tree = repo.find_tree(tree_oid)?;
+            let parent = repo.head()?.peel_to_commit()?;
+
+            // Preserve original author, new committer.
+            let author = commit.author();
+            repo.commit(
+                Some("HEAD"),
+                &author,
+                &sig,
+                commit.message().unwrap_or(""),
+                &tree,
+                &[&parent],
+            )?;
+
+            // Clear cherrypick state.
+            repo.cleanup_state()?;
+            Ok(())
+        })
     }
-    fn revert(&self, _repo_id: &RepoId, _oid: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
+    fn revert(&self, repo_id: &RepoId, oid: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let target = repo
+                .revparse_single(oid)
+                .map_err(|_| AppError::InvalidRef(oid.to_string()))?;
+            let commit = target.peel_to_commit()?;
+
+            repo.revert(&commit, None)?;
+
+            let statuses = repo.statuses(None)?;
+            if statuses.iter().any(|s| s.status().is_conflicted()) {
+                return Err(AppError::ConflictsDetected(format!(
+                    "revert of {} produced conflicts",
+                    &commit.id().to_string()[..7]
+                )));
+            }
+
+            let sig = crate::git::signature::default_signature(repo)?;
+            let mut index = repo.index()?;
+            let tree_oid = index.write_tree()?;
+            let tree = repo.find_tree(tree_oid)?;
+            let parent = repo.head()?.peel_to_commit()?;
+
+            let msg = format!("Revert \"{}\"", commit.summary().unwrap_or("commit"));
+            repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &[&parent])?;
+            repo.cleanup_state()?;
+            Ok(())
+        })
     }
     fn stash_save(&self, _repo_id: &RepoId, _opts: StashSaveOptions) -> AppResult<Option<String>> {
         Err(AppError::NotImplemented)

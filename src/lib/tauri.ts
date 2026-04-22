@@ -80,6 +80,14 @@ export async function reset(
   return invoke<void>("reset", { repoId, target, mode });
 }
 
+export async function cherryPick(repoId: string, oid: string): Promise<void> {
+  return invoke<void>("cherry_pick", { repoId, oid });
+}
+
+export async function revert(repoId: string, oid: string): Promise<void> {
+  return invoke<void>("revert", { repoId, oid });
+}
+
 export async function checkoutBranch(repoId: string, name: string): Promise<void> {
   return invoke<void>("checkout_branch", { repoId, name });
 }

@@ -37,6 +37,8 @@ pub fn run() {
             commands::branches::create_tag,
             commands::branches::delete_tag,
             commands::history::reset,
+            commands::history::cherry_pick,
+            commands::history::revert,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

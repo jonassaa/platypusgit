@@ -353,12 +353,16 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       icon: "rebase",
       label: "Cherry-pick onto current",
       shortcut: "⌘Y",
-      onClick: () => pgFlash(`cherry-picked ${sha}`),
+      onClick: () => {
+        if (commit?.sha) useRepoStore.getState().cherryPick(commit.sha);
+      },
     },
     {
       icon: "undo",
       label: "Revert commit",
-      onClick: () => pgFlash(`revert commit ${sha}`),
+      onClick: () => {
+        if (commit?.sha) useRepoStore.getState().revert(commit.sha);
+      },
     },
     {
       icon: "rebase",

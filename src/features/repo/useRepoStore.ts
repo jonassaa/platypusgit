@@ -12,6 +12,7 @@ import type { AppError } from "@/lib/errors";
 import { isAppError } from "@/lib/errors";
 import {
   checkoutBranch,
+  cherryPick,
   commit as commitFn,
   createBranch,
   createTag,
@@ -27,6 +28,7 @@ import {
   openRepo,
   renameBranch,
   reset as resetFn,
+  revert as revertFn,
   stagePaths,
   unstagePaths,
   type ResetMode,
@@ -59,6 +61,8 @@ interface RepoState {
   renameBranch: (from: string, to: string) => Promise<void>;
   createTag: (name: string, target: TagTarget) => Promise<void>;
   deleteTag: (name: string) => Promise<void>;
+  cherryPick: (oid: string) => Promise<void>;
+  revert: (oid: string) => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -250,6 +254,28 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     if (!repo) return;
     try {
       await deleteTag(repo.id, name);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async cherryPick(oid) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await cherryPick(repo.id, oid);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async revert(oid) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await revertFn(repo.id, oid);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
