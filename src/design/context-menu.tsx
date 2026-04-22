@@ -586,13 +586,17 @@ export function fileMenuItems(
           icon: "minus",
           label: "Unstage",
           shortcut: "⌘⇧U",
-          onClick: () => pgFlash(`unstaged ${path}`),
+          onClick: () => {
+            if (path) useRepoStore.getState().unstage([path]);
+          },
         }
       : {
           icon: "plus",
           label: "Stage",
           shortcut: "⌘⇧S",
-          onClick: () => pgFlash(`staged ${path}`),
+          onClick: () => {
+            if (path) useRepoStore.getState().stage([path]);
+          },
         },
     {
       icon: "edit",
