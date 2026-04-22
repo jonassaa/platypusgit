@@ -502,6 +502,9 @@ export function branchMenuItems(branch: { name?: string; current?: boolean } | n
 
 export function remoteBranchMenuItems(branch: { name?: string } | null): ContextMenuItem[] {
   const name = branch?.name || "";
+  // name is like "origin/feature" — parse out the remote prefix
+  const slashIdx = name.indexOf("/");
+  const remoteName = slashIdx >= 0 ? name.slice(0, slashIdx) : name;
   return [
     { __menuTitle: name || "remote branch" },
     {
@@ -520,7 +523,13 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
       onClick: () => pgFlash(`rebase onto ${name}`),
     },
     { divider: true },
-    { icon: "fetch", label: "Fetch", onClick: () => pgFlash(`fetch ${name}`) },
+    {
+      icon: "fetch",
+      label: "Fetch remote",
+      onClick: () => remoteName
+        ? useRepoStore.getState().fetch(remoteName)
+        : pgFlash(`fetch ${name}`),
+    },
     {
       icon: "diff",
       label: "Compare with current",
@@ -532,6 +541,61 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
       label: "Delete on remote",
       danger: true,
       onClick: () => pgFlash(`push --delete ${name}`),
+    },
+  ];
+}
+
+export function remoteMenuItems(remote: { name?: string; url?: string | null } | null): ContextMenuItem[] {
+  const name = remote?.name || "";
+  const url = remote?.url ?? "";
+  return [
+    { __menuTitle: name || "remote" },
+    {
+      icon: "fetch",
+      label: "Fetch",
+      onClick: () => useRepoStore.getState().fetch(name),
+    },
+    {
+      icon: "pull",
+      label: "Prune stale refs",
+      onClick: () => useRepoStore.getState().pruneRemote(name),
+    },
+    { divider: true },
+    {
+      icon: "edit",
+      label: "Edit URL…",
+      onClick: () => {
+        const newUrl = window.prompt("New URL", url);
+        if (newUrl && newUrl !== url)
+          useRepoStore.getState().setRemoteUrl(name, newUrl);
+      },
+    },
+    {
+      icon: "edit",
+      label: "Rename…",
+      onClick: () => {
+        const to = window.prompt("New name", name);
+        if (to && to !== name)
+          useRepoStore.getState().renameRemote(name, to);
+      },
+    },
+    {
+      icon: "copy",
+      label: "Copy URL",
+      onClick: () => {
+        if (url) navigator.clipboard?.writeText(url);
+        pgFlash("copied URL");
+      },
+    },
+    { divider: true },
+    {
+      icon: "trash",
+      label: "Remove remote",
+      danger: true,
+      onClick: () => {
+        if (window.confirm(`Remove remote "${name}"?`))
+          useRepoStore.getState().removeRemote(name);
+      },
     },
   ];
 }

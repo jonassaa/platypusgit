@@ -39,6 +39,17 @@ import {
   totalAheadBehind,
 } from "@/lib/derive";
 
+/** Derive the [remote, branch] pair from the HEAD branch's upstream tracking ref. */
+function headUpstream(
+  upstream: string | null | undefined,
+  headName: string | undefined,
+): [string, string] | null {
+  if (!upstream) return null;
+  const idx = upstream.indexOf("/");
+  if (idx < 0) return [upstream, headName ?? upstream];
+  return [upstream.slice(0, idx), upstream.slice(idx + 1)];
+}
+
 type ScreenId =
   | "repo"
   | "commit"
@@ -334,6 +345,7 @@ function AppTitlebar() {
   const refresh = useRepoStore((s) => s.refreshAll);
   const close = useRepoStore((s) => s.closeRepo);
   const openStore = useRepoStore((s) => s.openRepo);
+  const store = useRepoStore();
 
   const head = currentBranch(branches);
   const { ahead, behind } = totalAheadBehind(branches);
@@ -342,6 +354,8 @@ function AppTitlebar() {
   ).length;
   const repoName = repo?.path.split("/").filter(Boolean).pop() ?? "—";
 
+  const upstream = headUpstream(head?.upstream, head?.name);
+
   const onOpen = async () => {
     const selected = await open({
       directory: true,
@@ -349,6 +363,26 @@ function AppTitlebar() {
       title: "Open repository",
     });
     if (typeof selected === "string") await openStore(selected);
+  };
+
+  const onFetch = () => {
+    store.fetchAll();
+  };
+
+  const onPull = () => {
+    if (!upstream) {
+      pgFlash("No upstream configured for current branch");
+      return;
+    }
+    store.pull(upstream[0], upstream[1]);
+  };
+
+  const onPush = () => {
+    if (!upstream) {
+      pgFlash("No upstream configured — run git push -u origin <branch> first");
+      return;
+    }
+    store.push(upstream[0], upstream[1]);
   };
 
   return (
@@ -374,8 +408,7 @@ function AppTitlebar() {
                 size="sm"
                 variant="default"
                 icon="fetch"
-                disabled
-                onClick={() => pgFlash("fetch is not wired up yet")}
+                onClick={onFetch}
               >
                 Fetch
               </PGButton>
@@ -383,8 +416,7 @@ function AppTitlebar() {
                 size="sm"
                 variant="default"
                 icon="pull"
-                disabled
-                onClick={() => pgFlash("pull is not wired up yet")}
+                onClick={onPull}
               >
                 Pull{" "}
                 {behind > 0 && (
@@ -399,8 +431,7 @@ function AppTitlebar() {
                 size="sm"
                 variant="primary"
                 icon="push"
-                disabled
-                onClick={() => pgFlash("push is not wired up yet")}
+                onClick={onPush}
               >
                 Push {ahead > 0 && <span style={{ marginLeft: 4 }}>↑{ahead}</span>}
               </PGButton>

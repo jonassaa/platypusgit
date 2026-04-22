@@ -13,8 +13,45 @@ import { currentBranch, totalAheadBehind } from "@/lib/derive";
 export function RemoteScreen() {
   const branches = useRepoStore((s) => s.branches);
   const remotes = useRepoStore((s) => s.remotes);
+  const store = useRepoStore();
+
   const head = currentBranch(branches);
   const { ahead, behind } = totalAheadBehind(branches);
+
+  // Derive default remote/branch for pull and push from HEAD's upstream.
+  // upstream is like "origin/main" → split on first "/".
+  const [defaultRemote, defaultBranch] = (() => {
+    if (!head?.upstream) return [null, null];
+    const idx = head.upstream.indexOf("/");
+    if (idx < 0) return [head.upstream, head.name];
+    return [head.upstream.slice(0, idx), head.upstream.slice(idx + 1)];
+  })();
+
+  const handleFetchAll = () => store.fetchAll();
+
+  const handlePull = () => {
+    if (!defaultRemote || !defaultBranch) {
+      pgFlash("No upstream configured for current branch");
+      return;
+    }
+    store.pull(defaultRemote, defaultBranch);
+  };
+
+  const handlePush = () => {
+    if (!defaultRemote || !defaultBranch) {
+      pgFlash("No upstream configured — run git push -u origin <branch> first");
+      return;
+    }
+    store.push(defaultRemote, defaultBranch);
+  };
+
+  const handleAddRemote = () => {
+    const name = window.prompt("Remote name (e.g. origin)");
+    if (!name) return;
+    const url = window.prompt("Remote URL");
+    if (!url) return;
+    store.addRemote(name, url);
+  };
 
   return (
     <div
@@ -138,24 +175,21 @@ export function RemoteScreen() {
             <PGButton
               variant="outline"
               icon="fetch"
-              disabled
-              onClick={() => pgFlash("fetch is not wired up yet")}
+              onClick={handleFetchAll}
             >
               Fetch all remotes
             </PGButton>
             <PGButton
               variant="outline"
               icon="pull"
-              disabled
-              onClick={() => pgFlash("pull is not wired up yet")}
+              onClick={handlePull}
             >
               Pull {behind ? `↓${behind}` : ""}
             </PGButton>
             <PGButton
               variant="primary"
               icon="push"
-              disabled
-              onClick={() => pgFlash("push is not wired up yet")}
+              onClick={handlePush}
             >
               Push {ahead ? `↑${ahead}` : ""}
             </PGButton>
@@ -169,8 +203,7 @@ export function RemoteScreen() {
                 size="xs"
                 variant="ghost"
                 icon="plus"
-                disabled
-                onClick={() => pgFlash("add remote is not wired up yet")}
+                onClick={handleAddRemote}
               >
                 Add remote
               </PGButton>
@@ -192,9 +225,24 @@ export function RemoteScreen() {
               url={r.url ?? "(no url)"}
               ahead={0}
               behind={0}
-              onFetch={() => pgFlash("fetch is not wired up yet")}
-              onPull={() => pgFlash("pull is not wired up yet")}
-              onPush={() => pgFlash("push is not wired up yet")}
+              onFetch={() => store.fetch(r.name)}
+              onPull={() => {
+                // Pull the current branch from this remote (uses HEAD branch name).
+                const branch = head?.name;
+                if (!branch) {
+                  pgFlash("No branch checked out");
+                  return;
+                }
+                store.pull(r.name, branch);
+              }}
+              onPush={() => {
+                const branch = head?.name;
+                if (!branch) {
+                  pgFlash("No branch checked out");
+                  return;
+                }
+                store.push(r.name, branch);
+              }}
             />
           ))}
         </div>
