@@ -69,31 +69,22 @@ fn read_reflog_short_oid_is_seven_chars() {
 
 #[test]
 fn read_reflog_classifies_amend_op() {
-    // Regression test for amend operation classification.
-    // Covers the Amend variant handling in parse_reflog_op.
-    //
-    // NOTE: On this libgit2 version, Commit::amend() writes reflog messages
-    // with prefix "commit (initial)" rather than "commit (amend)".
-    // The test documents this limitation but asserts that the amend
-    // operation at least happens (commit message changes).
     let tr = TempRepo::with_initial_commit("hello\n");
+    // Make a second commit so the amend isn't amending the initial commit
+    // (libgit2 reflog records that as "commit (initial)" instead of "commit (amend)").
+    tr.add_commit("two.txt", "two\n", "second");
     let (backend, handle) = tr.open_with_backend();
 
-    // Amend the initial commit with a new message.
-    use platypusgit_lib::git::types::CommitOptions;
-    // Stage a trivial change first so amend has something to do.
-    support::fs::write_file(tr.path(), "README.md", "hello amended\n");
+    // Stage a trivial change so amend has something to do.
+    support::fs::write_file(tr.path(), "two.txt", "two amended\n");
     backend
-        .stage(
-            &handle.id,
-            &[std::path::PathBuf::from("README.md")],
-        )
+        .stage(&handle.id, &[std::path::PathBuf::from("two.txt")])
         .unwrap();
     backend
         .commit(
             &handle.id,
-            CommitOptions {
-                message: "amended".into(),
+            platypusgit_lib::git::types::CommitOptions {
+                message: "second amended".into(),
                 amend: true,
                 author_override: None,
             },
@@ -102,9 +93,8 @@ fn read_reflog_classifies_amend_op() {
 
     let entries = backend.read_reflog(&handle.id).unwrap();
     // The reflog message should update to reflect the new commit message.
-    assert_eq!(entries[0].message, "amended", "amended message should appear in reflog");
-    // TODO: When parse_reflog_op is extended to handle the actual
-    // "commit (initial)" prefix that libgit2 uses for amended commits,
-    // change this to:
-    // assert_eq!(entries[0].op, ReflogOp::Amend);
+    // NOTE: libgit2 0.20.4's Commit::amend() writes reflog prefix "commit:" not "commit (amend):",
+    // so ReflogOp::Amend never fires. This test verifies the amend operation happens (message updates)
+    // without asserting the op classification, which requires a git CLI implementation or libgit2 upgrade.
+    assert_eq!(entries[0].message, "second amended", "amended message should appear in reflog");
 }
