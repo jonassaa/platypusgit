@@ -391,3 +391,10 @@ export async function rebaseAbort(repoId: string): Promise<void> {
 export async function rebaseStatus(repoId: string): Promise<RebaseStatus> {
   return invoke<RebaseStatus>("rebase_status", { repoId });
 }
+
+export async function appendGitignore(
+  repoId: string,
+  pattern: string,
+): Promise<void> {
+  return invoke<void>("append_gitignore", { repoId, pattern });
+}

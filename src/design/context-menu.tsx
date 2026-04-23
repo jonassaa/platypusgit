@@ -806,7 +806,10 @@ export function fileMenuItems(
     {
       icon: "trash",
       label: "Ignore this file",
-      onClick: () => pgFlash(`added to .gitignore`),
+      onClick: () => {
+        if (!path) return;
+        useRepoStore.getState().appendGitignore(path);
+      },
     },
   ];
 }

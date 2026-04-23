@@ -43,3 +43,16 @@ pub async fn list_all_files(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+#[tauri::command]
+pub async fn append_gitignore(
+    state: State<'_, AppState>,
+    repo_id: String,
+    pattern: String,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.append_gitignore(&repo_id, &pattern))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
