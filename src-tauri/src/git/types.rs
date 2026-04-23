@@ -170,6 +170,39 @@ pub struct StashSaveOptions {
     pub keep_index: bool,
 }
 
+/// The current operation state of a repository.
+/// Mirrors `git2::RepositoryState`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RepoState {
+    Clean,
+    Merge,
+    Revert,
+    RevertSequence,
+    CherryPick,
+    CherryPickSequence,
+    Bisect,
+    Rebase,
+    RebaseInteractive,
+    RebaseMerge,
+    ApplyMailbox,
+    ApplyMailboxOrRebase,
+}
+
+/// Content of the three index stages for a conflicted file.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictSides {
+    pub path: String,
+    /// Stage 1 — common ancestor. None when no common ancestor exists (both sides added).
+    pub base: Option<String>,
+    /// Stage 2 — HEAD / ours.
+    pub ours: Option<String>,
+    /// Stage 3 — incoming / theirs.
+    pub theirs: Option<String>,
+    /// True when any side is binary; all three string fields will be None.
+    pub binary: bool,
+}
+
 /// How to integrate fetched changes during a pull.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PullMode {

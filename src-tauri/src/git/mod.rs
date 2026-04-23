@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
 use types::{
-    BranchInfo, CommitInfo, CommitOptions, DiffKind, FileDiff, FileStatus, RemoteInfo, RepoHandle,
-    RepoId, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+    BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
+    RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo,
+    TagTarget,
 };
 
 pub trait GitBackend: Send + Sync {
@@ -59,6 +60,23 @@ pub trait GitBackend: Send + Sync {
     fn rename_remote(&self, repo_id: &RepoId, from: &str, to: &str) -> AppResult<()>;
     fn set_remote_url(&self, repo_id: &RepoId, name: &str, url: &str) -> AppResult<()>;
     fn prune_remote(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
+
+    // === conflict resolution ===
+    /// Return the current operation state of the repo (Merge, CherryPick, etc.).
+    fn repo_state(&self, repo_id: &RepoId) -> AppResult<RepoState>;
+    /// Read the three index stages for a conflicted file (base/ours/theirs).
+    fn conflict_sides(&self, repo_id: &RepoId, path: &Path) -> AppResult<ConflictSides>;
+    /// Write stage 2 (ours) to the worktree file and stage it.
+    fn accept_ours(&self, repo_id: &RepoId, path: &Path) -> AppResult<()>;
+    /// Write stage 3 (theirs) to the worktree file and stage it.
+    fn accept_theirs(&self, repo_id: &RepoId, path: &Path) -> AppResult<()>;
+    /// Stage paths as-is, clearing their conflict entries.
+    fn mark_resolved(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
+    /// Hard-reset to HEAD and clear the in-progress operation state.
+    fn abort_operation(&self, repo_id: &RepoId) -> AppResult<()>;
+    /// Create the merge/cherry-pick/revert commit after all conflicts are resolved.
+    /// Returns the new commit OID.
+    fn continue_operation(&self, repo_id: &RepoId) -> AppResult<String>;
 
     // === network (shells out to git CLI via Tauri commands) ===
     fn fetch(&self, repo_id: &RepoId, remote: &str) -> AppResult<()>;

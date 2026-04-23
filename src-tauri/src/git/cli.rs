@@ -4,8 +4,9 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BranchInfo, CommitInfo, CommitOptions, DiffKind, FileDiff, FileStatus, RemoteInfo,
-        RepoHandle, RepoId, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+        BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
+        RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo,
+        TagTarget,
     },
     GitBackend,
 };
@@ -118,6 +119,27 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn prune_remote(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn repo_state(&self, _repo_id: &RepoId) -> AppResult<RepoState> {
+        Err(AppError::NotImplemented)
+    }
+    fn conflict_sides(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<ConflictSides> {
+        Err(AppError::NotImplemented)
+    }
+    fn accept_ours(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn accept_theirs(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn mark_resolved(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn abort_operation(&self, _repo_id: &RepoId) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn continue_operation(&self, _repo_id: &RepoId) -> AppResult<String> {
         Err(AppError::NotImplemented)
     }
     fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {

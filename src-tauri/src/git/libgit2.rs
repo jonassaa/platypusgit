@@ -13,9 +13,9 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BranchInfo, CommitInfo, CommitOptions, DiffHunk, DiffKind, DiffLine, DiffLineKind,
-        FileDiff, FileStatus, RemoteInfo, RepoHandle, RepoId, ResetMode, StashInfo,
-        StashSaveOptions, StatusFlag, TagInfo, TagTarget,
+        BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind, DiffLine,
+        DiffLineKind, FileDiff, FileStatus, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode,
+        StashInfo, StashSaveOptions, StatusFlag, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -138,6 +138,80 @@ fn collect_ref_map(repo: &Repository) -> Vec<(git2::Oid, String)> {
         }
     }
     out
+}
+
+fn accept_side(
+    backend: &Libgit2Backend,
+    repo_id: &RepoId,
+    path: &Path,
+    ours: bool,
+) -> AppResult<()> {
+    backend.with_repo(repo_id, |repo| {
+        let index = repo.index()?;
+        let path_bytes = path.to_string_lossy().as_bytes().to_vec();
+
+        let mut target_oid: Option<git2::Oid> = None;
+        let mut side_existed = false;
+        let conflicts = index.conflicts()?;
+        for conflict in conflicts {
+            let c = conflict?;
+            let entry = if ours { &c.our } else { &c.their };
+            if let Some(e) = entry {
+                if e.path == path_bytes {
+                    target_oid = Some(e.id);
+                    side_existed = true;
+                    break;
+                }
+            }
+            // The file may be absent on the chosen side (deleted in that branch).
+            // Detect that case by matching the other-side entry.
+            let other = if ours { &c.their } else { &c.our };
+            if let Some(e) = other {
+                if e.path == path_bytes {
+                    side_existed = false;
+                    break;
+                }
+            }
+        }
+        drop(index);
+
+        let workdir = repo
+            .workdir()
+            .ok_or_else(|| AppError::Internal("bare repo has no workdir".into()))?;
+        let full = workdir.join(path);
+
+        match target_oid {
+            Some(oid) => {
+                let blob = repo.find_blob(oid)?;
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| AppError::Io(e.to_string()))?;
+                }
+                std::fs::write(&full, blob.content())
+                    .map_err(|e| AppError::Io(e.to_string()))?;
+                let mut index = repo.index()?;
+                let _ = index.remove_path(path);
+                index.add_path(path)?;
+                index.write()?;
+            }
+            None if !side_existed => {
+                // File deleted on the chosen side — remove from worktree + index.
+                if full.exists() {
+                    std::fs::remove_file(&full).map_err(|e| AppError::Io(e.to_string()))?;
+                }
+                let mut index = repo.index()?;
+                let _ = index.remove_path(path);
+                index.write()?;
+            }
+            None => {
+                return Err(AppError::InvalidPath(format!(
+                    "no conflict entry for path: {}",
+                    path.display()
+                )));
+            }
+        }
+        Ok(())
+    })
 }
 
 impl GitBackend for Libgit2Backend {
@@ -900,5 +974,153 @@ impl GitBackend for Libgit2Backend {
     }
     fn push(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
+    }
+
+    fn repo_state(&self, repo_id: &RepoId) -> AppResult<RepoState> {
+        self.with_repo(repo_id, |repo| {
+            use git2::RepositoryState as RS;
+            Ok(match repo.state() {
+                RS::Clean => RepoState::Clean,
+                RS::Merge => RepoState::Merge,
+                RS::Revert => RepoState::Revert,
+                RS::RevertSequence => RepoState::RevertSequence,
+                RS::CherryPick => RepoState::CherryPick,
+                RS::CherryPickSequence => RepoState::CherryPickSequence,
+                RS::Bisect => RepoState::Bisect,
+                RS::Rebase => RepoState::Rebase,
+                RS::RebaseInteractive => RepoState::RebaseInteractive,
+                RS::RebaseMerge => RepoState::RebaseMerge,
+                RS::ApplyMailbox => RepoState::ApplyMailbox,
+                RS::ApplyMailboxOrRebase => RepoState::ApplyMailboxOrRebase,
+            })
+        })
+    }
+
+    fn conflict_sides(&self, repo_id: &RepoId, path: &Path) -> AppResult<ConflictSides> {
+        self.with_repo(repo_id, |repo| {
+            let index = repo.index()?;
+            let path_str = path.to_string_lossy().to_string();
+            let path_bytes = path.to_string_lossy().as_bytes().to_vec();
+
+            let mut base_oid = None;
+            let mut ours_oid = None;
+            let mut theirs_oid = None;
+
+            let conflicts = index.conflicts()?;
+            for conflict in conflicts {
+                let c = conflict?;
+                // Any of ancestor/our/their may refer to `path` — collect those that do.
+                let matches_path = |e: &Option<git2::IndexEntry>| {
+                    e.as_ref().map(|entry| entry.path == path_bytes).unwrap_or(false)
+                };
+                if matches_path(&c.ancestor) || matches_path(&c.our) || matches_path(&c.their) {
+                    if let Some(ref e) = c.ancestor { base_oid = Some(e.id); }
+                    if let Some(ref e) = c.our { ours_oid = Some(e.id); }
+                    if let Some(ref e) = c.their { theirs_oid = Some(e.id); }
+                    break;
+                }
+            }
+
+            let read_stage = |oid: Option<git2::Oid>| -> AppResult<(Option<String>, bool)> {
+                match oid {
+                    None => Ok((None, false)),
+                    Some(o) => {
+                        let blob = repo.find_blob(o)?;
+                        if blob.is_binary() {
+                            Ok((None, true))
+                        } else {
+                            match std::str::from_utf8(blob.content()) {
+                                Ok(s) => Ok((Some(s.to_string()), false)),
+                                Err(_) => Ok((None, true)),
+                            }
+                        }
+                    }
+                }
+            };
+
+            let (base, b1) = read_stage(base_oid)?;
+            let (ours, b2) = read_stage(ours_oid)?;
+            let (theirs, b3) = read_stage(theirs_oid)?;
+            let binary = b1 || b2 || b3;
+
+            Ok(ConflictSides {
+                path: path_str,
+                base: if binary { None } else { base },
+                ours: if binary { None } else { ours },
+                theirs: if binary { None } else { theirs },
+                binary,
+            })
+        })
+    }
+
+    fn accept_ours(&self, repo_id: &RepoId, path: &Path) -> AppResult<()> {
+        accept_side(self, repo_id, path, /* ours = */ true)
+    }
+
+    fn accept_theirs(&self, repo_id: &RepoId, path: &Path) -> AppResult<()> {
+        accept_side(self, repo_id, path, /* ours = */ false)
+    }
+
+    fn mark_resolved(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let mut index = repo.index()?;
+            for p in paths {
+                // remove_path drops all three stages; add_path re-inserts the worktree version as stage 0.
+                let _ = index.remove_path(p);
+                index.add_path(p)?;
+            }
+            index.write()?;
+            Ok(())
+        })
+    }
+
+    fn abort_operation(&self, repo_id: &RepoId) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let head = match repo.head() {
+                Ok(h) => h.peel_to_commit()?,
+                Err(_) => return Err(AppError::Unborn),
+            };
+            repo.reset(head.as_object(), git2::ResetType::Hard, None)?;
+            repo.cleanup_state()?;
+            Ok(())
+        })
+    }
+
+    fn continue_operation(&self, repo_id: &RepoId) -> AppResult<String> {
+        self.with_repo(repo_id, |repo| {
+            let statuses = repo.statuses(None)?;
+            if statuses.iter().any(|s| s.status().is_conflicted()) {
+                return Err(AppError::ConflictsDetected(
+                    "some files still have unresolved conflicts".into(),
+                ));
+            }
+
+            let sig = crate::git::signature::default_signature(repo)?.to_owned();
+            let mut index = repo.index()?;
+            let tree_oid = index.write_tree()?;
+            let tree = repo.find_tree(tree_oid)?;
+            let head_commit = repo.head()?.peel_to_commit()?;
+
+            let message = repo
+                .message()
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|_| "merge commit".into());
+
+            let parents: Vec<git2::Commit> = match repo.state() {
+                git2::RepositoryState::Merge => {
+                    let merge_head = repo
+                        .revparse_single("MERGE_HEAD")
+                        .map_err(|_| AppError::Internal("MERGE_HEAD missing".into()))?;
+                    let second = merge_head.peel_to_commit()?;
+                    vec![head_commit, second]
+                }
+                _ => vec![head_commit],
+            };
+            let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+
+            let oid = repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &parent_refs)?;
+            repo.cleanup_state()?;
+            Ok(oid.to_string())
+        })
     }
 }
