@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { RebaseStep } from "@/lib/types";
 
 /**
  * Cross-screen navigation intent. A context menu item can ask the app
@@ -10,7 +11,8 @@ export type NavIntent =
   | { kind: "commit-vs-wt"; oid: string }
   | { kind: "commit-vs-commit"; from: string; to: string }
   | { kind: "file-history"; path: string }
-  | { kind: "blame"; path: string };
+  | { kind: "blame"; path: string }
+  | { kind: "rebase-plan"; plan: RebaseStep[] };
 
 interface NavState {
   intent: NavIntent | null;

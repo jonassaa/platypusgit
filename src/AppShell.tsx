@@ -142,6 +142,9 @@ export function AppShell() {
       case "blame":
         setScreen("blame");
         break;
+      case "rebase-plan":
+        setScreen("rebase");
+        break;
     }
   }, [intent]);
 
