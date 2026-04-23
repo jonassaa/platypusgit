@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BlameLine,
   BranchInfo,
   CommitInfo,
   ConflictSides,
@@ -426,4 +427,11 @@ export async function openInEditor(
   relativePath: string,
 ): Promise<void> {
   return invoke<void>("open_in_editor", { repoId, relativePath });
+}
+
+export async function blameFile(
+  repoId: string,
+  path: string,
+): Promise<BlameLine[]> {
+  return invoke<BlameLine[]>("blame_file", { repoId, path });
 }

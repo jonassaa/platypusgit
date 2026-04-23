@@ -159,3 +159,14 @@ export interface ReflogEntry {
   op: ReflogOp;
   timestamp: number;
 }
+
+export interface BlameLine {
+  lineNo: number;
+  oid: string;
+  shortOid: string;
+  author: string;
+  email: string;
+  timestamp: number;
+  summary: string;
+  content: string;
+}

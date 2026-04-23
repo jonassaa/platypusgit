@@ -31,6 +31,7 @@ pub fn run() {
             commands::diff::unstage_hunk,
             commands::diff::discard_hunk,
             commands::diff::diff_commits,
+            commands::diff::blame_file,
             commands::branches::list_branches,
             commands::branches::list_tags,
             commands::branches::list_stashes,
