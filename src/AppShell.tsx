@@ -530,7 +530,12 @@ function AppSidebar({
               icon="plus"
               size="sm"
               title="New branch"
-              onClick={() => pgFlash("new branch is not wired up yet")}
+              onClick={async () => {
+                    const name = window.prompt("New branch name");
+                    if (!name) return;
+                    await useRepoStore.getState().createBranch(name);
+                    await useRepoStore.getState().checkoutBranch(name);
+                  }}
             />
           }
         >
