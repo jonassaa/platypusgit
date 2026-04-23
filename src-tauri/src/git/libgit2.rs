@@ -836,6 +836,122 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
+    fn diff_commits(
+        &self,
+        repo_id: &RepoId,
+        from_oid: &str,
+        to_oid: &str,
+    ) -> AppResult<Vec<FileDiff>> {
+        self.with_repo(repo_id, |repo| {
+            let from = git2::Oid::from_str(from_oid)
+                .map_err(|e| AppError::InvalidRef(e.message().to_string()))?;
+            let to = git2::Oid::from_str(to_oid)
+                .map_err(|e| AppError::InvalidRef(e.message().to_string()))?;
+            let from_tree = repo.find_commit(from)?.tree()?;
+            let to_tree = repo.find_commit(to)?.tree()?;
+
+            let mut opts = DiffOptions::new();
+            opts.context_lines(3);
+            let mut diff =
+                repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))?;
+
+            let mut find_opts = DiffFindOptions::new();
+            find_opts.renames(true).copies(false);
+            diff.find_similar(Some(&mut find_opts)).ok();
+
+            let num_deltas = diff.deltas().len();
+            let mut out: Vec<FileDiff> = Vec::with_capacity(num_deltas);
+
+            for delta_idx in 0..num_deltas {
+                let delta = diff.get_delta(delta_idx).expect("valid delta index");
+                let new_path = delta
+                    .new_file()
+                    .path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let old_path_opt = delta
+                    .old_file()
+                    .path()
+                    .map(|p| p.display().to_string())
+                    .filter(|p| p != &new_path);
+                let binary = delta.new_file().is_binary() || delta.old_file().is_binary();
+
+                let mut hunks: Vec<DiffHunk> = Vec::new();
+                let mut current: Option<DiffHunk> = None;
+                let mut additions: u32 = 0;
+                let mut deletions: u32 = 0;
+
+                diff.print(DiffFormat::Patch, |d, hunk, line| {
+                    if d.new_file()
+                        .path()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default()
+                        != new_path
+                    {
+                        return true;
+                    }
+                    if let Some(h) = hunk {
+                        if current
+                            .as_ref()
+                            .map(|c| c.old_start != h.old_start() || c.new_start != h.new_start())
+                            .unwrap_or(true)
+                        {
+                            if let Some(done) = current.take() {
+                                hunks.push(done);
+                            }
+                            current = Some(DiffHunk {
+                                header: std::str::from_utf8(h.header()).unwrap_or("").to_string(),
+                                old_start: h.old_start(),
+                                old_lines: h.old_lines(),
+                                new_start: h.new_start(),
+                                new_lines: h.new_lines(),
+                                lines: Vec::new(),
+                            });
+                        }
+                    }
+                    let kind = match line.origin() {
+                        '+' => {
+                            additions += 1;
+                            DiffLineKind::Addition
+                        }
+                        '-' => {
+                            deletions += 1;
+                            DiffLineKind::Deletion
+                        }
+                        'H' | 'F' => DiffLineKind::HunkHeader,
+                        _ => DiffLineKind::Context,
+                    };
+                    if let Some(h) = current.as_mut() {
+                        h.lines.push(DiffLine {
+                            kind,
+                            old_lineno: line.old_lineno(),
+                            new_lineno: line.new_lineno(),
+                            content: std::str::from_utf8(line.content())
+                                .unwrap_or("")
+                                .to_string(),
+                        });
+                    }
+                    true
+                })?;
+
+                if let Some(done) = current.take() {
+                    hunks.push(done);
+                }
+
+                out.push(FileDiff {
+                    path: new_path,
+                    old_path: old_path_opt,
+                    binary,
+                    additions,
+                    deletions,
+                    hunks,
+                });
+            }
+
+            Ok(out)
+        })
+    }
+
     fn stage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
             let mut index = repo.index()?;

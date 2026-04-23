@@ -100,6 +100,27 @@ fn read_reflog_classifies_amend_op() {
 }
 
 #[test]
+fn diff_commits_returns_per_file_diffs_between_two_commits() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    tr.add_commit("two.txt", "two\n", "add two");
+    tr.add_commit("three.txt", "three\n", "add three");
+    let (backend, handle) = tr.open_with_backend();
+
+    let commits = backend.log(&handle.id, 10).unwrap();
+    let head_oid = commits[0].oid.clone();
+    let grandparent_oid = commits[2].oid.clone();
+
+    let diffs = backend
+        .diff_commits(&handle.id, &grandparent_oid, &head_oid)
+        .unwrap();
+
+    // grandparent -> HEAD adds two.txt and three.txt.
+    let paths: std::collections::HashSet<_> = diffs.iter().map(|d| d.path.clone()).collect();
+    assert!(paths.contains("two.txt"), "expected two.txt in diff, got {:?}", paths);
+    assert!(paths.contains("three.txt"), "expected three.txt in diff, got {:?}", paths);
+}
+
+#[test]
 fn checkout_detached_leaves_head_detached_at_target() {
     let tr = TempRepo::with_initial_commit("hello\n");
     tr.add_commit("two.txt", "two\n", "second");

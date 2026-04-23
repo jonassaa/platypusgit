@@ -22,6 +22,12 @@ pub trait GitBackend: Send + Sync {
     fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>>;
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff>;
+    fn diff_commits(
+        &self,
+        repo_id: &RepoId,
+        from_oid: &str,
+        to_oid: &str,
+    ) -> AppResult<Vec<FileDiff>>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>>;
     fn stashes(&self, repo_id: &RepoId) -> AppResult<Vec<StashInfo>>;

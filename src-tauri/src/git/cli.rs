@@ -43,6 +43,14 @@ impl GitBackend for CliBackend {
     fn diff(&self, _repo_id: &RepoId, _path: &Path, _kind: DiffKind) -> AppResult<FileDiff> {
         Err(AppError::NotImplemented)
     }
+    fn diff_commits(
+        &self,
+        _repo_id: &RepoId,
+        _from_oid: &str,
+        _to_oid: &str,
+    ) -> AppResult<Vec<FileDiff>> {
+        Err(AppError::NotImplemented)
+    }
     fn stage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
