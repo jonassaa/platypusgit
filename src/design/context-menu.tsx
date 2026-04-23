@@ -883,7 +883,10 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
     {
       icon: "merge",
       label: "Open 3-way merge tool",
-      onClick: () => pgFlash("mergetool"),
+      onClick: () => {
+        if (!conflict?.path) return;
+        useRepoStore.getState().runMergetool(conflict.path);
+      },
     },
     { divider: true },
     {

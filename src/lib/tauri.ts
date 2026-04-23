@@ -371,6 +371,13 @@ export async function continueOperation(repoId: string): Promise<string> {
   return invoke<string>("continue_operation", { repoId });
 }
 
+export async function runMergetool(
+  repoId: string,
+  path: string,
+): Promise<void> {
+  return invoke<void>("run_mergetool", { repoId, path });
+}
+
 // ─── Interactive rebase ───────────────────────────────────────────────────────
 
 export async function rebaseStart(
