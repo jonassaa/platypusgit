@@ -774,7 +774,10 @@ export function fileMenuItems(
     {
       icon: "search",
       label: "Blame",
-      onClick: () => pgFlash(`blame ${path}`),
+      onClick: () => {
+        if (!path) return;
+        useNavStore.getState().setIntent({ kind: "blame", path });
+      },
     },
     {
       icon: "history",
