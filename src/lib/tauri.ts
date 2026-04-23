@@ -378,6 +378,13 @@ export async function runMergetool(
   return invoke<void>("run_mergetool", { repoId, path });
 }
 
+export async function restartConflict(
+  repoId: string,
+  path: string,
+): Promise<void> {
+  return invoke<void>("restart_conflict", { repoId, path });
+}
+
 // ─── Interactive rebase ───────────────────────────────────────────────────────
 
 export async function rebaseStart(

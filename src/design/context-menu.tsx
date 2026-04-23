@@ -909,7 +909,15 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
       icon: "undo",
       label: "Restart resolution",
       danger: true,
-      onClick: () => pgFlash("restarted"),
+      onClick: () => {
+        if (!conflict?.path) return;
+        if (
+          window.confirm(
+            `Restart resolution for ${conflict.path}? Current edits are discarded.`,
+          )
+        )
+          useRepoStore.getState().restartConflict(conflict.path);
+      },
     },
   ];
 }

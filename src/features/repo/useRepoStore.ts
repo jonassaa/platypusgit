@@ -60,6 +60,7 @@ import {
   removeRemote,
   repoState as repoStateFn,
   runMergetool as runMergetoolFn,
+  restartConflict as restartConflictFn,
   setRemoteUrl,
   stageHunk,
   stagePaths,
@@ -141,6 +142,7 @@ interface RepoStoreState {
   abortOperation: () => Promise<void>;
   continueOperation: () => Promise<string | null>;
   runMergetool: (path: string) => Promise<void>;
+  restartConflict: (path: string) => Promise<void>;
   // interactive rebase
   rebaseStart: (plan: RebaseStep[]) => Promise<RebaseStatus | null>;
   rebaseContinue: () => Promise<RebaseStatus | null>;
@@ -708,6 +710,17 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     if (!repo) return;
     try {
       await runMergetoolFn(repo.id, path);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async restartConflict(path) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await restartConflictFn(repo.id, path);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
