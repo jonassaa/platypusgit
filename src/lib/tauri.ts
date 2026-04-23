@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BranchInfo,
   CommitInfo,
+  ConflictSides,
   DiffKind,
   FileDiff,
   FileStatus,
@@ -9,6 +10,7 @@ import type {
   PushForce,
   RemoteInfo,
   RepoHandle,
+  RepoState,
   StashInfo,
   TagInfo,
 } from "./types";
@@ -237,3 +239,42 @@ export async function pruneRemote(repoId: string, name: string): Promise<void> {
 
 // Re-export types for consumers who only import from tauri.ts
 export type { PullMode, PushForce };
+
+// ─── Conflict resolution ─────────────────────────────────────────────────────
+
+export async function repoState(repoId: string): Promise<RepoState> {
+  return invoke<RepoState>("repo_state", { repoId });
+}
+
+export async function conflictSides(
+  repoId: string,
+  path: string,
+): Promise<ConflictSides> {
+  return invoke<ConflictSides>("conflict_sides", { repoId, path });
+}
+
+export async function acceptOurs(repoId: string, path: string): Promise<void> {
+  return invoke<void>("accept_ours", { repoId, path });
+}
+
+export async function acceptTheirs(
+  repoId: string,
+  path: string,
+): Promise<void> {
+  return invoke<void>("accept_theirs", { repoId, path });
+}
+
+export async function markResolved(
+  repoId: string,
+  paths: string[],
+): Promise<void> {
+  return invoke<void>("mark_resolved", { repoId, paths });
+}
+
+export async function abortOperation(repoId: string): Promise<void> {
+  return invoke<void>("abort_operation", { repoId });
+}
+
+export async function continueOperation(repoId: string): Promise<string> {
+  return invoke<string>("continue_operation", { repoId });
+}

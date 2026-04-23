@@ -5,16 +5,21 @@ import type {
   FileStatus,
   RemoteInfo,
   RepoHandle,
+  RepoState as GitRepoState,
   StashInfo,
   TagInfo,
 } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
 import { isAppError } from "@/lib/errors";
 import {
+  abortOperation,
+  acceptOurs,
+  acceptTheirs,
   addRemote,
   checkoutBranch,
   cherryPick,
   commit as commitFn,
+  continueOperation,
   createBranch,
   createTag,
   deleteBranch,
@@ -28,6 +33,7 @@ import {
   listRemotes,
   listStashes,
   listTags,
+  markResolved,
   openRepo,
   pruneRemote,
   pull as pullRemote,
@@ -37,6 +43,7 @@ import {
   reset as resetFn,
   revert as revertFn,
   removeRemote,
+  repoState as repoStateFn,
   setRemoteUrl,
   stagePaths,
   stashApply,
@@ -52,7 +59,7 @@ import {
 } from "@/lib/tauri";
 import { useRecentsStore } from "./useRecentsStore";
 
-interface RepoState {
+interface RepoStoreState {
   current: RepoHandle | null;
   status: FileStatus[];
   branches: BranchInfo[];
@@ -62,6 +69,7 @@ interface RepoState {
   commits: CommitInfo[];
   loading: boolean;
   error: AppError | null;
+  repoState: GitRepoState;
   openRepo: (path: string) => Promise<void>;
   refreshAll: () => Promise<void>;
   clearError: () => void;
@@ -94,13 +102,19 @@ interface RepoState {
   renameRemote: (from: string, to: string) => Promise<void>;
   setRemoteUrl: (name: string, url: string) => Promise<void>;
   pruneRemote: (name: string) => Promise<void>;
+  // conflict resolution
+  acceptOurs: (path: string) => Promise<void>;
+  acceptTheirs: (path: string) => Promise<void>;
+  markResolved: (paths: string[]) => Promise<void>;
+  abortOperation: () => Promise<void>;
+  continueOperation: () => Promise<string | null>;
 }
 
 function toAppError(e: unknown): AppError {
   return isAppError(e) ? e : { kind: "Internal", message: String(e) };
 }
 
-export const useRepoStore = create<RepoState>((set, get) => ({
+export const useRepoStore = create<RepoStoreState>((set, get) => ({
   current: null,
   status: [],
   branches: [],
@@ -110,6 +124,7 @@ export const useRepoStore = create<RepoState>((set, get) => ({
   commits: [],
   loading: false,
   error: null,
+  repoState: "Clean",
 
   async openRepo(path) {
     set({ loading: true, error: null });
@@ -136,15 +151,16 @@ export const useRepoStore = create<RepoState>((set, get) => ({
     if (!repo) return;
     set({ loading: true, error: null });
     try {
-      const [status, branches, tags, stashes, remotes, commits] = await Promise.all([
+      const [status, branches, tags, stashes, remotes, commits, repoState] = await Promise.all([
         getStatus(repo.id),
         listBranches(repo.id),
         listTags(repo.id),
         listStashes(repo.id),
         listRemotes(repo.id),
         getLog(repo.id, 500),
+        repoStateFn(repo.id),
       ]);
-      set({ status, branches, tags, stashes, remotes, commits, loading: false });
+      set({ status, branches, tags, stashes, remotes, commits, repoState, loading: false });
     } catch (e) {
       set({ loading: false, error: toAppError(e) });
     }
@@ -455,6 +471,63 @@ export const useRepoStore = create<RepoState>((set, get) => ({
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
+    }
+  },
+
+  async acceptOurs(path) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await acceptOurs(repo.id, path);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async acceptTheirs(path) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await acceptTheirs(repo.id, path);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async markResolved(paths) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await markResolved(repo.id, paths);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async abortOperation() {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await abortOperation(repo.id);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async continueOperation() {
+    const repo = get().current;
+    if (!repo) return null;
+    try {
+      const oid = await continueOperation(repo.id);
+      await get().refreshAll();
+      return oid;
+    } catch (e) {
+      set({ error: toAppError(e) });
+      return null;
     }
   },
 }));

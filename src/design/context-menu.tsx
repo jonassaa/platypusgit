@@ -762,12 +762,16 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
     {
       icon: "check",
       label: "Accept ours",
-      onClick: () => pgFlash("took ours"),
+      onClick: () => {
+        if (conflict?.path) useRepoStore.getState().acceptOurs(conflict.path);
+      },
     },
     {
       icon: "check",
       label: "Accept theirs",
-      onClick: () => pgFlash("took theirs"),
+      onClick: () => {
+        if (conflict?.path) useRepoStore.getState().acceptTheirs(conflict.path);
+      },
     },
     {
       icon: "merge",
@@ -783,7 +787,9 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
     {
       icon: "check",
       label: "Mark as resolved",
-      onClick: () => pgFlash("marked resolved"),
+      onClick: () => {
+        if (conflict?.path) useRepoStore.getState().markResolved([conflict.path]);
+      },
     },
     { divider: true },
     {

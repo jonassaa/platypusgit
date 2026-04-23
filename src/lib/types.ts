@@ -101,3 +101,25 @@ export interface FileDiff {
   deletions: number;
   hunks: DiffHunk[];
 }
+
+export type RepoState =
+  | "Clean"
+  | "Merge"
+  | "Revert"
+  | "RevertSequence"
+  | "CherryPick"
+  | "CherryPickSequence"
+  | "Bisect"
+  | "Rebase"
+  | "RebaseInteractive"
+  | "RebaseMerge"
+  | "ApplyMailbox"
+  | "ApplyMailboxOrRebase";
+
+export interface ConflictSides {
+  path: string;
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  binary: boolean;
+}
