@@ -137,6 +137,21 @@ pub fn with_conflicting_merge() -> TempRepo {
     tr
 }
 
+/// Create `n` commits on main, each touching a unique file `fileN.txt`.
+/// Returns the list of OIDs (oldest first).
+pub fn linear_history(tr: &TempRepo, n: usize) -> Vec<String> {
+    let mut oids = Vec::with_capacity(n);
+    for i in 0..n {
+        let filename = format!("file{}.txt", i);
+        let contents = format!("content {}\n", i);
+        let message = format!("commit {}", i);
+        tr.add_commit(&filename, &contents, &message);
+        let oid = tr.repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        oids.push(oid);
+    }
+    oids
+}
+
 /// A bare git repository in a tempdir — acts as a "remote" for network tests.
 pub struct BareTempRepo {
     pub dir: TempDir,
