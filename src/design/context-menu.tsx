@@ -779,7 +779,10 @@ export function fileMenuItems(
     {
       icon: "history",
       label: "File history",
-      onClick: () => pgFlash(`log -- ${path}`),
+      onClick: () => {
+        if (!path) return;
+        useNavStore.getState().setIntent({ kind: "file-history", path });
+      },
     },
     {
       icon: "edit",
