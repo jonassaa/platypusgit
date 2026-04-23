@@ -18,6 +18,8 @@ export function buildStatusTree(files: FileStatus[]): PGFileTreeNode[] {
 
   for (const f of files) {
     const parts = f.path.split("/").filter(Boolean);
+    const hasChange =
+      f.worktree.kind !== "Unmodified" || f.index.kind !== "Unmodified";
     let cursor = root;
     parts.forEach((part, i) => {
       const isLeaf = i === parts.length - 1;
@@ -25,7 +27,7 @@ export function buildStatusTree(files: FileStatus[]): PGFileTreeNode[] {
       let next = cursor.children.find((c) => c.name === part);
       if (!next) {
         next = isLeaf
-          ? { name: part, status: statusMark(f) }
+          ? { name: part, status: hasChange ? statusMark(f) : undefined }
           : { name: part, children: [] };
         cursor.children.push(next);
       }

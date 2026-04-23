@@ -603,6 +603,31 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
+    fn list_all_files(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
+        self.with_repo(repo_id, |repo| {
+            let mut opts = StatusOptions::new();
+            opts.include_untracked(true)
+                .recurse_untracked_dirs(true)
+                .include_unmodified(true)
+                .include_ignored(false);
+            let statuses = repo.statuses(Some(&mut opts))?;
+            let mut out = Vec::with_capacity(statuses.len());
+            for entry in statuses.iter() {
+                let path = entry.path().unwrap_or("").to_string();
+                if path.is_empty() {
+                    continue;
+                }
+                let s = entry.status();
+                out.push(FileStatus {
+                    path,
+                    worktree: map_status_flag(s, StatusSide::Worktree),
+                    index: map_status_flag(s, StatusSide::Index),
+                });
+            }
+            Ok(out)
+        })
+    }
+
     fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>> {
         self.with_repo(repo_id, |repo| {
             let ref_map = collect_ref_map(repo);

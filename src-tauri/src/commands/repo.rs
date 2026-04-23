@@ -31,3 +31,15 @@ pub async fn get_status(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+#[tauri::command]
+pub async fn list_all_files(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> AppResult<Vec<FileStatus>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.list_all_files(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}

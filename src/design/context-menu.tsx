@@ -429,9 +429,14 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
   ];
 }
 
-export function branchMenuItems(branch: { name?: string; current?: boolean } | null): ContextMenuItem[] {
+export function branchMenuItems(
+  branch: { name?: string; current?: boolean; upstream?: string | null } | null,
+): ContextMenuItem[] {
   const isCurrent = !!branch?.current;
   const name = branch?.name || "";
+  const upstream = branch?.upstream || null;
+  // Upstream is typically "origin/feature/foo" — remote is the first segment.
+  const remote = upstream ? upstream.split("/")[0] : "origin";
   return [
     { __menuTitle: name || "branch" },
     {
@@ -445,18 +450,48 @@ export function branchMenuItems(branch: { name?: string; current?: boolean } | n
       icon: "merge",
       label: "Merge into current",
       disabled: isCurrent,
-      onClick: () => pgFlash(`merge ${name}`),
+      onClick: () => {
+        if (!name) return;
+        if (
+          window.confirm(
+            `Merge ${name} into the current branch?`,
+          )
+        )
+          useRepoStore.getState().mergeBranch(name);
+      },
     },
     {
       icon: "rebase",
       label: "Rebase current onto this",
       disabled: isCurrent,
-      onClick: () => pgFlash(`rebase onto ${name}`),
+      onClick: () => {
+        if (!name) return;
+        if (
+          window.confirm(
+            `Rebase the current branch onto ${name}?`,
+          )
+        )
+          useRepoStore.getState().rebaseOnto(name);
+      },
     },
     { divider: true },
-    { icon: "sync", label: "Pull", onClick: () => pgFlash(`pull ${name}`) },
-    { icon: "push", label: "Push", onClick: () => pgFlash(`push ${name}`) },
-    { icon: "fetch", label: "Fetch", onClick: () => pgFlash(`fetch ${name}`) },
+    {
+      icon: "sync",
+      label: "Pull",
+      disabled: !isCurrent || !upstream,
+      onClick: () => useRepoStore.getState().pull(remote, name),
+    },
+    {
+      icon: "push",
+      label: "Push",
+      disabled: !isCurrent,
+      onClick: () => useRepoStore.getState().push(remote, name),
+    },
+    {
+      icon: "fetch",
+      label: "Fetch",
+      onClick: () => useRepoStore.getState().fetch(remote),
+    },
     { divider: true },
     {
       icon: "edit",
@@ -505,30 +540,50 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
   // name is like "origin/feature" — parse out the remote prefix
   const slashIdx = name.indexOf("/");
   const remoteName = slashIdx >= 0 ? name.slice(0, slashIdx) : name;
+  const shortName = slashIdx >= 0 ? name.slice(slashIdx + 1) : name;
   return [
     { __menuTitle: name || "remote branch" },
     {
       icon: "branch",
-      label: "Check out as new local branch",
-      onClick: () => pgFlash(`checkout -b local ${name}`),
+      label: "Check out as new local branch…",
+      onClick: () => {
+        if (!name) return;
+        const localName = window.prompt("Local branch name", shortName);
+        if (!localName) return;
+        (async () => {
+          await useRepoStore.getState().createBranch(localName, name);
+          await useRepoStore.getState().checkoutBranch(localName);
+        })();
+      },
     },
     {
       icon: "merge",
       label: "Merge into current",
-      onClick: () => pgFlash(`merge ${name}`),
+      onClick: () => {
+        if (!name) return;
+        if (window.confirm(`Merge ${name} into the current branch?`))
+          useRepoStore.getState().mergeBranch(name);
+      },
     },
     {
       icon: "rebase",
       label: "Rebase current onto this",
-      onClick: () => pgFlash(`rebase onto ${name}`),
+      onClick: () => {
+        if (!name) return;
+        if (
+          window.confirm(`Rebase the current branch onto ${name}?`)
+        )
+          useRepoStore.getState().rebaseOnto(name);
+      },
     },
     { divider: true },
     {
       icon: "fetch",
       label: "Fetch remote",
-      onClick: () => remoteName
-        ? useRepoStore.getState().fetch(remoteName)
-        : pgFlash(`fetch ${name}`),
+      onClick: () =>
+        remoteName
+          ? useRepoStore.getState().fetch(remoteName)
+          : pgFlash(`fetch ${name}`),
     },
     {
       icon: "diff",
@@ -540,7 +595,15 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
       icon: "trash",
       label: "Delete on remote",
       danger: true,
-      onClick: () => pgFlash(`push --delete ${name}`),
+      onClick: () => {
+        if (!remoteName || !shortName) return;
+        if (
+          window.confirm(
+            `Delete ${shortName} on ${remoteName}? This cannot be undone.`,
+          )
+        )
+          useRepoStore.getState().pushDeleteBranch(remoteName, shortName);
+      },
     },
   ];
 }
@@ -600,30 +663,49 @@ export function remoteMenuItems(remote: { name?: string; url?: string | null } |
   ];
 }
 
-export function tagMenuItems(tag: { name?: string; sha?: string } | null): ContextMenuItem[] {
+export function tagMenuItems(
+  tag: { name?: string; sha?: string; oid?: string } | null,
+): ContextMenuItem[] {
   const name = tag?.name || "";
+  const oid = tag?.oid || tag?.sha || "";
   return [
     { __menuTitle: name || "tag" },
     {
       icon: "check",
-      label: "Check out",
-      onClick: () => pgFlash(`checked out ${name}`),
+      label: "Check out (detached)",
+      onClick: () => {
+        if (!name) return;
+        useRepoStore.getState().checkoutRef(`refs/tags/${name}`);
+      },
     },
     {
       icon: "branch",
       label: "Create branch from tag…",
-      onClick: () => pgFlash(`branch from ${name}`),
+      onClick: () => {
+        if (!name) return;
+        const branchName = window.prompt("New branch name");
+        if (!branchName) return;
+        useRepoStore.getState().createBranch(branchName, name);
+      },
     },
     { divider: true },
     {
       icon: "push",
-      label: "Push tag to remote",
-      onClick: () => pgFlash(`push ${name}`),
+      label: "Push tag to remote…",
+      onClick: () => {
+        if (!name) return;
+        const remote = window.prompt("Remote name", "origin");
+        if (!remote) return;
+        useRepoStore.getState().pushTag(remote, name);
+      },
     },
     {
       icon: "copy",
       label: "Copy SHA",
-      onClick: () => navigator.clipboard?.writeText(tag?.sha || ""),
+      onClick: () => {
+        navigator.clipboard?.writeText(oid);
+        pgFlash("copied");
+      },
     },
     { divider: true },
     {

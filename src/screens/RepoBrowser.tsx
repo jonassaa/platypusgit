@@ -63,9 +63,11 @@ function PGBreadcrumb({ items }: { items: string[] }) {
 export function RepoBrowserScreen() {
   const repo = useRepoStore((s) => s.current);
   const status = useRepoStore((s) => s.status);
+  const allFiles = useRepoStore((s) => s.allFiles);
   const branches = useRepoStore((s) => s.branches);
   const commits = useRepoStore((s) => s.commits);
   const loading = useRepoStore((s) => s.loading);
+  const refreshAllFiles = useRepoStore((s) => s.refreshAllFiles);
 
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   const [selected, setSelected] = React.useState<string | null>(null);
@@ -87,6 +89,14 @@ export function RepoBrowserScreen() {
 
   const head = currentBranch(branches);
 
+  // Refresh the full file list each time the user picks "All" so the tree
+  // reflects newly created / deleted files.
+  React.useEffect(() => {
+    if (filterMode === "all" && repo) {
+      refreshAllFiles();
+    }
+  }, [filterMode, repo, refreshAllFiles]);
+
   const filteredStatus = React.useMemo<FileStatus[]>(() => {
     switch (filterMode) {
       case "conflicts":
@@ -102,9 +112,9 @@ export function RepoBrowserScreen() {
         );
       case "all":
       default:
-        return status;
+        return allFiles;
     }
-  }, [status, filterMode]);
+  }, [status, allFiles, filterMode]);
 
   const tree = React.useMemo<PGFileTreeNode[]>(
     () => buildStatusTree(filteredStatus),
@@ -125,8 +135,12 @@ export function RepoBrowserScreen() {
   const selectedFile = React.useMemo<FileStatus | null>(() => {
     if (!selected) return null;
     const path = selected.replace(/^\//, "");
-    return status.find((s) => s.path === path) ?? null;
-  }, [selected, status]);
+    return (
+      status.find((s) => s.path === path) ??
+      allFiles.find((s) => s.path === path) ??
+      null
+    );
+  }, [selected, status, allFiles]);
 
   React.useEffect(() => {
     if (!selectedFile || !repo) {
@@ -221,7 +235,11 @@ export function RepoBrowserScreen() {
                   fontFamily: "var(--font-mono)",
                 }}
               >
-                Working tree clean.
+                {filterMode === "all"
+                  ? "No files."
+                  : filterMode === "conflicts"
+                    ? "No conflicts."
+                    : "Working tree clean."}
               </div>
             )}
             {loading && tree.length === 0 && (

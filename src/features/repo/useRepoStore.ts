@@ -19,6 +19,7 @@ import {
   acceptTheirs,
   addRemote,
   checkoutBranch,
+  checkoutRef,
   cherryPick,
   commit as commitFn,
   continueOperation,
@@ -32,16 +33,21 @@ import {
   fetchAll,
   getLog,
   getStatus,
+  listAllFiles,
   listBranches,
   listRemotes,
   listStashes,
   listTags,
   markResolved,
+  mergeBranch as mergeBranchFn,
   openRepo,
   pruneRemote,
   pull as pullRemote,
   push as pushRemote,
+  pushDeleteBranch as pushDeleteBranchFn,
+  pushTag as pushTagFn,
   rebaseAbort,
+  rebaseOnto as rebaseOntoFn,
   rebaseContinue as rebaseContinueFn,
   rebaseStart as rebaseStartFn,
   rebaseStatus as rebaseStatusFn,
@@ -71,6 +77,8 @@ import { useRecentsStore } from "./useRecentsStore";
 interface RepoStoreState {
   current: RepoHandle | null;
   status: FileStatus[];
+  /** Every (non-ignored) file in the worktree, populated lazily by listAllFiles. */
+  allFiles: FileStatus[];
   branches: BranchInfo[];
   tags: TagInfo[];
   stashes: StashInfo[];
@@ -82,6 +90,7 @@ interface RepoStoreState {
   rebaseStatus: RebaseStatus;
   openRepo: (path: string) => Promise<void>;
   refreshAll: () => Promise<void>;
+  refreshAllFiles: () => Promise<void>;
   clearError: () => void;
   closeRepo: () => void;
   stage: (paths: string[]) => Promise<void>;
@@ -93,11 +102,16 @@ interface RepoStoreState {
   commit: (message: string, amend?: boolean) => Promise<string | null>;
   reset: (target: string, mode: ResetMode) => Promise<void>;
   checkoutBranch: (name: string) => Promise<void>;
+  checkoutRef: (reference: string) => Promise<void>;
   createBranch: (name: string, from?: string) => Promise<void>;
   deleteBranch: (name: string, force?: boolean) => Promise<void>;
   renameBranch: (from: string, to: string) => Promise<void>;
+  mergeBranch: (name: string) => Promise<void>;
+  rebaseOnto: (upstream: string) => Promise<void>;
   createTag: (name: string, target: TagTarget) => Promise<void>;
   deleteTag: (name: string) => Promise<void>;
+  pushTag: (remote: string, name: string) => Promise<void>;
+  pushDeleteBranch: (remote: string, name: string) => Promise<void>;
   cherryPick: (oid: string) => Promise<void>;
   revert: (oid: string) => Promise<void>;
   stashSave: (opts: StashSaveOptions) => Promise<string | null>;
@@ -141,6 +155,7 @@ const DEFAULT_REBASE_STATUS: RebaseStatus = {
 export const useRepoStore = create<RepoStoreState>((set, get) => ({
   current: null,
   status: [],
+  allFiles: [],
   branches: [],
   tags: [],
   stashes: [],
@@ -159,6 +174,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
       set({
         current: handle,
         status: [],
+        allFiles: [],
         branches: [],
         tags: [],
         stashes: [],
@@ -211,6 +227,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     set({
       current: null,
       status: [],
+      allFiles: [],
       branches: [],
       tags: [],
       stashes: [],
@@ -218,6 +235,17 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
       commits: [],
       error: null,
     });
+  },
+
+  async refreshAllFiles() {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      const allFiles = await listAllFiles(repo.id);
+      set({ allFiles });
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
   },
 
   async stage(paths) {
@@ -315,6 +343,61 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     if (!repo) return;
     try {
       await checkoutBranch(repo.id, name);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async checkoutRef(reference) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await checkoutRef(repo.id, reference);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async mergeBranch(name) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await mergeBranchFn(repo.id, name);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async rebaseOnto(upstream) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await rebaseOntoFn(repo.id, upstream);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async pushTag(remote, name) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await pushTagFn(repo.id, remote, name);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async pushDeleteBranch(remote, name) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await pushDeleteBranchFn(repo.id, remote, name);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });

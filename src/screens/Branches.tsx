@@ -42,10 +42,14 @@ export function BranchesScreen() {
   >((b) =>
     b?.kind === "remote"
       ? remoteBranchMenuItems({ name: b.name })
-      : branchMenuItems({ name: b?.name, current: b?.isHead }),
+      : branchMenuItems({
+          name: b?.name,
+          current: b?.isHead,
+          upstream: b?.upstream,
+        }),
   );
   const { onContextMenu: onTagCtx, menu: tagMenu } = useContextMenu<TagInfo>(
-    (t) => tagMenuItems({ name: t?.name, sha: t?.shortOid }),
+    (t) => tagMenuItems({ name: t?.name, sha: t?.shortOid, oid: t?.oid }),
   );
 
   const [widths, setWidths] = React.useState(() => COLS.map((c) => c.initial));
@@ -295,7 +299,15 @@ export function BranchesScreen() {
                 <div
                   style={{ ...cellStyle, justifyContent: "center", padding: 0 }}
                 >
-                  <PGIconButton icon="more" size="sm" />
+                  <PGIconButton
+                    icon="more"
+                    size="sm"
+                    title="Actions"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onBranchCtx(e, b);
+                    }}
+                  />
                 </div>
               </div>
             ))}
@@ -356,7 +368,15 @@ export function BranchesScreen() {
                 <div
                   style={{ ...cellStyle, justifyContent: "center", padding: 0 }}
                 >
-                  <PGIconButton icon="more" size="sm" />
+                  <PGIconButton
+                    icon="more"
+                    size="sm"
+                    title="Actions"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTagCtx(e, t);
+                    }}
+                  />
                 </div>
               </div>
             ))}

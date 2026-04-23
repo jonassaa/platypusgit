@@ -16,6 +16,9 @@ pub trait GitBackend: Send + Sync {
     // === existing reads ===
     fn open(&self, path: &Path) -> AppResult<RepoHandle>;
     fn status(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
+    /// Like `status`, but also includes tracked-but-unmodified files so UIs
+    /// can browse the whole worktree (ignored files are still excluded).
+    fn list_all_files(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>>;
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;

@@ -25,6 +25,10 @@ export async function getStatus(repoId: string): Promise<FileStatus[]> {
   return invoke<FileStatus[]>("get_status", { repoId });
 }
 
+export async function listAllFiles(repoId: string): Promise<FileStatus[]> {
+  return invoke<FileStatus[]>("list_all_files", { repoId });
+}
+
 export async function getLog(
   repoId: string,
   limit?: number,
@@ -161,6 +165,40 @@ export async function createTag(
 
 export async function deleteTag(repoId: string, name: string): Promise<void> {
   return invoke<void>("delete_tag", { repoId, name });
+}
+
+export async function mergeBranch(repoId: string, name: string): Promise<void> {
+  return invoke<void>("merge_branch", { repoId, name });
+}
+
+export async function rebaseOnto(
+  repoId: string,
+  upstream: string,
+): Promise<void> {
+  return invoke<void>("rebase_onto", { repoId, upstream });
+}
+
+export async function checkoutRef(
+  repoId: string,
+  reference: string,
+): Promise<void> {
+  return invoke<void>("checkout_ref", { repoId, reference });
+}
+
+export async function pushTag(
+  repoId: string,
+  remote: string,
+  name: string,
+): Promise<void> {
+  return invoke<void>("push_tag", { repoId, remote, name });
+}
+
+export async function pushDeleteBranch(
+  repoId: string,
+  remote: string,
+  name: string,
+): Promise<void> {
+  return invoke<void>("push_delete_branch", { repoId, remote, name });
 }
 
 export interface StashSaveOptions {

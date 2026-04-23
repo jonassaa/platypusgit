@@ -288,3 +288,60 @@ pub async fn delete_tag(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+// Higher-level operations implemented via the `git` CLI (same strategy as
+// fetch/pull/push). libgit2's native merge/rebase implementations don't
+// cover all the edge cases (recursive/ort strategies, hook integration),
+// and for checkout of arbitrary refs (tags, commits) we want git's rules.
+
+#[tauri::command]
+pub async fn merge_branch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+) -> AppResult<()> {
+    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
+    run_git(&path, &["merge", name.as_str()]).await
+}
+
+#[tauri::command]
+pub async fn rebase_onto(
+    state: State<'_, AppState>,
+    repo_id: String,
+    upstream: String,
+) -> AppResult<()> {
+    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
+    run_git(&path, &["rebase", upstream.as_str()]).await
+}
+
+#[tauri::command]
+pub async fn checkout_ref(
+    state: State<'_, AppState>,
+    repo_id: String,
+    reference: String,
+) -> AppResult<()> {
+    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
+    run_git(&path, &["checkout", reference.as_str()]).await
+}
+
+#[tauri::command]
+pub async fn push_tag(
+    state: State<'_, AppState>,
+    repo_id: String,
+    remote: String,
+    name: String,
+) -> AppResult<()> {
+    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
+    run_git(&path, &["push", remote.as_str(), name.as_str()]).await
+}
+
+#[tauri::command]
+pub async fn push_delete_branch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    remote: String,
+    name: String,
+) -> AppResult<()> {
+    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
+    run_git(&path, &["push", "--delete", remote.as_str(), name.as_str()]).await
+}

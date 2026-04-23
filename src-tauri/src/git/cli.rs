@@ -34,6 +34,9 @@ impl GitBackend for CliBackend {
     fn status(&self, _repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
         Err(AppError::NotImplemented)
     }
+    fn list_all_files(&self, _repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
+        Err(AppError::NotImplemented)
+    }
     fn log(&self, _repo_id: &RepoId, _limit: usize) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
