@@ -109,3 +109,17 @@ pub async fn discard_paths(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+#[tauri::command]
+pub async fn diff_commits(
+    state: State<'_, AppState>,
+    repo_id: String,
+    from_oid: String,
+    to_oid: String,
+) -> AppResult<Vec<FileDiff>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.diff_commits(&repo_id, &from_oid, &to_oid))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
