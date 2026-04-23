@@ -510,11 +510,24 @@ impl GitBackend for Libgit2Backend {
                 }
 
                 if let Some(h) = hunk {
-                    if hunks
+                    // Compare the stored header (newline-stripped) against the
+                    // raw header bytes (also stripped) so lines within the same
+                    // hunk don't create duplicate DiffHunk entries.
+                    let raw_header_trimmed = h
+                        .header()
+                        .iter()
+                        .copied()
+                        .collect::<Vec<u8>>();
+                    let raw_header_trimmed = raw_header_trimmed
+                        .iter()
+                        .rposition(|&b| b != b'\n')
+                        .map(|i| &raw_header_trimmed[..=i])
+                        .unwrap_or(&raw_header_trimmed);
+                    let is_new_hunk = hunks
                         .last()
-                        .map(|last| last.header.as_bytes() != h.header())
-                        .unwrap_or(true)
-                    {
+                        .map(|last| last.header.as_bytes() != raw_header_trimmed)
+                        .unwrap_or(true);
+                    if is_new_hunk {
                         let header_str = std::str::from_utf8(h.header())
                             .unwrap_or("")
                             .trim_end_matches('\n')
