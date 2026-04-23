@@ -419,12 +419,39 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "fix",
       label: "Fixup into this commit…",
-      onClick: () => pgFlash(`fixup ${sha}`),
+      onClick: () => {
+        if (!commit?.sha) return;
+        const commits = useRepoStore.getState().commits;
+        const idx = commits.findIndex((c) => c.oid === commit.sha);
+        const base = commits[idx + 1]?.oid;
+        if (!base) return;
+        const plan = buildRebasePlan(commits, base, {
+          kind: "fixup",
+          targetOid: commit.sha,
+        });
+        if (!plan) return;
+        useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
+      },
     },
     {
       icon: "squash",
       label: "Squash into this commit…",
-      onClick: () => pgFlash(`squash ${sha}`),
+      onClick: () => {
+        if (!commit?.sha) return;
+        const msg = window.prompt("New commit message for squashed commit");
+        if (!msg) return;
+        const commits = useRepoStore.getState().commits;
+        const idx = commits.findIndex((c) => c.oid === commit.sha);
+        const base = commits[idx + 1]?.oid;
+        if (!base) return;
+        const plan = buildRebasePlan(commits, base, {
+          kind: "squash",
+          targetOid: commit.sha,
+          message: msg,
+        });
+        if (!plan) return;
+        useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
+      },
     },
     { divider: true },
     {
