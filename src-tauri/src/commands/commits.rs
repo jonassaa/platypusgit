@@ -38,3 +38,18 @@ pub async fn commit(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+#[tauri::command]
+pub async fn file_history(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    limit: usize,
+) -> AppResult<Vec<CommitInfo>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = std::path::PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.file_history(&repo_id, &path, limit))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}

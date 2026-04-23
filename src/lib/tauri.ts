@@ -406,6 +406,14 @@ export async function rebaseStatus(repoId: string): Promise<RebaseStatus> {
   return invoke<RebaseStatus>("rebase_status", { repoId });
 }
 
+export async function fileHistory(
+  repoId: string,
+  path: string,
+  limit = 200,
+): Promise<CommitInfo[]> {
+  return invoke<CommitInfo[]>("file_history", { repoId, path, limit });
+}
+
 export async function appendGitignore(
   repoId: string,
   pattern: string,

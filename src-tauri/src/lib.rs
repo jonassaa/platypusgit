@@ -22,6 +22,7 @@ pub fn run() {
             commands::repo::open_in_editor,
             commands::commits::get_log,
             commands::commits::commit,
+            commands::commits::file_history,
             commands::diff::get_diff,
             commands::diff::stage_paths,
             commands::diff::unstage_paths,
