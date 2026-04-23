@@ -1244,6 +1244,19 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
+    fn checkout_detached(&self, repo_id: &RepoId, oid: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let parsed = git2::Oid::from_str(oid)
+                .map_err(|e| AppError::InvalidRef(e.message().to_string()))?;
+            // Verify it's a commit we can reach.
+            let _ = repo.find_commit(parsed).map_err(AppError::from)?;
+            repo.set_head_detached(parsed).map_err(AppError::from)?;
+            let mut co = git2::build::CheckoutBuilder::new();
+            co.force();
+            repo.checkout_head(Some(&mut co)).map_err(AppError::from)?;
+            Ok(())
+        })
+    }
     fn reset(&self, repo_id: &RepoId, target: &str, mode: ResetMode) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
             let obj = repo

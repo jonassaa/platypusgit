@@ -94,6 +94,9 @@ impl GitBackend for CliBackend {
     fn delete_tag(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn checkout_detached(&self, _repo_id: &RepoId, _oid: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn reset(&self, _repo_id: &RepoId, _target: &str, _mode: ResetMode) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }

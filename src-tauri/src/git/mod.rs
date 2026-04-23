@@ -56,6 +56,7 @@ pub trait GitBackend: Send + Sync {
     fn delete_tag(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
 
     // === history manipulation ===
+    fn checkout_detached(&self, repo_id: &RepoId, oid: &str) -> AppResult<()>;
     fn reset(&self, repo_id: &RepoId, target: &str, mode: ResetMode) -> AppResult<()>;
     fn cherry_pick(&self, repo_id: &RepoId, oid: &str) -> AppResult<()>;
     fn revert(&self, repo_id: &RepoId, oid: &str) -> AppResult<()>;

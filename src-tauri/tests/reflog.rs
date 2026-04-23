@@ -98,3 +98,22 @@ fn read_reflog_classifies_amend_op() {
     // without asserting the op classification, which requires a git CLI implementation or libgit2 upgrade.
     assert_eq!(entries[0].message, "second amended", "amended message should appear in reflog");
 }
+
+#[test]
+fn checkout_detached_leaves_head_detached_at_target() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    tr.add_commit("two.txt", "two\n", "second");
+    let (backend, handle) = tr.open_with_backend();
+
+    let first = {
+        let commits = backend.log(&handle.id, 10).unwrap();
+        commits.last().unwrap().oid.clone()
+    };
+
+    backend.checkout_detached(&handle.id, &first).unwrap();
+
+    // Re-open to observe HEAD state via git2 directly.
+    let repo = git2::Repository::open(tr.path()).unwrap();
+    assert!(repo.head_detached().unwrap(), "HEAD should be detached");
+    assert_eq!(repo.head().unwrap().target().unwrap().to_string(), first);
+}
