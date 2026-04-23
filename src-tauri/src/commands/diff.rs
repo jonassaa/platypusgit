@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{DiffKind, FileDiff, RepoId},
+    git::types::{BlameLine, DiffKind, FileDiff, RepoId},
     state::AppState,
 };
 
@@ -120,6 +120,20 @@ pub async fn diff_commits(
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     tokio::task::spawn_blocking(move || backend.diff_commits(&repo_id, &from_oid, &to_oid))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn blame_file(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+) -> AppResult<Vec<BlameLine>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.blame_file(&repo_id, &path))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

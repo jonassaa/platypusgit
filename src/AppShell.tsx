@@ -30,8 +30,12 @@ import { RebaseScreen } from "@/screens/Rebase";
 import { RemoteScreen } from "@/screens/Remote";
 import { WelcomeScreen } from "@/screens/Welcome";
 import { ReflogScreen } from "@/screens/Reflog";
+import { CommitDiffScreen } from "@/screens/CommitDiff";
+import { FileHistoryScreen } from "@/screens/FileHistory";
+import { BlameScreen } from "@/screens/Blame";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useNavStore } from "@/features/nav/useNavStore";
 import { appErrorMessage } from "@/lib/errors";
 import {
   currentBranch,
@@ -60,7 +64,10 @@ type ScreenId =
   | "rebase"
   | "remote"
   | "diff"
-  | "reflog";
+  | "reflog"
+  | "commitDiff"
+  | "fileHistory"
+  | "blame";
 
 const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "repo", icon: "folder", label: "Files", shortcut: "⌘1" },
@@ -118,6 +125,29 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [repo]);
 
+  const intent = useNavStore((s) => s.intent);
+  React.useEffect(() => {
+    if (!intent) return;
+    switch (intent.kind) {
+      case "diff-file":
+        setScreen("diff");
+        break;
+      case "commit-vs-wt":
+      case "commit-vs-commit":
+        setScreen("commitDiff");
+        break;
+      case "file-history":
+        setScreen("fileHistory");
+        break;
+      case "blame":
+        setScreen("blame");
+        break;
+      case "rebase-plan":
+        setScreen("rebase");
+        break;
+    }
+  }, [intent]);
+
   const screens: Record<ScreenId, React.ReactNode> = {
     repo: <RepoBrowserScreen />,
     commit: <CommitPanelScreen />,
@@ -128,6 +158,9 @@ export function AppShell() {
     rebase: <RebaseScreen />,
     remote: <RemoteScreen />,
     reflog: <ReflogScreen />,
+    commitDiff: <CommitDiffScreen />,
+    fileHistory: <FileHistoryScreen />,
+    blame: <BlameScreen />,
   };
 
   return (
@@ -530,7 +563,12 @@ function AppSidebar({
               icon="plus"
               size="sm"
               title="New branch"
-              onClick={() => pgFlash("new branch is not wired up yet")}
+              onClick={async () => {
+                    const name = window.prompt("New branch name");
+                    if (!name) return;
+                    await useRepoStore.getState().createBranch(name);
+                    await useRepoStore.getState().checkoutBranch(name);
+                  }}
             />
           }
         >

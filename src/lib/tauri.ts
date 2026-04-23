@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BlameLine,
   BranchInfo,
   CommitInfo,
   ConflictSides,
@@ -246,6 +247,14 @@ export async function stashDrop(repoId: string, index: number): Promise<void> {
   return invoke<void>("stash_drop", { repoId, index });
 }
 
+export async function stashBranch(
+  repoId: string,
+  index: number,
+  branch: string,
+): Promise<void> {
+  return invoke<void>("stash_branch", { repoId, index, branch });
+}
+
 // ─── Network operations ──────────────────────────────────────────────────────
 
 /** Fetch a single remote, pruning deleted remote refs. */
@@ -363,6 +372,20 @@ export async function continueOperation(repoId: string): Promise<string> {
   return invoke<string>("continue_operation", { repoId });
 }
 
+export async function runMergetool(
+  repoId: string,
+  path: string,
+): Promise<void> {
+  return invoke<void>("run_mergetool", { repoId, path });
+}
+
+export async function restartConflict(
+  repoId: string,
+  path: string,
+): Promise<void> {
+  return invoke<void>("restart_conflict", { repoId, path });
+}
+
 // ─── Interactive rebase ───────────────────────────────────────────────────────
 
 export async function rebaseStart(
@@ -382,4 +405,33 @@ export async function rebaseAbort(repoId: string): Promise<void> {
 
 export async function rebaseStatus(repoId: string): Promise<RebaseStatus> {
   return invoke<RebaseStatus>("rebase_status", { repoId });
+}
+
+export async function fileHistory(
+  repoId: string,
+  path: string,
+  limit = 200,
+): Promise<CommitInfo[]> {
+  return invoke<CommitInfo[]>("file_history", { repoId, path, limit });
+}
+
+export async function appendGitignore(
+  repoId: string,
+  pattern: string,
+): Promise<void> {
+  return invoke<void>("append_gitignore", { repoId, pattern });
+}
+
+export async function openInEditor(
+  repoId: string,
+  relativePath: string,
+): Promise<void> {
+  return invoke<void>("open_in_editor", { repoId, relativePath });
+}
+
+export async function blameFile(
+  repoId: string,
+  path: string,
+): Promise<BlameLine[]> {
+  return invoke<BlameLine[]>("blame_file", { repoId, path });
 }

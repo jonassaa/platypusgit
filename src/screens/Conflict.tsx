@@ -10,7 +10,6 @@ import {
   PGSectionHeader,
   PGSpinner,
   conflictMenuItems,
-  pgFlash,
   useContextMenu,
   usePaneWidth,
 } from "@/design";
@@ -447,7 +446,9 @@ export function ConflictScreen() {
                 onContextMenu={(e) => onConflictCtx(e, { path: c.path })}
                 onPickOurs={() => acceptOurs(c.path)}
                 onPickTheirs={() => acceptTheirs(c.path)}
-                onEdit={() => pgFlash("external editor TODO")}
+                onEdit={() => {
+                  if (c.path) useRepoStore.getState().openInEditor(c.path);
+                }}
               />
             ))}
           </div>

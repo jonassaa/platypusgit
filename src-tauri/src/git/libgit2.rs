@@ -13,10 +13,10 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind, DiffLine,
-        DiffLineKind, FileDiff, FileStatus, RebaseAction, RebaseStatus, RebaseStep, ReflogEntry,
-        ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
-        StatusFlag, TagInfo, TagTarget,
+        BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
+        DiffLine, DiffLineKind, FileDiff, FileStatus, RebaseAction, RebaseStatus, RebaseStep,
+        ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo,
+        StashSaveOptions, StatusFlag, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -668,29 +668,14 @@ impl GitBackend for Libgit2Backend {
             for oid in walk.take(limit) {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
-                let summary = commit.summary().unwrap_or("").to_string();
-                let full_message = commit.message().unwrap_or("").to_string();
-                let body = full_message
-                    .split_once("\n\n")
-                    .map(|(_, rest)| rest.trim_end().to_string())
-                    .filter(|s| !s.is_empty());
-                let author = commit.author();
                 let refs: Vec<String> = ref_map
                     .iter()
                     .filter(|(o, _)| *o == oid)
                     .map(|(_, name)| name.clone())
                     .collect();
-                out.push(CommitInfo {
-                    oid: oid.to_string(),
-                    short_oid: oid.to_string()[..7].to_string(),
-                    summary,
-                    body,
-                    author: author.name().unwrap_or("").to_string(),
-                    email: author.email().unwrap_or("").to_string(),
-                    timestamp: commit.time().seconds(),
-                    parents: commit.parent_ids().map(|p| p.to_string()).collect(),
-                    refs,
-                });
+                let mut info = commit_to_info(&commit);
+                info.refs = refs;
+                out.push(info);
             }
             Ok(out)
         })
@@ -843,10 +828,8 @@ impl GitBackend for Libgit2Backend {
         to_oid: &str,
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
-            let from = git2::Oid::from_str(from_oid)
-                .map_err(|e| AppError::InvalidRef(e.message().to_string()))?;
-            let to = git2::Oid::from_str(to_oid)
-                .map_err(|e| AppError::InvalidRef(e.message().to_string()))?;
+            let from = repo.revparse_single(from_oid)?.peel_to_commit()?.id();
+            let to = repo.revparse_single(to_oid)?.peel_to_commit()?.id();
             let from_tree = repo.find_commit(from)?.tree()?;
             let to_tree = repo.find_commit(to)?.tree()?;
 
@@ -1498,6 +1481,42 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
+    fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            let stash_oid = {
+                let mut found = None;
+                repo.stash_foreach(|i, _msg, oid| {
+                    if i == index {
+                        found = Some(*oid);
+                        false
+                    } else {
+                        true
+                    }
+                })?;
+                found.ok_or_else(|| AppError::Git(format!("stash {index} not found")))?
+            };
+            // Extract the base commit OID before any mutable borrows so the
+            // Commit objects (which hold &repo) are dropped before stash_apply.
+            let base_oid = {
+                let stash_commit = repo.find_commit(stash_oid)?;
+                let base_commit = stash_commit.parent(0)?;
+                base_commit.id()
+            };
+            let base_commit = repo.find_commit(base_oid)?;
+            repo.branch(branch, &base_commit, false)?;
+            drop(base_commit);
+
+            let refname = format!("refs/heads/{branch}");
+            repo.set_head(&refname)?;
+            repo.checkout_head(Some(
+                git2::build::CheckoutBuilder::new().force(),
+            ))?;
+
+            repo.stash_apply(index, None)?;
+            repo.stash_drop(index)?;
+            Ok(())
+        })
+    }
     fn repo_path(&self, repo_id: &RepoId) -> AppResult<PathBuf> {
         self.with_repo(repo_id, |repo| {
             repo.workdir()
@@ -1695,16 +1714,6 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-    fn pull(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-    fn push(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-
     fn repo_state(&self, repo_id: &RepoId) -> AppResult<RepoState> {
         self.with_repo(repo_id, |repo| {
             use git2::RepositoryState as RS;
@@ -1852,4 +1861,170 @@ impl GitBackend for Libgit2Backend {
             Ok(oid.to_string())
         })
     }
+
+    fn file_history(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let mut revwalk = repo.revwalk()?;
+            revwalk.push_head().or_else(|e| {
+                if e.code() == git2::ErrorCode::UnbornBranch {
+                    Err(AppError::Unborn)
+                } else {
+                    Err(e.into())
+                }
+            })?;
+            revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+
+            let mut out = Vec::with_capacity(limit);
+            for oid_res in revwalk {
+                if out.len() >= limit {
+                    break;
+                }
+                let oid = oid_res?;
+                let commit = repo.find_commit(oid)?;
+                if commit_touches_path(repo, &commit, path)? {
+                    out.push(commit_to_info(&commit));
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    fn append_gitignore(&self, repo_id: &RepoId, pattern: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::Git("bare repo has no worktree".into()))?;
+            let gitignore = workdir.join(".gitignore");
+            let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+            if existing.lines().any(|l| l.trim() == pattern) {
+                return Ok(());
+            }
+            let needs_nl = !existing.is_empty() && !existing.ends_with('\n');
+            let mut next = existing;
+            if needs_nl {
+                next.push('\n');
+            }
+            next.push_str(pattern);
+            next.push('\n');
+            std::fs::write(&gitignore, next)?;
+            Ok(())
+        })
+    }
+
+    fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>> {
+        self.with_repo(repo_id, |repo| {
+            let mut opts = git2::BlameOptions::new();
+            let blame = repo.blame_file(path, Some(&mut opts))?;
+
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::Git("bare repo has no worktree".into()))?;
+            let content = std::fs::read_to_string(workdir.join(path))?;
+            let content_lines: Vec<&str> = content.lines().collect();
+
+            let mut out = Vec::new();
+            for hunk in blame.iter() {
+                let oid = hunk.final_commit_id();
+                let commit = repo.find_commit(oid).ok();
+                let author = commit
+                    .as_ref()
+                    .map(|c| c.author().name().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                let email = commit
+                    .as_ref()
+                    .map(|c| c.author().email().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                let timestamp = commit
+                    .as_ref()
+                    .map(|c| c.time().seconds())
+                    .unwrap_or(0);
+                let summary = commit
+                    .as_ref()
+                    .and_then(|c| c.summary().map(String::from))
+                    .unwrap_or_default();
+                let short = oid.to_string()[..7].to_string();
+                let start = hunk.final_start_line();
+                for i in 0..hunk.lines_in_hunk() {
+                    let line_no = (start + i) as u32;
+                    let content_str = content_lines
+                        .get((line_no - 1) as usize)
+                        .copied()
+                        .unwrap_or("")
+                        .to_string();
+                    out.push(BlameLine {
+                        line_no,
+                        oid: oid.to_string(),
+                        short_oid: short.clone(),
+                        author: author.clone(),
+                        email: email.clone(),
+                        timestamp,
+                        summary: summary.clone(),
+                        content: content_str,
+                    });
+                }
+            }
+            out.sort_by_key(|l| l.line_no);
+            Ok(out)
+        })
+    }
+}
+
+// ─── Private helpers ──────────────────────────────────────────────────────────
+
+/// Build a `CommitInfo` from a git2 commit. The `refs` field is left empty;
+/// callers that need ref labels (e.g. `log`) fill it in separately.
+fn commit_to_info(commit: &git2::Commit<'_>) -> CommitInfo {
+    let oid = commit.id();
+    let summary = commit.summary().unwrap_or("").to_string();
+    let full_message = commit.message().unwrap_or("").to_string();
+    let body = full_message
+        .split_once("\n\n")
+        .map(|(_, rest)| rest.trim_end().to_string())
+        .filter(|s| !s.is_empty());
+    let author = commit.author();
+    CommitInfo {
+        oid: oid.to_string(),
+        short_oid: oid.to_string()[..7].to_string(),
+        summary,
+        body,
+        author: author.name().unwrap_or("").to_string(),
+        email: author.email().unwrap_or("").to_string(),
+        timestamp: commit.time().seconds(),
+        parents: commit.parent_ids().map(|p| p.to_string()).collect(),
+        refs: Vec::new(),
+    }
+}
+
+/// Return `true` if `commit` touched `path` relative to any of its parents.
+/// For a root commit (no parents) the path simply has to exist in the tree.
+fn commit_touches_path(
+    repo: &git2::Repository,
+    commit: &git2::Commit<'_>,
+    path: &std::path::Path,
+) -> AppResult<bool> {
+    if commit.parent_count() == 0 {
+        let tree = commit.tree()?;
+        return Ok(tree.get_path(path).is_ok());
+    }
+    for i in 0..commit.parent_count() {
+        let parent = commit.parent(i)?;
+        let parent_tree = parent.tree()?;
+        let commit_tree = commit.tree()?;
+        let mut opts = git2::DiffOptions::new();
+        opts.pathspec(path);
+        let diff = repo.diff_tree_to_tree(
+            Some(&parent_tree),
+            Some(&commit_tree),
+            Some(&mut opts),
+        )?;
+        if diff.deltas().len() > 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

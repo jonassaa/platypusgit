@@ -4,9 +4,9 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
-        RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId, RepoState,
-        ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+        BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff,
+        FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId,
+        RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -38,6 +38,14 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn log(&self, _repo_id: &RepoId, _limit: usize) -> AppResult<Vec<CommitInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn file_history(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
     fn diff(&self, _repo_id: &RepoId, _path: &Path, _kind: DiffKind) -> AppResult<FileDiff> {
@@ -126,6 +134,9 @@ impl GitBackend for CliBackend {
     fn stash_drop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn stash_branch(&self, _repo_id: &RepoId, _index: usize, _branch: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn repo_path(&self, _repo_id: &RepoId) -> AppResult<PathBuf> {
         Err(AppError::NotImplemented)
     }
@@ -177,16 +188,13 @@ impl GitBackend for CliBackend {
     fn rebase_status(&self, _repo_id: &RepoId) -> AppResult<RebaseStatus> {
         Err(AppError::NotImplemented)
     }
-    fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-    fn pull(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-    fn push(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
     fn read_reflog(&self, _repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>> {
+        Err(AppError::NotImplemented)
+    }
+    fn append_gitignore(&self, _repo_id: &RepoId, _pattern: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn blame_file(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<Vec<BlameLine>> {
         Err(AppError::NotImplemented)
     }
 }

@@ -18,6 +18,8 @@ import {
   acceptOurs,
   acceptTheirs,
   addRemote,
+  appendGitignore as appendGitignoreFn,
+  openInEditor as openInEditorFn,
   checkoutBranch,
   checkoutRef,
   cherryPick,
@@ -57,10 +59,13 @@ import {
   revert as revertFn,
   removeRemote,
   repoState as repoStateFn,
+  runMergetool as runMergetoolFn,
+  restartConflict as restartConflictFn,
   setRemoteUrl,
   stageHunk,
   stagePaths,
   stashApply,
+  stashBranch as stashBranchFn,
   stashDrop,
   stashPop,
   stashSave,
@@ -118,6 +123,7 @@ interface RepoStoreState {
   stashApply: (index: number) => Promise<void>;
   stashPop: (index: number) => Promise<void>;
   stashDrop: (index: number) => Promise<void>;
+  stashBranch: (index: number, branch: string) => Promise<void>;
   // network
   fetch: (remote: string) => Promise<void>;
   fetchAll: () => Promise<void>;
@@ -135,10 +141,14 @@ interface RepoStoreState {
   markResolved: (paths: string[]) => Promise<void>;
   abortOperation: () => Promise<void>;
   continueOperation: () => Promise<string | null>;
+  runMergetool: (path: string) => Promise<void>;
+  restartConflict: (path: string) => Promise<void>;
   // interactive rebase
   rebaseStart: (plan: RebaseStep[]) => Promise<RebaseStatus | null>;
   rebaseContinue: () => Promise<RebaseStatus | null>;
   rebaseAbort: () => Promise<void>;
+  appendGitignore: (pattern: string) => Promise<void>;
+  openInEditor: (relativePath: string) => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -528,6 +538,17 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     }
   },
 
+  async stashBranch(index, branch) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stashBranchFn(repo.id, index, branch);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
   async fetch(remote) {
     const repo = get().current;
     if (!repo) return;
@@ -684,6 +705,28 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     }
   },
 
+  async runMergetool(path) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await runMergetoolFn(repo.id, path);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async restartConflict(path) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await restartConflictFn(repo.id, path);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
   async rebaseStart(plan) {
     const repo = get().current;
     if (!repo) return null;
@@ -719,6 +762,27 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
       await rebaseAbort(repo.id);
       set({ rebaseStatus: DEFAULT_REBASE_STATUS });
       await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async appendGitignore(pattern) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await appendGitignoreFn(repo.id, pattern);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async openInEditor(relativePath) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await openInEditorFn(repo.id, relativePath);
     } catch (e) {
       set({ error: toAppError(e) });
     }

@@ -188,6 +188,21 @@ pub enum RepoState {
     ApplyMailboxOrRebase,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameLine {
+    /// 1-indexed line number in the current version of the file.
+    pub line_no: u32,
+    /// Commit OID that last modified this line.
+    pub oid: String,
+    pub short_oid: String,
+    pub author: String,
+    pub email: String,
+    pub timestamp: i64,
+    pub summary: String,
+    pub content: String,
+}
+
 /// Content of the three index stages for a conflicted file.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -5,6 +5,7 @@ import { PGEmpty } from "@/design";
 import type { CommitInfo } from "@/lib/types";
 import type { RebaseAction, RebaseStep } from "@/lib/types";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useNavStore } from "@/features/nav/useNavStore";
 
 // ─── Plan row state ───────────────────────────────────────────────────────────
 
@@ -114,6 +115,29 @@ export function RebaseScreen() {
       setPlan(commitsToPlan(commits.slice(0, REBASE_LIMIT)));
     }
   }, [commits, rebaseStatus.inProgress]);
+
+  // Seed the plan from a NavIntent when the context menu fires rebase-plan.
+  const intent = useNavStore((s) => s.intent);
+  const clearIntent = useNavStore((s) => s.clearIntent);
+  React.useEffect(() => {
+    if (intent?.kind !== "rebase-plan") return;
+    // Convert RebaseStep[] to PlanRow[] by looking up shortOid/subject from commits.
+    const byOid = new Map(commits.map((c) => [c.oid, c]));
+    const rows: PlanRow[] = intent.plan.map((step) => {
+      const c = byOid.get(step.oid);
+      return {
+        oid: step.oid,
+        shortOid: c?.shortOid ?? step.oid.slice(0, 7),
+        subject: c?.summary ?? "",
+        action: step.action,
+        message: step.message ?? "",
+      };
+    });
+    setPlan(rows);
+    // Prevent the sync-from-commits effect from clobbering us on the next render.
+    prevCommitsRef.current = commits;
+    clearIntent();
+  }, [intent, commits, clearIntent]);
 
   const updateRow = useCallback(
     (index: number, patch: Partial<PlanRow>) => {

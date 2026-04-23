@@ -2,6 +2,8 @@ import React, { type CSSProperties, type MouseEvent, type ReactNode } from "reac
 import { createPortal } from "react-dom";
 import { PGIcon, type IconName } from "./icons";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useNavStore } from "@/features/nav/useNavStore";
+import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 
 export interface ContextMenuItem {
   label?: ReactNode;
@@ -324,17 +326,27 @@ export function useContextMenu<T>(
 export function commitMenuItems(commit: { sha?: string; subject?: string } | null): ContextMenuItem[] {
   const sha = commit?.sha || "—";
   return [
-    { __menuTitle: `commit ${sha}` },
+    { __menuTitle: `commit ${sha.slice(0, 7)}` },
     {
       icon: "check",
       label: "Check out this commit",
       shortcut: "⌘⇧C",
-      onClick: () => pgFlash(`checked out ${sha} (detached)`),
+      onClick: () => {
+        if (!commit?.sha) return;
+        if (window.confirm(`Check out ${sha.slice(0, 7)} in detached HEAD?`))
+          useRepoStore.getState().checkoutRef(commit.sha);
+      },
     },
     {
       icon: "branch",
       label: "Create branch from here…",
-      onClick: () => pgFlash(`new branch from ${sha}`),
+      onClick: async () => {
+        if (!commit?.sha) return;
+        const name = window.prompt("New branch name");
+        if (!name) return;
+        await useRepoStore.getState().createBranch(name, commit.sha);
+        await useRepoStore.getState().checkoutBranch(name);
+      },
     },
     {
       icon: "tag",
@@ -367,7 +379,19 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "rebase",
       label: "Interactive rebase from here",
-      onClick: () => pgFlash(`rebase -i ${sha}^`),
+      onClick: () => {
+        if (!commit?.sha) return;
+        const commits = useRepoStore.getState().commits;
+        // "Rebase -i from here" means: rebase commits newer than target's parent.
+        // The parent of `commit.sha` in our newest-first commits list is the
+        // entry at `index + 1`.
+        const idx = commits.findIndex((c) => c.oid === commit.sha);
+        const base = commits[idx + 1]?.oid;
+        if (!base) return;
+        const plan = buildRebasePlan(commits, base, { kind: "edit-from" });
+        if (!plan || plan.length === 0) return;
+        useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
+      },
     },
     { divider: true },
     {
@@ -394,19 +418,49 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     },
     {
       icon: "fix",
-      label: "Fixup into this commit…",
-      onClick: () => pgFlash(`fixup ${sha}`),
+      label: "Fixup this commit into its parent",
+      onClick: () => {
+        if (!commit?.sha) return;
+        const commits = useRepoStore.getState().commits;
+        const idx = commits.findIndex((c) => c.oid === commit.sha);
+        const base = commits[idx + 1]?.oid;
+        if (!base) return;
+        const plan = buildRebasePlan(commits, base, {
+          kind: "fixup",
+          targetOid: commit.sha,
+        });
+        if (!plan) return;
+        useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
+      },
     },
     {
       icon: "squash",
-      label: "Squash into this commit…",
-      onClick: () => pgFlash(`squash ${sha}`),
+      label: "Squash this commit into its parent",
+      onClick: () => {
+        if (!commit?.sha) return;
+        const msg = window.prompt("New commit message for squashed commit");
+        if (!msg) return;
+        const commits = useRepoStore.getState().commits;
+        const idx = commits.findIndex((c) => c.oid === commit.sha);
+        const base = commits[idx + 1]?.oid;
+        if (!base) return;
+        const plan = buildRebasePlan(commits, base, {
+          kind: "squash",
+          targetOid: commit.sha,
+          message: msg,
+        });
+        if (!plan) return;
+        useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
+      },
     },
     { divider: true },
     {
       icon: "diff",
-      label: "Compare with working tree",
-      onClick: () => pgFlash(`diff ${sha}..WT`),
+      label: "Compare with HEAD",
+      onClick: () => {
+        if (!commit?.sha) return;
+        useNavStore.getState().setIntent({ kind: "commit-vs-wt", oid: commit.sha });
+      },
     },
     { divider: true },
     {
@@ -415,7 +469,7 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       shortcut: "⌘C",
       onClick: () => {
         navigator.clipboard?.writeText(sha);
-        pgFlash(`copied ${sha}`);
+        pgFlash(`copied ${sha.slice(0, 7)}`);
       },
     },
     {
@@ -583,12 +637,22 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
       onClick: () =>
         remoteName
           ? useRepoStore.getState().fetch(remoteName)
-          : pgFlash(`fetch ${name}`),
+          : useRepoStore.getState().fetchAll(),
     },
     {
       icon: "diff",
       label: "Compare with current",
-      onClick: () => pgFlash(`diff HEAD..${name}`),
+      onClick: () => {
+        const branches = useRepoStore.getState().branches;
+        const head = branches.find((b) => b.isHead);
+        const target = branches.find((b) => b.name === name);
+        if (!head?.tip || !target?.tip) return;
+        useNavStore.getState().setIntent({
+          kind: "commit-vs-commit",
+          from: head.tip,
+          to: target.tip,
+        });
+      },
     },
     { divider: true },
     {
@@ -748,30 +812,45 @@ export function fileMenuItems(
       icon: "edit",
       label: "Stage hunks…",
       disabled: staged,
-      onClick: () => pgFlash("hunk picker"),
+      onClick: () => {
+        if (!path) return;
+        useNavStore.getState().setIntent({ kind: "diff-file", path });
+      },
     },
     { divider: true },
     {
       icon: "diff",
       label: "View diff",
       shortcut: "⏎",
-      onClick: () => pgFlash(`diff ${path}`),
+      onClick: () => {
+        if (!path) return;
+        useNavStore.getState().setIntent({ kind: "diff-file", path });
+      },
     },
     {
       icon: "search",
       label: "Blame",
-      onClick: () => pgFlash(`blame ${path}`),
+      onClick: () => {
+        if (!path) return;
+        useNavStore.getState().setIntent({ kind: "blame", path });
+      },
     },
     {
       icon: "history",
       label: "File history",
-      onClick: () => pgFlash(`log -- ${path}`),
+      onClick: () => {
+        if (!path) return;
+        useNavStore.getState().setIntent({ kind: "file-history", path });
+      },
     },
     {
       icon: "edit",
       label: "Open in editor",
       shortcut: "⌘O",
-      onClick: () => pgFlash(`open ${path}`),
+      onClick: () => {
+        if (!path) return;
+        useRepoStore.getState().openInEditor(path);
+      },
     },
     { divider: true },
     {
@@ -792,7 +871,10 @@ export function fileMenuItems(
     {
       icon: "trash",
       label: "Ignore this file",
-      onClick: () => pgFlash(`added to .gitignore`),
+      onClick: () => {
+        if (!path) return;
+        useRepoStore.getState().appendGitignore(path);
+      },
     },
   ];
 }
@@ -820,7 +902,12 @@ export function stashMenuItems(
     {
       icon: "branch",
       label: "Branch from stash…",
-      onClick: () => pgFlash(`branch from ${name}`),
+      onClick: async () => {
+        if (stash?.index == null) return;
+        const branch = window.prompt("Branch name");
+        if (!branch) return;
+        await useRepoStore.getState().stashBranch(stash.index, branch);
+      },
     },
     { divider: true },
     {
@@ -858,13 +945,19 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
     {
       icon: "merge",
       label: "Open 3-way merge tool",
-      onClick: () => pgFlash("mergetool"),
+      onClick: () => {
+        if (!conflict?.path) return;
+        useRepoStore.getState().runMergetool(conflict.path);
+      },
     },
     { divider: true },
     {
       icon: "edit",
       label: "Edit resolution in editor",
-      onClick: () => pgFlash("open editor"),
+      onClick: () => {
+        if (!conflict?.path) return;
+        useRepoStore.getState().openInEditor(conflict.path);
+      },
     },
     {
       icon: "check",
@@ -878,7 +971,15 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
       icon: "undo",
       label: "Restart resolution",
       danger: true,
-      onClick: () => pgFlash("restarted"),
+      onClick: () => {
+        if (!conflict?.path) return;
+        if (
+          window.confirm(
+            `Restart resolution for ${conflict.path}? Current edits are discarded.`,
+          )
+        )
+          useRepoStore.getState().restartConflict(conflict.path);
+      },
     },
   ];
 }

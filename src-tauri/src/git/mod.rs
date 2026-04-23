@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
 use types::{
-    BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
-    RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode,
-    StashInfo, StashSaveOptions, TagInfo, TagTarget,
+    BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff,
+    FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId, RepoState,
+    ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
 };
 
 pub trait GitBackend: Send + Sync {
@@ -20,6 +20,14 @@ pub trait GitBackend: Send + Sync {
     /// can browse the whole worktree (ignored files are still excluded).
     fn list_all_files(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>>;
+    /// Commits that touched `path`, newest first, up to `limit`.
+    fn file_history(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>>;
+    fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>>;
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff>;
     fn diff_commits(
@@ -72,6 +80,7 @@ pub trait GitBackend: Send + Sync {
     fn stash_apply(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
     fn stash_pop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
     fn stash_drop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
+    fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()>;
 
     // === remote management ===
     fn add_remote(&self, repo_id: &RepoId, name: &str, url: &str) -> AppResult<()>;
@@ -103,8 +112,8 @@ pub trait GitBackend: Send + Sync {
     fn rebase_abort(&self, repo_id: &RepoId) -> AppResult<()>;
     fn rebase_status(&self, repo_id: &RepoId) -> AppResult<RebaseStatus>;
 
-    // === network (shells out to git CLI via Tauri commands) ===
-    fn fetch(&self, repo_id: &RepoId, remote: &str) -> AppResult<()>;
-    fn pull(&self, repo_id: &RepoId, remote: &str, branch: &str) -> AppResult<()>;
-    fn push(&self, repo_id: &RepoId, remote: &str, branch: &str) -> AppResult<()>;
+    // === ignore ===
+    /// Append a pattern to the repo's top-level `.gitignore`, creating the file
+    /// if it doesn't exist. No-op if the pattern is already present on its own line.
+    fn append_gitignore(&self, repo_id: &RepoId, pattern: &str) -> AppResult<()>;
 }
