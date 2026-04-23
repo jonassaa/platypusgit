@@ -326,14 +326,14 @@ export function useContextMenu<T>(
 export function commitMenuItems(commit: { sha?: string; subject?: string } | null): ContextMenuItem[] {
   const sha = commit?.sha || "—";
   return [
-    { __menuTitle: `commit ${sha}` },
+    { __menuTitle: `commit ${sha.slice(0, 7)}` },
     {
       icon: "check",
       label: "Check out this commit",
       shortcut: "⌘⇧C",
       onClick: () => {
         if (!commit?.sha) return;
-        if (window.confirm(`Check out ${sha} in detached HEAD?`))
+        if (window.confirm(`Check out ${sha.slice(0, 7)} in detached HEAD?`))
           useRepoStore.getState().checkoutRef(commit.sha);
       },
     },
@@ -469,7 +469,7 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       shortcut: "⌘C",
       onClick: () => {
         navigator.clipboard?.writeText(sha);
-        pgFlash(`copied ${sha}`);
+        pgFlash(`copied ${sha.slice(0, 7)}`);
       },
     },
     {

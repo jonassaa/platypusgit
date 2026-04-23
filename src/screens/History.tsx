@@ -130,7 +130,7 @@ export function HistoryScreen() {
                   selected={selected === i}
                   onClick={() => setSelected(i)}
                   onContextMenu={(e) =>
-                    onCommitContext(e, { sha: c.shortOid, subject: c.summary })
+                    onCommitContext(e, { sha: c.oid, subject: c.summary })
                   }
                 />
               );
