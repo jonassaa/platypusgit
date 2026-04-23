@@ -9,6 +9,51 @@ use crate::{
 };
 
 #[tauri::command]
+pub async fn stage_hunk(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: usize,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.stage_hunk(&repo_id, &path, hunk_index))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn unstage_hunk(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: usize,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.unstage_hunk(&repo_id, &path, hunk_index))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn discard_hunk(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: usize,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.discard_hunk(&repo_id, &path, hunk_index))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
 pub async fn get_diff(
     state: State<'_, AppState>,
     repo_id: String,

@@ -24,6 +24,7 @@ import {
   createTag,
   deleteBranch,
   deleteTag,
+  discardHunk,
   discardPaths,
   fetch as fetchRemote,
   fetchAll,
@@ -45,11 +46,13 @@ import {
   removeRemote,
   repoState as repoStateFn,
   setRemoteUrl,
+  stageHunk,
   stagePaths,
   stashApply,
   stashDrop,
   stashPop,
   stashSave,
+  unstageHunk,
   unstagePaths,
   type PullMode,
   type PushForce,
@@ -77,6 +80,9 @@ interface RepoStoreState {
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
   discard: (paths: string[]) => Promise<void>;
+  stageHunk: (path: string, hunkIndex: number) => Promise<void>;
+  unstageHunk: (path: string, hunkIndex: number) => Promise<void>;
+  discardHunk: (path: string, hunkIndex: number) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<string | null>;
   reset: (target: string, mode: ResetMode) => Promise<void>;
   checkoutBranch: (name: string) => Promise<void>;
@@ -210,6 +216,39 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     if (!repo) return;
     try {
       await discardPaths(repo.id, paths);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async stageHunk(path, hunkIndex) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stageHunk(repo.id, path, hunkIndex);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async unstageHunk(path, hunkIndex) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await unstageHunk(repo.id, path, hunkIndex);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async discardHunk(path, hunkIndex) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await discardHunk(repo.id, path, hunkIndex);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });

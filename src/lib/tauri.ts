@@ -74,6 +74,30 @@ export async function discardPaths(repoId: string, paths: string[]): Promise<voi
   return invoke<void>("discard_paths", { repoId, paths });
 }
 
+export async function stageHunk(
+  repoId: string,
+  path: string,
+  hunkIndex: number,
+): Promise<void> {
+  return invoke<void>("stage_hunk", { repoId, path, hunkIndex });
+}
+
+export async function unstageHunk(
+  repoId: string,
+  path: string,
+  hunkIndex: number,
+): Promise<void> {
+  return invoke<void>("unstage_hunk", { repoId, path, hunkIndex });
+}
+
+export async function discardHunk(
+  repoId: string,
+  path: string,
+  hunkIndex: number,
+): Promise<void> {
+  return invoke<void>("discard_hunk", { repoId, path, hunkIndex });
+}
+
 export type ResetMode = "Soft" | "Mixed" | "Hard";
 
 export async function reset(
