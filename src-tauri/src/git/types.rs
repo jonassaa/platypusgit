@@ -258,3 +258,27 @@ pub enum PushForce {
     /// `--force`: unconditional overwrite. Use with care.
     Force,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "detail")]
+pub enum ReflogOp {
+    Commit,
+    Amend,
+    Reset,
+    Checkout,
+    Merge,
+    Rebase,
+    Pull,
+    Clone,
+    Other(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReflogEntry {
+    pub oid: String,
+    pub short_oid: String,
+    pub message: String,
+    pub op: ReflogOp,
+    pub timestamp: i64,
+}
