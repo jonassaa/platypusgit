@@ -839,7 +839,7 @@ export function PGSideBySideDiff({
 export interface GraphLane {
   col: number;
   color: string;
-  kind: "line" | "diag" | "half-top" | "half-bot";
+  kind: "line" | "diag" | "half-top" | "half-bot" | "fork-bot" | "merge-top";
   to?: number;
 }
 
@@ -917,6 +917,30 @@ export function PGGraphRow({
               y2={height}
               stroke={ln.color}
               strokeWidth="1.5"
+            />
+          );
+        }
+        if (ln.kind === "fork-bot") {
+          const x2 = 12 + (ln.to ?? ln.col + 1) * 16;
+          return (
+            <path
+              key={i}
+              d={`M ${x} ${height / 2} C ${x} ${height * 0.75}, ${x2} ${height * 0.75}, ${x2} ${height}`}
+              stroke={ln.color}
+              strokeWidth="1.5"
+              fill="none"
+            />
+          );
+        }
+        if (ln.kind === "merge-top") {
+          const x2 = 12 + (ln.to ?? ln.col + 1) * 16;
+          return (
+            <path
+              key={i}
+              d={`M ${x} 0 C ${x} ${height * 0.25}, ${x2} ${height * 0.25}, ${x2} ${height / 2}`}
+              stroke={ln.color}
+              strokeWidth="1.5"
+              fill="none"
             />
           );
         }
