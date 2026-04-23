@@ -593,7 +593,7 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
       onClick: () =>
         remoteName
           ? useRepoStore.getState().fetch(remoteName)
-          : pgFlash(`fetch ${name}`),
+          : useRepoStore.getState().fetchAll(),
     },
     {
       icon: "diff",
