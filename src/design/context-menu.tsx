@@ -417,7 +417,10 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "diff",
       label: "Compare with working tree",
-      onClick: () => pgFlash(`diff ${sha}..WT`),
+      onClick: () => {
+        if (!commit?.sha) return;
+        useNavStore.getState().setIntent({ kind: "commit-vs-wt", oid: commit.sha });
+      },
     },
     { divider: true },
     {
@@ -599,7 +602,17 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
     {
       icon: "diff",
       label: "Compare with current",
-      onClick: () => pgFlash(`diff HEAD..${name}`),
+      onClick: () => {
+        const branches = useRepoStore.getState().branches;
+        const head = branches.find((b) => b.isHead);
+        const target = branches.find((b) => b.name === name);
+        if (!head?.tip || !target?.tip) return;
+        useNavStore.getState().setIntent({
+          kind: "commit-vs-commit",
+          from: head.tip,
+          to: target.tip,
+        });
+      },
     },
     { divider: true },
     {
