@@ -133,3 +133,35 @@ pub async fn run_mergetool(
     }
     Ok(())
 }
+
+#[tauri::command]
+pub async fn restart_conflict(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id_cloned = RepoId(repo_id);
+    let workdir: PathBuf = tokio::task::spawn_blocking(move || {
+        backend.repo_path(&repo_id_cloned)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))??;
+
+    let status = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(&workdir)
+        .arg("checkout")
+        .arg("--merge")
+        .arg("--")
+        .arg(&path)
+        .status()
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    if !status.success() {
+        return Err(AppError::Git(format!(
+            "git checkout --merge exited with {status}"
+        )));
+    }
+    Ok(())
+}

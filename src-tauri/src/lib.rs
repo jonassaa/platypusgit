@@ -70,6 +70,7 @@ pub fn run() {
             commands::conflict::abort_operation,
             commands::conflict::continue_operation,
             commands::conflict::run_mergetool,
+            commands::conflict::restart_conflict,
             commands::rebase::rebase_start,
             commands::rebase::rebase_continue,
             commands::rebase::rebase_abort,
