@@ -13,10 +13,10 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind, DiffLine,
-        DiffLineKind, FileDiff, FileStatus, RebaseAction, RebaseStatus, RebaseStep, ReflogEntry,
-        ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
-        StatusFlag, TagInfo, TagTarget,
+        BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
+        DiffLine, DiffLineKind, FileDiff, FileStatus, RebaseAction, RebaseStatus, RebaseStep,
+        ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo,
+        StashSaveOptions, StatusFlag, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -1925,6 +1925,63 @@ impl GitBackend for Libgit2Backend {
             next.push('\n');
             std::fs::write(&gitignore, next)?;
             Ok(())
+        })
+    }
+
+    fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>> {
+        self.with_repo(repo_id, |repo| {
+            let mut opts = git2::BlameOptions::new();
+            let blame = repo.blame_file(path, Some(&mut opts))?;
+
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::Git("bare repo has no worktree".into()))?;
+            let content = std::fs::read_to_string(workdir.join(path))?;
+            let content_lines: Vec<&str> = content.lines().collect();
+
+            let mut out = Vec::new();
+            for hunk in blame.iter() {
+                let oid = hunk.final_commit_id();
+                let commit = repo.find_commit(oid).ok();
+                let author = commit
+                    .as_ref()
+                    .map(|c| c.author().name().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                let email = commit
+                    .as_ref()
+                    .map(|c| c.author().email().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                let timestamp = commit
+                    .as_ref()
+                    .map(|c| c.time().seconds())
+                    .unwrap_or(0);
+                let summary = commit
+                    .as_ref()
+                    .and_then(|c| c.summary().map(String::from))
+                    .unwrap_or_default();
+                let short = oid.to_string()[..7].to_string();
+                let start = hunk.final_start_line();
+                for i in 0..hunk.lines_in_hunk() {
+                    let line_no = (start + i) as u32;
+                    let content_str = content_lines
+                        .get((line_no - 1) as usize)
+                        .copied()
+                        .unwrap_or("")
+                        .to_string();
+                    out.push(BlameLine {
+                        line_no,
+                        oid: oid.to_string(),
+                        short_oid: short.clone(),
+                        author: author.clone(),
+                        email: email.clone(),
+                        timestamp,
+                        summary: summary.clone(),
+                        content: content_str,
+                    });
+                }
+            }
+            out.sort_by_key(|l| l.line_no);
+            Ok(out)
         })
     }
 }

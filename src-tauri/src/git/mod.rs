@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
 use types::{
-    BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
-    RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode,
-    StashInfo, StashSaveOptions, TagInfo, TagTarget,
+    BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff,
+    FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId, RepoState,
+    ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
 };
 
 pub trait GitBackend: Send + Sync {
@@ -27,6 +27,7 @@ pub trait GitBackend: Send + Sync {
         path: &Path,
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>>;
+    fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>>;
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff>;
     fn diff_commits(
