@@ -15,7 +15,6 @@ import {
   PGResizeHandle,
   PGTextarea,
   fileMenuItems,
-  pgFlash,
   useContextMenu,
   usePaneWidth,
   type DiffLineData,
@@ -321,8 +320,20 @@ export function CommitPanelScreen() {
                 lines={h.lines.map(toUiLine)}
                 expanded={true}
                 staged={selected?.side === "staged"}
-                onStage={() => pgFlash("stage hunk is not wired up yet")}
-                onDiscard={() => pgFlash("discard hunk is not wired up yet")}
+                onStage={() => {
+                  if (!selected) return;
+                  if (selected.side === "staged") {
+                    useRepoStore.getState().unstageHunk(selected.path, i);
+                  } else {
+                    useRepoStore.getState().stageHunk(selected.path, i);
+                  }
+                }}
+                onDiscard={() => {
+                  if (!selected) return;
+                  if (window.confirm("Discard this hunk? The change will be lost.")) {
+                    useRepoStore.getState().discardHunk(selected.path, i);
+                  }
+                }}
               />
             ))}
         </div>

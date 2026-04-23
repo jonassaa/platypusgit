@@ -331,6 +331,16 @@ export function RepoBrowserScreen() {
                   lines={h.lines.map(toUiLine)}
                   expanded={true}
                   staged={false}
+                  onStage={() => {
+                    if (!selectedFile) return;
+                    useRepoStore.getState().stageHunk(selectedFile.path, i);
+                  }}
+                  onDiscard={() => {
+                    if (!selectedFile) return;
+                    if (window.confirm("Discard this hunk? The change will be lost.")) {
+                      useRepoStore.getState().discardHunk(selectedFile.path, i);
+                    }
+                  }}
                 />
               ))}
             {selectedFile && !diffLoading && diff?.binary && (
