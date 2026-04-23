@@ -812,7 +812,10 @@ export function fileMenuItems(
       icon: "edit",
       label: "Stage hunks…",
       disabled: staged,
-      onClick: () => pgFlash("hunk picker"),
+      onClick: () => {
+        if (!path) return;
+        useNavStore.getState().setIntent({ kind: "diff-file", path });
+      },
     },
     { divider: true },
     {
