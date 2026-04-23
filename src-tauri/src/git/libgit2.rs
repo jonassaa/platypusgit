@@ -1716,16 +1716,6 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-    fn pull(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-    fn push(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-
     fn repo_state(&self, repo_id: &RepoId) -> AppResult<RepoState> {
         self.with_repo(repo_id, |repo| {
             use git2::RepositoryState as RS;

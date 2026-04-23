@@ -188,15 +188,6 @@ impl GitBackend for CliBackend {
     fn rebase_status(&self, _repo_id: &RepoId) -> AppResult<RebaseStatus> {
         Err(AppError::NotImplemented)
     }
-    fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-    fn pull(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
-    fn push(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
-        Err(AppError::NotImplemented)
-    }
     fn read_reflog(&self, _repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>> {
         Err(AppError::NotImplemented)
     }
