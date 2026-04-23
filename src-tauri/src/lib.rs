@@ -69,6 +69,7 @@ pub fn run() {
             commands::conflict::mark_resolved,
             commands::conflict::abort_operation,
             commands::conflict::continue_operation,
+            commands::conflict::run_mergetool,
             commands::rebase::rebase_start,
             commands::rebase::rebase_continue,
             commands::rebase::rebase_abort,
