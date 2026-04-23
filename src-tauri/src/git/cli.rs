@@ -5,8 +5,8 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
-        RebaseStatus, RebaseStep, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo,
-        StashSaveOptions, TagInfo, TagTarget,
+        RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId, RepoState,
+        ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -173,6 +173,9 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn push(&self, _repo_id: &RepoId, _remote: &str, _branch: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn read_reflog(&self, _repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>> {
         Err(AppError::NotImplemented)
     }
 }

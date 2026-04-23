@@ -14,9 +14,9 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind, DiffLine,
-        DiffLineKind, FileDiff, FileStatus, RebaseAction, RebaseStatus, RebaseStep, RemoteInfo,
-        RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag, TagInfo,
-        TagTarget,
+        DiffLineKind, FileDiff, FileStatus, RebaseAction, RebaseStatus, RebaseStep, ReflogEntry,
+        ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
+        StatusFlag, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -463,6 +463,30 @@ fn collect_ref_map(repo: &Repository) -> Vec<(git2::Oid, String)> {
         }
     }
     out
+}
+
+fn parse_reflog_op(raw_message: &str) -> (ReflogOp, String) {
+    // Reflog messages look like "commit: fix bar", "checkout: moving from X to Y",
+    // "reset: moving to HEAD~1", "pull: Fast-forward", etc. If there's no ':' at all
+    // we treat the whole string as Other with an empty trailing message.
+    let Some((prefix, rest)) = raw_message.split_once(':') else {
+        return (ReflogOp::Other(raw_message.trim().to_string()), String::new());
+    };
+    let prefix = prefix.trim();
+    let rest = rest.trim().to_string();
+    let op = match prefix {
+        "commit" => ReflogOp::Commit,
+        "commit (amend)" => ReflogOp::Amend,
+        "reset" => ReflogOp::Reset,
+        "checkout" => ReflogOp::Checkout,
+        "merge" => ReflogOp::Merge,
+        "rebase" | "rebase -i" | "rebase (start)" | "rebase (finish)"
+        | "rebase (pick)" | "rebase (continue)" => ReflogOp::Rebase,
+        "pull" => ReflogOp::Pull,
+        "clone" => ReflogOp::Clone,
+        other => ReflogOp::Other(other.to_string()),
+    };
+    (op, rest)
 }
 
 fn accept_side(
@@ -1516,6 +1540,30 @@ impl GitBackend for Libgit2Backend {
                 pause_reason: None,
             }),
         }
+    }
+
+    fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>> {
+        self.with_repo(repo_id, |repo| {
+            let reflog = match repo.reflog("HEAD") {
+                Ok(r) => r,
+                Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(Vec::new()),
+                Err(e) => return Err(e.into()),
+            };
+            let mut out = Vec::with_capacity(reflog.len());
+            for entry in reflog.iter() {
+                let oid = entry.id_new();
+                let raw_msg = entry.message().unwrap_or("");
+                let (op, message) = parse_reflog_op(raw_msg);
+                out.push(ReflogEntry {
+                    oid: oid.to_string(),
+                    short_oid: oid.to_string()[..7].to_string(),
+                    message,
+                    op,
+                    timestamp: entry.committer().when().seconds(),
+                });
+            }
+            Ok(out)
+        })
     }
 
     fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {

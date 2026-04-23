@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use crate::error::AppResult;
 use types::{
     BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
-    RebaseStatus, RebaseStep, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo,
-    StashSaveOptions, TagInfo, TagTarget,
+    RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode,
+    StashInfo, StashSaveOptions, TagInfo, TagTarget,
 };
 
 pub trait GitBackend: Send + Sync {
@@ -20,6 +20,7 @@ pub trait GitBackend: Send + Sync {
     /// can browse the whole worktree (ignored files are still excluded).
     fn list_all_files(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>>;
+    fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>>;
