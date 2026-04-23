@@ -7,10 +7,18 @@ import {
   PGToolbar,
   PGSpinner,
 } from "@/design";
-import { useReflogStore } from "@/features/reflog/useReflogStore";
+import {
+  useReflogStore,
+  type ReflogActionChoice,
+} from "@/features/reflog/useReflogStore";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { ReflogActionDialog } from "@/features/reflog/ReflogActionDialog";
+import {
+  DirtyTreeDialog,
+  type DirtyChoice,
+} from "@/features/reflog/DirtyTreeDialog";
 import { relativeTime } from "@/lib/derive";
-import type { FileDiff, ReflogEntry, ReflogOp } from "@/lib/types";
+import type { FileDiff, ReflogOp } from "@/lib/types";
 
 function opLabel(op: ReflogOp): string {
   switch (op.kind) {
@@ -37,6 +45,7 @@ function opLabel(op: ReflogOp): string {
 
 export function ReflogScreen() {
   const repo = useRepoStore((s) => s.current);
+  const status = useRepoStore((s) => s.status);
   const entries = useReflogStore((s) => s.entries);
   const selectedOid = useReflogStore((s) => s.selectedOid);
   const previewDiff = useReflogStore((s) => s.previewDiff);
@@ -44,13 +53,82 @@ export function ReflogScreen() {
   const loading = useReflogStore((s) => s.loading);
   const loadReflog = useReflogStore((s) => s.loadReflog);
   const selectEntry = useReflogStore((s) => s.selectEntry);
+  const resetBranchTo = useReflogStore((s) => s.resetBranchTo);
+  const checkoutAt = useReflogStore((s) => s.checkoutAt);
+  const createBranchAt = useReflogStore((s) => s.createBranchAt);
+  const stashAndThen = useReflogStore((s) => s.stashAndThen);
+  const discardAndThen = useReflogStore((s) => s.discardAndThen);
+  const rememberedAction = useReflogStore((s) => s.rememberedAction);
+
+  const [actionOpen, setActionOpen] = React.useState(false);
+  const [dirtyOpen, setDirtyOpen] = React.useState(false);
+  const pendingActionRef = React.useRef<(() => Promise<void>) | null>(null);
 
   React.useEffect(() => {
     if (repo) void loadReflog();
   }, [repo, loadReflog]);
 
-  const selectedEntry: ReflogEntry | null =
-    entries.find((e) => e.oid === selectedOid) ?? null;
+  const selectedEntry = entries.find((e) => e.oid === selectedOid) ?? null;
+
+  function makeActionRunner(
+    oid: string,
+    choice: ReflogActionChoice,
+    branchName?: string,
+  ): () => Promise<void> {
+    if (choice === "reset") return () => resetBranchTo(oid);
+    if (choice === "checkout") return () => checkoutAt(oid);
+    return () => createBranchAt(oid, branchName ?? "");
+  }
+
+  function treeIsDirty(): boolean {
+    return status.some(
+      (s) =>
+        s.worktree.kind !== "Unmodified" || s.index.kind !== "Unmodified",
+    );
+  }
+
+  async function runOrPromptDirty(action: () => Promise<void>) {
+    if (!treeIsDirty()) {
+      await action();
+      return;
+    }
+    pendingActionRef.current = action;
+    setDirtyOpen(true);
+  }
+
+  async function handleActionResolve(
+    choice: ReflogActionChoice,
+    branchName?: string,
+  ) {
+    setActionOpen(false);
+    if (!selectedEntry) return;
+    const run = makeActionRunner(selectedEntry.oid, choice, branchName);
+    await runOrPromptDirty(run);
+  }
+
+  async function handleDirtyResolve(choice: DirtyChoice) {
+    setDirtyOpen(false);
+    const action = pendingActionRef.current;
+    pendingActionRef.current = null;
+    if (!action) return;
+    if (choice === "cancel" || choice === "commit-first") return;
+    if (choice === "stash") {
+      await stashAndThen(action);
+    } else if (choice === "discard") {
+      await discardAndThen(action);
+    }
+  }
+
+  function openActionDialog() {
+    if (!selectedEntry) return;
+    // Short-circuit if a non-branch choice is remembered (branch still needs a name).
+    if (rememberedAction && rememberedAction !== "branch") {
+      const run = makeActionRunner(selectedEntry.oid, rememberedAction);
+      void runOrPromptDirty(run);
+      return;
+    }
+    setActionOpen(true);
+  }
 
   if (!repo) {
     return (
@@ -141,7 +219,7 @@ export function ReflogScreen() {
                   {new Date(selectedEntry.timestamp * 1000).toLocaleString()}
                 </div>
               </div>
-              <PGButton disabled title="Wired up in task 14" onClick={() => {}}>
+              <PGButton variant="primary" onClick={openActionDialog}>
                 Go to this point
               </PGButton>
               <div style={{ marginTop: 16 }}>
@@ -154,6 +232,17 @@ export function ReflogScreen() {
           )}
         </div>
       </div>
+
+      {actionOpen && selectedEntry && (
+        <ReflogActionDialog
+          entry={selectedEntry}
+          onResolve={(choice, name) => void handleActionResolve(choice, name)}
+          onCancel={() => setActionOpen(false)}
+        />
+      )}
+      {dirtyOpen && (
+        <DirtyTreeDialog onResolve={(c) => void handleDirtyResolve(c)} />
+      )}
     </div>
   );
 }
