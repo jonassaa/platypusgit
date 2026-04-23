@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -14,20 +14,31 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind, DiffLine,
-        DiffLineKind, FileDiff, FileStatus, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode,
-        StashInfo, StashSaveOptions, StatusFlag, TagInfo, TagTarget,
+        DiffLineKind, FileDiff, FileStatus, RebaseAction, RebaseStatus, RebaseStep, RemoteInfo,
+        RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag, TagInfo,
+        TagTarget,
     },
     GitBackend,
 };
 
+/// In-memory state for a running interactive rebase on a given repo.
+pub struct RebaseState {
+    pub plan: VecDeque<RebaseStep>,
+    pub total: usize,
+    pub completed: usize,
+    pub pause_reason: Option<String>,
+}
+
 pub struct Libgit2Backend {
     repos: Mutex<HashMap<RepoId, Mutex<Repository>>>,
+    rebases: Mutex<HashMap<RepoId, RebaseState>>,
 }
 
 impl Libgit2Backend {
     pub fn new() -> Self {
         Self {
             repos: Mutex::new(HashMap::new()),
+            rebases: Mutex::new(HashMap::new()),
         }
     }
 
@@ -69,6 +80,202 @@ impl Libgit2Backend {
 impl Default for Libgit2Backend {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ─── Interactive rebase helpers ───────────────────────────────────────────────
+
+impl Libgit2Backend {
+    /// Cherry-pick `oid` onto the current HEAD without the libgit2-level commit
+    /// (we build our own commit so we can control the message, tree, etc.).
+    /// Returns Ok(true) on a clean apply; Ok(false) when the pick produced
+    /// conflicts (the worktree is left dirty so the user can resolve them).
+    fn pick_onto_head(&self, repo_id: &RepoId, oid: &str) -> AppResult<bool> {
+        self.with_repo(repo_id, |repo| {
+            let target = repo
+                .revparse_single(oid)
+                .map_err(|_| AppError::InvalidRef(oid.to_string()))?
+                .peel_to_commit()?;
+            // Apply the diff into the index + worktree.
+            repo.cherrypick(&target, None)?;
+
+            let statuses = repo.statuses(None)?;
+            if statuses.iter().any(|s| s.status().is_conflicted()) {
+                return Ok(false);
+            }
+
+            // Build the commit, preserving the original author.
+            let sig = crate::git::signature::default_signature(repo)?;
+            let mut index = repo.index()?;
+            let tree_oid = index.write_tree()?;
+            let tree = repo.find_tree(tree_oid)?;
+            let head_commit = repo.head()?.peel_to_commit()?;
+            let author = target.author();
+            repo.commit(
+                Some("HEAD"),
+                &author,
+                &sig,
+                target.message().unwrap_or(""),
+                &tree,
+                &[&head_commit],
+            )?;
+            repo.cleanup_state()?;
+            Ok(true)
+        })
+    }
+
+    fn bump_completed(&self, repo_id: &RepoId) -> AppResult<()> {
+        let mut rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        if let Some(state) = rebases.get_mut(repo_id) {
+            state.completed += 1;
+        }
+        Ok(())
+    }
+
+    fn push_front(&self, repo_id: &RepoId, step: RebaseStep) -> AppResult<()> {
+        let mut rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        if let Some(state) = rebases.get_mut(repo_id) {
+            state.plan.push_front(step);
+        }
+        Ok(())
+    }
+
+    fn mark_paused(&self, repo_id: &RepoId, reason: &str) -> AppResult<RebaseStatus> {
+        let mut rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        if let Some(state) = rebases.get_mut(repo_id) {
+            state.pause_reason = Some(reason.into());
+        }
+        drop(rebases);
+        self.rebase_status(repo_id)
+    }
+
+    /// The main execution loop: pops steps off the front of the plan and
+    /// applies them until either (a) the plan is exhausted, or (b) a step
+    /// pauses execution (conflict / edit).
+    fn advance_rebase(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
+        loop {
+            // Take the next step.
+            let step_opt = {
+                let mut rebases = self
+                    .rebases
+                    .lock()
+                    .map_err(|e| AppError::Internal(e.to_string()))?;
+                let state = match rebases.get_mut(repo_id) {
+                    Some(s) => s,
+                    None => {
+                        return Err(AppError::InvalidRef("no rebase in progress".into()))
+                    }
+                };
+                state.pause_reason = None;
+                state.plan.pop_front()
+            };
+
+            let Some(step) = step_opt else {
+                // Plan exhausted — rebase complete.
+                return self.rebase_status(repo_id);
+            };
+
+            match step.action {
+                RebaseAction::Drop => {
+                    self.bump_completed(repo_id)?;
+                    continue;
+                }
+
+                RebaseAction::Pick => {
+                    if !self.pick_onto_head(repo_id, &step.oid)? {
+                        self.push_front(repo_id, step)?;
+                        return self.mark_paused(repo_id, "conflict");
+                    }
+                    self.bump_completed(repo_id)?;
+                }
+
+                RebaseAction::Reword => {
+                    if !self.pick_onto_head(repo_id, &step.oid)? {
+                        self.push_front(repo_id, step)?;
+                        return self.mark_paused(repo_id, "conflict");
+                    }
+                    let new_msg = step.message.clone().unwrap_or_default();
+                    self.with_repo(repo_id, |repo| {
+                        let sig = crate::git::signature::default_signature(repo)?;
+                        let head = repo.head()?.peel_to_commit()?;
+                        head.amend(
+                            Some("HEAD"),
+                            None,
+                            Some(&sig),
+                            None,
+                            Some(&new_msg),
+                            None,
+                        )?;
+                        Ok(())
+                    })?;
+                    self.bump_completed(repo_id)?;
+                }
+
+                RebaseAction::Edit => {
+                    if !self.pick_onto_head(repo_id, &step.oid)? {
+                        self.push_front(repo_id, step)?;
+                        return self.mark_paused(repo_id, "conflict");
+                    }
+                    self.bump_completed(repo_id)?;
+                    return self.mark_paused(repo_id, "edit");
+                }
+
+                RebaseAction::Squash | RebaseAction::Fixup => {
+                    let is_fixup = matches!(step.action, RebaseAction::Fixup);
+
+                    if !self.pick_onto_head(repo_id, &step.oid)? {
+                        self.push_front(repo_id, step)?;
+                        return self.mark_paused(repo_id, "conflict");
+                    }
+
+                    self.with_repo(repo_id, |repo| {
+                        let sig = crate::git::signature::default_signature(repo)?;
+                        let head = repo.head()?.peel_to_commit()?;
+                        // head's parent is the previous commit in the new history.
+                        let prev = head.parent(0)?;
+
+                        let new_msg = if is_fixup {
+                            prev.message().unwrap_or("").to_string()
+                        } else {
+                            step.message.clone().unwrap_or_else(|| {
+                                format!(
+                                    "{}\n\n{}",
+                                    prev.message().unwrap_or(""),
+                                    head.message().unwrap_or(""),
+                                )
+                            })
+                        };
+
+                        // New commit parents are prev's parents (i.e. we squash head into prev).
+                        let grandparents: Vec<git2::Commit> = (0..prev.parent_count())
+                            .filter_map(|i| prev.parent(i).ok())
+                            .collect();
+                        let gp_refs: Vec<&git2::Commit> = grandparents.iter().collect();
+
+                        let tree = head.tree()?;
+                        let new_oid =
+                            repo.commit(None, &sig, &sig, &new_msg, &tree, &gp_refs)?;
+                        let new_commit = repo.find_commit(new_oid)?;
+                        repo.reset(
+                            new_commit.as_object(),
+                            git2::ResetType::Hard,
+                            None,
+                        )?;
+                        Ok(())
+                    })?;
+                    self.bump_completed(repo_id)?;
+                }
+            }
+        }
     }
 }
 
@@ -1171,6 +1378,119 @@ impl GitBackend for Libgit2Backend {
             return Err(AppError::Network(format!("prune failed: {}", stderr)));
         }
         Ok(())
+    }
+
+    fn rebase_start(&self, repo_id: &RepoId, plan: Vec<RebaseStep>) -> AppResult<RebaseStatus> {
+        if plan.is_empty() {
+            return Err(AppError::InvalidRef("empty rebase plan".into()));
+        }
+
+        // Find the first non-Drop step — we need its parent as the new base.
+        let first_step = plan
+            .iter()
+            .find(|s| s.action != RebaseAction::Drop)
+            .ok_or_else(|| AppError::InvalidRef("rebase plan contains only drops".into()))?;
+        let first_oid_str = first_step.oid.clone();
+
+        // Verify worktree is clean and reset HEAD to the parent of the first commit.
+        self.with_repo(repo_id, |repo| {
+            let statuses = repo.statuses(None)?;
+            if statuses.iter().any(|s| {
+                let b = s.status();
+                b.is_wt_modified()
+                    || b.is_index_modified()
+                    || b.is_conflicted()
+                    || b.is_wt_deleted()
+                    || b.is_index_deleted()
+                    || b.is_wt_new()
+            }) {
+                return Err(AppError::DirtyWorktree(
+                    "commit or stash before rebasing".into(),
+                ));
+            }
+
+            let first_commit = repo
+                .revparse_single(&first_oid_str)
+                .map_err(|_| AppError::InvalidRef(first_oid_str.clone()))?
+                .peel_to_commit()?;
+            let parent = first_commit.parent(0).map_err(|_| {
+                AppError::InvalidRef("first rebase commit has no parent".into())
+            })?;
+            repo.reset(parent.as_object(), git2::ResetType::Hard, None)?;
+            Ok(())
+        })?;
+
+        let total = plan.len();
+        let mut rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        rebases.insert(
+            repo_id.clone(),
+            RebaseState {
+                plan: plan.into_iter().collect(),
+                total,
+                completed: 0,
+                pause_reason: None,
+            },
+        );
+        drop(rebases);
+
+        self.advance_rebase(repo_id)
+    }
+
+    fn rebase_continue(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
+        // Verify no unresolved conflicts remain.
+        self.with_repo(repo_id, |repo| {
+            let statuses = repo.statuses(None)?;
+            if statuses.iter().any(|s| s.status().is_conflicted()) {
+                return Err(AppError::ConflictsDetected(
+                    "unresolved conflicts — resolve before continuing rebase".into(),
+                ));
+            }
+            Ok(())
+        })?;
+        self.advance_rebase(repo_id)
+    }
+
+    fn rebase_abort(&self, repo_id: &RepoId) -> AppResult<()> {
+        // Drop in-memory state.
+        let mut rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        rebases.remove(repo_id);
+        drop(rebases);
+
+        self.with_repo(repo_id, |repo| {
+            repo.cleanup_state()?;
+            if let Ok(head) = repo.head() {
+                let head_commit = head.peel_to_commit()?;
+                repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn rebase_status(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
+        let rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        match rebases.get(repo_id) {
+            Some(state) => Ok(RebaseStatus {
+                in_progress: state.completed < state.total || state.pause_reason.is_some(),
+                next_index: state.completed,
+                total: state.total,
+                pause_reason: state.pause_reason.clone(),
+            }),
+            None => Ok(RebaseStatus {
+                in_progress: false,
+                next_index: 0,
+                total: 0,
+                pause_reason: None,
+            }),
+        }
     }
 
     fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {

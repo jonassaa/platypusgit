@@ -59,6 +59,10 @@ pub fn run() {
             commands::conflict::mark_resolved,
             commands::conflict::abort_operation,
             commands::conflict::continue_operation,
+            commands::rebase::rebase_start,
+            commands::rebase::rebase_continue,
+            commands::rebase::rebase_abort,
+            commands::rebase::rebase_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

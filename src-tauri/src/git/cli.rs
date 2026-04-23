@@ -5,8 +5,8 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
-        RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo,
-        TagTarget,
+        RebaseStatus, RebaseStep, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo,
+        StashSaveOptions, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -149,6 +149,18 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn continue_operation(&self, _repo_id: &RepoId) -> AppResult<String> {
+        Err(AppError::NotImplemented)
+    }
+    fn rebase_start(&self, _repo_id: &RepoId, _plan: Vec<RebaseStep>) -> AppResult<RebaseStatus> {
+        Err(AppError::NotImplemented)
+    }
+    fn rebase_continue(&self, _repo_id: &RepoId) -> AppResult<RebaseStatus> {
+        Err(AppError::NotImplemented)
+    }
+    fn rebase_abort(&self, _repo_id: &RepoId) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn rebase_status(&self, _repo_id: &RepoId) -> AppResult<RebaseStatus> {
         Err(AppError::NotImplemented)
     }
     fn fetch(&self, _repo_id: &RepoId, _remote: &str) -> AppResult<()> {

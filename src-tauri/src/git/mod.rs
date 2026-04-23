@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use crate::error::AppResult;
 use types::{
     BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff, FileStatus,
-    RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo,
-    TagTarget,
+    RebaseStatus, RebaseStep, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo,
+    StashSaveOptions, TagInfo, TagTarget,
 };
 
 pub trait GitBackend: Send + Sync {
@@ -85,6 +85,12 @@ pub trait GitBackend: Send + Sync {
     /// Create the merge/cherry-pick/revert commit after all conflicts are resolved.
     /// Returns the new commit OID.
     fn continue_operation(&self, repo_id: &RepoId) -> AppResult<String>;
+
+    // === interactive rebase ===
+    fn rebase_start(&self, repo_id: &RepoId, plan: Vec<RebaseStep>) -> AppResult<RebaseStatus>;
+    fn rebase_continue(&self, repo_id: &RepoId) -> AppResult<RebaseStatus>;
+    fn rebase_abort(&self, repo_id: &RepoId) -> AppResult<()>;
+    fn rebase_status(&self, repo_id: &RepoId) -> AppResult<RebaseStatus>;
 
     // === network (shells out to git CLI via Tauri commands) ===
     fn fetch(&self, repo_id: &RepoId, remote: &str) -> AppResult<()>;

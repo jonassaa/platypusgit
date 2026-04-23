@@ -203,6 +203,40 @@ pub struct ConflictSides {
     pub binary: bool,
 }
 
+// ─── Interactive rebase ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RebaseAction {
+    Pick,
+    Reword,
+    Edit,
+    Squash,
+    Fixup,
+    Drop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseStep {
+    /// Commit to operate on (full OID from the log).
+    pub oid: String,
+    pub action: RebaseAction,
+    /// New message for reword / squash. Ignored for other actions.
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseStatus {
+    /// True when a rebase is in progress.
+    pub in_progress: bool,
+    /// Zero-based index of the next step to process (equals total when done).
+    pub next_index: usize,
+    pub total: usize,
+    /// "conflict" | "edit" | "ok" — only meaningful when in_progress is true.
+    pub pause_reason: Option<String>,
+}
+
 /// How to integrate fetched changes during a pull.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PullMode {
