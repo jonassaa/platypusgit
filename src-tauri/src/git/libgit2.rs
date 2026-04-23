@@ -828,10 +828,8 @@ impl GitBackend for Libgit2Backend {
         to_oid: &str,
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
-            let from = git2::Oid::from_str(from_oid)
-                .map_err(|e| AppError::InvalidRef(e.message().to_string()))?;
-            let to = git2::Oid::from_str(to_oid)
-                .map_err(|e| AppError::InvalidRef(e.message().to_string()))?;
+            let from = repo.revparse_single(from_oid)?.peel_to_commit()?.id();
+            let to = repo.revparse_single(to_oid)?.peel_to_commit()?.id();
             let from_tree = repo.find_commit(from)?.tree()?;
             let to_tree = repo.find_commit(to)?.tree()?;
 
@@ -1879,7 +1877,7 @@ impl GitBackend for Libgit2Backend {
                     Err(e.into())
                 }
             })?;
-            revwalk.set_sorting(git2::Sort::TIME)?;
+            revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
 
             let mut out = Vec::with_capacity(limit);
             for oid_res in revwalk {
