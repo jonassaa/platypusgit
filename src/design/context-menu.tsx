@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { PGIcon, type IconName } from "./icons";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 
 export interface ContextMenuItem {
   label?: ReactNode;
@@ -378,7 +379,19 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "rebase",
       label: "Interactive rebase from here",
-      onClick: () => pgFlash(`rebase -i ${sha}^`),
+      onClick: () => {
+        if (!commit?.sha) return;
+        const commits = useRepoStore.getState().commits;
+        // "Rebase -i from here" means: rebase commits newer than target's parent.
+        // The parent of `commit.sha` in our newest-first commits list is the
+        // entry at `index + 1`.
+        const idx = commits.findIndex((c) => c.oid === commit.sha);
+        const base = commits[idx + 1]?.oid;
+        if (!base) return;
+        const plan = buildRebasePlan(commits, base, { kind: "edit-from" });
+        if (!plan || plan.length === 0) return;
+        useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
+      },
     },
     { divider: true },
     {
