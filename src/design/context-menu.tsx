@@ -418,7 +418,7 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     },
     {
       icon: "fix",
-      label: "Fixup into this commit…",
+      label: "Fixup this commit into its parent",
       onClick: () => {
         if (!commit?.sha) return;
         const commits = useRepoStore.getState().commits;
@@ -435,7 +435,7 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     },
     {
       icon: "squash",
-      label: "Squash into this commit…",
+      label: "Squash this commit into its parent",
       onClick: () => {
         if (!commit?.sha) return;
         const msg = window.prompt("New commit message for squashed commit");
@@ -456,7 +456,7 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     { divider: true },
     {
       icon: "diff",
-      label: "Compare with working tree",
+      label: "Compare with HEAD",
       onClick: () => {
         if (!commit?.sha) return;
         useNavStore.getState().setIntent({ kind: "commit-vs-wt", oid: commit.sha });
