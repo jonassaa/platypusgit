@@ -329,7 +329,11 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       icon: "check",
       label: "Check out this commit",
       shortcut: "⌘⇧C",
-      onClick: () => pgFlash(`checked out ${sha} (detached)`),
+      onClick: () => {
+        if (!commit?.sha) return;
+        if (window.confirm(`Check out ${sha} in detached HEAD?`))
+          useRepoStore.getState().checkoutRef(commit.sha);
+      },
     },
     {
       icon: "branch",
