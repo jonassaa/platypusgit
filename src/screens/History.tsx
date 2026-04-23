@@ -15,12 +15,10 @@ import {
   commitMenuItems,
   useContextMenu,
   usePaneWidth,
-  type GraphLane,
-  type GraphNode,
 } from "@/design";
+import { layoutGraph } from "@/features/commits/graphLayout";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch, mapCommitRefs, relativeTime, shortSha } from "@/lib/derive";
-import type { CommitInfo } from "@/lib/types";
 
 export function HistoryScreen() {
   const commits = useRepoStore((s) => s.commits);
@@ -55,39 +53,7 @@ export function HistoryScreen() {
     );
   }, [commits, filter]);
 
-  /**
-   * Very simple graph renderer: everything on col 0, merge commits get a
-   * small diagonal hint. A real multi-lane layout is a follow-up.
-   */
-  const buildLanes = (
-    c: CommitInfo,
-    i: number,
-    arr: CommitInfo[],
-  ): { lanes: GraphLane[]; node: GraphNode } => {
-    const lanes: GraphLane[] = [];
-    lanes.push({
-      col: 0,
-      color: "var(--graph-1)",
-      kind:
-        i === 0
-          ? "half-bot"
-          : i === arr.length - 1
-            ? "half-top"
-            : "line",
-    });
-    if (c.parents.length > 1) {
-      lanes.push({ col: 1, to: 0, color: "var(--graph-2)", kind: "diag" });
-    }
-    return {
-      lanes,
-      node: {
-        col: 0,
-        color: "var(--graph-1)",
-        solid: c.parents.length <= 1,
-        merge: c.parents.length > 1,
-      },
-    };
-  };
+  const rows = React.useMemo(() => layoutGraph(visible), [visible]);
 
   if (!commits.length) {
     return (
@@ -150,12 +116,12 @@ export function HistoryScreen() {
           </div>
           <div style={{ flex: 1, overflow: "auto" }}>
             {visible.map((c, i) => {
-              const g = buildLanes(c, i, visible);
+              const g = rows[i];
               return (
                 <PGCommitRow
                   key={c.oid}
-                  lanes={g.lanes}
-                  node={g.node}
+                  lanes={g?.lanes}
+                  node={g?.node}
                   sha={c.shortOid}
                   message={c.summary}
                   author={c.author || "unknown"}
