@@ -12,7 +12,13 @@ interface Props {
 }
 
 export function ReflogActionDialog({ entry, onResolve, onCancel }: Props) {
-  const headDetached = useRepoStore((s) => s.current?.head === null);
+  const headDetached = useRepoStore((s) => {
+    if (!s.current) return false;
+    // Detached HEAD = no local branch has isHead: true. This is the live-refreshed
+    // view; s.current.head is only set at openRepo time and would go stale after
+    // an in-app detached checkout.
+    return !s.branches.some((b) => b.isHead);
+  });
   const remembered = useReflogStore((s) => s.rememberedAction);
   const rememberAction = useReflogStore((s) => s.rememberAction);
 
