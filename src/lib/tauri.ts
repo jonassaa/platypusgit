@@ -246,6 +246,14 @@ export async function stashDrop(repoId: string, index: number): Promise<void> {
   return invoke<void>("stash_drop", { repoId, index });
 }
 
+export async function stashBranch(
+  repoId: string,
+  index: number,
+  branch: string,
+): Promise<void> {
+  return invoke<void>("stash_branch", { repoId, index, branch });
+}
+
 // ─── Network operations ──────────────────────────────────────────────────────
 
 /** Fetch a single remote, pruning deleted remote refs. */

@@ -57,3 +57,17 @@ pub async fn stash_drop(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+#[tauri::command]
+pub async fn stash_branch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    index: usize,
+    branch: String,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.stash_branch(&repo_id, index, &branch))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}

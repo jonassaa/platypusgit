@@ -59,6 +59,7 @@ pub fn run() {
             commands::stash::stash_apply,
             commands::stash::stash_pop,
             commands::stash::stash_drop,
+            commands::stash::stash_branch,
             commands::conflict::repo_state,
             commands::conflict::conflict_sides,
             commands::conflict::accept_ours,

@@ -61,6 +61,7 @@ import {
   stageHunk,
   stagePaths,
   stashApply,
+  stashBranch as stashBranchFn,
   stashDrop,
   stashPop,
   stashSave,
@@ -118,6 +119,7 @@ interface RepoStoreState {
   stashApply: (index: number) => Promise<void>;
   stashPop: (index: number) => Promise<void>;
   stashDrop: (index: number) => Promise<void>;
+  stashBranch: (index: number, branch: string) => Promise<void>;
   // network
   fetch: (remote: string) => Promise<void>;
   fetchAll: () => Promise<void>;
@@ -522,6 +524,17 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     if (!repo) return;
     try {
       await stashDrop(repo.id, index);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async stashBranch(index, branch) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stashBranchFn(repo.id, index, branch);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });

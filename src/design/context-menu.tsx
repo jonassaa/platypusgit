@@ -834,7 +834,12 @@ export function stashMenuItems(
     {
       icon: "branch",
       label: "Branch from stash…",
-      onClick: () => pgFlash(`branch from ${name}`),
+      onClick: async () => {
+        if (stash?.index == null) return;
+        const branch = window.prompt("Branch name");
+        if (!branch) return;
+        await useRepoStore.getState().stashBranch(stash.index, branch);
+      },
     },
     { divider: true },
     {
