@@ -32,6 +32,14 @@ pub trait GitBackend: Send + Sync {
     fn unstage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
     fn discard(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
 
+    // === hunk-level staging ===
+    /// Stage a single hunk (by index into the WorktreeToIndex diff) for `path`.
+    fn stage_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()>;
+    /// Unstage a single hunk (by index into the IndexToHead diff) for `path`.
+    fn unstage_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()>;
+    /// Discard a single hunk (by index into the WorktreeToIndex diff) for `path`.
+    fn discard_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()>;
+
     // === commit ===
     fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String>;
 

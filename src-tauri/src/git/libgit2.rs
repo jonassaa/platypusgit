@@ -116,6 +116,124 @@ fn map_status_flag(s: Status, side: StatusSide) -> StatusFlag {
     }
 }
 
+// ─── Hunk-level staging helpers ──────────────────────────────────────────────
+
+/// Find which delta index corresponds to `path` inside a diff.
+fn find_delta_index(diff: &git2::Diff, path: &Path) -> AppResult<usize> {
+    for (i, delta) in diff.deltas().enumerate() {
+        if let Some(p) = delta.new_file().path() {
+            if p == path {
+                return Ok(i);
+            }
+        }
+        // Also check old_file path (e.g. for deleted files).
+        if let Some(p) = delta.old_file().path() {
+            if p == path {
+                return Ok(i);
+            }
+        }
+    }
+    Err(AppError::InvalidPath(path.display().to_string()))
+}
+
+/// Build a minimal unified-diff patch string for a single hunk within a diff.
+fn patch_text_for_hunk(diff: &git2::Diff, delta_index: usize, hunk_index: usize) -> AppResult<String> {
+    let patch = git2::Patch::from_diff(diff, delta_index)
+        .map_err(AppError::from)?
+        .ok_or_else(|| AppError::Internal("no patch for delta".into()))?;
+
+    let num_hunks = patch.num_hunks();
+    if hunk_index >= num_hunks {
+        return Err(AppError::InvalidRef(format!(
+            "hunk index {} out of range (file has {} hunks)",
+            hunk_index, num_hunks
+        )));
+    }
+
+    let delta = diff
+        .get_delta(delta_index)
+        .ok_or_else(|| AppError::Internal(format!("delta {} missing", delta_index)))?;
+
+    // Use new_file path preferentially; fall back to old_file for deletions.
+    let path_str = delta
+        .new_file()
+        .path()
+        .or_else(|| delta.old_file().path())
+        .ok_or_else(|| AppError::Internal("delta has no path".into()))?
+        .to_string_lossy()
+        .to_string();
+
+    let (hunk_header, _line_count) = patch.hunk(hunk_index).map_err(AppError::from)?;
+    let header_str = std::str::from_utf8(hunk_header.header())
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let mut out = String::new();
+    out.push_str(&format!("diff --git a/{p} b/{p}\n", p = path_str));
+    out.push_str(&format!("--- a/{}\n", path_str));
+    out.push_str(&format!("+++ b/{}\n", path_str));
+    // hunk header may or may not end with \n
+    out.push_str(header_str);
+    if !header_str.ends_with('\n') {
+        out.push('\n');
+    }
+
+    let line_count = patch.num_lines_in_hunk(hunk_index).map_err(AppError::from)?;
+    for line_i in 0..line_count {
+        let line = patch.line_in_hunk(hunk_index, line_i).map_err(AppError::from)?;
+        let origin = line.origin();
+        // Skip git-internal pseudo-lines (file headers etc.)
+        if !matches!(origin, '+' | '-' | ' ') {
+            continue;
+        }
+        out.push(origin);
+        let content = std::str::from_utf8(line.content())
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        out.push_str(content);
+        // Ensure each line ends with newline (some diffs omit trailing \n).
+        if !content.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+
+    Ok(out)
+}
+
+/// Run `git apply [extra_args...] -` with `patch_text` piped to stdin.
+fn git_apply(repo_path: &Path, extra_args: &[&str], patch_text: &str) -> AppResult<()> {
+    use std::io::Write as _;
+    let mut child = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("apply")
+        .args(extra_args)
+        .arg("--whitespace=nowarn")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Io(e.to_string()))?;
+
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(patch_text.as_bytes())
+        .map_err(|e| AppError::Io(e.to_string()))?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| AppError::Io(e.to_string()))?;
+
+    if !output.status.success() {
+        return Err(AppError::Git(format!(
+            "git apply failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
 /// Map git2's per-ref lookup by target OID. Scans once per log call.
 fn collect_ref_map(repo: &Repository) -> Vec<(git2::Oid, String)> {
     let mut out = Vec::new();
@@ -501,6 +619,82 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
+
+    fn stage_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let mut opts = DiffOptions::new();
+            opts.pathspec(path);
+            opts.context_lines(3);
+            let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
+
+            // Find delta for path, then count hunks via Patch.
+            let delta_idx = find_delta_index(&diff, path)?;
+            let patch = git2::Patch::from_diff(&diff, delta_idx)
+                .map_err(AppError::from)?
+                .ok_or_else(|| AppError::Internal("no patch for delta".into()))?;
+            let num_hunks = patch.num_hunks();
+            // Drop patch before we call apply (apply needs exclusive access to diff).
+            drop(patch);
+
+            if hunk_index >= num_hunks {
+                return Err(AppError::InvalidRef(format!(
+                    "hunk index {} out of range for {} (file has {} hunks)",
+                    hunk_index,
+                    path.display(),
+                    num_hunks,
+                )));
+            }
+
+            // Use ApplyOptions::hunk_callback to apply only the matching hunk.
+            let mut counter: usize = 0;
+            let mut apply_opts = git2::ApplyOptions::new();
+            apply_opts.hunk_callback(move |_h| {
+                let idx = counter;
+                counter += 1;
+                idx == hunk_index
+            });
+
+            repo.apply(&diff, git2::ApplyLocation::Index, Some(&mut apply_opts))?;
+            // apply_opts is dropped here, releasing the closure borrow.
+            Ok(())
+        })
+    }
+
+    fn unstage_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()> {
+        // Build patch text from the IndexToHead diff, then `git apply --cached --reverse`.
+        let patch_text = self.with_repo(repo_id, |repo| {
+            let mut opts = DiffOptions::new();
+            opts.pathspec(path);
+            opts.context_lines(3);
+            let head_tree = match repo.head() {
+                Ok(h) => Some(h.peel_to_tree()?),
+                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+                Err(e) => return Err(e.into()),
+            };
+            let diff = repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?;
+            let delta_index = find_delta_index(&diff, path)?;
+            patch_text_for_hunk(&diff, delta_index, hunk_index)
+        })?;
+
+        let repo_path = self.repo_path(repo_id)?;
+        git_apply(&repo_path, &["--cached", "--reverse"], &patch_text)
+    }
+
+    fn discard_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()> {
+        // Build patch text from the WorktreeToIndex diff, then `git apply --reverse`.
+        let patch_text = self.with_repo(repo_id, |repo| {
+            let mut opts = DiffOptions::new();
+            opts.pathspec(path);
+            opts.context_lines(3);
+            let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
+            let delta_index = find_delta_index(&diff, path)?;
+            patch_text_for_hunk(&diff, delta_index, hunk_index)
+        })?;
+
+        let repo_path = self.repo_path(repo_id)?;
+        git_apply(&repo_path, &["--reverse"], &patch_text)
+    }
+
     fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String> {
         use crate::git::signature::default_signature;
 

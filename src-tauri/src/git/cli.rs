@@ -49,6 +49,15 @@ impl GitBackend for CliBackend {
     fn discard(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn stage_hunk(&self, _repo_id: &RepoId, _path: &Path, _hunk_index: usize) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn unstage_hunk(&self, _repo_id: &RepoId, _path: &Path, _hunk_index: usize) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn discard_hunk(&self, _repo_id: &RepoId, _path: &Path, _hunk_index: usize) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<String> {
         Err(AppError::NotImplemented)
     }
