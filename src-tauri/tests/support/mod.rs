@@ -82,6 +82,61 @@ impl TempRepo {
     }
 }
 
+/// Initiate a merge that conflicts on README.md, returning a TempRepo
+/// with the merge state active. The conflicting branch is `feature`.
+pub fn with_conflicting_merge() -> TempRepo {
+    use self::fs::write_file;
+    use std::path::PathBuf;
+
+    let tr = TempRepo::with_initial_commit("hello\n");
+    {
+        let (backend, handle) = tr.open_with_backend();
+        // feature branch: change README.
+        backend.create_branch(&handle.id, "feature", None).unwrap();
+        backend.checkout_branch(&handle.id, "feature").unwrap();
+        write_file(tr.path(), "README.md", "feature branch content\n");
+        backend.stage(&handle.id, &[PathBuf::from("README.md")]).unwrap();
+        backend
+            .commit(
+                &handle.id,
+                platypusgit_lib::git::types::CommitOptions {
+                    message: "feature change".into(),
+                    amend: false,
+                    author_override: None,
+                },
+            )
+            .unwrap();
+
+        // main: change README differently.
+        backend.checkout_branch(&handle.id, "main").unwrap();
+        write_file(tr.path(), "README.md", "main branch content\n");
+        backend.stage(&handle.id, &[PathBuf::from("README.md")]).unwrap();
+        backend
+            .commit(
+                &handle.id,
+                platypusgit_lib::git::types::CommitOptions {
+                    message: "main change".into(),
+                    amend: false,
+                    author_override: None,
+                },
+            )
+            .unwrap();
+    }
+
+    // Kick off the merge directly via git2 so we end up in the merge
+    // state with README.md conflicted.
+    {
+        let feature_ref = tr.repo.find_reference("refs/heads/feature").unwrap();
+        let annotated = tr.repo.reference_to_annotated_commit(&feature_ref).unwrap();
+        tr.repo
+            .merge(&[&annotated], None, None)
+            .expect("merge should produce conflicts");
+        // annotated and feature_ref are dropped here, releasing borrows on tr.repo.
+    }
+
+    tr
+}
+
 /// A bare git repository in a tempdir — acts as a "remote" for network tests.
 pub struct BareTempRepo {
     pub dir: TempDir,
