@@ -59,6 +59,8 @@ export function ReflogScreen() {
   const stashAndThen = useReflogStore((s) => s.stashAndThen);
   const discardAndThen = useReflogStore((s) => s.discardAndThen);
   const rememberedAction = useReflogStore((s) => s.rememberedAction);
+  const error = useReflogStore((s) => s.error);
+  const clearError = useReflogStore((s) => s.clearError);
 
   const [actionOpen, setActionOpen] = React.useState(false);
   const [dirtyOpen, setDirtyOpen] = React.useState(false);
@@ -147,6 +149,37 @@ export function ReflogScreen() {
         overflow: "hidden",
       }}
     >
+      {error && (
+        <div
+          role="alert"
+          style={{
+            padding: "6px 12px",
+            fontSize: "var(--fs-12)",
+            fontFamily: "var(--font-mono)",
+            color: "var(--git-removed)",
+            background: "oklch(0.68 0.18 25 / 0.1)",
+            borderBottom: "1px solid oklch(0.68 0.18 25 / 0.35)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <strong>{error.kind}:</strong>
+          <span style={{ flex: 1 }}>{error.message ?? error.kind}</span>
+          <button
+            onClick={clearError}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "inherit",
+              cursor: "pointer",
+              fontSize: "var(--fs-11)",
+            }}
+          >
+            dismiss
+          </button>
+        </div>
+      )}
       <PGToolbar
         right={
           <PGIconButton
