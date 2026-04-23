@@ -108,4 +108,9 @@ pub trait GitBackend: Send + Sync {
     fn fetch(&self, repo_id: &RepoId, remote: &str) -> AppResult<()>;
     fn pull(&self, repo_id: &RepoId, remote: &str, branch: &str) -> AppResult<()>;
     fn push(&self, repo_id: &RepoId, remote: &str, branch: &str) -> AppResult<()>;
+
+    // === ignore ===
+    /// Append a pattern to the repo's top-level `.gitignore`, creating the file
+    /// if it doesn't exist. No-op if the pattern is already present on its own line.
+    fn append_gitignore(&self, repo_id: &RepoId, pattern: &str) -> AppResult<()>;
 }

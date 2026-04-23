@@ -1888,4 +1888,26 @@ impl GitBackend for Libgit2Backend {
             Ok(oid.to_string())
         })
     }
+
+    fn append_gitignore(&self, repo_id: &RepoId, pattern: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::Git("bare repo has no worktree".into()))?;
+            let gitignore = workdir.join(".gitignore");
+            let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+            if existing.lines().any(|l| l.trim() == pattern) {
+                return Ok(());
+            }
+            let needs_nl = !existing.is_empty() && !existing.ends_with('\n');
+            let mut next = existing;
+            if needs_nl {
+                next.push('\n');
+            }
+            next.push_str(pattern);
+            next.push('\n');
+            std::fs::write(&gitignore, next)?;
+            Ok(())
+        })
+    }
 }
