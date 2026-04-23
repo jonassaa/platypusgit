@@ -123,3 +123,20 @@ export interface ConflictSides {
   theirs: string | null;
   binary: boolean;
 }
+
+// ─── Interactive rebase ───────────────────────────────────────────────────────
+
+export type RebaseAction = "Pick" | "Reword" | "Edit" | "Squash" | "Fixup" | "Drop";
+
+export interface RebaseStep {
+  oid: string;
+  action: RebaseAction;
+  message: string | null;
+}
+
+export interface RebaseStatus {
+  inProgress: boolean;
+  nextIndex: number;
+  total: number;
+  pauseReason: string | null;
+}

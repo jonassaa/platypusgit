@@ -8,6 +8,8 @@ import type {
   FileStatus,
   PullMode,
   PushForce,
+  RebaseStatus,
+  RebaseStep,
   RemoteInfo,
   RepoHandle,
   RepoState,
@@ -301,4 +303,25 @@ export async function abortOperation(repoId: string): Promise<void> {
 
 export async function continueOperation(repoId: string): Promise<string> {
   return invoke<string>("continue_operation", { repoId });
+}
+
+// ─── Interactive rebase ───────────────────────────────────────────────────────
+
+export async function rebaseStart(
+  repoId: string,
+  plan: RebaseStep[],
+): Promise<RebaseStatus> {
+  return invoke<RebaseStatus>("rebase_start", { repoId, plan });
+}
+
+export async function rebaseContinue(repoId: string): Promise<RebaseStatus> {
+  return invoke<RebaseStatus>("rebase_continue", { repoId });
+}
+
+export async function rebaseAbort(repoId: string): Promise<void> {
+  return invoke<void>("rebase_abort", { repoId });
+}
+
+export async function rebaseStatus(repoId: string): Promise<RebaseStatus> {
+  return invoke<RebaseStatus>("rebase_status", { repoId });
 }

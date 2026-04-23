@@ -3,6 +3,8 @@ import type {
   BranchInfo,
   CommitInfo,
   FileStatus,
+  RebaseStatus,
+  RebaseStep,
   RemoteInfo,
   RepoHandle,
   RepoState as GitRepoState,
@@ -39,6 +41,10 @@ import {
   pruneRemote,
   pull as pullRemote,
   push as pushRemote,
+  rebaseAbort,
+  rebaseContinue as rebaseContinueFn,
+  rebaseStart as rebaseStartFn,
+  rebaseStatus as rebaseStatusFn,
   renameBranch,
   renameRemote,
   reset as resetFn,
@@ -73,6 +79,7 @@ interface RepoStoreState {
   loading: boolean;
   error: AppError | null;
   repoState: GitRepoState;
+  rebaseStatus: RebaseStatus;
   openRepo: (path: string) => Promise<void>;
   refreshAll: () => Promise<void>;
   clearError: () => void;
@@ -114,11 +121,22 @@ interface RepoStoreState {
   markResolved: (paths: string[]) => Promise<void>;
   abortOperation: () => Promise<void>;
   continueOperation: () => Promise<string | null>;
+  // interactive rebase
+  rebaseStart: (plan: RebaseStep[]) => Promise<RebaseStatus | null>;
+  rebaseContinue: () => Promise<RebaseStatus | null>;
+  rebaseAbort: () => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
   return isAppError(e) ? e : { kind: "Internal", message: String(e) };
 }
+
+const DEFAULT_REBASE_STATUS: RebaseStatus = {
+  inProgress: false,
+  nextIndex: 0,
+  total: 0,
+  pauseReason: null,
+};
 
 export const useRepoStore = create<RepoStoreState>((set, get) => ({
   current: null,
@@ -131,6 +149,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
   loading: false,
   error: null,
   repoState: "Clean",
+  rebaseStatus: DEFAULT_REBASE_STATUS,
 
   async openRepo(path) {
     set({ loading: true, error: null });
@@ -157,16 +176,28 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     if (!repo) return;
     set({ loading: true, error: null });
     try {
-      const [status, branches, tags, stashes, remotes, commits, repoState] = await Promise.all([
-        getStatus(repo.id),
-        listBranches(repo.id),
-        listTags(repo.id),
-        listStashes(repo.id),
-        listRemotes(repo.id),
-        getLog(repo.id, 500),
-        repoStateFn(repo.id),
-      ]);
-      set({ status, branches, tags, stashes, remotes, commits, repoState, loading: false });
+      const [status, branches, tags, stashes, remotes, commits, repoState, rebaseStatus] =
+        await Promise.all([
+          getStatus(repo.id),
+          listBranches(repo.id),
+          listTags(repo.id),
+          listStashes(repo.id),
+          listRemotes(repo.id),
+          getLog(repo.id, 500),
+          repoStateFn(repo.id),
+          rebaseStatusFn(repo.id),
+        ]);
+      set({
+        status,
+        branches,
+        tags,
+        stashes,
+        remotes,
+        commits,
+        repoState,
+        rebaseStatus,
+        loading: false,
+      });
     } catch (e) {
       set({ loading: false, error: toAppError(e) });
     }
@@ -567,6 +598,46 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     } catch (e) {
       set({ error: toAppError(e) });
       return null;
+    }
+  },
+
+  async rebaseStart(plan) {
+    const repo = get().current;
+    if (!repo) return null;
+    try {
+      const status = await rebaseStartFn(repo.id, plan);
+      set({ rebaseStatus: status });
+      await get().refreshAll();
+      return status;
+    } catch (e) {
+      set({ error: toAppError(e) });
+      return null;
+    }
+  },
+
+  async rebaseContinue() {
+    const repo = get().current;
+    if (!repo) return null;
+    try {
+      const status = await rebaseContinueFn(repo.id);
+      set({ rebaseStatus: status });
+      await get().refreshAll();
+      return status;
+    } catch (e) {
+      set({ error: toAppError(e) });
+      return null;
+    }
+  },
+
+  async rebaseAbort() {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await rebaseAbort(repo.id);
+      set({ rebaseStatus: DEFAULT_REBASE_STATUS });
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
     }
   },
 }));
