@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="256" height="256" role="img" aria-label="PlatypusGit">
+  <title>PlatypusGit</title>
+  
+  <path d="M 4 8 Q 4 4 12 4 Q 20 4 20 8 L 20 14 Q 20 15 19 15 L 5 15 Q 4 15 4 14 Z" fill="#3E9B91"></path>
+  
+  <path d="M 6 13 L 18 13 Q 19 13 19 14 L 18 19 Q 18 20 17 20 L 7 20 Q 6 20 6 19 L 5 14 Q 5 13 6 13 Z" fill="#E6A95A"></path>
+  
+  <rect x="9.5" y="15.5" width="1.2" height="0.8" rx="0.3" fill="#000" opacity="0.35"></rect>
+  <rect x="13.3" y="15.5" width="1.2" height="0.8" rx="0.3" fill="#000" opacity="0.35"></rect>
+  
+  <circle cx="9" cy="9" r="0.9" fill="#161a1a"></circle>
+  <circle cx="15" cy="9" r="0.9" fill="#161a1a"></circle>
+</svg>
