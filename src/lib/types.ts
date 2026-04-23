@@ -140,3 +140,22 @@ export interface RebaseStatus {
   total: number;
   pauseReason: string | null;
 }
+
+export type ReflogOp =
+  | { kind: "Commit" }
+  | { kind: "Amend" }
+  | { kind: "Reset" }
+  | { kind: "Checkout" }
+  | { kind: "Merge" }
+  | { kind: "Rebase" }
+  | { kind: "Pull" }
+  | { kind: "Clone" }
+  | { kind: "Other"; detail: string };
+
+export interface ReflogEntry {
+  oid: string;
+  shortOid: string;
+  message: string;
+  op: ReflogOp;
+  timestamp: number;
+}

@@ -10,6 +10,7 @@ import type {
   PushForce,
   RebaseStatus,
   RebaseStep,
+  ReflogEntry,
   RemoteInfo,
   RepoHandle,
   RepoState,
@@ -58,6 +59,25 @@ export async function getDiff(
   kind: DiffKind = "WorktreeToIndex",
 ): Promise<FileDiff> {
   return invoke<FileDiff>("get_diff", { repoId, path, kind });
+}
+
+export async function getReflog(repoId: string): Promise<ReflogEntry[]> {
+  return invoke<ReflogEntry[]>("get_reflog", { repoId });
+}
+
+export async function checkoutDetached(
+  repoId: string,
+  oid: string,
+): Promise<void> {
+  return invoke<void>("checkout_detached", { repoId, oid });
+}
+
+export async function diffCommits(
+  repoId: string,
+  fromOid: string,
+  toOid: string,
+): Promise<FileDiff[]> {
+  return invoke<FileDiff[]>("diff_commits", { repoId, fromOid, toOid });
 }
 
 export async function stagePaths(repoId: string, paths: string[]): Promise<void> {
