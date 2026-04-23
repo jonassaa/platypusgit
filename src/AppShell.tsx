@@ -29,6 +29,7 @@ import { ConflictScreen } from "@/screens/Conflict";
 import { RebaseScreen } from "@/screens/Rebase";
 import { RemoteScreen } from "@/screens/Remote";
 import { WelcomeScreen } from "@/screens/Welcome";
+import { ReflogScreen } from "@/screens/Reflog";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { appErrorMessage } from "@/lib/errors";
@@ -58,7 +59,8 @@ type ScreenId =
   | "conflict"
   | "rebase"
   | "remote"
-  | "diff";
+  | "diff"
+  | "reflog";
 
 const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "repo", icon: "folder", label: "Files", shortcut: "⌘1" },
@@ -75,6 +77,7 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "rebase", icon: "rebase", label: "Rebase", shortcut: "⌘6" },
   { id: "remote", icon: "link", label: "Remotes", shortcut: "⌘7" },
   { id: "diff", icon: "fileCode", label: "Diff viewer", shortcut: "⌘8" },
+  { id: "reflog", icon: "clock", label: "Reflog", shortcut: "⌘9" },
 ];
 
 export function AppShell() {
@@ -124,6 +127,7 @@ export function AppShell() {
     conflict: <ConflictScreen />,
     rebase: <RebaseScreen />,
     remote: <RemoteScreen />,
+    reflog: <ReflogScreen />,
   };
 
   return (
