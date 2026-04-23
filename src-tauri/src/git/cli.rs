@@ -126,6 +126,9 @@ impl GitBackend for CliBackend {
     fn stash_drop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn stash_branch(&self, _repo_id: &RepoId, _index: usize, _branch: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn repo_path(&self, _repo_id: &RepoId) -> AppResult<PathBuf> {
         Err(AppError::NotImplemented)
     }

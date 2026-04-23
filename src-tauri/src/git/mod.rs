@@ -72,6 +72,7 @@ pub trait GitBackend: Send + Sync {
     fn stash_apply(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
     fn stash_pop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
     fn stash_drop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
+    fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()>;
 
     // === remote management ===
     fn add_remote(&self, repo_id: &RepoId, name: &str, url: &str) -> AppResult<()>;

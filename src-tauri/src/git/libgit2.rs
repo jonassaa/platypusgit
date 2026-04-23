@@ -1498,6 +1498,42 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
+    fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            let stash_oid = {
+                let mut found = None;
+                repo.stash_foreach(|i, _msg, oid| {
+                    if i == index {
+                        found = Some(*oid);
+                        false
+                    } else {
+                        true
+                    }
+                })?;
+                found.ok_or_else(|| AppError::Git(format!("stash {index} not found")))?
+            };
+            // Extract the base commit OID before any mutable borrows so the
+            // Commit objects (which hold &repo) are dropped before stash_apply.
+            let base_oid = {
+                let stash_commit = repo.find_commit(stash_oid)?;
+                let base_commit = stash_commit.parent(0)?;
+                base_commit.id()
+            };
+            let base_commit = repo.find_commit(base_oid)?;
+            repo.branch(branch, &base_commit, false)?;
+            drop(base_commit);
+
+            let refname = format!("refs/heads/{branch}");
+            repo.set_head(&refname)?;
+            repo.checkout_head(Some(
+                git2::build::CheckoutBuilder::new().force(),
+            ))?;
+
+            repo.stash_apply(index, None)?;
+            repo.stash_drop(index)?;
+            Ok(())
+        })
+    }
     fn repo_path(&self, repo_id: &RepoId) -> AppResult<PathBuf> {
         self.with_repo(repo_id, |repo| {
             repo.workdir()
