@@ -338,7 +338,13 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "branch",
       label: "Create branch from here…",
-      onClick: () => pgFlash(`new branch from ${sha}`),
+      onClick: async () => {
+        if (!commit?.sha) return;
+        const name = window.prompt("New branch name");
+        if (!name) return;
+        await useRepoStore.getState().createBranch(name, commit.sha);
+        await useRepoStore.getState().checkoutBranch(name);
+      },
     },
     {
       icon: "tag",
