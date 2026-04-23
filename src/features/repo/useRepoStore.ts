@@ -19,6 +19,7 @@ import {
   acceptTheirs,
   addRemote,
   appendGitignore as appendGitignoreFn,
+  openInEditor as openInEditorFn,
   checkoutBranch,
   checkoutRef,
   cherryPick,
@@ -143,6 +144,7 @@ interface RepoStoreState {
   rebaseContinue: () => Promise<RebaseStatus | null>;
   rebaseAbort: () => Promise<void>;
   appendGitignore: (pattern: string) => Promise<void>;
+  openInEditor: (relativePath: string) => Promise<void>;
 }
 
 function toAppError(e: unknown): AppError {
@@ -745,6 +747,16 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     try {
       await appendGitignoreFn(repo.id, pattern);
       await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async openInEditor(relativePath) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await openInEditorFn(repo.id, relativePath);
     } catch (e) {
       set({ error: toAppError(e) });
     }

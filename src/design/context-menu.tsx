@@ -785,7 +785,10 @@ export function fileMenuItems(
       icon: "edit",
       label: "Open in editor",
       shortcut: "⌘O",
-      onClick: () => pgFlash(`open ${path}`),
+      onClick: () => {
+        if (!path) return;
+        useRepoStore.getState().openInEditor(path);
+      },
     },
     { divider: true },
     {
@@ -886,7 +889,10 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
     {
       icon: "edit",
       label: "Edit resolution in editor",
-      onClick: () => pgFlash("open editor"),
+      onClick: () => {
+        if (!conflict?.path) return;
+        useRepoStore.getState().openInEditor(conflict.path);
+      },
     },
     {
       icon: "check",

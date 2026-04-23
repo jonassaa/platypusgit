@@ -398,3 +398,10 @@ export async function appendGitignore(
 ): Promise<void> {
   return invoke<void>("append_gitignore", { repoId, pattern });
 }
+
+export async function openInEditor(
+  repoId: string,
+  relativePath: string,
+): Promise<void> {
+  return invoke<void>("open_in_editor", { repoId, relativePath });
+}
