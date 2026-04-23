@@ -2,6 +2,7 @@ import React, { type CSSProperties, type MouseEvent, type ReactNode } from "reac
 import { createPortal } from "react-dom";
 import { PGIcon, type IconName } from "./icons";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useNavStore } from "@/features/nav/useNavStore";
 
 export interface ContextMenuItem {
   label?: ReactNode;
@@ -765,7 +766,10 @@ export function fileMenuItems(
       icon: "diff",
       label: "View diff",
       shortcut: "⏎",
-      onClick: () => pgFlash(`diff ${path}`),
+      onClick: () => {
+        if (!path) return;
+        useNavStore.getState().setIntent({ kind: "diff-file", path });
+      },
     },
     {
       icon: "search",
