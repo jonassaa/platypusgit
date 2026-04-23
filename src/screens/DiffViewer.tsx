@@ -17,6 +17,7 @@ import {
   type SideLine,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useNavStore } from "@/features/nav/useNavStore";
 import { statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
 import type { FileDiff } from "@/lib/types";
@@ -49,6 +50,15 @@ export function DiffViewerScreen() {
   React.useEffect(() => {
     if (!selectedPath && filtered[0]) setSelectedPath(filtered[0].path);
   }, [filtered, selectedPath]);
+
+  const intent = useNavStore((s) => s.intent);
+  const clearIntent = useNavStore((s) => s.clearIntent);
+  React.useEffect(() => {
+    if (intent?.kind === "diff-file") {
+      setSelectedPath(intent.path);
+      clearIntent();
+    }
+  }, [intent, clearIntent]);
 
   const current = status.find((s) => s.path === selectedPath) ?? null;
 
