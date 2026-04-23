@@ -66,6 +66,27 @@ impl TempRepo {
         (backend, handle)
     }
 
+    /// Stage all tracked/new files and make a commit.
+    pub fn commit_all(&self, msg: &str) -> git2::Oid {
+        let repo = git2::Repository::open(self.path()).unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let head = repo
+            .head()
+            .ok()
+            .and_then(|h| h.target())
+            .map(|o| repo.find_commit(o).unwrap());
+        let parents: Vec<&git2::Commit> = head.as_ref().map(|c| vec![c]).unwrap_or_default();
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parents)
+            .unwrap()
+    }
+
     /// Make an additional commit to this repo (useful to get a commit to push).
     pub fn add_commit(&self, filename: &str, contents: &str, message: &str) {
         self::fs::write_file(self.path(), filename, contents);

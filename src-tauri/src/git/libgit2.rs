@@ -668,29 +668,14 @@ impl GitBackend for Libgit2Backend {
             for oid in walk.take(limit) {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
-                let summary = commit.summary().unwrap_or("").to_string();
-                let full_message = commit.message().unwrap_or("").to_string();
-                let body = full_message
-                    .split_once("\n\n")
-                    .map(|(_, rest)| rest.trim_end().to_string())
-                    .filter(|s| !s.is_empty());
-                let author = commit.author();
                 let refs: Vec<String> = ref_map
                     .iter()
                     .filter(|(o, _)| *o == oid)
                     .map(|(_, name)| name.clone())
                     .collect();
-                out.push(CommitInfo {
-                    oid: oid.to_string(),
-                    short_oid: oid.to_string()[..7].to_string(),
-                    summary,
-                    body,
-                    author: author.name().unwrap_or("").to_string(),
-                    email: author.email().unwrap_or("").to_string(),
-                    timestamp: commit.time().seconds(),
-                    parents: commit.parent_ids().map(|p| p.to_string()).collect(),
-                    refs,
-                });
+                let mut info = commit_to_info(&commit);
+                info.refs = refs;
+                out.push(info);
             }
             Ok(out)
         })
@@ -1889,6 +1874,38 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
+    fn file_history(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let mut revwalk = repo.revwalk()?;
+            revwalk.push_head().or_else(|e| {
+                if e.code() == git2::ErrorCode::UnbornBranch {
+                    Err(AppError::Unborn)
+                } else {
+                    Err(e.into())
+                }
+            })?;
+            revwalk.set_sorting(git2::Sort::TIME)?;
+
+            let mut out = Vec::with_capacity(limit);
+            for oid_res in revwalk {
+                if out.len() >= limit {
+                    break;
+                }
+                let oid = oid_res?;
+                let commit = repo.find_commit(oid)?;
+                if commit_touches_path(repo, &commit, path)? {
+                    out.push(commit_to_info(&commit));
+                }
+            }
+            Ok(out)
+        })
+    }
+
     fn append_gitignore(&self, repo_id: &RepoId, pattern: &str) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
             let workdir = repo
@@ -1910,4 +1927,59 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
+}
+
+// ─── Private helpers ──────────────────────────────────────────────────────────
+
+/// Build a `CommitInfo` from a git2 commit. The `refs` field is left empty;
+/// callers that need ref labels (e.g. `log`) fill it in separately.
+fn commit_to_info(commit: &git2::Commit<'_>) -> CommitInfo {
+    let oid = commit.id();
+    let summary = commit.summary().unwrap_or("").to_string();
+    let full_message = commit.message().unwrap_or("").to_string();
+    let body = full_message
+        .split_once("\n\n")
+        .map(|(_, rest)| rest.trim_end().to_string())
+        .filter(|s| !s.is_empty());
+    let author = commit.author();
+    CommitInfo {
+        oid: oid.to_string(),
+        short_oid: oid.to_string()[..7].to_string(),
+        summary,
+        body,
+        author: author.name().unwrap_or("").to_string(),
+        email: author.email().unwrap_or("").to_string(),
+        timestamp: commit.time().seconds(),
+        parents: commit.parent_ids().map(|p| p.to_string()).collect(),
+        refs: Vec::new(),
+    }
+}
+
+/// Return `true` if `commit` touched `path` relative to any of its parents.
+/// For a root commit (no parents) the path simply has to exist in the tree.
+fn commit_touches_path(
+    repo: &git2::Repository,
+    commit: &git2::Commit<'_>,
+    path: &std::path::Path,
+) -> AppResult<bool> {
+    if commit.parent_count() == 0 {
+        let tree = commit.tree()?;
+        return Ok(tree.get_path(path).is_ok());
+    }
+    for i in 0..commit.parent_count() {
+        let parent = commit.parent(i)?;
+        let parent_tree = parent.tree()?;
+        let commit_tree = commit.tree()?;
+        let mut opts = git2::DiffOptions::new();
+        opts.pathspec(path);
+        let diff = repo.diff_tree_to_tree(
+            Some(&parent_tree),
+            Some(&commit_tree),
+            Some(&mut opts),
+        )?;
+        if diff.deltas().len() > 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

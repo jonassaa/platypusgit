@@ -20,6 +20,13 @@ pub trait GitBackend: Send + Sync {
     /// can browse the whole worktree (ignored files are still excluded).
     fn list_all_files(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>>;
+    /// Commits that touched `path`, newest first, up to `limit`.
+    fn file_history(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>>;
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff>;
     fn diff_commits(
