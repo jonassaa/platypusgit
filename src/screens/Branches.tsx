@@ -31,11 +31,12 @@ const COLS = [
 export function BranchesScreen() {
   const branches = useRepoStore((s) => s.branches);
   const tags = useRepoStore((s) => s.tags);
+  const stashes = useRepoStore((s) => s.stashes);
   const [selected, setSelected] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState("");
-  const [view, setView] = React.useState<"all" | "local" | "remote" | "tags">(
-    "all",
-  );
+  const [view, setView] = React.useState<
+    "all" | "local" | "remote" | "tags" | "stashes"
+  >("all");
 
   const { onContextMenu: onBranchCtx, menu: branchMenu } = useContextMenu<
     BranchInfo & { kind: "local" | "remote" }
@@ -88,6 +89,7 @@ export function BranchesScreen() {
   };
 
   const rows = React.useMemo(() => {
+    if (view === "tags" || view === "stashes") return [];
     const list = branches.map((b) => ({
       ...b,
       kind: b.isRemote ? ("remote" as const) : ("local" as const),
@@ -99,10 +101,23 @@ export function BranchesScreen() {
   }, [branches, filter, view]);
 
   const visibleTags = React.useMemo(() => {
+    if (view === "stashes") return [];
     if (view === "tags" || view === "all")
       return tags.filter((t) => t.name.includes(filter));
     return [];
   }, [tags, filter, view]);
+
+  const visibleStashes = React.useMemo(() => {
+    if (view === "stashes" || view === "all")
+      return stashes.filter(
+        (s) =>
+          s.message.includes(filter) || `stash@{${s.index}}`.includes(filter),
+      );
+    return [];
+  }, [stashes, filter, view]);
+
+  // Task 8 will render stash rows; suppressing unused var warning for now
+  void visibleStashes;
 
   const selectedBranch = branches.find((b) => b.name === selected) ?? null;
 
@@ -117,7 +132,7 @@ export function BranchesScreen() {
     padding: "0 8px",
   };
 
-  if (branches.length === 0 && tags.length === 0) {
+  if (branches.length === 0 && tags.length === 0 && stashes.length === 0) {
     return (
       <>
         <BranchesToolbar
@@ -126,8 +141,8 @@ export function BranchesScreen() {
           view={view}
           onView={setView}
         />
-        <PGEmpty icon="branch" title="No branches or tags">
-          This repository doesn&apos;t have any branches yet.
+        <PGEmpty icon="branch" title="No branches, tags, or stashes">
+          This repository doesn&apos;t have any branches, tags, or stashes yet.
         </PGEmpty>
       </>
     );
@@ -558,8 +573,8 @@ function BranchesToolbar({
 }: {
   filter: string;
   onFilter: (v: string) => void;
-  view: "all" | "local" | "remote" | "tags";
-  onView: (v: "all" | "local" | "remote" | "tags") => void;
+  view: "all" | "local" | "remote" | "tags" | "stashes";
+  onView: (v: "all" | "local" | "remote" | "tags" | "stashes") => void;
 }) {
   return (
     <PGToolbar
@@ -579,6 +594,7 @@ function BranchesToolbar({
               { value: "local", label: "Local" },
               { value: "remote", label: "Remote" },
               { value: "tags", label: "Tags" },
+              { value: "stashes", label: "Stashes" },
             ]}
           />
         </>
