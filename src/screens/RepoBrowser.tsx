@@ -15,11 +15,13 @@ import {
   PGStatusMark,
   PGToolbar,
   KV,
+  useContextMenu,
   usePaneWidth,
   type DiffLineData,
   type PGFileTreeNode,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useNavStore } from "@/features/nav/useNavStore";
 import {
   currentBranch,
   relativeTime,
@@ -28,7 +30,10 @@ import {
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
-import type { FileContent, FileDiff, FileStatus } from "@/lib/types";
+import type { FileContent, FileDiff, FileStatus, StatusFlag } from "@/lib/types";
+
+type SortMode = "asc" | "desc";
+type HideKind = "Untracked" | "Ignored" | "Deleted";
 
 function PGBreadcrumb({ items }: { items: string[] }) {
   return (
@@ -78,6 +83,11 @@ export function RepoBrowserScreen() {
   const [filterMode, setFilterMode] = React.useState<
     "all" | "changes" | "conflicts"
   >("changes");
+  const [hiddenKinds, setHiddenKinds] = React.useState<Set<HideKind>>(
+    () => new Set(),
+  );
+  const [sortMode, setSortMode] = React.useState<SortMode>("asc");
+  const setNavIntent = useNavStore((s) => s.setIntent);
   const treePane = usePaneWidth(280, {
     min: 180,
     max: 600,
@@ -100,28 +110,33 @@ export function RepoBrowserScreen() {
   }, [filterMode, repo, refreshAllFiles]);
 
   const filteredStatus = React.useMemo<FileStatus[]>(() => {
+    let base: FileStatus[];
     switch (filterMode) {
       case "conflicts":
-        return status.filter(
+        base = status.filter(
           (s) =>
             s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted",
         );
+        break;
       case "changes":
-        return status.filter(
+        base = status.filter(
           (s) =>
             s.worktree.kind !== "Unmodified" ||
             s.index.kind !== "Unmodified",
         );
+        break;
       case "all":
       default:
-        return allFiles;
+        base = allFiles;
     }
-  }, [status, allFiles, filterMode]);
+    if (hiddenKinds.size === 0) return base;
+    return base.filter((s) => !isHidden(s, hiddenKinds));
+  }, [status, allFiles, filterMode, hiddenKinds]);
 
-  const tree = React.useMemo<PGFileTreeNode[]>(
-    () => buildStatusTree(filteredStatus),
-    [filteredStatus],
-  );
+  const tree = React.useMemo<PGFileTreeNode[]>(() => {
+    const t = buildStatusTree(filteredStatus);
+    return sortMode === "desc" ? reverseTree(t) : t;
+  }, [filteredStatus, sortMode]);
 
   const conflictCount = React.useMemo(
     () =>
@@ -216,8 +231,14 @@ export function RepoBrowserScreen() {
                 },
               ]}
             />
-            <PGIconButton icon="filter" size="md" title="Filter" />
-            <PGIconButton icon="sort" size="md" title="Sort" />
+            <FilterMenuButton hiddenKinds={hiddenKinds} onToggle={(k) => {
+              setHiddenKinds((prev) => {
+                const next = new Set(prev);
+                if (next.has(k)) next.delete(k); else next.add(k);
+                return next;
+              });
+            }} />
+            <SortMenuButton sortMode={sortMode} onChange={setSortMode} />
           </>
         }
       />
@@ -338,13 +359,43 @@ export function RepoBrowserScreen() {
               </span>
             )}
             <div style={{ flex: 1 }} />
-            <PGButton size="xs" variant="ghost" icon="eye" disabled>
+            <PGButton
+              size="xs"
+              variant="ghost"
+              icon="eye"
+              disabled={!selectedFile}
+              title="Open in external editor"
+              onClick={() => {
+                if (selectedFile)
+                  useRepoStore.getState().openInEditor(selectedFile.path);
+              }}
+            >
               Open
             </PGButton>
-            <PGButton size="xs" variant="ghost" icon="edit" disabled>
+            <PGButton
+              size="xs"
+              variant="ghost"
+              icon="edit"
+              disabled={!selectedFile}
+              title="Edit in external editor"
+              onClick={() => {
+                if (selectedFile)
+                  useRepoStore.getState().openInEditor(selectedFile.path);
+              }}
+            >
               Edit
             </PGButton>
-            <PGButton size="xs" variant="ghost" icon="history" disabled>
+            <PGButton
+              size="xs"
+              variant="ghost"
+              icon="history"
+              disabled={!selectedFile}
+              title="Show blame"
+              onClick={() => {
+                if (selectedFile)
+                  setNavIntent({ kind: "blame", path: selectedFile.path });
+              }}
+            >
               Blame
             </PGButton>
           </div>
@@ -638,3 +689,92 @@ function toUiLine(l: {
   };
 }
 
+function isHidden(s: FileStatus, hidden: Set<HideKind>): boolean {
+  const sides: StatusFlag[] = [s.worktree, s.index];
+  for (const k of hidden) {
+    if (sides.some((x) => x.kind === k)) return true;
+  }
+  return false;
+}
+
+function reverseTree(nodes: PGFileTreeNode[]): PGFileTreeNode[] {
+  const copy = [...nodes].reverse();
+  return copy.map((n) =>
+    n.children
+      ? { ...n, children: reverseTree(n.children) }
+      : n,
+  );
+}
+
+function FilterMenuButton({
+  hiddenKinds,
+  onToggle,
+}: {
+  hiddenKinds: Set<HideKind>;
+  onToggle: (k: HideKind) => void;
+}) {
+  const { openAt, menu } = useContextMenu<null>(() => [
+    { __menuTitle: "Hide by status" },
+    {
+      icon: hiddenKinds.has("Untracked") ? "check" : "dot",
+      label: "Hide untracked",
+      onClick: () => onToggle("Untracked"),
+    },
+    {
+      icon: hiddenKinds.has("Ignored") ? "check" : "dot",
+      label: "Hide ignored",
+      onClick: () => onToggle("Ignored"),
+    },
+    {
+      icon: hiddenKinds.has("Deleted") ? "check" : "dot",
+      label: "Hide deleted",
+      onClick: () => onToggle("Deleted"),
+    },
+  ]);
+  return (
+    <>
+      <PGIconButton
+        icon="filter"
+        size="md"
+        title="Filter"
+        active={hiddenKinds.size > 0}
+        onClick={(e) => openAt(e.clientX, e.clientY + 4, null)}
+      />
+      {menu}
+    </>
+  );
+}
+
+function SortMenuButton({
+  sortMode,
+  onChange,
+}: {
+  sortMode: SortMode;
+  onChange: (m: SortMode) => void;
+}) {
+  const { openAt, menu } = useContextMenu<null>(() => [
+    { __menuTitle: "Sort order" },
+    {
+      icon: sortMode === "asc" ? "check" : "dot",
+      label: "Name (A → Z)",
+      onClick: () => onChange("asc"),
+    },
+    {
+      icon: sortMode === "desc" ? "check" : "dot",
+      label: "Name (Z → A)",
+      onClick: () => onChange("desc"),
+    },
+  ]);
+  return (
+    <>
+      <PGIconButton
+        icon="sort"
+        size="md"
+        title="Sort"
+        active={sortMode !== "asc"}
+        onClick={(e) => openAt(e.clientX, e.clientY + 4, null)}
+      />
+      {menu}
+    </>
+  );
+}

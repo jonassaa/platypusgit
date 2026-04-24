@@ -10,17 +10,21 @@ import {
   PGHunk,
   PGIconButton,
   PGInput,
+  PGSideBySideDiff,
   PGSpinner,
   PGStatusMark,
   PGResizeHandle,
   PGTextarea,
   fileMenuItems,
+  pgFlash,
   useContextMenu,
   usePaneWidth,
   type DiffLineData,
+  type SideLine,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
-import { isStaged, isUnstaged, statusMark } from "@/lib/derive";
+import { useNavStore } from "@/features/nav/useNavStore";
+import { currentBranch, isStaged, isUnstaged, statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
 import type { DiffKind, FileDiff, FileStatus } from "@/lib/types";
 
@@ -33,14 +37,20 @@ interface FileSlot {
 export function CommitPanelScreen() {
   const repo = useRepoStore((s) => s.current);
   const status = useRepoStore((s) => s.status);
+  const branches = useRepoStore((s) => s.branches);
+  const remotes = useRepoStore((s) => s.remotes);
   const loading = useRepoStore((s) => s.loading);
   const stage = useRepoStore((s) => s.stage);
   const unstage = useRepoStore((s) => s.unstage);
   const commitAction = useRepoStore((s) => s.commit);
+  const pushAction = useRepoStore((s) => s.push);
+  const activity = useRepoStore((s) => s.activity);
+  const setNavIntent = useNavStore((s) => s.setIntent);
   const [message, setMessage] = React.useState("");
   const [body, setBody] = React.useState("");
   const [amend, setAmend] = React.useState(false);
   const [signoff, setSignoff] = React.useState(false);
+  const [diffMode, setDiffMode] = React.useState<"unified" | "split">("unified");
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
   const changesPane = usePaneWidth(320, {
     min: 220,
@@ -62,6 +72,57 @@ export function CommitPanelScreen() {
         path: f?.path,
         staged: f?.side === "staged",
       }),
+  );
+
+  const moreMenu = useContextMenu<{ path: string; diff: FileDiff | null }>(
+    (p) => [
+      { __menuTitle: p?.path || "file" },
+      {
+        icon: "copy",
+        label: "Copy path",
+        onClick: () => {
+          if (!p?.path) return;
+          navigator.clipboard?.writeText(p.path);
+          pgFlash("copied path");
+        },
+      },
+      {
+        icon: "copy",
+        label: "Copy diff as text",
+        onClick: () => {
+          if (!p?.diff) return;
+          const text = p.diff.hunks
+            .map(
+              (h) =>
+                `${h.header}\n${h.lines
+                  .map((ln) => {
+                    const k = ln.kind.kind;
+                    const prefix = k === "Addition" ? "+" : k === "Deletion" ? "-" : " ";
+                    return `${prefix}${ln.content}`;
+                  })
+                  .join("")}`,
+            )
+            .join("\n");
+          navigator.clipboard?.writeText(text);
+          pgFlash("copied diff");
+        },
+      },
+      { divider: true },
+      {
+        icon: "edit",
+        label: "Open in editor",
+        onClick: () => {
+          if (p?.path) useRepoStore.getState().openInEditor(p.path);
+        },
+      },
+      {
+        icon: "history",
+        label: "Show file history",
+        onClick: () => {
+          if (p?.path) setNavIntent({ kind: "file-history", path: p.path });
+        },
+      },
+    ],
   );
 
   const staged = React.useMemo(
@@ -113,6 +174,9 @@ export function CommitPanelScreen() {
       cancelled = true;
     };
   }, [selected?.path, selected?.side, repo]);
+
+  const headBranch = currentBranch(branches);
+  const defaultRemote = remotes[0] ?? null;
 
   const stagedAdd = React.useMemo(
     () => staged.reduce((s, f) => s + countAdd(f.status), 0),
@@ -267,15 +331,26 @@ export function CommitPanelScreen() {
           <span>{selected?.path ?? "no file selected"}</span>
           <div style={{ flex: 1 }} />
           <PGButtonGroup
-            value="unified"
-            onChange={() => {}}
+            value={diffMode}
+            onChange={(v) => setDiffMode(v as typeof diffMode)}
             options={[
               { value: "unified", label: "Unified" },
               { value: "split", label: "Split" },
             ]}
             size="sm"
           />
-          <PGIconButton icon="more" size="sm" />
+          <PGIconButton
+            icon="more"
+            size="sm"
+            title="File actions"
+            onClick={(e) => {
+              if (!selected) return;
+              moreMenu.openAt(e.clientX, e.clientY + 4, {
+                path: selected.path,
+                diff,
+              });
+            }}
+          />
         </div>
         <div style={{ flex: 1, overflow: "auto" }}>
           {diffLoading && (
@@ -312,7 +387,8 @@ export function CommitPanelScreen() {
                 File is tracked but no hunks were produced.
               </PGEmpty>
             )}
-          {!diffLoading && !diffError && diff && !diff.binary &&
+          {!diffLoading && !diffError && diff && !diff.binary && diff.hunks.length > 0 &&
+            diffMode === "unified" &&
             diff.hunks.map((h, i) => (
               <PGHunk
                 key={i}
@@ -336,7 +412,12 @@ export function CommitPanelScreen() {
                 }}
               />
             ))}
+          {!diffLoading && !diffError && diff && !diff.binary && diff.hunks.length > 0 &&
+            diffMode === "split" && (
+              <PGSideBySideDiff {...diffToSplit(diff)} />
+            )}
         </div>
+        {moreMenu.menu}
       </div>
 
       <PGResizeHandle onDrag={(d) => composerPane.resize(-d)} side="left" />
@@ -470,7 +551,7 @@ export function CommitPanelScreen() {
               fullWidth
               disabled={(!amend && staged.length === 0) || !message.trim()}
               onClick={async () => {
-                const full = body.trim() ? `${message}\n\n${body}` : message;
+                const full = buildMessage(message, body, signoff);
                 const oid = await commitAction(full, amend);
                 if (oid) {
                   setMessage("");
@@ -485,8 +566,30 @@ export function CommitPanelScreen() {
               variant="primary"
               icon="push"
               fullWidth
-              disabled
-              title="Push will arrive in Plan B (network)"
+              loading={!!activity.push}
+              disabled={
+                !headBranch ||
+                !defaultRemote ||
+                (!amend && staged.length === 0) ||
+                !message.trim()
+              }
+              title={
+                !headBranch
+                  ? "Detached HEAD — no branch to push"
+                  : !defaultRemote
+                    ? "No remote configured"
+                    : `Commit then push to ${defaultRemote.name}/${headBranch.name}`
+              }
+              onClick={async () => {
+                if (!headBranch || !defaultRemote) return;
+                const full = buildMessage(message, body, signoff);
+                const oid = await commitAction(full, amend);
+                if (!oid) return;
+                setMessage("");
+                setBody("");
+                setAmend(false);
+                await pushAction(defaultRemote.name, headBranch.name);
+              }}
             >
               Commit & Push
             </PGButton>
@@ -500,6 +603,57 @@ export function CommitPanelScreen() {
 
 function keyOf(f: FileSlot): string {
   return `${f.side}:${f.path}`;
+}
+
+function buildMessage(subject: string, body: string, signoff: boolean): string {
+  const parts: string[] = [subject];
+  if (body.trim()) parts.push("", body.trim());
+  if (signoff) {
+    const head = useRepoStore.getState().commits[0];
+    if (head?.author && head?.email) {
+      parts.push("", `Signed-off-by: ${head.author} <${head.email}>`);
+    }
+  }
+  return parts.join("\n");
+}
+
+function diffToSplit(d: FileDiff): { left: SideLine[]; right: SideLine[] } {
+  const left: SideLine[] = [];
+  const right: SideLine[] = [];
+  for (const h of d.hunks) {
+    left.push({ kind: "info", text: h.header });
+    right.push({ kind: "info", text: h.header });
+    for (const ln of h.lines) {
+      const k = ln.kind.kind;
+      if (k === "Addition") {
+        left.push({ kind: "empty", ln: "", text: "" });
+        right.push({
+          kind: "add",
+          ln: ln.newLineno ?? undefined,
+          text: ln.content,
+        });
+      } else if (k === "Deletion") {
+        left.push({
+          kind: "rem",
+          ln: ln.oldLineno ?? undefined,
+          text: ln.content,
+        });
+        right.push({ kind: "empty", ln: "", text: "" });
+      } else {
+        left.push({
+          kind: "ctx",
+          ln: ln.oldLineno ?? undefined,
+          text: ln.content,
+        });
+        right.push({
+          kind: "ctx",
+          ln: ln.newLineno ?? undefined,
+          text: ln.content,
+        });
+      }
+    }
+  }
+  return { left, right };
 }
 
 function countAdd(s: FileStatus): number {

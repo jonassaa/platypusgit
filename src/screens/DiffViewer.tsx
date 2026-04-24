@@ -28,6 +28,12 @@ export function DiffViewerScreen() {
   const [mode, setMode] = React.useState<"unified" | "split">("unified");
   const [wrap, setWrap] = React.useState(false);
   const [filter, setFilter] = React.useState("");
+  const [findQuery, setFindQuery] = React.useState("");
+  const [findOpen, setFindOpen] = React.useState(false);
+  const findInputRef = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => {
+    if (findOpen) findInputRef.current?.focus();
+  }, [findOpen]);
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
@@ -84,7 +90,19 @@ export function DiffViewerScreen() {
     };
   }, [current?.path, repo]);
 
-  const split = React.useMemo(() => diffToSplit(diff), [diff]);
+  const findFiltered = React.useMemo<FileDiff | null>(() => {
+    if (!diff || !findQuery.trim()) return diff;
+    const q = findQuery.toLowerCase();
+    const hunks = diff.hunks
+      .map((h) => ({
+        ...h,
+        lines: h.lines.filter((ln) => ln.content.toLowerCase().includes(q)),
+      }))
+      .filter((h) => h.lines.length > 0);
+    return { ...diff, hunks };
+  }, [diff, findQuery]);
+
+  const split = React.useMemo(() => diffToSplit(findFiltered), [findFiltered]);
 
   if (status.length === 0) {
     return (
@@ -145,10 +163,52 @@ export function DiffViewerScreen() {
               ]}
             />
             <PGToggle checked={wrap} onChange={setWrap} label="Wrap" />
-            <PGIconButton icon="search" size="md" title="Find in diff" />
+            <PGIconButton
+              icon="search"
+              size="md"
+              title="Find in diff"
+              active={findOpen}
+              onClick={() => {
+                setFindOpen((v) => {
+                  if (v) setFindQuery("");
+                  return !v;
+                });
+              }}
+            />
           </>
         }
       />
+      {findOpen && (
+        <div
+          style={{
+            padding: "6px 10px",
+            borderBottom: "1px solid var(--border-0)",
+            background: "var(--bg-1)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <PGSearchInput
+            value={findQuery}
+            onChange={setFindQuery}
+            placeholder="Find in diff…"
+            inputRef={findInputRef}
+            style={{ width: 320 }}
+          />
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--fs-11)",
+              color: "var(--fg-2)",
+            }}
+          >
+            {findQuery.trim()
+              ? `${findFiltered?.hunks.reduce((n, h) => n + h.lines.length, 0) ?? 0} matches`
+              : ""}
+          </span>
+        </div>
+      )}
       <div
         style={{
           flex: 1,
@@ -227,9 +287,12 @@ export function DiffViewerScreen() {
           {!diffLoading && diff?.binary && (
             <PGEmpty icon="file" title="Binary file" />
           )}
-          {!diffLoading && diff && !diff.binary && mode === "unified" && (
+          {!diffLoading && findFiltered && !findFiltered.binary && mode === "unified" && (
             <div style={{ flex: 1, overflow: "auto" }}>
-              {diff.hunks.map((h, i) => (
+              {findFiltered.hunks.length === 0 && findQuery.trim() && (
+                <PGEmpty icon="search" title="No matches" />
+              )}
+              {findFiltered.hunks.map((h, i) => (
                 <PGHunk
                   key={i}
                   header={h.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
@@ -239,7 +302,7 @@ export function DiffViewerScreen() {
               ))}
             </div>
           )}
-          {!diffLoading && diff && !diff.binary && mode === "split" && (
+          {!diffLoading && findFiltered && !findFiltered.binary && mode === "split" && (
             <PGSideBySideDiff left={split.left} right={split.right} />
           )}
         </div>

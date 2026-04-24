@@ -720,10 +720,34 @@ function BranchActions({ branch }: { branch: BranchInfo }) {
       >
         Check out
       </PGButton>
-      <PGButton variant="outline" icon="merge" disabled={branch.isHead} title="merge will land in Plan C">
+      <PGButton
+        variant="outline"
+        icon="merge"
+        disabled={branch.isHead}
+        title={`Merge ${branch.name} into current branch`}
+        onClick={() => {
+          if (!window.confirm(`Merge ${branch.name} into the current branch?`))
+            return;
+          useRepoStore.getState().mergeBranch(branch.name);
+        }}
+      >
         Merge into current
       </PGButton>
-      <PGButton variant="outline" icon="rebase" disabled={branch.isHead} title="rebase will land in Plan E">
+      <PGButton
+        variant="outline"
+        icon="rebase"
+        disabled={branch.isHead}
+        title={`Rebase current branch onto ${branch.name}`}
+        onClick={() => {
+          if (
+            !window.confirm(
+              `Rebase the current branch onto ${branch.name}? This rewrites history.`,
+            )
+          )
+            return;
+          useRepoStore.getState().rebaseOnto(branch.name);
+        }}
+      >
         Rebase current onto this
       </PGButton>
       <PGButton
