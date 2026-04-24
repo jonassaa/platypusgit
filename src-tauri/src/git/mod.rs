@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
 use types::{
-    BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff,
-    FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId, RepoState,
-    ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+    BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileContent,
+    FileDiff, FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId,
+    RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
 };
 
 pub trait GitBackend: Send + Sync {
@@ -30,6 +30,9 @@ pub trait GitBackend: Send + Sync {
     fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>>;
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff>;
+    /// Read the full content of a file from the worktree. Falls back to the
+    /// HEAD blob when the worktree copy is missing (e.g. a deleted file).
+    fn read_file_content(&self, repo_id: &RepoId, path: &Path) -> AppResult<FileContent>;
     fn diff_commits(
         &self,
         repo_id: &RepoId,

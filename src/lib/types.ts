@@ -102,6 +102,16 @@ export interface FileDiff {
   hunks: DiffHunk[];
 }
 
+export interface FileContent {
+  path: string;
+  binary: boolean;
+  /** null when binary or missing */
+  text: string | null;
+  /** true when the file only exists in HEAD (deleted from worktree) */
+  fromHead: boolean;
+  size: number;
+}
+
 export type RepoState =
   | "Clean"
   | "Merge"

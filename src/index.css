@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "highlight.js/styles/github-dark.css";
 
 /* ============================================================
  * PlatypusGit Design Tokens
@@ -222,3 +223,42 @@ kbd {
 .pg-row  { display: flex; align-items: center; gap: 8px; }
 .pg-col  { display: flex; flex-direction: column; }
 .pg-fill { flex: 1; min-width: 0; min-height: 0; }
+
+/* ============================================================
+ * Code viewer — light-mode syntax overrides.
+ * highlight.js ships a single github-dark stylesheet globally; its
+ * tokens are too light on light backgrounds. Override with the
+ * github-light palette when the active theme is a light one.
+ * ============================================================ */
+[data-theme-mode="light"] .hljs { color: #1f2328; background: transparent; }
+[data-theme-mode="light"] .hljs-comment,
+[data-theme-mode="light"] .hljs-quote { color: #57606a; }
+[data-theme-mode="light"] .hljs-keyword,
+[data-theme-mode="light"] .hljs-selector-tag,
+[data-theme-mode="light"] .hljs-meta,
+[data-theme-mode="light"] .hljs-doctag { color: #cf222e; }
+[data-theme-mode="light"] .hljs-string,
+[data-theme-mode="light"] .hljs-regexp,
+[data-theme-mode="light"] .hljs-attr { color: #0a3069; }
+[data-theme-mode="light"] .hljs-number,
+[data-theme-mode="light"] .hljs-literal,
+[data-theme-mode="light"] .hljs-built_in,
+[data-theme-mode="light"] .hljs-symbol,
+[data-theme-mode="light"] .hljs-type { color: #0550ae; }
+[data-theme-mode="light"] .hljs-title,
+[data-theme-mode="light"] .hljs-name,
+[data-theme-mode="light"] .hljs-section,
+[data-theme-mode="light"] .hljs-title.class_,
+[data-theme-mode="light"] .hljs-title.function_ { color: #8250df; }
+[data-theme-mode="light"] .hljs-variable,
+[data-theme-mode="light"] .hljs-template-variable,
+[data-theme-mode="light"] .hljs-params { color: #953800; }
+[data-theme-mode="light"] .hljs-tag,
+[data-theme-mode="light"] .hljs-selector-id,
+[data-theme-mode="light"] .hljs-selector-class,
+[data-theme-mode="light"] .hljs-selector-attr,
+[data-theme-mode="light"] .hljs-selector-pseudo { color: #116329; }
+[data-theme-mode="light"] .hljs-addition { color: #0a3069; background: #dafbe1; }
+[data-theme-mode="light"] .hljs-deletion { color: #82071e; background: #ffebe9; }
+[data-theme-mode="light"] .hljs-emphasis { font-style: italic; }
+[data-theme-mode="light"] .hljs-strong { font-weight: 600; }

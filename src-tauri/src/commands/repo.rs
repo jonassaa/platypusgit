@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{FileStatus, RepoHandle, RepoId},
+    git::types::{FileContent, FileStatus, RepoHandle, RepoId},
     state::AppState,
 };
 
@@ -40,6 +40,20 @@ pub async fn list_all_files(
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     tokio::task::spawn_blocking(move || backend.list_all_files(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn read_file_content(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+) -> AppResult<FileContent> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path_buf = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.read_file_content(&repo_id, &path_buf))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

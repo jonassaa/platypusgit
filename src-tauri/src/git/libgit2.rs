@@ -14,9 +14,9 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
-        DiffLine, DiffLineKind, FileDiff, FileStatus, RebaseAction, RebaseStatus, RebaseStep,
-        ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo,
-        StashSaveOptions, StatusFlag, TagInfo, TagTarget,
+        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, RebaseAction, RebaseStatus,
+        RebaseStep, ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode,
+        StashInfo, StashSaveOptions, StatusFlag, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -818,6 +818,78 @@ impl GitBackend for Libgit2Backend {
                 deletions,
                 hunks,
             })
+        })
+    }
+
+    fn read_file_content(&self, repo_id: &RepoId, path: &Path) -> AppResult<FileContent> {
+        let rel = path.to_path_buf();
+        let path_str = rel.to_string_lossy().into_owned();
+        self.with_repo(repo_id, |repo| {
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::InvalidPath("bare repository has no workdir".into()))?;
+            let abs = workdir.join(&rel);
+            if abs.is_file() {
+                let bytes = std::fs::read(&abs)?;
+                let size = bytes.len() as u64;
+                return Ok(match std::str::from_utf8(&bytes) {
+                    Ok(s) => FileContent {
+                        path: path_str,
+                        binary: false,
+                        text: Some(s.to_string()),
+                        from_head: false,
+                        size,
+                    },
+                    Err(_) => FileContent {
+                        path: path_str,
+                        binary: true,
+                        text: None,
+                        from_head: false,
+                        size,
+                    },
+                });
+            }
+
+            // Fallback: read from HEAD blob (for deleted files).
+            let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+            if let Some(tree) = head {
+                if let Ok(entry) = tree.get_path(&rel) {
+                    let obj = entry.to_object(repo)?;
+                    if let Some(blob) = obj.as_blob() {
+                        let content = blob.content();
+                        let size = content.len() as u64;
+                        if blob.is_binary() {
+                            return Ok(FileContent {
+                                path: path_str,
+                                binary: true,
+                                text: None,
+                                from_head: true,
+                                size,
+                            });
+                        }
+                        return Ok(match std::str::from_utf8(content) {
+                            Ok(s) => FileContent {
+                                path: path_str,
+                                binary: false,
+                                text: Some(s.to_string()),
+                                from_head: true,
+                                size,
+                            },
+                            Err(_) => FileContent {
+                                path: path_str,
+                                binary: true,
+                                text: None,
+                                from_head: true,
+                                size,
+                            },
+                        });
+                    }
+                }
+            }
+
+            Err(AppError::InvalidPath(format!(
+                "file not found: {path_str}"
+            )))
         })
     }
 

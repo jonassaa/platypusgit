@@ -18,6 +18,7 @@ pub fn run() {
             commands::repo::open_repo,
             commands::repo::get_status,
             commands::repo::list_all_files,
+            commands::repo::read_file_content,
             commands::repo::append_gitignore,
             commands::repo::open_in_editor,
             commands::commits::get_log,

@@ -132,6 +132,18 @@ pub struct FileDiff {
     pub hunks: Vec<DiffHunk>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+    pub path: String,
+    pub binary: bool,
+    /// None when `binary` is true, or when the file is missing.
+    pub text: Option<String>,
+    /// True when the file only exists in HEAD (deleted from worktree).
+    pub from_head: bool,
+    pub size: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitOptions {

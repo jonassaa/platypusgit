@@ -4,9 +4,9 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileDiff,
-        FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId,
-        RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+        BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileContent,
+        FileDiff, FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle,
+        RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -49,6 +49,9 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn diff(&self, _repo_id: &RepoId, _path: &Path, _kind: DiffKind) -> AppResult<FileDiff> {
+        Err(AppError::NotImplemented)
+    }
+    fn read_file_content(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<FileContent> {
         Err(AppError::NotImplemented)
     }
     fn diff_commits(

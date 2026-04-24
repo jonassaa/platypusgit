@@ -5,6 +5,7 @@ import type {
   CommitInfo,
   ConflictSides,
   DiffKind,
+  FileContent,
   FileDiff,
   FileStatus,
   PullMode,
@@ -29,6 +30,13 @@ export async function getStatus(repoId: string): Promise<FileStatus[]> {
 
 export async function listAllFiles(repoId: string): Promise<FileStatus[]> {
   return invoke<FileStatus[]>("list_all_files", { repoId });
+}
+
+export async function readFileContent(
+  repoId: string,
+  path: string,
+): Promise<FileContent> {
+  return invoke<FileContent>("read_file_content", { repoId, path });
 }
 
 export async function getLog(

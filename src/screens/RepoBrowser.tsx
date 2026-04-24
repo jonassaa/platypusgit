@@ -25,9 +25,10 @@ import {
   relativeTime,
   statusMark,
 } from "@/lib/derive";
-import { getDiff } from "@/lib/tauri";
+import { highlightFile } from "@/lib/highlight";
+import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
-import type { FileDiff, FileStatus } from "@/lib/types";
+import type { FileContent, FileDiff, FileStatus } from "@/lib/types";
 
 function PGBreadcrumb({ items }: { items: string[] }) {
   return (
@@ -73,6 +74,7 @@ export function RepoBrowserScreen() {
   const [selected, setSelected] = React.useState<string | null>(null);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
+  const [fileContent, setFileContent] = React.useState<FileContent | null>(null);
   const [filterMode, setFilterMode] = React.useState<
     "all" | "changes" | "conflicts"
   >("changes");
@@ -142,27 +144,48 @@ export function RepoBrowserScreen() {
     );
   }, [selected, status, allFiles]);
 
+  const selectedIsUnmodified =
+    !!selectedFile &&
+    selectedFile.worktree.kind === "Unmodified" &&
+    selectedFile.index.kind === "Unmodified";
+
   React.useEffect(() => {
     if (!selectedFile || !repo) {
       setDiff(null);
+      setFileContent(null);
       return;
     }
     let cancelled = false;
     setDiffLoading(true);
-    getDiff(repo.id, selectedFile.path, "WorktreeToHead")
-      .then((d) => {
-        if (!cancelled) setDiff(d);
-      })
-      .catch(() => {
-        if (!cancelled) setDiff(null);
-      })
-      .finally(() => {
-        if (!cancelled) setDiffLoading(false);
-      });
+    if (selectedIsUnmodified) {
+      setDiff(null);
+      readFileContent(repo.id, selectedFile.path)
+        .then((c) => {
+          if (!cancelled) setFileContent(c);
+        })
+        .catch(() => {
+          if (!cancelled) setFileContent(null);
+        })
+        .finally(() => {
+          if (!cancelled) setDiffLoading(false);
+        });
+    } else {
+      setFileContent(null);
+      getDiff(repo.id, selectedFile.path, "WorktreeToHead")
+        .then((d) => {
+          if (!cancelled) setDiff(d);
+        })
+        .catch(() => {
+          if (!cancelled) setDiff(null);
+        })
+        .finally(() => {
+          if (!cancelled) setDiffLoading(false);
+        });
+    }
     return () => {
       cancelled = true;
     };
-  }, [selectedFile?.path, repo]);
+  }, [selectedFile?.path, selectedIsUnmodified, repo]);
 
   const breadcrumbItems = React.useMemo(() => {
     const root = repo?.path.split("/").filter(Boolean).pop() ?? "repository";
@@ -300,10 +323,18 @@ export function RepoBrowserScreen() {
                   </>
                 )}
                 {diff?.binary && <PGBadge tone="muted">binary</PGBadge>}
+                {fileContent?.binary && (
+                  <PGBadge tone="muted">binary</PGBadge>
+                )}
+                {fileContent?.fromHead && (
+                  <PGBadge tone="muted">from HEAD</PGBadge>
+                )}
               </>
             ) : (
               <span style={{ color: "var(--fg-3)" }}>
-                Select a changed file to preview its diff
+                {filterMode === "all"
+                  ? "Select a file to preview its content"
+                  : "Select a changed file to preview its diff"}
               </span>
             )}
             <div style={{ flex: 1 }} />
@@ -366,8 +397,20 @@ export function RepoBrowserScreen() {
                 Binary diffs aren&apos;t shown.
               </PGEmpty>
             )}
-            {selectedFile && !diffLoading && (!diff || diff.hunks.length === 0) &&
-              !diff?.binary && (
+            {selectedFile && !diffLoading && fileContent?.binary && (
+              <PGEmpty icon="file" title="Binary file">
+                Binary contents aren&apos;t shown.
+              </PGEmpty>
+            )}
+            {selectedFile && !diffLoading && fileContent && !fileContent.binary &&
+              fileContent.text !== null && (
+                <FileContentView
+                  path={fileContent.path}
+                  text={fileContent.text}
+                />
+              )}
+            {selectedFile && !diffLoading && !fileContent &&
+              (!diff || diff.hunks.length === 0) && !diff?.binary && (
                 <PGEmpty icon="file" title="No diff available">
                   Couldn&apos;t produce a diff for this file.
                 </PGEmpty>
@@ -519,6 +562,60 @@ export function RepoBrowserScreen() {
         </div>
       </div>
     </>
+  );
+}
+
+function FileContentView({ path, text }: { path: string; text: string }) {
+  const highlighted = React.useMemo(() => highlightFile(path, text), [path, text]);
+  const lines = highlighted.lines;
+
+  if (lines.length === 0) {
+    return (
+      <PGEmpty icon="file" title="Empty file">
+        This file has no content.
+      </PGEmpty>
+    );
+  }
+
+  const gutterWidth = Math.max(32, String(lines.length).length * 9 + 16);
+
+  return (
+    <div
+      className="hljs"
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--fs-12)",
+        lineHeight: "var(--lh-code)",
+        background: "transparent",
+      }}
+    >
+      {lines.map((line, i) => (
+        <div key={i} style={{ display: "flex", minHeight: 18 }}>
+          <span
+            style={{
+              width: gutterWidth,
+              flexShrink: 0,
+              textAlign: "right",
+              paddingRight: 10,
+              color: "var(--fg-3)",
+              userSelect: "none",
+              borderRight: "1px solid var(--border-0)",
+            }}
+          >
+            {i + 1}
+          </span>
+          <span
+            style={{
+              flex: 1,
+              whiteSpace: "pre-wrap",
+              paddingLeft: 10,
+              paddingRight: 10,
+            }}
+            dangerouslySetInnerHTML={{ __html: line || "&nbsp;" }}
+          />
+        </div>
+      ))}
+    </div>
   );
 }
 
