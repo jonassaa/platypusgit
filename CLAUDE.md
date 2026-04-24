@@ -41,7 +41,26 @@ pnpm vite build                             # bundle frontend only
 cargo check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build                            # production bundle (.msi/.dmg/.deb/.AppImage)
+pnpm test                                   # vitest (unit logic + component tests)
 ```
+
+## Testing
+
+Three layers, each run independently:
+
+- **Rust backend integration** — `cargo test --manifest-path src-tauri/Cargo.toml`.
+  Covers every `GitBackend` op against real temp repos via the `TempRepo` fixture
+  in `src-tauri/tests/support/`. End-to-end for git logic, no webview needed.
+- **Frontend pure logic** — `pnpm test` picks up `*.test.ts` (e.g. `graphLayout`,
+  `buildRebasePlan`). Node-grade pure functions.
+- **Frontend component tests** — `pnpm test` also picks up `*.test.tsx` under
+  `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
+  `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
+  per-command responses with `mockInvoke(cmd, handler)`.
+
+Full webview-level E2E (WebdriverIO + `tauri-driver`) is not wired up. Tauri's
+native WebDriver bridge does not yet support macOS, so we skip it on dev
+machines and rely on the three layers above.
 
 ## Architecture
 
