@@ -42,6 +42,8 @@ import { SettingsScreen } from "@/screens/Settings";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { BranchChip } from "@/features/branches/BranchChip";
+import { BranchPicker } from "@/features/branches/BranchPicker";
 import { appErrorMessage } from "@/lib/errors";
 import type { BranchInfo, RemoteInfo, TagInfo } from "@/lib/types";
 import {
@@ -319,6 +321,10 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   const upstream = headUpstream(head?.upstream, head?.name);
 
+  const [pickerAnchor, setPickerAnchor] = React.useState<HTMLElement | null>(
+    null,
+  );
+
   const onOpen = async () => {
     const selected = await open({
       directory: true,
@@ -349,87 +355,94 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   };
 
   return (
-    <PGTitlebar
-      repoName={repoName}
-      branch={head?.name ?? "(detached)"}
-      dirty={dirty}
-      showTrafficLights={false}
-      rightSlot={
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          {repo && (
-            <>
-              <PGButton
-                size="sm"
-                variant="default"
-                icon="sync"
-                onClick={() => refresh()}
-                title="Refresh"
-              >
-                Refresh
-              </PGButton>
-              <PGButton
-                size="sm"
-                variant="default"
-                icon="fetch"
-                onClick={onFetch}
-              >
-                Fetch
-              </PGButton>
-              <PGButton
-                size="sm"
-                variant="default"
-                icon="pull"
-                onClick={onPull}
-              >
-                Pull{" "}
-                {behind > 0 && (
-                  <span
-                    style={{ color: "var(--git-modified)", marginLeft: 4 }}
-                  >
-                    ↓{behind}
-                  </span>
-                )}
-              </PGButton>
+    <>
+      <PGTitlebar
+        repoName={repoName}
+        branch={<BranchChip onClick={setPickerAnchor} />}
+        dirty={dirty}
+        showTrafficLights={false}
+        rightSlot={
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {repo && (
+              <>
+                <PGButton
+                  size="sm"
+                  variant="default"
+                  icon="sync"
+                  onClick={() => refresh()}
+                  title="Refresh"
+                >
+                  Refresh
+                </PGButton>
+                <PGButton
+                  size="sm"
+                  variant="default"
+                  icon="fetch"
+                  onClick={onFetch}
+                >
+                  Fetch
+                </PGButton>
+                <PGButton
+                  size="sm"
+                  variant="default"
+                  icon="pull"
+                  onClick={onPull}
+                >
+                  Pull{" "}
+                  {behind > 0 && (
+                    <span
+                      style={{ color: "var(--git-modified)", marginLeft: 4 }}
+                    >
+                      ↓{behind}
+                    </span>
+                  )}
+                </PGButton>
+                <PGButton
+                  size="sm"
+                  variant="primary"
+                  icon="push"
+                  onClick={onPush}
+                >
+                  Push {ahead > 0 && <span style={{ marginLeft: 4 }}>↑{ahead}</span>}
+                </PGButton>
+                <div
+                  style={{
+                    width: 1,
+                    height: 16,
+                    background: "var(--border-1)",
+                    margin: "0 4px",
+                  }}
+                />
+                <PGButton size="sm" variant="ghost" onClick={close}>
+                  Close repo
+                </PGButton>
+              </>
+            )}
+            {!repo && (
               <PGButton
                 size="sm"
                 variant="primary"
-                icon="push"
-                onClick={onPush}
+                icon="folder"
+                onClick={onOpen}
               >
-                Push {ahead > 0 && <span style={{ marginLeft: 4 }}>↑{ahead}</span>}
+                Open…
               </PGButton>
-              <div
-                style={{
-                  width: 1,
-                  height: 16,
-                  background: "var(--border-1)",
-                  margin: "0 4px",
-                }}
-              />
-              <PGButton size="sm" variant="ghost" onClick={close}>
-                Close repo
-              </PGButton>
-            </>
-          )}
-          {!repo && (
-            <PGButton
-              size="sm"
-              variant="primary"
-              icon="folder"
-              onClick={onOpen}
-            >
-              Open…
-            </PGButton>
-          )}
-          <PGIconButton
-            icon="settings"
-            size="md"
-            title="Settings"
-            onClick={onOpenSettings}
-          />
-        </div>
-      }
-    />
+            )}
+            <PGIconButton
+              icon="settings"
+              size="md"
+              title="Settings"
+              onClick={onOpenSettings}
+            />
+          </div>
+        }
+      />
+      <BranchPicker
+        anchor={pickerAnchor}
+        open={!!pickerAnchor}
+        onClose={() => setPickerAnchor(null)}
+      />
+    </>
   );
 }
 
