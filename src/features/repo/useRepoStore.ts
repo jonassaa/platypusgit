@@ -79,6 +79,20 @@ import {
 } from "@/lib/tauri";
 import { useRecentsStore } from "./useRecentsStore";
 
+/**
+ * Active long-running operations, keyed by operation kind. Value is the
+ * user-visible label (e.g. "Fetching origin…"). Consumers can flip button
+ * spinners with `!!activity.fetch` and render a status-bar line from the
+ * first truthy entry.
+ */
+export interface RepoActivity {
+  fetch?: string;
+  pull?: string;
+  push?: string;
+  stash?: string;
+  branch?: string;
+}
+
 interface RepoStoreState {
   current: RepoHandle | null;
   status: FileStatus[];
@@ -93,6 +107,8 @@ interface RepoStoreState {
   error: AppError | null;
   repoState: GitRepoState;
   rebaseStatus: RebaseStatus;
+  /** Active long-running ops keyed by op kind. */
+  activity: RepoActivity;
   openRepo: (path: string) => Promise<void>;
   refreshAll: () => Promise<void>;
   refreshAllFiles: () => Promise<void>;
@@ -109,6 +125,15 @@ interface RepoStoreState {
   checkoutBranch: (name: string) => Promise<void>;
   checkoutRef: (reference: string) => Promise<void>;
   createBranch: (name: string, from?: string) => Promise<void>;
+  /**
+   * Create a branch and switch to it. When the worktree is dirty and
+   * `autoStash` is true, stashes before checkout and pops the stash after.
+   * Returns true on success, false on any failure (error is set on the store).
+   */
+  createAndSwitchBranch: (
+    name: string,
+    opts?: { from?: string; autoStash?: boolean },
+  ) => Promise<boolean>;
   deleteBranch: (name: string, force?: boolean) => Promise<void>;
   renameBranch: (from: string, to: string) => Promise<void>;
   mergeBranch: (name: string) => Promise<void>;
@@ -162,7 +187,16 @@ const DEFAULT_REBASE_STATUS: RebaseStatus = {
   pauseReason: null,
 };
 
-export const useRepoStore = create<RepoStoreState>((set, get) => ({
+export const useRepoStore = create<RepoStoreState>((set, get) => {
+  const setActivity = (key: keyof RepoActivity, label: string | null) => {
+    set((s) => {
+      const next = { ...s.activity };
+      if (label === null) delete next[key];
+      else next[key] = label;
+      return { activity: next };
+    });
+  };
+  return ({
   current: null,
   status: [],
   allFiles: [],
@@ -175,6 +209,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
   error: null,
   repoState: "Clean",
   rebaseStatus: DEFAULT_REBASE_STATUS,
+  activity: {},
 
   async openRepo(path) {
     set({ loading: true, error: null });
@@ -351,11 +386,30 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
   async checkoutBranch(name) {
     const repo = get().current;
     if (!repo) return;
+    setActivity("branch", `Switching to ${name}…`);
     try {
+      // Carry over uncommitted work automatically: stash → checkout → pop.
+      // stashSave returns null when there's nothing to stash, so this is a
+      // no-op on a clean tree. The client-side `status` can lag behind the
+      // backend, so we always attempt the stash rather than gating on it.
+      setActivity("branch", `Stashing changes…`);
+      const stashed = await stashSave(repo.id, {
+        message: `auto: switch to ${name}`,
+        includeUntracked: true,
+        keepIndex: false,
+      });
+      setActivity("branch", `Switching to ${name}…`);
       await checkoutBranch(repo.id, name);
+      if (stashed) {
+        setActivity("branch", `Restoring stashed changes…`);
+        await stashPop(repo.id, 0);
+      }
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
+      await get().refreshAll();
+    } finally {
+      setActivity("branch", null);
     }
   },
 
@@ -423,6 +477,25 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
     } catch (e) {
       set({ error: toAppError(e) });
     }
+  },
+
+  async createAndSwitchBranch(name, opts) {
+    const repo = get().current;
+    if (!repo) return false;
+    setActivity("branch", `Creating ${name}…`);
+    try {
+      await createBranch(repo.id, name, opts?.from);
+    } catch (e) {
+      set({ error: toAppError(e) });
+      setActivity("branch", null);
+      await get().refreshAll();
+      return false;
+    }
+    setActivity("branch", null);
+    // checkoutBranch handles stash + checkout + pop and its own activity
+    // labels. Any error surfaces via the store's `error` field.
+    await get().checkoutBranch(name);
+    return !get().error;
   },
 
   async deleteBranch(name, force = false) {
@@ -552,44 +625,56 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
   async fetch(remote) {
     const repo = get().current;
     if (!repo) return;
+    setActivity("fetch", `Fetching ${remote}…`);
     try {
       await fetchRemote(repo.id, remote);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
+    } finally {
+      setActivity("fetch", null);
     }
   },
 
   async fetchAll() {
     const repo = get().current;
     if (!repo) return;
+    setActivity("fetch", "Fetching all remotes…");
     try {
       await fetchAll(repo.id);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
+    } finally {
+      setActivity("fetch", null);
     }
   },
 
   async pull(remote, branch, mode = "Merge") {
     const repo = get().current;
     if (!repo) return;
+    setActivity("pull", `Pulling ${remote}/${branch}…`);
     try {
       await pullRemote(repo.id, remote, branch, mode);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
+    } finally {
+      setActivity("pull", null);
     }
   },
 
   async push(remote, branch, force = "None") {
     const repo = get().current;
     if (!repo) return;
+    setActivity("push", `Pushing ${remote}/${branch}…`);
     try {
       await pushRemote(repo.id, remote, branch, force);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
+    } finally {
+      setActivity("push", null);
     }
   },
 
@@ -787,4 +872,5 @@ export const useRepoStore = create<RepoStoreState>((set, get) => ({
       set({ error: toAppError(e) });
     }
   },
-}));
+  });
+});

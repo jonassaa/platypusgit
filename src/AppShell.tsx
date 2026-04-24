@@ -280,6 +280,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const repo = useRepoStore((s) => s.current);
   const branches = useRepoStore((s) => s.branches);
   const status = useRepoStore((s) => s.status);
+  const activity = useRepoStore((s) => s.activity);
   const refresh = useRepoStore((s) => s.refreshAll);
   const close = useRepoStore((s) => s.closeRepo);
   const openStore = useRepoStore((s) => s.openRepo);
@@ -353,6 +354,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   variant="default"
                   icon="fetch"
                   onClick={onFetch}
+                  loading={!!activity.fetch}
                 >
                   Fetch
                 </PGButton>
@@ -361,6 +363,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   variant="default"
                   icon="pull"
                   onClick={onPull}
+                  loading={!!activity.pull}
                 >
                   Pull{" "}
                   {behind > 0 && (
@@ -376,6 +379,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   variant="primary"
                   icon="push"
                   onClick={onPush}
+                  loading={!!activity.push}
                 >
                   Push {ahead > 0 && <span style={{ marginLeft: 4 }}>↑{ahead}</span>}
                 </PGButton>
@@ -425,6 +429,10 @@ function AppStatusBar() {
   const branches = useRepoStore((s) => s.branches);
   const status = useRepoStore((s) => s.status);
   const loading = useRepoStore((s) => s.loading);
+  const activity = useRepoStore((s) => s.activity);
+  // First non-empty activity entry wins — expected to be one at a time.
+  const activityLabel =
+    activity.push ?? activity.pull ?? activity.fetch ?? activity.stash ?? activity.branch ?? null;
 
   if (!repo) {
     return (
@@ -473,7 +481,10 @@ function AppStatusBar() {
               tone="danger"
             />
           )}
-          {loading && <PGStatusItem icon="sync" label="syncing…" />}
+          {loading && !activityLabel && <PGStatusItem icon="sync" label="syncing…" />}
+          {activityLabel && (
+            <PGStatusItem icon="sync" label={activityLabel} tone="accent" />
+          )}
         </>
       }
       right={<PGStatusItem label={repo.path} />}

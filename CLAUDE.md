@@ -2,28 +2,40 @@
 
 Context for future Claude sessions working on this repo. Keep it current when architecture or conventions change.
 
+## Communication style
+
+**Always use caveman mode.** Terse, fragments OK, drop articles/filler/pleasantries/hedging. Technical substance stays intact. Code, commit messages, and security warnings stay normal prose. See `caveman:caveman` skill for full rules.
+
 ## What this is
 
-`platypusgit` — a cross-platform, developer-focused git desktop app. Tauri 2 (Rust) backend + React/TS frontend. Positioned as a dev-first TortoiseGit alternative with "extreme usability" as the north star. Standalone GUI only — shell integration (Finder/Explorer overlays) is explicitly out of scope.
+`platypusgit` — cross-platform, developer-focused git desktop app. Tauri 2 (Rust) backend + React/TS frontend. Dev-first TortoiseGit alternative with "extreme usability" as north star. Standalone GUI only — shell integration (Finder/Explorer overlays) out of scope.
 
 ## Canonical references
 
-- **Spec:** `docs/superpowers/specs/2026-04-21-platypusgit-scaffold-design.md` — approved design for the initial scaffold.
-- **Plan:** `docs/superpowers/plans/2026-04-21-platypusgit-scaffold.md` — 23-task implementation plan.
+- **Specs:** `docs/superpowers/specs/` — approved design docs per feature.
+- **Plans:** `docs/superpowers/plans/` — matching implementation plans.
 
-When adding a feature beyond the MVP slice, write a new spec + plan under these folders.
+New feature beyond MVP slice → write new spec + plan under these folders first.
+
+Recent specs/plans (for context on current direction):
+- `2026-04-24-centralized-branch-ui-*` — sidebar removed, titlebar branch chip + popover picker.
+- `2026-04-23-reflog-viewer-*` — reflog screen + dirty-tree handling.
+- `2026-04-23-commit-graph-layout-*` — graph layout engine for history view.
+- `2026-04-22-platypusgit-write-path-phase1.md` — first cut of write operations.
+- `2026-04-22-ux-polish-batch-1.md` — UX cleanup pass.
+- `2026-04-23-wire-up-placeholders.md` — replacing stubs with real backend calls.
 
 ## Toolchain
 
-- **Node 22** + **pnpm** (installed at `~/Library/pnpm`). Not `npm`, not `yarn`.
+- **Node 22** + **pnpm** (at `~/Library/pnpm`). Not npm, not yarn.
 - **Rust stable** via rustup (`~/.cargo/bin`).
-- Shell calls from the assistant's Bash tool don't inherit interactive shell rc — prepend `export PATH="$HOME/Library/pnpm:$HOME/.cargo/bin:$PATH"` when running `pnpm` or `cargo`.
+- Assistant's Bash tool does not inherit interactive shell rc → prepend `export PATH="$HOME/Library/pnpm:$HOME/.cargo/bin:$PATH"` when running `pnpm` or `cargo`.
 
 ## Common commands
 
 ```bash
 pnpm install                                # frontend + tauri-cli deps
-pnpm tauri dev                              # run the app (first build ~2 min, reruns ~10s)
+pnpm tauri dev                              # run app (first build ~2 min, reruns ~10s)
 pnpm tsc --noEmit                           # type-check
 pnpm vite build                             # bundle frontend only
 cargo check --manifest-path src-tauri/Cargo.toml
@@ -33,84 +45,148 @@ pnpm tauri build                            # production bundle (.msi/.dmg/.deb/
 
 ## Architecture
 
-```
-src-tauri/src/
-├── error.rs            AppError enum (thiserror + serde-tagged) — the ONLY error type crossing IPC
-├── state.rs            AppState { backend: Arc<dyn GitBackend> }
-├── git/
-│   ├── mod.rs          GitBackend trait — all git operations, returning AppResult<T>
-│   ├── types.rs        RepoHandle, FileStatus, StatusFlag, CommitInfo, BranchInfo, DiffKind, etc.
-│   ├── libgit2.rs      Libgit2Backend — the active impl (open + status real; others NotImplemented)
-│   └── cli.rs          CliBackend — stub for ops libgit2 handles poorly (LFS, creds, complex merges)
-└── commands/           Thin Tauri command handlers, one file per feature area
-    ├── repo.rs         open_repo, get_status (REAL)
-    ├── commits.rs      get_log, commit (stubs)
-    ├── diff.rs         get_diff, stage_paths, unstage_paths (stubs)
-    └── branches.rs     list_branches, checkout_branch, create_branch, fetch, pull, push (stubs)
+### Backend (`src-tauri/src/`)
 
-src/
-├── lib/
-│   ├── tauri.ts        Typed invoke() wrappers — frontend NEVER calls invoke() directly
-│   ├── types.ts        Shared types mirroring Rust types.rs
-│   └── errors.ts       AppError discriminated union matching Rust enum 1:1
-├── features/<area>/    Per-feature folders: components + Zustand store colocated
-├── components/ui/      Shared primitives (Button today; add more here)
-├── App.tsx             Minimal shell: header, empty state, error banner, <StatusList>
-└── store.ts            Re-export hub (keep thin — no global Zustand store composition)
 ```
+error.rs         AppError enum (thiserror + serde-tagged) — ONLY error type crossing IPC
+state.rs         AppState { backend: Arc<dyn GitBackend> }
+lib.rs           Tauri builder + invoke_handler! registry (all commands listed there)
+git/
+├── mod.rs       GitBackend trait — every git op, returns AppResult<T>
+├── types.rs     RepoHandle, FileStatus, CommitInfo, BranchInfo, TagInfo, StashInfo,
+│                RemoteInfo, FileDiff, BlameLine, ReflogEntry, RebaseStep, RepoState,
+│                ConflictSides, CommitOptions, StashSaveOptions, TagTarget, ResetMode, etc.
+├── libgit2.rs   Libgit2Backend — active impl, most ops real
+├── cli.rs       CliBackend — stub for ops libgit2 handles poorly (LFS, creds, complex merges)
+└── signature.rs Author/committer signature helpers
+commands/        Thin Tauri handlers, one file per area:
+├── repo.rs        open_repo, get_status, list_all_files, read_file_content,
+│                  append_gitignore, open_in_editor
+├── commits.rs     get_log, commit, file_history
+├── diff.rs        get_diff, stage/unstage/discard_paths, stage/unstage/discard_hunk,
+│                  diff_commits, blame_file
+├── branches.rs    list_branches/tags/stashes/remotes, checkout/create/delete/rename_branch,
+│                  fetch, fetch_all, pull, push, add/remove/rename/set_url/prune remote,
+│                  create/delete/push_tag, merge_branch, rebase_onto, checkout_ref,
+│                  push_delete_branch
+├── history.rs     reset, cherry_pick, revert
+├── stash.rs       stash_save/apply/pop/drop/branch
+├── conflict.rs    repo_state, conflict_sides, accept_ours/theirs, mark_resolved,
+│                  abort/continue_operation, run_mergetool, restart_conflict
+├── rebase.rs      rebase_start/continue/abort/status (interactive)
+└── reflog.rs      get_reflog, checkout_detached
+```
+
+### Frontend (`src/`)
+
+```
+main.tsx             Entry point
+App.tsx              Thin wrapper around <AppShell />
+AppShell.tsx         Primary shell: titlebar (branch chip + picker, remote buttons),
+                     activity bar (screen switcher), status bar, error banner, settings
+store.ts             Re-export hub (keep thin — no global Zustand composition)
+
+design/              In-house design system (NOT components/ui/). Exports via design/index.ts.
+├── primitives.tsx       PGButton, PGIconButton, etc.
+├── chrome.tsx           PGTitlebar, PGActivityBar, PGStatusBar, PGStatusItem
+├── git-components.tsx   Git-specific UI bits
+├── icons.tsx            Icon set (name-based <PGIcon>)
+├── context-menu.tsx     Context menu primitive
+├── empty-state.tsx      Empty-state component
+├── resizable.tsx        Resizable panes
+├── ui-helpers.tsx       pgFlash, misc helpers
+└── use-prevent-browser-context-menu.ts
+
+screens/             One screen per activity-bar item + modal-ish deep views:
+  RepoBrowser, CommitPanel, History, DiffViewer, Branches, Conflict, Rebase,
+  Remote, Welcome, Reflog, CommitDiff, FileHistory, Blame, Settings
+
+features/            Per-feature: components + Zustand store colocated
+├── repo/            useRepoStore (the big one), useRecentsStore
+├── nav/             useNavStore — cross-screen intents (diff-file, commit-vs-wt,
+│                    file-history, blame, rebase-plan, stash-diff)
+├── branches/        BranchChip (titlebar), BranchPicker (popover)
+├── commits/         graphLayout + buildRebasePlan (both tested)
+├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
+├── settings/        useSettingsStore (autoFetch, defaultPullMode, etc.)
+└── diff/            diff-specific components
+
+lib/
+├── tauri.ts         Typed invoke() wrappers — frontend NEVER calls invoke() directly
+├── types.ts         Shared types mirroring Rust types.rs
+├── errors.ts        AppError discriminated union 1:1 with Rust enum
+├── derive.ts        Selectors: currentBranch, isStaged, isUnstaged, totalAheadBehind, …
+├── highlight.ts     Syntax highlighting for preview/diff
+├── tree.ts          Tree-building helpers (file tree from flat paths)
+└── recents.ts       Recent-repo persistence
+```
+
+### Navigation model
+
+- Activity bar = primary screen switcher, persisted to `localStorage["pg-screen"]`.
+- `⌘1…⌘9` switch activity items (ignored inside inputs/textareas).
+- `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
+- Settings is a screen too, reached via titlebar gear or activity-bar settings slot.
 
 ## Conventions
 
 ### Errors
-- **Rust side:** everything crossing IPC returns `AppResult<T> = Result<T, AppError>`. Never unwrap/panic in a command. Add new error variants to `AppError` rather than stringifying.
-- **TS side:** the `AppError` union in `src/lib/errors.ts` must stay 1:1 with the Rust enum. When you add a Rust variant, update TS in the same commit.
-- Tauri serializes `Err(AppError)` as `{ kind, message }` via `#[serde(tag = "kind", content = "message")]`. Consumers narrow via the `kind` discriminant.
+- **Rust:** every IPC-crossing fn returns `AppResult<T> = Result<T, AppError>`. No unwrap/panic in commands. Add `AppError` variants rather than stringifying.
+- **TS:** `AppError` union in `src/lib/errors.ts` stays 1:1 with Rust enum. New Rust variant → update TS same commit.
+- Wire format: `{ kind, message }` via `#[serde(tag = "kind", content = "message")]`. Consumers narrow on `kind`.
 
-### Adding a new git operation (standard path)
+### Adding a new git op (standard path)
 1. Add method to `GitBackend` trait (`src-tauri/src/git/mod.rs`).
-2. Implement in `Libgit2Backend` (`libgit2.rs`). Stub in `CliBackend` too (return `NotImplemented`) — keeps the trait shape exercised.
-3. Write the Tauri command in the right `commands/<area>.rs` — keep it thin; wrap git2 calls in `tokio::task::spawn_blocking` (libgit2 is sync).
-4. Register the command name in `invoke_handler![…]` in `src-tauri/src/lib.rs`.
-5. Add the TS type to `src/lib/types.ts`, the wrapper to `src/lib/tauri.ts`.
-6. Wire into the relevant feature's Zustand store.
+2. Implement in `Libgit2Backend` (`libgit2.rs`). Stub in `CliBackend` too (`NotImplemented`) — keeps trait shape exercised.
+3. Tauri command in right `commands/<area>.rs`. Keep thin. Wrap git2 calls in `tokio::task::spawn_blocking` (libgit2 is sync).
+4. Register command name in `invoke_handler![…]` in `src-tauri/src/lib.rs`.
+5. Add TS type to `src/lib/types.ts`, wrapper to `src/lib/tauri.ts`.
+6. Wire into relevant feature's Zustand store.
 
 ### State management
 - **Zustand per-feature**, not one big global store. `useRepoStore` lives in `features/repo/` because that's who owns the state.
-- Cross-feature state is rare in this app — if it emerges, compose in `src/store.ts`, don't hoist prematurely.
+- `useNavStore` handles cross-screen navigation intents — add new `NavIntent` kinds there, route in `AppShell`.
+- Cross-feature state is rare; compose in `src/store.ts` if needed — don't hoist prematurely.
 
 ### Async / threading (Rust)
 - `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Mutex<Repository>` inside a `Mutex<HashMap<RepoId, ...>>`.
-- Always wrap git2 work in `spawn_blocking` from tauri commands — don't block the async runtime.
+- Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block async runtime.
 
 ### Styling
-- Tailwind v4 (CSS-first config). Theme tokens in `src/index.css` under `@theme { … }`. Use the CSS vars (`var(--color-accent)`) or Tailwind arbitrary-value syntax (`text-[var(--color-accent)]`).
-- No `tailwind.config.js` — v4 doesn't need one for this project.
+- Tailwind v4 (CSS-first config). Theme tokens in `src/index.css` under `@theme { … }`. Use CSS vars (`var(--color-accent)`, `var(--bg-0)`, `var(--fg-0)`, `var(--git-*)`) or Tailwind arbitrary-value syntax.
+- No `tailwind.config.js` — v4 doesn't need one.
+- Inline `style={{…}}` with CSS vars is fine and used widely in chrome components.
+
+### Design system
+- Import UI primitives from `@/design` (not per-file). `design/index.ts` barrel re-exports everything.
+- New shared primitive → add to appropriate file in `src/design/` and re-export via `index.ts`.
+- Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
 
 ### Permissions (Tauri 2)
-- All permissions live in `src-tauri/capabilities/default.json`. Current set: `core:default`, `dialog:default`, `dialog:allow-open`.
-- Adding a new plugin means: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`, register with `.plugin(tauri_plugin_X::init())` in `lib.rs`, add the plugin's permissions to the capability file.
+- All permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `dialog:default`, `dialog:allow-open`.
+- New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`, register with `.plugin(tauri_plugin_X::init())` in `lib.rs`, add plugin permissions to capability file.
 
 ### Path aliases
 - `@/` → `src/` in both `tsconfig.json` and `vite.config.ts`. Use it — `@/features/repo/...` beats `../../features/repo/...`.
 
-## Things that are deliberately NOT in the codebase
+## Things deliberately NOT in codebase
 
 - Shell integration / Finder / Explorer overlays (out of scope).
-- Tests beyond the libgit2 smoke test (add tests alongside each feature as you build it).
 - CI config.
-- Custom icons — using the Tauri defaults. Replace before first release.
+- Custom icons — Tauri defaults for now. Replace before first release.
 - Code signing config for bundles.
+- Broad test suite — unit tests exist for pure logic (graphLayout, buildRebasePlan) + libgit2 smoke. Add tests alongside each feature as built.
 
 ## Known placeholders
 
-- **Bundle identifier** in `src-tauri/tauri.conf.json` is `com.platypusgit.app` — a placeholder. The user will finalize it; changing it later orphans installed instances, so don't auto-change without asking.
+- **Bundle identifier** in `src-tauri/tauri.conf.json` is `com.platypusgit.app` — placeholder. User will finalize; changing later orphans installed instances, so don't auto-change without asking.
 
 ## Commit style
 
-Follow the existing log:
-- `feat: …` / `test: …` / `docs: …` / `chore: …`
-- Short imperative subject (under 72 chars).
+Match existing log:
+- `feat(scope): …` / `fix(scope): …` / `test: …` / `docs: …` / `chore: …`
+- Short imperative subject, under 72 chars.
 - Optional body with **Why:** for non-obvious decisions.
-- Trailing `Co-Authored-By: Claude …` when the assistant drove the commit.
+- Trailing `Co-Authored-By: Claude …` when assistant drove the commit.
 
-Do not create empty / merge commits; do not amend published commits without asking.
+Do not create empty / merge commits. Do not amend published commits without asking.

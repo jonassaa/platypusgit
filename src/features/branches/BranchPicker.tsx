@@ -25,7 +25,7 @@ const MAX_HEIGHT = 480;
 export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
   const branches = useRepoStore((s) => s.branches);
   const checkoutBranch = useRepoStore((s) => s.checkoutBranch);
-  const createBranch = useRepoStore((s) => s.createBranch);
+  const createAndSwitchBranch = useRepoStore((s) => s.createAndSwitchBranch);
   const [query, setQuery] = React.useState("");
   const [activeIndex, setActiveIndex] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
@@ -86,6 +86,13 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
     return () => window.removeEventListener("mousedown", onDown);
   }, [open, onClose, anchor]);
 
+  const requestCreate = (rawName: string) => {
+    const name = rawName.trim();
+    if (!name) return;
+    onClose();
+    void createAndSwitchBranch(name, { autoStash: true });
+  };
+
   if (!open || !anchor) return null;
 
   const rect = anchor.getBoundingClientRect();
@@ -120,11 +127,7 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
     if (e.key === "Enter") {
       e.preventDefault();
       if (flat.length === 0) {
-        const name = query.trim() || "main";
-        void createBranch(name).then(() =>
-          useRepoStore.getState().checkoutBranch(name),
-        );
-        onClose();
+        requestCreate(query.trim() || "main");
         return;
       }
       const row = flat[activeIndex];
@@ -297,13 +300,7 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
                 : "No branches in this repo."}
               <div style={{ marginTop: 8 }}>
                 <span
-                  onClick={() => {
-                    const name = (query.trim() || "main");
-                    void createBranch(name).then(() =>
-                      useRepoStore.getState().checkoutBranch(name),
-                    );
-                    onClose();
-                  }}
+                  onClick={() => requestCreate(query.trim() || "main")}
                   style={{
                     color: "var(--accent)",
                     cursor: "pointer",

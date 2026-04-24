@@ -39,11 +39,22 @@ export function BranchesScreen() {
   const branches = useRepoStore((s) => s.branches);
   const tags = useRepoStore((s) => s.tags);
   const stashes = useRepoStore((s) => s.stashes);
+  const activity = useRepoStore((s) => s.activity);
+  const fetchAllOp = useRepoStore((s) => s.fetchAll);
+  const createAndSwitchBranch = useRepoStore((s) => s.createAndSwitchBranch);
   const [selection, setSelection] = React.useState<Selection | null>(null);
   const [filter, setFilter] = React.useState("");
   const [view, setView] = React.useState<
     "all" | "local" | "remote" | "tags" | "stashes"
   >("all");
+
+  const startCreate = () => {
+    const raw = window.prompt("New branch name");
+    if (!raw) return;
+    const name = raw.trim();
+    if (!name) return;
+    void createAndSwitchBranch(name, { autoStash: true });
+  };
 
   React.useEffect(() => {
     setSelection(null);
@@ -163,6 +174,9 @@ export function BranchesScreen() {
           onFilter={setFilter}
           view={view}
           onView={setView}
+          onNew={startCreate}
+          onFetchAll={fetchAllOp}
+          fetching={!!activity.fetch}
         />
         <PGEmpty icon="branch" title="No branches, tags, or stashes">
           This repository doesn&apos;t have any branches, tags, or stashes yet.
@@ -178,6 +192,9 @@ export function BranchesScreen() {
         onFilter={setFilter}
         view={view}
         onView={setView}
+        onNew={startCreate}
+        onFetchAll={fetchAllOp}
+        fetching={!!activity.fetch}
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
@@ -572,11 +589,17 @@ function BranchesToolbar({
   onFilter,
   view,
   onView,
+  onNew,
+  onFetchAll,
+  fetching,
 }: {
   filter: string;
   onFilter: (v: string) => void;
   view: "all" | "local" | "remote" | "tags" | "stashes";
   onView: (v: "all" | "local" | "remote" | "tags" | "stashes") => void;
+  onNew: () => void;
+  onFetchAll: () => void;
+  fetching: boolean;
 }) {
   return (
     <PGToolbar
@@ -603,17 +626,20 @@ function BranchesToolbar({
       }
       right={
         <>
-          <PGButton size="sm" variant="outline" icon="fetch" disabled>
+          <PGButton
+            size="sm"
+            variant="outline"
+            icon="fetch"
+            loading={fetching}
+            onClick={onFetchAll}
+          >
             Fetch all
           </PGButton>
           <PGButton
             size="sm"
             variant="primary"
             icon="plus"
-            onClick={() => {
-              const name = window.prompt("New branch name");
-              if (name) useRepoStore.getState().createBranch(name);
-            }}
+            onClick={onNew}
           >
             New branch
           </PGButton>
