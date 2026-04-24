@@ -45,6 +45,10 @@ export function BranchesScreen() {
     "all" | "local" | "remote" | "tags" | "stashes"
   >("all");
 
+  React.useEffect(() => {
+    setSelection(null);
+  }, [view]);
+
   const { onContextMenu: onBranchCtx, menu: branchMenu } = useContextMenu<
     BranchInfo & { kind: "local" | "remote" }
   >((b) =>

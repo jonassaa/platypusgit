@@ -86,9 +86,11 @@ export function PGTitlebar({
         <PGIcon name="repo" size={13} />
         <span style={{ color: "var(--fg-0)", fontWeight: 600 }}>{repoName}</span>
         <span style={{ color: "var(--fg-3)" }}>/</span>
-        <PGIcon name="branch" size={12} />
         {typeof branch === "string" ? (
-          <span style={{ color: "var(--accent)" }}>{branch}</span>
+          <>
+            <PGIcon name="branch" size={12} />
+            <span style={{ color: "var(--accent)" }}>{branch}</span>
+          </>
         ) : (
           branch
         )}

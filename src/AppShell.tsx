@@ -332,7 +332,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     <>
       <PGTitlebar
         repoName={repoName}
-        branch={<BranchChip onClick={setPickerAnchor} />}
+        branch={<BranchChip onClick={(el) => setPickerAnchor((prev) => (prev ? null : el))} />}
         dirty={dirty}
         showTrafficLights={false}
         rightSlot={

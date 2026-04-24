@@ -119,9 +119,10 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      if (flat.length === 0 && query.trim()) {
-        void createBranch(query.trim()).then(() =>
-          useRepoStore.getState().checkoutBranch(query.trim()),
+      if (flat.length === 0) {
+        const name = query.trim() || "main";
+        void createBranch(name).then(() =>
+          useRepoStore.getState().checkoutBranch(name),
         );
         onClose();
         return;
@@ -294,25 +295,26 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
               {query
                 ? `No branches match "${query}".`
                 : "No branches in this repo."}
-              {query && (
-                <div style={{ marginTop: 8 }}>
-                  <span
-                    onClick={() => {
-                      void createBranch(query.trim()).then(() =>
-                        useRepoStore.getState().checkoutBranch(query.trim()),
-                      );
-                      onClose();
-                    }}
-                    style={{
-                      color: "var(--accent)",
-                      cursor: "pointer",
-                      textDecoration: "underline",
-                    }}
-                  >
-                    Create branch "{query.trim()}" from HEAD
-                  </span>
-                </div>
-              )}
+              <div style={{ marginTop: 8 }}>
+                <span
+                  onClick={() => {
+                    const name = (query.trim() || "main");
+                    void createBranch(name).then(() =>
+                      useRepoStore.getState().checkoutBranch(name),
+                    );
+                    onClose();
+                  }}
+                  style={{
+                    color: "var(--accent)",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                  }}
+                >
+                  {query.trim()
+                    ? `Create branch "${query.trim()}" from HEAD`
+                    : `Create branch "main" from HEAD`}
+                </span>
+              </div>
             </div>
           ) : (
             <>
