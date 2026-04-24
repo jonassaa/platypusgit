@@ -18,7 +18,13 @@ import {
   usePaneWidth,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
-import type { BranchInfo, TagInfo } from "@/lib/types";
+import { useNavStore } from "@/features/nav/useNavStore";
+import type { BranchInfo, StashInfo, TagInfo } from "@/lib/types";
+
+type Selection =
+  | { kind: "branch"; name: string }
+  | { kind: "tag"; name: string }
+  | { kind: "stash"; index: number };
 
 const COLS = [
   { key: "icon", label: "", initial: 20, min: 20, resizable: false },
@@ -33,7 +39,7 @@ export function BranchesScreen() {
   const branches = useRepoStore((s) => s.branches);
   const tags = useRepoStore((s) => s.tags);
   const stashes = useRepoStore((s) => s.stashes);
-  const [selected, setSelected] = React.useState<string | null>(null);
+  const [selection, setSelection] = React.useState<Selection | null>(null);
   const [filter, setFilter] = React.useState("");
   const [view, setView] = React.useState<
     "all" | "local" | "remote" | "tags" | "stashes"
@@ -121,7 +127,18 @@ export function BranchesScreen() {
     return [];
   }, [stashes, filter, view]);
 
-  const selectedBranch = branches.find((b) => b.name === selected) ?? null;
+  const selectedBranch =
+    selection?.kind === "branch"
+      ? branches.find((b) => b.name === selection.name) ?? null
+      : null;
+  const selectedTag =
+    selection?.kind === "tag"
+      ? tags.find((t) => t.name === selection.name) ?? null
+      : null;
+  const selectedStash =
+    selection?.kind === "stash"
+      ? stashes.find((s) => s.index === selection.index) ?? null
+      : null;
 
   const cellStyle: CSSProperties = {
     minWidth: 0,
@@ -213,7 +230,7 @@ export function BranchesScreen() {
             {rows.map((b, i) => (
               <div
                 key={`${b.kind}:${b.name}`}
-                onClick={() => setSelected(b.name)}
+                onClick={() => setSelection({ kind: "branch", name: b.name })}
                 onContextMenu={(e) => onBranchCtx(e, b)}
                 style={{
                   display: "grid",
@@ -221,7 +238,7 @@ export function BranchesScreen() {
                   alignItems: "center",
                   height: 28,
                   background:
-                    selected === b.name
+                    selection?.kind === "branch" && selection.name === b.name
                       ? "var(--bg-selection)"
                       : i % 2
                         ? "var(--bg-1)"
@@ -346,6 +363,7 @@ export function BranchesScreen() {
             {visibleTags.map((t) => (
               <div
                 key={t.name}
+                onClick={() => setSelection({ kind: "tag", name: t.name })}
                 onContextMenu={(e) => onTagCtx(e, t)}
                 style={{
                   display: "grid",
@@ -355,6 +373,11 @@ export function BranchesScreen() {
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--fs-12)",
                   borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",
+                  cursor: "pointer",
+                  background:
+                    selection?.kind === "tag" && selection.name === t.name
+                      ? "var(--bg-selection)"
+                      : "transparent",
                 }}
               >
                 <div
@@ -415,6 +438,7 @@ export function BranchesScreen() {
             {visibleStashes.map((s) => (
               <div
                 key={`stash:${s.index}`}
+                onClick={() => setSelection({ kind: "stash", index: s.index })}
                 onContextMenu={(e) =>
                   onStashCtx(e, { index: s.index, name: `stash@{${s.index}}` })
                 }
@@ -426,6 +450,11 @@ export function BranchesScreen() {
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--fs-12)",
                   borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",
+                  cursor: "pointer",
+                  background:
+                    selection?.kind === "stash" && selection.index === s.index
+                      ? "var(--bg-selection)"
+                      : "transparent",
                 }}
               >
                 <div
@@ -498,12 +527,7 @@ export function BranchesScreen() {
             minWidth: 0,
           }}
         >
-          <div
-            style={{
-              padding: 12,
-              borderBottom: "1px solid var(--border-0)",
-            }}
-          >
+          <div style={{ padding: 12, borderBottom: "1px solid var(--border-0)" }}>
             <div
               style={{
                 fontFamily: "var(--font-mono)",
@@ -514,133 +538,21 @@ export function BranchesScreen() {
                 marginBottom: 6,
               }}
             >
-              BRANCH
+              {selection?.kind?.toUpperCase() ?? "REF"}
             </div>
-            {selectedBranch ? (
-              <>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    marginBottom: 8,
-                    minWidth: 0,
-                  }}
-                >
-                  <PGIcon
-                    name="branch"
-                    size={14}
-                    style={{ color: "var(--accent)", flexShrink: 0 }}
-                  />
-                  <span
-                    title={selectedBranch.name}
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: "var(--fs-14)",
-                      color: "var(--accent)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {selectedBranch.name}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                  }}
-                >
-                  <KV
-                    k="Kind"
-                    v={selectedBranch.isRemote ? "remote" : "local"}
-                  />
-                  <KV
-                    k="Tip"
-                    v={<span className="mono">{selectedBranch.tip ?? "—"}</span>}
-                  />
-                  {!selectedBranch.isRemote && (
-                    <>
-                      <KV
-                        k="Tracks"
-                        v={selectedBranch.upstream ?? "— (no upstream)"}
-                      />
-                      <KV
-                        k="Ahead"
-                        v={
-                          <span style={{ color: "var(--git-added)" }}>
-                            {selectedBranch.ahead} commits
-                          </span>
-                        }
-                      />
-                      <KV
-                        k="Behind"
-                        v={
-                          <span style={{ color: "var(--git-modified)" }}>
-                            {selectedBranch.behind} commits
-                          </span>
-                        }
-                      />
-                    </>
-                  )}
-                </div>
-              </>
-            ) : (
+            {selectedBranch && <BranchInspector branch={selectedBranch} />}
+            {selectedTag && <TagInspector tag={selectedTag} />}
+            {selectedStash && <StashInspector stash={selectedStash} />}
+            {!selection && (
               <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-12)" }}>
-                Select a branch to inspect.
+                Select a branch, tag, or stash to inspect.
               </span>
             )}
           </div>
-          <div
-            style={{
-              padding: 12,
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-            }}
-          >
-            <PGButton
-              variant="primary"
-              icon="check"
-              disabled={!selectedBranch || selectedBranch.isHead}
-              onClick={() =>
-                selectedBranch &&
-                useRepoStore.getState().checkoutBranch(selectedBranch.name)
-              }
-            >
-              Check out
-            </PGButton>
-            <PGButton
-              variant="outline"
-              icon="merge"
-              disabled={!selectedBranch || selectedBranch.isHead}
-              title="merge will land in Plan C"
-            >
-              Merge into current
-            </PGButton>
-            <PGButton
-              variant="outline"
-              icon="rebase"
-              disabled={!selectedBranch || selectedBranch.isHead}
-              title="rebase will land in Plan E"
-            >
-              Rebase current onto this
-            </PGButton>
-            <PGButton
-              variant="ghost"
-              tone="danger"
-              icon="trash"
-              disabled={!selectedBranch || selectedBranch.isHead}
-              onClick={() => {
-                if (!selectedBranch) return;
-                if (window.confirm(`Delete ${selectedBranch.name}?`))
-                  useRepoStore.getState().deleteBranch(selectedBranch.name);
-              }}
-            >
-              Delete branch
-            </PGButton>
+          <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+            {selectedBranch && <BranchActions branch={selectedBranch} />}
+            {selectedTag && <TagActions tag={selectedTag} />}
+            {selectedStash && <StashActions stash={selectedStash} />}
           </div>
         </div>
       </div>
@@ -707,3 +619,239 @@ function BranchesToolbar({
   );
 }
 
+function BranchInspector({ branch }: { branch: BranchInfo }) {
+  return (
+    <>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 8,
+          minWidth: 0,
+        }}
+      >
+        <PGIcon
+          name="branch"
+          size={14}
+          style={{ color: "var(--accent)", flexShrink: 0 }}
+        />
+        <span
+          title={branch.name}
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-14)",
+            color: "var(--accent)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {branch.name}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <KV k="Kind" v={branch.isRemote ? "remote" : "local"} />
+        <KV k="Tip" v={<span className="mono">{branch.tip ?? "—"}</span>} />
+        {!branch.isRemote && (
+          <>
+            <KV k="Tracks" v={branch.upstream ?? "— (no upstream)"} />
+            <KV
+              k="Ahead"
+              v={
+                <span style={{ color: "var(--git-added)" }}>
+                  {branch.ahead} commits
+                </span>
+              }
+            />
+            <KV
+              k="Behind"
+              v={
+                <span style={{ color: "var(--git-modified)" }}>
+                  {branch.behind} commits
+                </span>
+              }
+            />
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function BranchActions({ branch }: { branch: BranchInfo }) {
+  return (
+    <>
+      <PGButton
+        variant="primary"
+        icon="check"
+        disabled={branch.isHead}
+        onClick={() => useRepoStore.getState().checkoutBranch(branch.name)}
+      >
+        Check out
+      </PGButton>
+      <PGButton variant="outline" icon="merge" disabled={branch.isHead} title="merge will land in Plan C">
+        Merge into current
+      </PGButton>
+      <PGButton variant="outline" icon="rebase" disabled={branch.isHead} title="rebase will land in Plan E">
+        Rebase current onto this
+      </PGButton>
+      <PGButton
+        variant="ghost"
+        tone="danger"
+        icon="trash"
+        disabled={branch.isHead}
+        onClick={() => {
+          if (window.confirm(`Delete ${branch.name}?`))
+            useRepoStore.getState().deleteBranch(branch.name);
+        }}
+      >
+        Delete branch
+      </PGButton>
+    </>
+  );
+}
+
+function TagInspector({ tag }: { tag: TagInfo }) {
+  return (
+    <>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 8,
+          minWidth: 0,
+        }}
+      >
+        <PGIcon name="tag" size={14} style={{ color: "var(--git-modified)", flexShrink: 0 }} />
+        <span
+          title={tag.name}
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-14)",
+            color: "var(--fg-0)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {tag.name}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <KV k="Oid" v={<span className="mono">{tag.shortOid}</span>} />
+      </div>
+    </>
+  );
+}
+
+function TagActions({ tag }: { tag: TagInfo }) {
+  const remotes = useRepoStore((s) => s.remotes);
+  const defaultRemote = remotes[0]?.name ?? null;
+  return (
+    <>
+      <PGButton
+        variant="primary"
+        icon="check"
+        onClick={() => useRepoStore.getState().checkoutRef(tag.name)}
+      >
+        Check out (detached)
+      </PGButton>
+      <PGButton
+        variant="outline"
+        icon="push"
+        disabled={!defaultRemote}
+        title={defaultRemote ? `push to ${defaultRemote}` : "no remote configured"}
+        onClick={() => {
+          if (defaultRemote)
+            useRepoStore.getState().pushTag(defaultRemote, tag.name);
+        }}
+      >
+        Push tag{defaultRemote ? ` to ${defaultRemote}` : ""}
+      </PGButton>
+      <PGButton
+        variant="ghost"
+        tone="danger"
+        icon="trash"
+        onClick={() => {
+          if (window.confirm(`Delete tag ${tag.name}?`))
+            useRepoStore.getState().deleteTag(tag.name);
+        }}
+      >
+        Delete tag
+      </PGButton>
+    </>
+  );
+}
+
+function StashInspector({ stash }: { stash: StashInfo }) {
+  return (
+    <>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 8,
+          minWidth: 0,
+        }}
+      >
+        <PGIcon name="stash" size={14} style={{ color: "var(--fg-2)", flexShrink: 0 }} />
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-14)",
+            color: "var(--fg-0)",
+          }}
+        >
+          stash@{`{${stash.index}}`}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <KV k="Oid" v={<span className="mono">{stash.shortOid}</span>} />
+        <KV k="Message" v={stash.message} />
+      </div>
+    </>
+  );
+}
+
+function StashActions({ stash }: { stash: StashInfo }) {
+  const setIntent = useNavStore((s) => s.setIntent);
+  return (
+    <>
+      <PGButton
+        variant="primary"
+        icon="check"
+        onClick={() => useRepoStore.getState().stashApply(stash.index)}
+      >
+        Apply
+      </PGButton>
+      <PGButton
+        variant="outline"
+        icon="stash"
+        onClick={() => useRepoStore.getState().stashPop(stash.index)}
+      >
+        Pop
+      </PGButton>
+      <PGButton
+        variant="outline"
+        icon="fileCode"
+        onClick={() => setIntent({ kind: "stash-diff", oid: stash.shortOid })}
+      >
+        Show diff
+      </PGButton>
+      <PGButton
+        variant="ghost"
+        tone="danger"
+        icon="trash"
+        onClick={() => {
+          if (window.confirm(`Drop stash@{${stash.index}}?`))
+            useRepoStore.getState().stashDrop(stash.index);
+        }}
+      >
+        Drop
+      </PGButton>
+    </>
+  );
+}
