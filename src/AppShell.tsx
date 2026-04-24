@@ -166,6 +166,9 @@ export function AppShell() {
       case "rebase-plan":
         setScreen("rebase");
         break;
+      case "stash-diff":
+        setScreen("commitDiff");
+        break;
     }
   }, [intent]);
 

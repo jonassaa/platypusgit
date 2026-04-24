@@ -12,7 +12,8 @@ export type NavIntent =
   | { kind: "commit-vs-commit"; from: string; to: string }
   | { kind: "file-history"; path: string }
   | { kind: "blame"; path: string }
-  | { kind: "rebase-plan"; plan: RebaseStep[] };
+  | { kind: "rebase-plan"; plan: RebaseStep[] }
+  | { kind: "stash-diff"; oid: string };
 
 interface NavState {
   intent: NavIntent | null;
