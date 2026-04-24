@@ -12,8 +12,12 @@ import {
   PGStatusBar,
   PGStatusItem,
   PGTitlebar,
+  branchMenuItems,
   pgFlash,
+  remoteBranchMenuItems,
+  remoteMenuItems,
   stashMenuItems,
+  tagMenuItems,
   useContextMenu,
   usePaneWidth,
   usePreventBrowserContextMenu,
@@ -33,10 +37,13 @@ import { ReflogScreen } from "@/screens/Reflog";
 import { CommitDiffScreen } from "@/screens/CommitDiff";
 import { FileHistoryScreen } from "@/screens/FileHistory";
 import { BlameScreen } from "@/screens/Blame";
+import { SettingsScreen } from "@/screens/Settings";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { appErrorMessage } from "@/lib/errors";
+import type { BranchInfo, RemoteInfo, TagInfo } from "@/lib/types";
 import {
   currentBranch,
   isStaged,
@@ -67,7 +74,8 @@ type ScreenId =
   | "reflog"
   | "commitDiff"
   | "fileHistory"
-  | "blame";
+  | "blame"
+  | "settings";
 
 const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "repo", icon: "folder", label: "Files", shortcut: "⌘1" },
@@ -101,6 +109,19 @@ export function AppShell() {
   React.useEffect(() => {
     localStorage.setItem("pg-screen", screen);
   }, [screen]);
+
+  const autoFetchEnabled = useSettingsStore((s) => s.autoFetchEnabled);
+  const autoFetchMinutes = useSettingsStore((s) => s.autoFetchMinutes);
+  React.useEffect(() => {
+    if (!repo || !autoFetchEnabled) return;
+    const id = window.setInterval(
+      () => {
+        useRepoStore.getState().fetchAll();
+      },
+      Math.max(1, autoFetchMinutes) * 60_000,
+    );
+    return () => window.clearInterval(id);
+  }, [repo, autoFetchEnabled, autoFetchMinutes]);
 
   React.useEffect(() => {
     if (!repo) return;
@@ -161,6 +182,7 @@ export function AppShell() {
     commitDiff: <CommitDiffScreen />,
     fileHistory: <FileHistoryScreen />,
     blame: <BlameScreen />,
+    settings: <SettingsScreen />,
   };
 
   return (
@@ -174,7 +196,7 @@ export function AppShell() {
         overflow: "hidden",
       }}
     >
-      <AppTitlebar />
+      <AppTitlebar onOpenSettings={() => setScreen("settings")} />
       {error && (
         <div
           role="alert"
@@ -206,8 +228,13 @@ export function AppShell() {
           </button>
         </div>
       )}
-      {repo ? (
-        <AppBody screen={screen} screens={screens} setScreen={setScreen} />
+      {repo || screen === "settings" ? (
+        <AppBody
+          screen={screen}
+          screens={screens}
+          setScreen={setScreen}
+          hasRepo={!!repo}
+        />
       ) : (
         <WelcomeScreen />
       )}
@@ -220,81 +247,20 @@ function AppBody({
   screen,
   screens,
   setScreen,
+  hasRepo,
 }: {
   screen: ScreenId;
   screens: Record<ScreenId, React.ReactNode>;
   setScreen: (s: ScreenId) => void;
+  hasRepo: boolean;
 }) {
   const sidebar = usePaneWidth(260, {
     min: 180,
     max: 520,
     storageKey: "pg-sidebar-w",
   });
-  const [collapsed, setCollapsed] = React.useState<boolean>(() => {
-    try {
-      return localStorage.getItem("pg-sidebar-collapsed") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const toggleCollapsed = React.useCallback(() => {
-    setCollapsed((c) => {
-      const next = !c;
-      try {
-        localStorage.setItem("pg-sidebar-collapsed", next ? "1" : "0");
-      } catch {
-        // non-fatal
-      }
-      return next;
-    });
-  }, []);
 
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
-        const t = e.target as HTMLElement | null;
-        if (
-          t &&
-          (t.tagName === "INPUT" ||
-            t.tagName === "TEXTAREA" ||
-            t.isContentEditable)
-        ) {
-          return;
-        }
-        e.preventDefault();
-        toggleCollapsed();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggleCollapsed]);
-
-  const [dragging, setDragging] = React.useState(false);
-  const [hovering, setHovering] = React.useState(false);
-  const leaveTimer = React.useRef<number | null>(null);
-
-  const onHoverEnter = React.useCallback(() => {
-    if (leaveTimer.current !== null) {
-      window.clearTimeout(leaveTimer.current);
-      leaveTimer.current = null;
-    }
-    setHovering(true);
-  }, []);
-  const onHoverLeave = React.useCallback(() => {
-    if (leaveTimer.current !== null) window.clearTimeout(leaveTimer.current);
-    leaveTimer.current = window.setTimeout(() => setHovering(false), 150);
-  }, []);
-
-  React.useEffect(() => {
-    if (!collapsed) setHovering(false);
-  }, [collapsed]);
-
-  const HOVER_STRIP_W = 6;
-  const dockedWidth = collapsed ? HOVER_STRIP_W : sidebar.width;
-  const widthTransition = dragging
-    ? "none"
-    : "width 220ms cubic-bezier(0.4, 0, 0.2, 1)";
-  const overlayVisible = !collapsed || hovering;
+  const showSidebar = hasRepo && screen !== "settings";
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
@@ -302,6 +268,8 @@ function AppBody({
         value={screen}
         onChange={(id) => setScreen(id as ScreenId)}
         items={ACTIVITY_ITEMS}
+        settingsActive={screen === "settings"}
+        onSettingsClick={() => setScreen("settings")}
       />
       <div
         style={{
@@ -309,30 +277,10 @@ function AppBody({
           minWidth: 0,
           minHeight: 0,
           display: "flex",
-          position: "relative",
         }}
       >
-        {/* Docked placeholder: reserves layout space; narrow strip when collapsed */}
-        <div
-          onMouseEnter={collapsed ? onHoverEnter : undefined}
-          onMouseLeave={collapsed ? onHoverLeave : undefined}
-          onClick={collapsed ? toggleCollapsed : undefined}
-          title={collapsed ? "Expand sidebar (⌘B)" : undefined}
-          style={{
-            width: dockedWidth,
-            flexShrink: 0,
-            background: "var(--bg-1)",
-            borderRight: "1px solid var(--border-0)",
-            transition: widthTransition,
-            cursor: collapsed ? "pointer" : "default",
-          }}
-        />
-        {!collapsed && (
-          <PGResizeHandle
-            onDrag={sidebar.resize}
-            onActiveChange={setDragging}
-          />
-        )}
+        {showSidebar && <AppSidebar width={sidebar.width} />}
+        {showSidebar && <PGResizeHandle onDrag={sidebar.resize} />}
         <div
           style={{
             flex: 1,
@@ -344,38 +292,12 @@ function AppBody({
         >
           {screens[screen]}
         </div>
-        {/* Sidebar body. Docked when expanded; floating overlay on hover when collapsed. */}
-        <div
-          onMouseEnter={collapsed ? onHoverEnter : undefined}
-          onMouseLeave={collapsed ? onHoverLeave : undefined}
-          style={{
-            position: "absolute",
-            top: 0,
-            bottom: 0,
-            left: 0,
-            width: sidebar.width,
-            display: "flex",
-            zIndex: 5,
-            transform: overlayVisible ? "translateX(0)" : "translateX(-100%)",
-            transition: dragging
-              ? "none"
-              : "transform 220ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 220ms ease",
-            pointerEvents: overlayVisible ? "auto" : "none",
-            boxShadow: collapsed && hovering ? "var(--shadow-3)" : "none",
-          }}
-        >
-          <AppSidebar
-            width={sidebar.width}
-            onCollapse={toggleCollapsed}
-            floating={collapsed && hovering}
-          />
-        </div>
       </div>
     </div>
   );
 }
 
-function AppTitlebar() {
+function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const repo = useRepoStore((s) => s.current);
   const branches = useRepoStore((s) => s.branches);
   const status = useRepoStore((s) => s.status);
@@ -383,6 +305,7 @@ function AppTitlebar() {
   const close = useRepoStore((s) => s.closeRepo);
   const openStore = useRepoStore((s) => s.openRepo);
   const store = useRepoStore();
+  const defaultPullMode = useSettingsStore((s) => s.defaultPullMode);
 
   const head = currentBranch(branches);
   const { ahead, behind } = totalAheadBehind(branches);
@@ -411,7 +334,7 @@ function AppTitlebar() {
       pgFlash("No upstream configured for current branch");
       return;
     }
-    store.pull(upstream[0], upstream[1]);
+    store.pull(upstream[0], upstream[1], defaultPullMode);
   };
 
   const onPush = () => {
@@ -495,23 +418,19 @@ function AppTitlebar() {
               Open…
             </PGButton>
           )}
-          <PGIconButton icon="bell" size="md" title="Notifications" />
+          <PGIconButton
+            icon="settings"
+            size="md"
+            title="Settings"
+            onClick={onOpenSettings}
+          />
         </div>
       }
     />
   );
 }
 
-function AppSidebar({
-  width,
-  onCollapse,
-  floating = false,
-}: {
-  width: number;
-  onCollapse: () => void;
-  floating?: boolean;
-}) {
-  void floating;
+function AppSidebar({ width }: { width: number }) {
   const [branchFilter, setBranchFilter] = React.useState("");
   const branches = useRepoStore((s) => s.branches);
   const tags = useRepoStore((s) => s.tags);
@@ -522,6 +441,23 @@ function AppSidebar({
     index: number;
     name: string;
   }>((s) => stashMenuItems(s));
+  const { onContextMenu: onLocalCtx, menu: localMenu } =
+    useContextMenu<BranchInfo>((b) =>
+      branchMenuItems({
+        name: b?.name,
+        current: b?.isHead,
+        upstream: b?.upstream,
+      }),
+    );
+  const { onContextMenu: onRemoteBranchCtx, menu: remoteBranchMenu } =
+    useContextMenu<BranchInfo>((b) => remoteBranchMenuItems({ name: b?.name }));
+  const { onContextMenu: onTagCtx, menu: tagMenu } = useContextMenu<TagInfo>(
+    (t) => tagMenuItems({ name: t?.name, sha: t?.shortOid, oid: t?.oid }),
+  );
+  const { onContextMenu: onRemoteCtx, menu: remoteMenu } =
+    useContextMenu<RemoteInfo>((r) =>
+      remoteMenuItems({ name: r?.name, url: r?.url }),
+    );
 
   const local = branches.filter((b) => !b.isRemote);
   const remote = branches.filter((b) => b.isRemote);
@@ -545,12 +481,6 @@ function AppSidebar({
             shortcut="⌘P"
           />
         </div>
-        <PGIconButton
-          icon="chevronLeft"
-          size="sm"
-          title="Collapse sidebar (⌘B)"
-          onClick={onCollapse}
-        />
       </div>
 
       <div style={{ flex: 1, overflow: "auto" }}>
@@ -581,6 +511,7 @@ function AppSidebar({
                 label={b.name}
                 selected={b.isHead}
                 accent={b.isHead ? "var(--accent)" : undefined}
+                onContextMenu={(e) => onLocalCtx(e, b)}
                 status={
                   <span
                     style={{
@@ -626,7 +557,12 @@ function AppSidebar({
           {remote
             .filter((b) => b.name.includes(branchFilter))
             .map((b) => (
-              <PGSidebarRow key={b.name} icon="branch" label={b.name} />
+              <PGSidebarRow
+                key={b.name}
+                icon="branch"
+                label={b.name}
+                onContextMenu={(e) => onRemoteBranchCtx(e, b)}
+              />
             ))}
           {remote.length === 0 && (
             <div
@@ -653,6 +589,7 @@ function AppSidebar({
               icon="tag"
               label={t.name}
               meta={t.shortOid}
+              onContextMenu={(e) => onTagCtx(e, t)}
             />
           ))}
         </PGSidebarGroup>
@@ -692,10 +629,15 @@ function AppSidebar({
               icon="link"
               label={r.name}
               meta={r.url ?? "(no url)"}
+              onContextMenu={(e) => onRemoteCtx(e, r)}
             />
           ))}
         </PGSidebarGroup>
       </div>
+      {localMenu}
+      {remoteBranchMenu}
+      {tagMenu}
+      {remoteMenu}
     </PGPrimarySidebar>
   );
 }

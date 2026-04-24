@@ -203,10 +203,14 @@ export function PGActivityBar({
   value,
   onChange,
   items,
+  settingsActive,
+  onSettingsClick,
 }: {
   value?: string;
   onChange?: (id: string) => void;
   items: ActivityBarItem[];
+  settingsActive?: boolean;
+  onSettingsClick?: () => void;
 }) {
   return (
     <div
@@ -278,18 +282,33 @@ export function PGActivityBar({
       <div style={{ flex: 1 }} />
       <PGTooltip content="Settings" placement="right">
         <button
+          onClick={onSettingsClick}
           style={{
             width: 44,
             height: 40,
             background: "transparent",
             border: "none",
-            color: "var(--fg-2)",
+            color: settingsActive ? "var(--accent)" : "var(--fg-2)",
             cursor: "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            position: "relative",
           }}
         >
+          {settingsActive && (
+            <span
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 8,
+                bottom: 8,
+                width: 2,
+                background: "var(--accent)",
+                borderRadius: 1,
+              }}
+            />
+          )}
           <PGIcon name="settings" size={16} />
         </button>
       </PGTooltip>
