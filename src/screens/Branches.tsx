@@ -12,6 +12,7 @@ import {
   KV,
   branchMenuItems,
   remoteBranchMenuItems,
+  stashMenuItems,
   tagMenuItems,
   useContextMenu,
   usePaneWidth,
@@ -52,6 +53,10 @@ export function BranchesScreen() {
   const { onContextMenu: onTagCtx, menu: tagMenu } = useContextMenu<TagInfo>(
     (t) => tagMenuItems({ name: t?.name, sha: t?.shortOid, oid: t?.oid }),
   );
+  const { onContextMenu: onStashCtx, menu: stashMenu } = useContextMenu<{
+    index: number;
+    name: string;
+  }>((s) => stashMenuItems(s));
 
   const [widths, setWidths] = React.useState(() => COLS.map((c) => c.initial));
   const gridTemplate = widths.map((w) => `${w}px`).join(" ");
@@ -115,9 +120,6 @@ export function BranchesScreen() {
       );
     return [];
   }, [stashes, filter, view]);
-
-  // Task 8 will render stash rows; suppressing unused var warning for now
-  void visibleStashes;
 
   const selectedBranch = branches.find((b) => b.name === selected) ?? null;
 
@@ -395,6 +397,89 @@ export function BranchesScreen() {
                 </div>
               </div>
             ))}
+
+            {visibleStashes.length > 0 && (
+              <div
+                style={{
+                  padding: "16px 12px 6px",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--fs-10)",
+                  color: "var(--fg-2)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                STASHES
+              </div>
+            )}
+            {visibleStashes.map((s) => (
+              <div
+                key={`stash:${s.index}`}
+                onContextMenu={(e) =>
+                  onStashCtx(e, { index: s.index, name: `stash@{${s.index}}` })
+                }
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: gridTemplate,
+                  alignItems: "center",
+                  height: 28,
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--fs-12)",
+                  borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",
+                }}
+              >
+                <div
+                  style={{ ...cellStyle, justifyContent: "center", padding: 0 }}
+                >
+                  <PGIcon
+                    name="stash"
+                    size={12}
+                    style={{ color: "var(--fg-2)" }}
+                  />
+                </div>
+                <div style={cellStyle} title={`stash@{${s.index}}`}>
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    stash@{`{${s.index}}`}
+                  </span>
+                </div>
+                <div style={{ ...cellStyle, color: "var(--accent)" }}>
+                  {s.shortOid}
+                </div>
+                <div
+                  style={{
+                    ...cellStyle,
+                    color: "var(--fg-2)",
+                    fontSize: "var(--fs-11)",
+                  }}
+                  title={s.message}
+                >
+                  {s.message}
+                </div>
+                <div style={{ ...cellStyle, color: "var(--fg-3)" }}>stash</div>
+                <div
+                  style={{ ...cellStyle, justifyContent: "center", padding: 0 }}
+                >
+                  <PGIconButton
+                    icon="more"
+                    size="sm"
+                    title="Actions"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onStashCtx(e, {
+                        index: s.index,
+                        name: `stash@{${s.index}}`,
+                      });
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -561,6 +646,7 @@ export function BranchesScreen() {
       </div>
       {branchMenu}
       {tagMenu}
+      {stashMenu}
     </>
   );
 }
