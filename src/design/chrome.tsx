@@ -41,7 +41,7 @@ export function PGTrafficLights({ onClose }: { onClose?: () => void }) {
 
 export interface PGTitlebarProps {
   repoName?: string;
-  branch?: string;
+  branch?: ReactNode;
   dirty?: number;
   children?: ReactNode;
   onClose?: () => void;
@@ -86,8 +86,14 @@ export function PGTitlebar({
         <PGIcon name="repo" size={13} />
         <span style={{ color: "var(--fg-0)", fontWeight: 600 }}>{repoName}</span>
         <span style={{ color: "var(--fg-3)" }}>/</span>
-        <PGIcon name="branch" size={12} />
-        <span style={{ color: "var(--accent)" }}>{branch}</span>
+        {typeof branch === "string" ? (
+          <>
+            <PGIcon name="branch" size={12} />
+            <span style={{ color: "var(--accent)" }}>{branch}</span>
+          </>
+        ) : (
+          branch
+        )}
         {dirty > 0 && (
           <span
             style={{

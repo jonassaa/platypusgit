@@ -307,6 +307,18 @@ export function useContextMenu<T>(
 
   const close = React.useCallback(() => setState(null), []);
 
+  const openAt = React.useCallback(
+    (x: number, y: number, payload: T) => {
+      const items =
+        typeof builder === "function"
+          ? (builder as (p: T) => ContextMenuItem[])(payload)
+          : builder;
+      if (!items || !items.length) return;
+      setState({ x, y, items });
+    },
+    [builder],
+  );
+
   const menu = state ? (
     <PGContextMenu
       x={state.x}
@@ -316,7 +328,7 @@ export function useContextMenu<T>(
     />
   ) : null;
 
-  return { onContextMenu, menu };
+  return { onContextMenu, openAt, menu };
 }
 
 // ═════════════════════════════════════════════════════════

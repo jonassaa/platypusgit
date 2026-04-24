@@ -256,6 +256,7 @@ export interface PGInputProps
   mono?: boolean;
   error?: boolean;
   style?: CSSProperties;
+  inputRef?: React.Ref<HTMLInputElement>;
 }
 
 export function PGInput({
@@ -267,6 +268,7 @@ export function PGInput({
   mono,
   error,
   style,
+  inputRef,
   ...rest
 }: PGInputProps) {
   const sizes = { sm: 24, md: 28, lg: 32 } as const;
@@ -295,6 +297,7 @@ export function PGInput({
     >
       {icon && <PGIcon name={icon} size={13} style={{ color: "var(--fg-3)" }} />}
       <input
+        ref={inputRef}
         value={value}
         onChange={(e) => onChange?.(e.target.value)}
         placeholder={placeholder}
@@ -323,6 +326,7 @@ export interface PGSearchInputProps {
   placeholder?: string;
   shortcut?: string;
   style?: CSSProperties;
+  inputRef?: React.Ref<HTMLInputElement>;
 }
 
 export function PGSearchInput({
@@ -331,10 +335,12 @@ export function PGSearchInput({
   placeholder = "Search",
   shortcut,
   style,
+  inputRef,
 }: PGSearchInputProps) {
   return (
     <div style={{ position: "relative", width: "100%", ...style }}>
       <PGInput
+        inputRef={inputRef}
         value={value}
         onChange={onChange}
         placeholder={placeholder}

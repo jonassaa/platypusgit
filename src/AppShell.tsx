@@ -4,22 +4,10 @@ import {
   PGActivityBar,
   PGButton,
   PGIconButton,
-  PGPrimarySidebar,
-  PGResizeHandle,
-  PGSearchInput,
-  PGSidebarGroup,
-  PGSidebarRow,
   PGStatusBar,
   PGStatusItem,
   PGTitlebar,
-  branchMenuItems,
   pgFlash,
-  remoteBranchMenuItems,
-  remoteMenuItems,
-  stashMenuItems,
-  tagMenuItems,
-  useContextMenu,
-  usePaneWidth,
   usePreventBrowserContextMenu,
   type ActivityBarItem,
 } from "@/design";
@@ -42,8 +30,9 @@ import { SettingsScreen } from "@/screens/Settings";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { BranchChip } from "@/features/branches/BranchChip";
+import { BranchPicker } from "@/features/branches/BranchPicker";
 import { appErrorMessage } from "@/lib/errors";
-import type { BranchInfo, RemoteInfo, TagInfo } from "@/lib/types";
 import {
   currentBranch,
   isStaged,
@@ -166,6 +155,9 @@ export function AppShell() {
       case "rebase-plan":
         setScreen("rebase");
         break;
+      case "stash-diff":
+        setScreen("commitDiff");
+        break;
     }
   }, [intent]);
 
@@ -233,7 +225,6 @@ export function AppShell() {
           screen={screen}
           screens={screens}
           setScreen={setScreen}
-          hasRepo={!!repo}
         />
       ) : (
         <WelcomeScreen />
@@ -247,21 +238,11 @@ function AppBody({
   screen,
   screens,
   setScreen,
-  hasRepo,
 }: {
   screen: ScreenId;
   screens: Record<ScreenId, React.ReactNode>;
   setScreen: (s: ScreenId) => void;
-  hasRepo: boolean;
 }) {
-  const sidebar = usePaneWidth(260, {
-    min: 180,
-    max: 520,
-    storageKey: "pg-sidebar-w",
-  });
-
-  const showSidebar = hasRepo && screen !== "settings";
-
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
       <PGActivityBar
@@ -279,8 +260,6 @@ function AppBody({
           display: "flex",
         }}
       >
-        {showSidebar && <AppSidebar width={sidebar.width} />}
-        {showSidebar && <PGResizeHandle onDrag={sidebar.resize} />}
         <div
           style={{
             flex: 1,
@@ -316,6 +295,10 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   const upstream = headUpstream(head?.upstream, head?.name);
 
+  const [pickerAnchor, setPickerAnchor] = React.useState<HTMLElement | null>(
+    null,
+  );
+
   const onOpen = async () => {
     const selected = await open({
       directory: true,
@@ -346,299 +329,94 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   };
 
   return (
-    <PGTitlebar
-      repoName={repoName}
-      branch={head?.name ?? "(detached)"}
-      dirty={dirty}
-      showTrafficLights={false}
-      rightSlot={
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          {repo && (
-            <>
-              <PGButton
-                size="sm"
-                variant="default"
-                icon="sync"
-                onClick={() => refresh()}
-                title="Refresh"
-              >
-                Refresh
-              </PGButton>
-              <PGButton
-                size="sm"
-                variant="default"
-                icon="fetch"
-                onClick={onFetch}
-              >
-                Fetch
-              </PGButton>
-              <PGButton
-                size="sm"
-                variant="default"
-                icon="pull"
-                onClick={onPull}
-              >
-                Pull{" "}
-                {behind > 0 && (
-                  <span
-                    style={{ color: "var(--git-modified)", marginLeft: 4 }}
-                  >
-                    ↓{behind}
-                  </span>
-                )}
-              </PGButton>
+    <>
+      <PGTitlebar
+        repoName={repoName}
+        branch={<BranchChip onClick={(el) => setPickerAnchor((prev) => (prev ? null : el))} />}
+        dirty={dirty}
+        showTrafficLights={false}
+        rightSlot={
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {repo && (
+              <>
+                <PGButton
+                  size="sm"
+                  variant="default"
+                  icon="sync"
+                  onClick={() => refresh()}
+                  title="Refresh"
+                >
+                  Refresh
+                </PGButton>
+                <PGButton
+                  size="sm"
+                  variant="default"
+                  icon="fetch"
+                  onClick={onFetch}
+                >
+                  Fetch
+                </PGButton>
+                <PGButton
+                  size="sm"
+                  variant="default"
+                  icon="pull"
+                  onClick={onPull}
+                >
+                  Pull{" "}
+                  {behind > 0 && (
+                    <span
+                      style={{ color: "var(--git-modified)", marginLeft: 4 }}
+                    >
+                      ↓{behind}
+                    </span>
+                  )}
+                </PGButton>
+                <PGButton
+                  size="sm"
+                  variant="primary"
+                  icon="push"
+                  onClick={onPush}
+                >
+                  Push {ahead > 0 && <span style={{ marginLeft: 4 }}>↑{ahead}</span>}
+                </PGButton>
+                <div
+                  style={{
+                    width: 1,
+                    height: 16,
+                    background: "var(--border-1)",
+                    margin: "0 4px",
+                  }}
+                />
+                <PGButton size="sm" variant="ghost" onClick={close}>
+                  Close repo
+                </PGButton>
+              </>
+            )}
+            {!repo && (
               <PGButton
                 size="sm"
                 variant="primary"
-                icon="push"
-                onClick={onPush}
+                icon="folder"
+                onClick={onOpen}
               >
-                Push {ahead > 0 && <span style={{ marginLeft: 4 }}>↑{ahead}</span>}
+                Open…
               </PGButton>
-              <div
-                style={{
-                  width: 1,
-                  height: 16,
-                  background: "var(--border-1)",
-                  margin: "0 4px",
-                }}
-              />
-              <PGButton size="sm" variant="ghost" onClick={close}>
-                Close repo
-              </PGButton>
-            </>
-          )}
-          {!repo && (
-            <PGButton
-              size="sm"
-              variant="primary"
-              icon="folder"
-              onClick={onOpen}
-            >
-              Open…
-            </PGButton>
-          )}
-          <PGIconButton
-            icon="settings"
-            size="md"
-            title="Settings"
-            onClick={onOpenSettings}
-          />
-        </div>
-      }
-    />
-  );
-}
-
-function AppSidebar({ width }: { width: number }) {
-  const [branchFilter, setBranchFilter] = React.useState("");
-  const branches = useRepoStore((s) => s.branches);
-  const tags = useRepoStore((s) => s.tags);
-  const stashes = useRepoStore((s) => s.stashes);
-  const remotes = useRepoStore((s) => s.remotes);
-
-  const { onContextMenu: onStashCtx, menu: stashMenu } = useContextMenu<{
-    index: number;
-    name: string;
-  }>((s) => stashMenuItems(s));
-  const { onContextMenu: onLocalCtx, menu: localMenu } =
-    useContextMenu<BranchInfo>((b) =>
-      branchMenuItems({
-        name: b?.name,
-        current: b?.isHead,
-        upstream: b?.upstream,
-      }),
-    );
-  const { onContextMenu: onRemoteBranchCtx, menu: remoteBranchMenu } =
-    useContextMenu<BranchInfo>((b) => remoteBranchMenuItems({ name: b?.name }));
-  const { onContextMenu: onTagCtx, menu: tagMenu } = useContextMenu<TagInfo>(
-    (t) => tagMenuItems({ name: t?.name, sha: t?.shortOid, oid: t?.oid }),
-  );
-  const { onContextMenu: onRemoteCtx, menu: remoteMenu } =
-    useContextMenu<RemoteInfo>((r) =>
-      remoteMenuItems({ name: r?.name, url: r?.url }),
-    );
-
-  const local = branches.filter((b) => !b.isRemote);
-  const remote = branches.filter((b) => b.isRemote);
-
-  return (
-    <PGPrimarySidebar width={width}>
-      <div
-        style={{
-          padding: 8,
-          borderBottom: "1px solid var(--border-0)",
-          display: "flex",
-          gap: 6,
-          alignItems: "center",
-        }}
-      >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <PGSearchInput
-            value={branchFilter}
-            onChange={setBranchFilter}
-            placeholder="Filter branches…"
-            shortcut="⌘P"
-          />
-        </div>
-      </div>
-
-      <div style={{ flex: 1, overflow: "auto" }}>
-        <PGSidebarGroup
-          title="Local"
-          icon="branch"
-          count={local.length}
-          actions={
+            )}
             <PGIconButton
-              icon="plus"
-              size="sm"
-              title="New branch"
-              onClick={async () => {
-                    const name = window.prompt("New branch name");
-                    if (!name) return;
-                    await useRepoStore.getState().createBranch(name);
-                    await useRepoStore.getState().checkoutBranch(name);
-                  }}
+              icon="settings"
+              size="md"
+              title="Settings"
+              onClick={onOpenSettings}
             />
-          }
-        >
-          {local
-            .filter((b) => b.name.includes(branchFilter))
-            .map((b) => (
-              <PGSidebarRow
-                key={b.name}
-                icon="branch"
-                label={b.name}
-                selected={b.isHead}
-                accent={b.isHead ? "var(--accent)" : undefined}
-                onContextMenu={(e) => onLocalCtx(e, b)}
-                status={
-                  <span
-                    style={{
-                      display: "flex",
-                      gap: 3,
-                      fontSize: "var(--fs-10)",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {b.ahead > 0 && (
-                      <span style={{ color: "var(--git-added)" }}>
-                        ↑{b.ahead}
-                      </span>
-                    )}
-                    {b.behind > 0 && (
-                      <span style={{ color: "var(--git-modified)" }}>
-                        ↓{b.behind}
-                      </span>
-                    )}
-                  </span>
-                }
-              />
-            ))}
-          {local.length === 0 && (
-            <div
-              style={{
-                padding: "4px 12px",
-                fontSize: "var(--fs-11)",
-                color: "var(--fg-3)",
-              }}
-            >
-              (none)
-            </div>
-          )}
-        </PGSidebarGroup>
-
-        <PGSidebarGroup
-          title="Remote"
-          icon="link"
-          count={remote.length}
-          defaultOpen={true}
-        >
-          {remote
-            .filter((b) => b.name.includes(branchFilter))
-            .map((b) => (
-              <PGSidebarRow
-                key={b.name}
-                icon="branch"
-                label={b.name}
-                onContextMenu={(e) => onRemoteBranchCtx(e, b)}
-              />
-            ))}
-          {remote.length === 0 && (
-            <div
-              style={{
-                padding: "4px 12px",
-                fontSize: "var(--fs-11)",
-                color: "var(--fg-3)",
-              }}
-            >
-              (none)
-            </div>
-          )}
-        </PGSidebarGroup>
-
-        <PGSidebarGroup
-          title="Tags"
-          icon="tag"
-          count={tags.length}
-          defaultOpen={false}
-        >
-          {tags.map((t) => (
-            <PGSidebarRow
-              key={t.name}
-              icon="tag"
-              label={t.name}
-              meta={t.shortOid}
-              onContextMenu={(e) => onTagCtx(e, t)}
-            />
-          ))}
-        </PGSidebarGroup>
-
-        <PGSidebarGroup
-          title="Stashes"
-          icon="stash"
-          count={stashes.length}
-          defaultOpen={false}
-        >
-          {stashes.map((s) => (
-            <PGSidebarRow
-              key={s.index}
-              icon="stash"
-              label={`stash@{${s.index}}`}
-              meta={s.message.slice(0, 20)}
-              onContextMenu={(e) =>
-                onStashCtx(e, {
-                  index: s.index,
-                  name: `stash@{${s.index}}`,
-                })
-              }
-            />
-          ))}
-        </PGSidebarGroup>
-        {stashMenu}
-
-        <PGSidebarGroup
-          title="Remotes"
-          icon="link"
-          count={remotes.length}
-          defaultOpen={false}
-        >
-          {remotes.map((r) => (
-            <PGSidebarRow
-              key={r.name}
-              icon="link"
-              label={r.name}
-              meta={r.url ?? "(no url)"}
-              onContextMenu={(e) => onRemoteCtx(e, r)}
-            />
-          ))}
-        </PGSidebarGroup>
-      </div>
-      {localMenu}
-      {remoteBranchMenu}
-      {tagMenu}
-      {remoteMenu}
-    </PGPrimarySidebar>
+          </div>
+        }
+      />
+      <BranchPicker
+        anchor={pickerAnchor}
+        open={!!pickerAnchor}
+        onClose={() => setPickerAnchor(null)}
+      />
+    </>
   );
 }
 
