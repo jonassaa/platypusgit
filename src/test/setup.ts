@@ -14,6 +14,23 @@ vi.mock("@tauri-apps/plugin-dialog", async () => {
   return await import("./dialogMock");
 });
 
+vi.mock("@tauri-apps/plugin-os", () => ({
+  platform: vi.fn(() => "macos"),
+}));
+
+vi.mock("@tauri-apps/api/window", () => {
+  const fn = () => vi.fn();
+  return {
+    getCurrentWindow: () => ({
+      minimize: fn(),
+      toggleMaximize: fn(),
+      close: fn(),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      onResized: vi.fn().mockResolvedValue(() => {}),
+    }),
+  };
+});
+
 afterEach(() => {
   cleanup();
   resetInvokeMock();
