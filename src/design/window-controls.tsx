@@ -64,7 +64,7 @@ function MaxIcon({ maximized }: { maximized: boolean }) {
   return maximized ? (
     <svg {...iconProps}>
       <rect x="1" y="3" width="6" height="6" />
-      <rect x="3" y="1" width="6" height="6" fill="var(--bg-titlebar)" />
+      <rect x="3" y="1" width="6" height="6" />
     </svg>
   ) : (
     <svg {...iconProps}>
