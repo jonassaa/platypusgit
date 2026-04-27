@@ -182,7 +182,7 @@ lib/
 - Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
 
 ### Permissions (Tauri 2)
-- All permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `dialog:default`, `dialog:allow-open`.
+- All permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `dialog:default`, `dialog:allow-open`, `os:default`.
 - New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`, register with `.plugin(tauri_plugin_X::init())` in `lib.rs`, add plugin permissions to capability file.
 
 ### Path aliases

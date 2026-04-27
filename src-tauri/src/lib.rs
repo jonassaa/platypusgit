@@ -22,7 +22,9 @@ pub fn run() {
             {
                 use tauri::Manager;
                 if let Some(win) = _app.get_webview_window("main") {
-                    let _ = win.set_decorations(false);
+                    if let Err(e) = win.set_decorations(false) {
+                        eprintln!("failed to disable window decorations: {e}");
+                    }
                 }
             }
             Ok(())
