@@ -19,20 +19,19 @@ vi.mock("@tauri-apps/plugin-os", () => ({
 }));
 
 vi.mock("@tauri-apps/api/window", () => {
-  const fn = () => vi.fn();
-  return {
-    getCurrentWindow: () => ({
-      minimize: fn(),
-      toggleMaximize: fn(),
-      close: fn(),
-      isMaximized: vi.fn().mockResolvedValue(false),
-      onResized: vi.fn().mockResolvedValue(() => {}),
-    }),
+  const win = {
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onResized: vi.fn().mockResolvedValue(() => {}),
   };
+  return { getCurrentWindow: () => win };
 });
 
 afterEach(() => {
   cleanup();
   resetInvokeMock();
   resetDialogMock();
+  vi.clearAllMocks();
 });
