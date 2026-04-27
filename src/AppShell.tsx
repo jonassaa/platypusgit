@@ -335,7 +335,6 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         repoName={repoName}
         branch={<BranchChip onClick={(el) => setPickerAnchor((prev) => (prev ? null : el))} />}
         dirty={dirty}
-        showTrafficLights={false}
         rightSlot={
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             {repo && (
