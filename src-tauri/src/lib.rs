@@ -14,6 +14,19 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
+        .setup(|_app| {
+            // macOS uses titleBarStyle: Overlay (set in tauri.conf.json) to keep native
+            // traffic lights while letting our content extend under them. On Windows /
+            // Linux we hide the OS frame entirely and render PGWindowControls ourselves.
+            #[cfg(not(target_os = "macos"))]
+            {
+                use tauri::Manager;
+                if let Some(win) = _app.get_webview_window("main") {
+                    let _ = win.set_decorations(false);
+                }
+            }
+            Ok(())
+        })
         .manage(AppState::new(backend))
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
