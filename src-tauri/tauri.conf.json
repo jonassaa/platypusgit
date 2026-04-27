@@ -21,7 +21,7 @@
         "fullscreen": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 12, "y": 13 }
+        "trafficLightPosition": { "x": 12, "y": 20 }
       }
     ],
     "security": {
