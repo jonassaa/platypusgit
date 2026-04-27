@@ -24,6 +24,7 @@ export function PGTitlebar({
   rightSlot,
 }: PGTitlebarProps) {
   const platform = usePlatform();
+  // Treat first-render (undefined) as mac to avoid Win/Linux control flash.
   const isMac = platform === "macos" || platform === undefined;
 
   return (
