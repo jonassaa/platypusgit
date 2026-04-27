@@ -1,52 +1,19 @@
 import React, { type CSSProperties, type ReactNode } from "react";
 import { PGIcon, type IconName } from "./icons";
 import { PGTooltip } from "./primitives";
+import { usePlatform } from "@/lib/platform";
+import { PGWindowControls } from "./window-controls";
 
 // ═════════════════════════════════════════════════════════
 // WINDOW / TITLEBAR
 // ═════════════════════════════════════════════════════════
-
-export function PGTrafficLights({ onClose }: { onClose?: () => void }) {
-  const cs = [
-    { bg: "#ff5f57", border: "#e0443e" },
-    { bg: "#febc2e", border: "#dea123" },
-    { bg: "#28c840", border: "#1aab29" },
-  ];
-  return (
-    <div
-      style={{
-        display: "flex",
-        gap: 8,
-        alignItems: "center",
-        padding: "0 4px",
-      }}
-    >
-      {cs.map((c, i) => (
-        <div
-          key={i}
-          onClick={i === 0 ? onClose : undefined}
-          style={{
-            width: 12,
-            height: 12,
-            borderRadius: "50%",
-            background: c.bg,
-            border: `0.5px solid ${c.border}`,
-            cursor: "pointer",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
 
 export interface PGTitlebarProps {
   repoName?: string;
   branch?: ReactNode;
   dirty?: number;
   children?: ReactNode;
-  onClose?: () => void;
   rightSlot?: ReactNode;
-  showTrafficLights?: boolean;
 }
 
 export function PGTitlebar({
@@ -54,25 +21,33 @@ export function PGTitlebar({
   branch = "main",
   dirty = 0,
   children,
-  onClose,
   rightSlot,
-  showTrafficLights = true,
 }: PGTitlebarProps) {
+  const platform = usePlatform();
+  const isMac = platform === "macos" || platform === undefined;
+
   return (
     <div
+      data-tauri-drag-region
       style={{
         height: 38,
         background: "var(--bg-titlebar)",
         borderBottom: "1px solid var(--border-0)",
         display: "flex",
         alignItems: "center",
-        padding: "0 12px",
         gap: 12,
         flexShrink: 0,
         userSelect: "none",
+        paddingLeft: isMac ? 80 : 12,
+        paddingRight: isMac ? 12 : 0,
       }}
     >
-      {showTrafficLights && <PGTrafficLights onClose={onClose} />}
+      {isMac && (
+        <div
+          data-testid="pg-titlebar-mac-shim"
+          style={{ width: 0, height: 38 }}
+        />
+      )}
       <div
         style={{
           display: "flex",
@@ -109,9 +84,10 @@ export function PGTitlebar({
           </span>
         )}
       </div>
-      <div style={{ flex: 1 }} />
+      <div data-tauri-drag-region style={{ flex: 1, height: 38 }} />
       {children}
       {rightSlot}
+      {!isMac && <PGWindowControls />}
     </div>
   );
 }
