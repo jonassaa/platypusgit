@@ -6,6 +6,7 @@ import type { CommitInfo } from "@/lib/types";
 import type { RebaseAction, RebaseStep } from "@/lib/types";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { RebaseBasePicker } from "@/features/rebase/RebaseBasePicker";
 
 // ─── Plan row state ───────────────────────────────────────────────────────────
 
@@ -97,31 +98,53 @@ function RebaseBanner({
 
 // ─── Plan builder ─────────────────────────────────────────────────────────────
 
-const REBASE_LIMIT = 10;
-
 export function RebaseScreen() {
   const { current, commits, rebaseStatus, rebaseStart, rebaseContinue, rebaseAbort } =
     useRepoStore();
 
-  const [plan, setPlan] = useState<PlanRow[]>(() =>
-    commitsToPlan(commits.slice(0, REBASE_LIMIT)),
+  const [plan, setPlan] = useState<PlanRow[]>([]);
+  const [baseLabel, setBaseLabel] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerNotice, setPickerNotice] = useState<string | null>(null);
+  const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
+
+  /** Build a plan from commits strictly newer than `baseOid` (assumes commits is newest-first). */
+  const planFromBase = useCallback(
+    (baseOid: string): PlanRow[] | null => {
+      const idx = commits.findIndex((c) => c.oid === baseOid);
+      if (idx === -1) return null;
+      // Commits newer than base: indices [0, idx). idx itself is the base (excluded).
+      return commitsToPlan(commits.slice(0, idx));
+    },
+    [commits],
   );
 
-  // Re-sync plan when commits change (e.g. after a refresh) — only if no rebase is running.
-  const prevCommitsRef = React.useRef(commits);
-  React.useEffect(() => {
-    if (!rebaseStatus.inProgress && commits !== prevCommitsRef.current) {
-      prevCommitsRef.current = commits;
-      setPlan(commitsToPlan(commits.slice(0, REBASE_LIMIT)));
-    }
-  }, [commits, rebaseStatus.inProgress]);
+  const handlePickBase = useCallback(
+    (oid: string, label: string) => {
+      const built = planFromBase(oid);
+      if (!built) {
+        setPickerNotice(
+          `${label.split(" — ")[0]} is not on the current branch's history.`,
+        );
+        return;
+      }
+      if (built.length === 0) {
+        setPickerNotice(`No commits between HEAD and ${label.split(" — ")[0]}.`);
+        return;
+      }
+      setPlan(built);
+      setBaseLabel(label);
+      setPickerNotice(null);
+      setPickerOpen(false);
+    },
+    [planFromBase],
+  );
 
   // Seed the plan from a NavIntent when the context menu fires rebase-plan.
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
   React.useEffect(() => {
     if (intent?.kind !== "rebase-plan") return;
-    // Convert RebaseStep[] to PlanRow[] by looking up shortOid/subject from commits.
     const byOid = new Map(commits.map((c) => [c.oid, c]));
     const rows: PlanRow[] = intent.plan.map((step) => {
       const c = byOid.get(step.oid);
@@ -134,8 +157,18 @@ export function RebaseScreen() {
       };
     });
     setPlan(rows);
-    // Prevent the sync-from-commits effect from clobbering us on the next render.
-    prevCommitsRef.current = commits;
+    // The base of a context-menu plan is the parent of the oldest step.
+    const oldest = rows[0];
+    const oldestCommit = oldest ? byOid.get(oldest.oid) : null;
+    const baseOid = oldestCommit?.parents[0];
+    const baseCommit = baseOid ? byOid.get(baseOid) : null;
+    setBaseLabel(
+      baseCommit
+        ? `${baseCommit.shortOid} — ${baseCommit.summary}`
+        : baseOid
+          ? baseOid.slice(0, 7)
+          : "selected commit",
+    );
     clearIntent();
   }, [intent, commits, clearIntent]);
 
@@ -165,6 +198,11 @@ export function RebaseScreen() {
       message: r.action === "Reword" || r.action === "Squash" ? (r.message || null) : null,
     }));
     await rebaseStart(steps);
+  };
+
+  const handleClear = () => {
+    setPlan([]);
+    setBaseLabel(null);
   };
 
   if (!current) {
@@ -204,7 +242,6 @@ export function RebaseScreen() {
           >
             <span
               style={{
-                flex: 1,
                 fontSize: "var(--fs-13)",
                 fontWeight: 600,
                 color: "var(--fg-0)",
@@ -212,15 +249,40 @@ export function RebaseScreen() {
             >
               Interactive Rebase
             </span>
-            <span
-              style={{
-                fontSize: "var(--fs-11)",
-                color: "var(--fg-3)",
-                fontFamily: "var(--font-mono)",
+            <span style={{ flex: 1 }} />
+            {baseLabel && (
+              <span
+                style={{
+                  fontSize: "var(--fs-11)",
+                  color: "var(--fg-2)",
+                  fontFamily: "var(--font-mono)",
+                  maxWidth: 360,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={baseLabel}
+              >
+                base: {baseLabel}
+              </span>
+            )}
+            <PGButton
+              size="sm"
+              variant={baseLabel ? "outline" : "primary"}
+              icon="search"
+              onClick={(e) => {
+                setPickerAnchor(e.currentTarget);
+                setPickerNotice(null);
+                setPickerOpen((v) => !v);
               }}
             >
-              last {plan.length} commits
-            </span>
+              {baseLabel ? "Change base" : "New rebase"}
+            </PGButton>
+            {plan.length > 0 && (
+              <PGButton size="sm" variant="ghost" icon="x" onClick={handleClear}>
+                Clear
+              </PGButton>
+            )}
             <PGButton
               size="sm"
               variant="primary"
@@ -241,8 +303,9 @@ export function RebaseScreen() {
             }}
           >
             {plan.length === 0 ? (
-              <PGEmpty icon="rebase" title="No commits to rebase">
-                The repository has no commits yet.
+              <PGEmpty icon="rebase" title="No rebase planned">
+                Click <strong>New rebase</strong> to pick a base — branch, commit, or hash.
+                The plan will include every commit between HEAD and that base.
               </PGEmpty>
             ) : (
               plan.map((row, i) => (
@@ -319,7 +382,7 @@ export function RebaseScreen() {
       )}
 
       {/* Waiting / done state when rebase just finished */}
-      {rebaseStatus.inProgress === false && rebaseStatus.total > 0 && (
+      {rebaseStatus.inProgress === false && rebaseStatus.total > 0 && plan.length === 0 && (
         <div
           style={{
             padding: "8px 16px",
@@ -332,6 +395,14 @@ export function RebaseScreen() {
           Last rebase: {rebaseStatus.total} steps completed.
         </div>
       )}
+
+      <RebaseBasePicker
+        anchor={pickerAnchor}
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={handlePickBase}
+        notice={pickerNotice}
+      />
     </div>
   );
 }
