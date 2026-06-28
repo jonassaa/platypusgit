@@ -73,7 +73,6 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
     icon: "commit",
     label: "Commit",
     shortcut: "⌘2",
-    badge: true,
   },
   { id: "history", icon: "history", label: "History", shortcut: "⌘3" },
   { id: "branches", icon: "branch", label: "Branches", shortcut: "⌘4" },
@@ -243,12 +242,20 @@ function AppBody({
   screens: Record<ScreenId, React.ReactNode>;
   setScreen: (s: ScreenId) => void;
 }) {
+  const hasChanges = useRepoStore((s) => s.status.length > 0);
+  const items = React.useMemo(
+    () =>
+      ACTIVITY_ITEMS.map((it) =>
+        it.id === "commit" ? { ...it, badge: hasChanges } : it,
+      ),
+    [hasChanges],
+  );
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
       <PGActivityBar
         value={screen}
         onChange={(id) => setScreen(id as ScreenId)}
-        items={ACTIVITY_ITEMS}
+        items={items}
         settingsActive={screen === "settings"}
         onSettingsClick={() => setScreen("settings")}
       />
