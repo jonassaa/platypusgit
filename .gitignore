@@ -28,6 +28,3 @@ lerna-debug.log*
 
 # worktrees
 .worktrees
-
-# local scratch
-features.md
