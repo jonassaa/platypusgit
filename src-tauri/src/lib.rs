@@ -12,9 +12,28 @@ pub fn run() {
     let backend = Arc::new(Libgit2Backend::new());
 
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .level_for("platypusgit_lib", log::LevelFilter::Debug)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("platypusgit".into()),
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                ])
+                .max_file_size(5_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .setup(|_app| {
+            log::info!(
+                "platypusgit starting v{}",
+                env!("CARGO_PKG_VERSION")
+            );
             // macOS uses titleBarStyle: Overlay (set in tauri.conf.json) to keep native
             // traffic lights while letting our content extend under them. On Windows /
             // Linux we hide the OS frame entirely and render PGWindowControls ourselves.
@@ -23,7 +42,7 @@ pub fn run() {
                 use tauri::Manager;
                 if let Some(win) = _app.get_webview_window("main") {
                     if let Err(e) = win.set_decorations(false) {
-                        eprintln!("failed to disable window decorations: {e}");
+                        log::error!("failed to disable window decorations: {e}");
                     }
                 }
             }
