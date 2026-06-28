@@ -1,8 +1,29 @@
 # platypusgit
 
 A cross-platform, developer-focused git desktop app. Tauri 2 + React + TypeScript.
+A dev-first alternative to TortoiseGit with "extreme usability" as the north star.
 
-Status: **early scaffold** — one working vertical slice (open a repository, list working-tree status). Commits, diff, staging, branches, and remote ops are stubbed.
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
+
+> **Status: active development.** Most core git operations are implemented
+> end-to-end (staging, hunks, commit, diff, blame, branches, tags, history,
+> stash, conflict resolution, interactive rebase, remotes, fetch/pull/push,
+> reflog). Standalone GUI only — shell integration (Finder/Explorer overlays)
+> is out of scope.
+
+## Features
+
+- **Staging & commit** — stage/unstage/discard files and individual hunks, commit with amend + author override
+- **Diff & viewing** — worktree/index/HEAD diffs, commit-to-commit diffs, blame, repo browser
+- **Branches & tags** — list/create/checkout/rename/delete branches, lightweight + annotated tags
+- **History** — commit graph, file history, reflog viewer, detached-HEAD checkout
+- **History manipulation** — reset (soft/mixed/hard), cherry-pick, revert
+- **Stash** — save/apply/pop/drop, stash-to-branch
+- **Conflict resolution** — 3-way sides, accept ours/theirs, external mergetool, continue/abort
+- **Interactive rebase** — pick/reword/edit/squash/fixup/drop, continue/abort, base picker
+- **Remotes & network** — add/remove/rename/prune remotes, fetch/pull/push (with-lease/force), merge
+
+See [`implemented-features.md`](./implemented-features.md) for the full list.
 
 ## Development
 
@@ -58,3 +79,13 @@ Produces platform-native installers in `src-tauri/target/release/bundle/`:
 ## Project layout
 
 See [`CLAUDE.md`](./CLAUDE.md) for architecture, conventions, and the recipe for adding a new git operation. Design and implementation docs live under `docs/superpowers/`.
+
+## Contributing
+
+Contributions welcome! See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup, the
+test layers, commit conventions, and the PR workflow. Please also read the
+[Code of Conduct](./CODE_OF_CONDUCT.md).
+
+## License
+
+Licensed under the [GNU General Public License v3.0](./LICENSE).
