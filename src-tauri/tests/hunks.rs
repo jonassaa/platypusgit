@@ -258,3 +258,48 @@ fn stage_hunk_out_of_range_returns_error() {
     );
     assert!(result.is_err(), "out-of-range hunk index should return an error");
 }
+
+#[test]
+fn worktree_diff_includes_untracked_file_content() {
+    // Untracked files have no entry in the index, so libgit2's index→workdir diff
+    // skips them by default. We pass include_untracked + show_untracked_content so
+    // the commit panel can show the file body when an untracked file is selected.
+    let tr = TempRepo::fresh();
+
+    // Need at least one commit so HEAD resolves.
+    write_file(tr.path(), "seed.txt", "seed\n");
+    let mut index = tr.repo.index().unwrap();
+    index.add_path(std::path::Path::new("seed.txt")).unwrap();
+    index.write().unwrap();
+    let tree_oid = index.write_tree().unwrap();
+    {
+        let tree = tr.repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        tr.repo
+            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+    }
+
+    // Drop a brand-new untracked file with three lines.
+    write_file(tr.path(), "new.txt", "alpha\nbeta\ngamma\n");
+
+    let (backend, handle) = tr.open_with_backend();
+    let diff = backend
+        .diff(
+            &handle.id,
+            &std::path::Path::new("new.txt"),
+            platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+        )
+        .expect("diff");
+
+    assert!(!diff.hunks.is_empty(), "untracked file diff should produce hunks");
+    let added: Vec<&str> = diff
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .filter(|l| matches!(l.kind, platypusgit_lib::git::types::DiffLineKind::Addition))
+        .map(|l| l.content.as_str())
+        .collect();
+    assert_eq!(added, vec!["alpha", "beta", "gamma"]);
+    assert_eq!(diff.additions, 3);
+}

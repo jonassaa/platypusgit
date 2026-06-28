@@ -686,6 +686,13 @@ impl GitBackend for Libgit2Backend {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
             opts.context_lines(3);
+            // Include untracked files as if their full content were a new addition
+            // so the diff viewer shows file contents for newly created files.
+            if matches!(kind, DiffKind::WorktreeToIndex | DiffKind::WorktreeToHead) {
+                opts.include_untracked(true)
+                    .recurse_untracked_dirs(true)
+                    .show_untracked_content(true);
+            }
 
             let mut diff = match kind {
                 DiffKind::WorktreeToIndex => repo.diff_index_to_workdir(None, Some(&mut opts))?,
