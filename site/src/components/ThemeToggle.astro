@@ -1,0 +1,22 @@
+---
+---
+<button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme" type="button">
+  <span class="t-dark">◐</span>
+</button>
+<style>
+  .theme-toggle {
+    background: transparent; border: 1px solid var(--border-1); color: var(--fg-1);
+    width: 32px; height: 32px; border-radius: var(--r-4); cursor: pointer;
+    font-size: 15px; line-height: 1; transition: border-color var(--t-fast), color var(--t-fast);
+  }
+  .theme-toggle:hover { border-color: var(--border-2); color: var(--fg-0); }
+</style>
+<script>
+  const btn = document.getElementById('theme-toggle');
+  btn?.addEventListener('click', () => {
+    const root = document.documentElement;
+    const next = root.getAttribute('data-theme-mode') === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme-mode', next);
+    try { localStorage.setItem('pg-site-theme', next); } catch {}
+  });
+</script>

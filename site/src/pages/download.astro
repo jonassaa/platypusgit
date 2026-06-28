@@ -1,0 +1,62 @@
+---
+import Layout from '../layouts/Layout.astro';
+import CTAButton from '../components/CTAButton.astro';
+import CodeBlock from '../components/CodeBlock.astro';
+import PlatformCard from '../components/PlatformCard.astro';
+import { site } from '../data/site.ts';
+import { platforms } from '../data/features.ts';
+
+const buildSteps = `# 1. Prerequisites: Node 22+, pnpm, Rust stable
+#    macOS: xcode-select --install
+#    Linux: libwebkit2gtk-4.1-dev build-essential libssl-dev
+#    Windows: WebView2 + MSVC Build Tools
+
+git clone ${site.repo}.git
+cd platypusgit
+pnpm install
+pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
+---
+<Layout title={'Download — ' + site.name}>
+  <section class="container page-head">
+    <h1>Download</h1>
+    <p class="lead">platypusgit is in active development. Prebuilt binaries land on GitHub Releases — meanwhile, build from source below.</p>
+    <div class="head-ctas">
+      <CTAButton href={site.releasesLatest} external>Latest release</CTAButton>
+      <CTAButton href={site.releases} variant="secondary" external>All releases</CTAButton>
+    </div>
+  </section>
+
+  <section class="container">
+    <div class="notice">
+      <strong>No published releases yet.</strong> Binaries will appear on the
+      <a href={site.releases} target="_blank" rel="noopener">Releases page</a> once tagged. Build from source today.
+    </div>
+    <div class="platforms">
+      {platforms.map((p) => <PlatformCard os={p.os} ext={p.ext} note={p.note} href={site.releases} />)}
+    </div>
+  </section>
+
+  <section class="container build">
+    <h2>Build from source</h2>
+    <p class="lead">Standard Tauri toolchain. Full instructions in the README.</p>
+    <CodeBlock code={buildSteps} lang="bash" />
+    <p class="readme-link"><a href={site.repo + '#development'} target="_blank" rel="noopener">Full development guide on GitHub →</a></p>
+  </section>
+</Layout>
+
+<style>
+  .page-head { padding-top: var(--s-12); }
+  .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
+  .lead { color: var(--fg-2); font-size: 16px; max-width: 620px; margin: 0; }
+  .head-ctas { display: flex; gap: var(--s-4); margin-top: var(--s-7); flex-wrap: wrap; }
+  .notice { background: color-mix(in oklab, var(--accent-2) 12%, transparent);
+    border: 1px solid color-mix(in oklab, var(--accent-2) 40%, transparent);
+    color: var(--fg-1); padding: var(--s-5) var(--s-6); border-radius: var(--r-5);
+    margin: var(--s-10) 0 var(--s-8); font-size: 14px; }
+  .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-6); }
+  .build { margin-top: var(--s-12); }
+  .build h2 { font-size: 26px; margin: 0 0 var(--s-3); }
+  .build .lead { margin-bottom: var(--s-7); }
+  .readme-link { margin-top: var(--s-6); font-size: 14px; }
+  @media (max-width: 720px) { .platforms { grid-template-columns: 1fr; } }
+</style>

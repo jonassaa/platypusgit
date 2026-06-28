@@ -1,0 +1,17 @@
+---
+interface Props { href: string; variant?: 'primary' | 'secondary'; external?: boolean; }
+const { href, variant = 'primary', external = false } = Astro.props;
+const rel = external ? 'noopener' : undefined;
+const target = external ? '_blank' : undefined;
+---
+<a href={href} class={`cta cta-${variant}`} target={target} rel={rel}><slot /></a>
+<style>
+  .cta { display: inline-flex; align-items: center; gap: var(--s-3); padding: 10px 18px;
+    border-radius: var(--r-5); font-weight: 600; font-size: 14px; font-family: var(--font-sans);
+    transition: transform var(--t-fast), background var(--t-fast), border-color var(--t-fast); }
+  .cta:hover { text-decoration: none; transform: translateY(-1px); }
+  .cta-primary { background: var(--accent); color: var(--accent-ink); }
+  .cta-primary:hover { background: color-mix(in oklab, var(--accent) 88%, white); }
+  .cta-secondary { background: transparent; color: var(--fg-0); border: 1px solid var(--border-2); }
+  .cta-secondary:hover { border-color: var(--accent); color: var(--accent); }
+</style>

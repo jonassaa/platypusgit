@@ -1,0 +1,33 @@
+---
+import { site, nav } from '../data/site.ts';
+import ThemeToggle from './ThemeToggle.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<header class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href={base + '/'}>
+      <img src={base + '/logo.svg'} alt="" width="28" height="28" />
+      <span class="brand-name mono">platypusgit</span>
+    </a>
+    <nav class="nav-links">
+      {nav.map((n) => <a href={n.href}>{n.label}</a>)}
+      <a href={site.repo} target="_blank" rel="noopener">GitHub</a>
+      <a class="coffee" href={site.buyMeACoffee} target="_blank" rel="noopener">☕ Sponsor</a>
+      <ThemeToggle />
+    </nav>
+  </div>
+</header>
+<style>
+  .nav { position: sticky; top: 0; z-index: 50; background: color-mix(in oklab, var(--bg-titlebar) 88%, transparent);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-0); }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+  .brand { display: flex; align-items: center; gap: var(--s-3); color: var(--fg-0); }
+  .brand:hover { text-decoration: none; }
+  .brand-name { font-weight: 600; font-size: 15px; }
+  .nav-links { display: flex; align-items: center; gap: var(--s-6); }
+  .nav-links a { color: var(--fg-1); font-size: 14px; }
+  .nav-links a:hover { color: var(--fg-0); text-decoration: none; }
+  .coffee { border: 1px solid var(--border-1); padding: 5px 10px; border-radius: var(--r-4); }
+  .coffee:hover { border-color: var(--accent); color: var(--accent) !important; }
+  @media (max-width: 640px) { .nav-links { gap: var(--s-4); } .nav-links a:not(.coffee) { font-size: 13px; } }
+</style>

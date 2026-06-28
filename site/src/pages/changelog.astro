@@ -1,0 +1,49 @@
+---
+import Layout from '../layouts/Layout.astro';
+import CTAButton from '../components/CTAButton.astro';
+import { site } from '../data/site.ts';
+import { changelog } from '../data/features.ts';
+---
+<Layout title={'Changelog — ' + site.name}>
+  <section class="container page-head">
+    <h1>Changelog</h1>
+    <p class="lead">Release notes. For the full commit history, see <a href={site.repo + '/commits/main'} target="_blank" rel="noopener">GitHub</a>.</p>
+    <div class="head-ctas">
+      <CTAButton href={site.releases} variant="secondary" external>Releases on GitHub →</CTAButton>
+    </div>
+  </section>
+
+  <section class="container log">
+    {changelog.map((entry) => (
+      <article class="entry">
+        <div class="entry-meta">
+          <span class="ver mono">v{entry.version}</span>
+          <span class="date">{entry.date}</span>
+          <span class="status">{entry.status}</span>
+        </div>
+        <ul class="entry-notes">
+          {entry.notes.map((n) => <li>{n}</li>)}
+        </ul>
+      </article>
+    ))}
+  </section>
+</Layout>
+
+<style>
+  .page-head { padding-top: var(--s-12); }
+  .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
+  .lead { color: var(--fg-2); font-size: 16px; max-width: 600px; margin: 0; }
+  .head-ctas { margin-top: var(--s-7); }
+  .log { margin-top: var(--s-11); display: grid; gap: var(--s-9); max-width: 760px; }
+  .entry { border-left: 2px solid var(--border-1); padding-left: var(--s-7); position: relative; }
+  .entry::before { content: ''; position: absolute; left: -6px; top: 4px; width: 10px; height: 10px;
+    border-radius: 999px; background: var(--accent); }
+  .entry-meta { display: flex; align-items: center; gap: var(--s-5); margin-bottom: var(--s-5); flex-wrap: wrap; }
+  .ver { font-size: 18px; font-weight: 700; color: var(--fg-0); }
+  .date { color: var(--fg-3); font-size: 14px; }
+  .status { font-size: 11px; color: var(--accent-2); border: 1px solid var(--border-1);
+    padding: 2px 8px; border-radius: 999px; }
+  .entry-notes { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-4); }
+  .entry-notes li { color: var(--fg-1); font-size: 15px; padding-left: var(--s-5); position: relative; }
+  .entry-notes li::before { content: '–'; position: absolute; left: 0; color: var(--fg-3); }
+</style>

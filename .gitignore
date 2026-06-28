@@ -28,3 +28,8 @@ lerna-debug.log*
 
 # worktrees
 .worktrees
+
+# marketing site
+site/node_modules
+site/dist
+site/.astro

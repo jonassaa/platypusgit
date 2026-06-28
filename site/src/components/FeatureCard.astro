@@ -1,0 +1,16 @@
+---
+interface Props { title: string; blurb: string; }
+const { title, blurb } = Astro.props;
+---
+<div class="fcard">
+  <h3 class="fcard-title">{title}</h3>
+  <p class="fcard-blurb">{blurb}</p>
+</div>
+<style>
+  .fcard { background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-6);
+    padding: var(--s-7); transition: border-color var(--t-med), transform var(--t-med); }
+  .fcard:hover { border-color: var(--border-2); transform: translateY(-2px); }
+  .fcard-title { font-size: 16px; margin: 0 0 var(--s-3); color: var(--fg-0);
+    border-left: 3px solid var(--accent); padding-left: var(--s-4); }
+  .fcard-blurb { color: var(--fg-2); font-size: 14px; margin: 0; line-height: 1.5; }
+</style>
