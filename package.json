@@ -7,7 +7,7 @@
   "author": "Jonas Aasberg <jonas.aasberg@clave.no>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jonasaasberg/platypusgit.git"
+    "url": "https://github.com/jonassaa/platypusgit.git"
   },
   "type": "module",
   "scripts": {
