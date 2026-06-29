@@ -7,6 +7,7 @@ import {
   PGCommitRow,
   PGEmpty,
   PGIconButton,
+  PGInput,
   PGResizeHandle,
   PGSearchInput,
   PGSelect,
@@ -18,6 +19,7 @@ import {
   usePaneWidth,
 } from "@/design";
 import { layoutGraph } from "@/features/commits/graphLayout";
+import { buildLogFilter, isFilterEmpty } from "@/features/commits/logFilter";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch, mapCommitRefs, relativeTime, shortSha } from "@/lib/derive";
 import type { CommitInfo } from "@/lib/types";
@@ -25,15 +27,53 @@ import type { CommitInfo } from "@/lib/types";
 type HistoryFilterKind = "all" | "mine" | "branch";
 type RefFilter = "all" | "local";
 
+const SEARCH_DEBOUNCE_MS = 250;
+
 export function HistoryScreen() {
   const commits = useRepoStore((s) => s.commits);
+  const searchResults = useRepoStore((s) => s.searchResults);
+  const searching = useRepoStore((s) => s.searching);
+  const searchCommits = useRepoStore((s) => s.searchCommits);
   const branches = useRepoStore((s) => s.branches);
   const loading = useRepoStore((s) => s.loading);
   const [selected, setSelected] = React.useState(0);
+  // Free-text search box (supports key:value qualifiers — see logFilter.ts).
   const [filter, setFilter] = React.useState("");
+  // Dedicated structured search fields.
+  const [authorQ, setAuthorQ] = React.useState("");
+  const [pathQ, setPathQ] = React.useState("");
+  const [sinceDate, setSinceDate] = React.useState("");
+  const [untilDate, setUntilDate] = React.useState("");
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const [filterKind, setFilterKind] = React.useState<HistoryFilterKind>("all");
   const [refFilter, setRefFilter] = React.useState<RefFilter>("all");
   const [hideMerges, setHideMerges] = React.useState(false);
+
+  // Debounce the backend search across all search inputs.
+  const logFilter = React.useMemo(
+    () =>
+      buildLogFilter({
+        text: filter,
+        author: authorQ,
+        path: pathQ,
+        sinceDate,
+        untilDate,
+      }),
+    [filter, authorQ, pathQ, sinceDate, untilDate],
+  );
+  const filterKey = JSON.stringify(logFilter);
+  React.useEffect(() => {
+    const handle = window.setTimeout(() => {
+      void searchCommits(logFilter);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+    // filterKey captures the filter's content; logFilter identity changes each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterKey, searchCommits]);
+
+  const searchActive = !isFilterEmpty(logFilter);
+  // Base list: backend-filtered results when a search is active, else full log.
+  const baseCommits = searchActive ? (searchResults ?? []) : commits;
   const detailPane = usePaneWidth(440, {
     min: 280,
     max: 720,
@@ -43,7 +83,7 @@ export function HistoryScreen() {
   // Reset selection when the commit list changes shape.
   React.useEffect(() => {
     setSelected(0);
-  }, [commits.length]);
+  }, [baseCommits.length, filterKey]);
 
   const head = currentBranch(branches);
   const headName = head?.name ?? null;
@@ -62,8 +102,10 @@ export function HistoryScreen() {
     return best;
   }, [commits]);
 
+  // Text/author/path/date/sha filtering happens on the backend (baseCommits).
+  // The "mine"/"branch"/hide-merges toggles remain client-side refinements.
   const visible = React.useMemo(() => {
-    let list: CommitInfo[] = commits;
+    let list: CommitInfo[] = baseCommits;
     if (filterKind === "mine" && myEmail) {
       list = list.filter((c) => c.email === myEmail);
     } else if (filterKind === "branch" && aheadCount > 0) {
@@ -71,18 +113,8 @@ export function HistoryScreen() {
       list = list.slice(0, aheadCount);
     }
     if (hideMerges) list = list.filter((c) => c.parents.length <= 1);
-    if (filter.trim()) {
-      const q = filter.toLowerCase();
-      list = list.filter(
-        (c) =>
-          c.summary.toLowerCase().includes(q) ||
-          c.author.toLowerCase().includes(q) ||
-          c.shortOid.toLowerCase().includes(q) ||
-          c.refs.some((r) => r.toLowerCase().includes(q)),
-      );
-    }
     return list;
-  }, [commits, filter, filterKind, myEmail, hideMerges, aheadCount]);
+  }, [baseCommits, filterKind, myEmail, hideMerges, aheadCount]);
 
   const rows = React.useMemo(() => layoutGraph(visible), [visible]);
 
@@ -104,19 +136,54 @@ export function HistoryScreen() {
       onExport={exportVisible}
     />
   );
+  const clearSearch = React.useCallback(() => {
+    setFilter("");
+    setAuthorQ("");
+    setPathQ("");
+    setSinceDate("");
+    setUntilDate("");
+  }, []);
+
   const toolbarLeft = (
     <HistoryToolbarLeft
       filter={filter}
       onFilter={setFilter}
       filterKind={filterKind}
       onFilterKind={setFilterKind}
+      authorQ={authorQ}
+      onAuthorQ={setAuthorQ}
+      pathQ={pathQ}
+      onPathQ={setPathQ}
+      sinceDate={sinceDate}
+      onSinceDate={setSinceDate}
+      untilDate={untilDate}
+      onUntilDate={setUntilDate}
+      advancedOpen={advancedOpen}
+      onToggleAdvanced={() => setAdvancedOpen((v) => !v)}
+      searchActive={searchActive}
+      searching={searching}
+      matchCount={searchActive ? visible.length : null}
+      onClear={clearSearch}
     />
   );
+  const advancedPanel = advancedOpen ? (
+    <AdvancedSearchPanel
+      authorQ={authorQ}
+      onAuthorQ={setAuthorQ}
+      pathQ={pathQ}
+      onPathQ={setPathQ}
+      sinceDate={sinceDate}
+      onSinceDate={setSinceDate}
+      untilDate={untilDate}
+      onUntilDate={setUntilDate}
+    />
+  ) : null;
 
   if (!commits.length) {
     return (
       <>
         <PGToolbar left={toolbarLeft} right={toolbarRight} />
+        {advancedPanel}
         {loading ? (
           <PGEmpty icon="history" title={<PGSpinner size={18} />}>
             Loading commits…
@@ -135,6 +202,7 @@ export function HistoryScreen() {
   return (
     <>
       <PGToolbar left={toolbarLeft} right={toolbarRight} />
+      {advancedPanel}
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <div
           style={{
@@ -176,7 +244,11 @@ export function HistoryScreen() {
                   fontSize: "var(--fs-12)",
                 }}
               >
-                No commits match the current filters.
+                {searching
+                  ? "Searching…"
+                  : searchActive
+                    ? "No commits match the search."
+                    : "No commits match the current filters."}
               </div>
             )}
             {visible.map((c, i) => {
@@ -350,25 +422,56 @@ function CommitActionRow({ commit }: { commit: CommitInfo }) {
   );
 }
 
-function HistoryToolbarLeft({
-  filter,
-  onFilter,
-  filterKind,
-  onFilterKind,
-}: {
+interface HistoryToolbarLeftProps {
   filter: string;
   onFilter: (v: string) => void;
   filterKind: HistoryFilterKind;
   onFilterKind: (v: HistoryFilterKind) => void;
-}) {
+  authorQ: string;
+  onAuthorQ: (v: string) => void;
+  pathQ: string;
+  onPathQ: (v: string) => void;
+  sinceDate: string;
+  onSinceDate: (v: string) => void;
+  untilDate: string;
+  onUntilDate: (v: string) => void;
+  advancedOpen: boolean;
+  onToggleAdvanced: () => void;
+  searchActive: boolean;
+  searching: boolean;
+  matchCount: number | null;
+  onClear: () => void;
+}
+
+function HistoryToolbarLeft(props: HistoryToolbarLeftProps) {
+  const {
+    filter,
+    onFilter,
+    filterKind,
+    onFilterKind,
+    advancedOpen,
+    onToggleAdvanced,
+    searchActive,
+    searching,
+    matchCount,
+    onClear,
+  } = props;
   return (
     <>
       <PGSearchInput
         value={filter}
         onChange={onFilter}
-        placeholder="Search commits, authors, refs…"
+        placeholder="Search message, author, sha, path… (e.g. author:bob)"
         shortcut="⌘F"
         style={{ width: 340 }}
+      />
+      <PGIconButton
+        icon="sort"
+        size="md"
+        title="Advanced search (author / path / date range)"
+        aria-pressed={advancedOpen}
+        onClick={onToggleAdvanced}
+        style={advancedOpen ? { color: "var(--accent)" } : undefined}
       />
       <PGButtonGroup
         value={filterKind}
@@ -379,7 +482,128 @@ function HistoryToolbarLeft({
           { value: "branch", label: "This branch" },
         ]}
       />
+      {searchActive && (
+        <>
+          <span
+            style={{
+              fontSize: "var(--fs-11)",
+              color: "var(--fg-3)",
+              fontFamily: "var(--font-mono)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {searching
+              ? "searching…"
+              : `${matchCount} match${matchCount === 1 ? "" : "es"}`}
+          </span>
+          <PGButton size="sm" variant="ghost" icon="x" onClick={onClear}>
+            Clear
+          </PGButton>
+        </>
+      )}
     </>
+  );
+}
+
+/** Field labels reused by the advanced search strip. */
+function SearchField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        fontSize: "var(--fs-10)",
+        color: "var(--fg-2)",
+        textTransform: "uppercase",
+        letterSpacing: "0.05em",
+      }}
+    >
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function AdvancedSearchPanel(props: {
+  authorQ: string;
+  onAuthorQ: (v: string) => void;
+  pathQ: string;
+  onPathQ: (v: string) => void;
+  sinceDate: string;
+  onSinceDate: (v: string) => void;
+  untilDate: string;
+  onUntilDate: (v: string) => void;
+}) {
+  const {
+    authorQ,
+    onAuthorQ,
+    pathQ,
+    onPathQ,
+    sinceDate,
+    onSinceDate,
+    untilDate,
+    onUntilDate,
+  } = props;
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 12,
+        alignItems: "flex-end",
+        flexWrap: "wrap",
+        padding: "8px 12px",
+        background: "var(--bg-1)",
+        borderBottom: "1px solid var(--border-0)",
+        flexShrink: 0,
+      }}
+    >
+      <SearchField label="Author">
+        <PGInput
+          value={authorQ}
+          onChange={onAuthorQ}
+          placeholder="name or email"
+          icon="user"
+          size="sm"
+          style={{ width: 200 }}
+        />
+      </SearchField>
+      <SearchField label="Path">
+        <PGInput
+          value={pathQ}
+          onChange={onPathQ}
+          placeholder="src/foo.ts"
+          icon="file"
+          size="sm"
+          mono
+          style={{ width: 220 }}
+        />
+      </SearchField>
+      <SearchField label="Since">
+        <PGInput
+          type="date"
+          value={sinceDate}
+          onChange={onSinceDate}
+          size="sm"
+          style={{ width: 150 }}
+        />
+      </SearchField>
+      <SearchField label="Until">
+        <PGInput
+          type="date"
+          value={untilDate}
+          onChange={onUntilDate}
+          size="sm"
+          style={{ width: 150 }}
+        />
+      </SearchField>
+    </div>
   );
 }
 
