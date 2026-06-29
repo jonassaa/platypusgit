@@ -18,6 +18,10 @@ name: release
 on:
   push:
     branches: [main]
+    # Site-only changes deploy via site.yml — never cut an app release.
+    paths-ignore:
+      - 'site/**'
+      - '.github/workflows/site.yml'
 
 permissions:
   contents: write
