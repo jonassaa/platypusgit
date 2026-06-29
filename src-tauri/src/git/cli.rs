@@ -57,6 +57,17 @@ impl GitBackend for CliBackend {
     fn read_file_content(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<FileContent> {
         Err(AppError::NotImplemented)
     }
+    fn list_files_at_rev(&self, _repo_id: &RepoId, _revspec: &str) -> AppResult<Vec<FileStatus>> {
+        Err(AppError::NotImplemented)
+    }
+    fn read_file_content_at_rev(
+        &self,
+        _repo_id: &RepoId,
+        _revspec: &str,
+        _path: &Path,
+    ) -> AppResult<FileContent> {
+        Err(AppError::NotImplemented)
+    }
     fn diff_commits(
         &self,
         _repo_id: &RepoId,
