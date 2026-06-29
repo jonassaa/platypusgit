@@ -29,6 +29,8 @@ import { SettingsScreen } from "@/screens/Settings";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { usePaletteStore } from "@/features/palette/usePaletteStore";
+import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { BranchChip } from "@/features/branches/BranchChip";
 import { BranchPicker } from "@/features/branches/BranchPicker";
@@ -134,7 +136,31 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [repo]);
 
+  // Global ⌘P / Ctrl+P opens the command palette. Ignored when typing in an
+  // input/textarea/contentEditable, matching the ⌘1…⌘9 handling above.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.shiftKey || e.altKey) return;
+      if (e.key !== "p" && e.key !== "P") return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      usePaletteStore.getState().openPalette();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const intent = useNavStore((s) => s.intent);
+  const clearIntent = useNavStore((s) => s.clearIntent);
   React.useEffect(() => {
     if (!intent) return;
     switch (intent.kind) {
@@ -156,6 +182,10 @@ export function AppShell() {
         break;
       case "stash-diff":
         setScreen("commitDiff");
+        break;
+      case "switch-screen":
+        setScreen(intent.screen as ScreenId);
+        clearIntent();
         break;
     }
   }, [intent]);
@@ -229,6 +259,7 @@ export function AppShell() {
         <WelcomeScreen />
       )}
       <AppStatusBar />
+      <CommandPalette />
     </div>
   );
 }
