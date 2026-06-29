@@ -1,24 +1,87 @@
 name: release
 
-# Build and publish a macOS universal .dmg on every v* tag.
-# The dmg is uploaded under a STABLE name (no version in filename) so the
-# Homebrew cask can point at releases/latest/download/ and never needs a
-# per-release URL/sha bump.
+# Every push to main cuts a release.
+#
+# Version bump is driven by the latest commit message prefix:
+#   [major] -> X+1.0.0
+#   [minor] -> X.Y+1.0
+#   [patch] -> X.Y.Z+1   (also the default when no prefix is present)
+#
+# The computed version is tagged (vX.Y.Z), injected into the app manifests at
+# build time (no commit-back, so no trigger loop), and a macOS universal .dmg
+# is published to the GitHub Release under a STABLE filename so the Homebrew
+# cask can track releases/latest/download.
 #
 # The app is ad-hoc signed (tauri.conf.json -> macOS.signingIdentity "-") but
-# NOT notarized — no paid Apple Developer account. The Homebrew cask strips the
-# Gatekeeper quarantine flag on install (see homebrew-platypusgit tap).
+# NOT notarized — the Homebrew cask strips the Gatekeeper quarantine flag.
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full tag history
+
+      - name: Compute version and tag
+        id: bump
+        run: |
+          set -euo pipefail
+          msg="$(git log -1 --pretty=%s)"
+          level=patch
+          case "$msg" in
+            \[major\]*) level=major ;;
+            \[minor\]*) level=minor ;;
+            \[patch\]*) level=patch ;;
+          esac
+          echo "Commit subject: $msg"
+          echo "Bump level: $level"
+
+          # Base = latest v* tag, else fall back to the manifest version.
+          last="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
+          if [ -z "$last" ]; then
+            last="v$(jq -r '.version' src-tauri/tauri.conf.json)"
+          fi
+          base="${last#v}"
+          IFS='.' read -r MA MI PA <<EOF
+          $base
+          EOF
+          MA=${MA:-0}; MI=${MI:-0}; PA=${PA:-0}
+
+          case "$level" in
+            major) MA=$((MA + 1)); MI=0; PA=0 ;;
+            minor) MI=$((MI + 1)); PA=0 ;;
+            patch) PA=$((PA + 1)) ;;
+          esac
+
+          version="${MA}.${MI}.${PA}"
+          tag="v${version}"
+          echo "Next: $tag (from base $base)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          set -euo pipefail
+          git tag "${{ steps.bump.outputs.tag }}"
+          git push origin "${{ steps.bump.outputs.tag }}"
+
   macos-universal:
+    needs: version
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +107,15 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Inject version ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          tmp="$(mktemp)"
+          jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
+          jq --arg v "$v" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
+          sed -i '' -E "s/^version = \".*\"/version = \"$v\"/" src-tauri/Cargo.toml
+
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
@@ -54,11 +126,14 @@ jobs:
         run: |
           set -euo pipefail
           src_dir="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
-          dmg=$(ls "$src_dir"/*.dmg | head -n1)
+          dmg="$(ls "$src_dir"/*.dmg | head -n1)"
           cp "$dmg" "$src_dir/PlatypusGit_universal.dmg"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          generate_release_notes: true
           files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/PlatypusGit_universal.dmg
           fail_on_unmatched_files: true
