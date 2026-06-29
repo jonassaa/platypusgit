@@ -13,7 +13,8 @@ export type NavIntent =
   | { kind: "file-history"; path: string }
   | { kind: "blame"; path: string }
   | { kind: "rebase-plan"; plan: RebaseStep[] }
-  | { kind: "stash-diff"; oid: string };
+  | { kind: "stash-diff"; oid: string }
+  | { kind: "switch-screen"; screen: string };
 
 interface NavState {
   intent: NavIntent | null;
