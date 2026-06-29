@@ -50,6 +50,39 @@ pub struct CommitInfo {
     pub refs: Vec<String>,
 }
 
+/// Filter applied to the commit log walk. All fields are ANDed together;
+/// an all-`None`/empty filter matches every commit (equivalent to a plain log).
+/// String matches are case-insensitive substring matches except `sha_prefix`,
+/// which matches the start of the full or short OID.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogFilter {
+    /// Substring of the commit message (summary + body), case-insensitive.
+    pub message: Option<String>,
+    /// Substring of the author name OR email, case-insensitive.
+    pub author: Option<String>,
+    /// Prefix of the commit OID (hex, case-insensitive).
+    pub sha_prefix: Option<String>,
+    /// Lower bound on commit time (unix seconds, inclusive).
+    pub since: Option<i64>,
+    /// Upper bound on commit time (unix seconds, inclusive).
+    pub until: Option<i64>,
+    /// Only commits that touched this path (relative to repo root).
+    pub path: Option<String>,
+}
+
+impl LogFilter {
+    /// True when no filter dimension is set — the walk can skip per-commit checks.
+    pub fn is_empty(&self) -> bool {
+        self.message.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && self.author.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && self.sha_prefix.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && self.since.is_none()
+            && self.until.is_none()
+            && self.path.as_deref().map(str::trim).unwrap_or("").is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchInfo {

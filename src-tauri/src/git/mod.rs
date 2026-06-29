@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use crate::error::AppResult;
 use types::{
     BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileContent,
-    FileDiff, FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle, RepoId,
-    RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+    FileDiff, FileStatus, LogFilter, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle,
+    RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
 };
 
 pub trait GitBackend: Send + Sync {
@@ -20,6 +20,16 @@ pub trait GitBackend: Send + Sync {
     /// can browse the whole worktree (ignored files are still excluded).
     fn list_all_files(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>>;
+    /// Like `log`, but only returns commits matching `filter`. The `limit`
+    /// caps the number of *matching* commits returned (newest-first), so the
+    /// walk may visit more than `limit` commits to fill the result. An empty
+    /// filter behaves like `log`.
+    fn log_filtered(
+        &self,
+        repo_id: &RepoId,
+        filter: &LogFilter,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>>;
     /// Commits reachable from HEAD but not from `base` (the `base..HEAD` range),
     /// newest-first. `base` is any revspec — branch, tag, short or full oid.
     /// Errors with `InvalidRef` if `base` can't be resolved or is not an

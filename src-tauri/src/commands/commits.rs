@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{CommitInfo, CommitOptions, RepoId},
+    git::types::{CommitInfo, CommitOptions, LogFilter, RepoId},
     state::AppState,
 };
 
@@ -16,6 +16,21 @@ pub async fn get_log(
     let repo_id = RepoId(repo_id);
     let limit = limit.unwrap_or(500);
     tokio::task::spawn_blocking(move || backend.log(&repo_id, limit))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn get_log_filtered(
+    state: State<'_, AppState>,
+    repo_id: String,
+    filter: LogFilter,
+    limit: Option<usize>,
+) -> AppResult<Vec<CommitInfo>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let limit = limit.unwrap_or(500);
+    tokio::task::spawn_blocking(move || backend.log_filtered(&repo_id, &filter, limit))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
