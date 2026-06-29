@@ -5,8 +5,8 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileContent,
-        FileDiff, FileStatus, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle,
-        RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+        FileDiff, FileStatus, LogFilter, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo,
+        RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
     },
     GitBackend,
 };
@@ -38,6 +38,14 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn log(&self, _repo_id: &RepoId, _limit: usize) -> AppResult<Vec<CommitInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn log_filtered(
+        &self,
+        _repo_id: &RepoId,
+        _filter: &LogFilter,
+        _limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
     fn commits_since(&self, _repo_id: &RepoId, _base: &str) -> AppResult<Vec<CommitInfo>> {

@@ -14,8 +14,9 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
-        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, RebaseAction, RebaseStatus,
-        RebaseStep, ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode,
+        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LogFilter, RebaseAction,
+        RebaseStatus, RebaseStep, ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState,
+        ResetMode,
         StashInfo, StashSaveOptions, StatusFlag, TagInfo, TagTarget,
     },
     GitBackend,
@@ -668,6 +669,130 @@ impl GitBackend for Libgit2Backend {
             for oid in walk.take(limit) {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
+                let refs: Vec<String> = ref_map
+                    .iter()
+                    .filter(|(o, _)| *o == oid)
+                    .map(|(_, name)| name.clone())
+                    .collect();
+                let mut info = commit_to_info(&commit);
+                info.refs = refs;
+                out.push(info);
+            }
+            Ok(out)
+        })
+    }
+
+    fn log_filtered(
+        &self,
+        repo_id: &RepoId,
+        filter: &LogFilter,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
+        // No filter set → identical to a plain log walk.
+        if filter.is_empty() {
+            return self.log(repo_id, limit);
+        }
+
+        // Normalize filter terms once.
+        let message_q = filter
+            .message
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase);
+        let author_q = filter
+            .author
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase);
+        let sha_q = filter
+            .sha_prefix
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase);
+        let path_q = filter
+            .path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from);
+
+        self.with_repo(repo_id, |repo| {
+            // Unborn HEAD (no commits yet) → nothing to walk. Detect up front
+            // since push_head() surfaces this as a generic "ref not found".
+            match repo.head() {
+                Ok(_) => {}
+                Err(e)
+                    if matches!(
+                        e.code(),
+                        git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound
+                    ) =>
+                {
+                    return Ok(Vec::new())
+                }
+                Err(e) => return Err(e.into()),
+            }
+
+            let ref_map = collect_ref_map(repo);
+            let mut walk = repo.revwalk()?;
+            walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
+            walk.push_head()?;
+
+            let mut out = Vec::new();
+            for oid in walk {
+                if out.len() >= limit {
+                    break;
+                }
+                let oid = oid?;
+                let commit = repo.find_commit(oid)?;
+
+                // sha prefix — cheap, check first.
+                if let Some(ref q) = sha_q {
+                    if !oid.to_string().starts_with(q.as_str()) {
+                        continue;
+                    }
+                }
+
+                // date range.
+                let ts = commit.time().seconds();
+                if let Some(since) = filter.since {
+                    if ts < since {
+                        continue;
+                    }
+                }
+                if let Some(until) = filter.until {
+                    if ts > until {
+                        continue;
+                    }
+                }
+
+                // author name or email.
+                if let Some(ref q) = author_q {
+                    let author = commit.author();
+                    let name = author.name().unwrap_or("").to_lowercase();
+                    let email = author.email().unwrap_or("").to_lowercase();
+                    if !name.contains(q.as_str()) && !email.contains(q.as_str()) {
+                        continue;
+                    }
+                }
+
+                // message (full message: summary + body).
+                if let Some(ref q) = message_q {
+                    let msg = commit.message().unwrap_or("").to_lowercase();
+                    if !msg.contains(q.as_str()) {
+                        continue;
+                    }
+                }
+
+                // path — most expensive, check last.
+                if let Some(ref p) = path_q {
+                    if !commit_touches_path(repo, &commit, p)? {
+                        continue;
+                    }
+                }
+
                 let refs: Vec<String> = ref_map
                     .iter()
                     .filter(|(o, _)| *o == oid)
