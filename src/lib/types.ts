@@ -36,6 +36,26 @@ export interface CommitInfo {
   refs: string[];
 }
 
+/**
+ * Backend commit-log filter. All set fields are ANDed. String matches are
+ * case-insensitive substring matches except `shaPrefix` (matches start of OID).
+ * Mirrors Rust `LogFilter` in `git/types.rs`.
+ */
+export interface LogFilter {
+  /** Substring of the commit message (summary + body). */
+  message?: string | null;
+  /** Substring of author name OR email. */
+  author?: string | null;
+  /** Prefix of the commit OID (hex). */
+  shaPrefix?: string | null;
+  /** Lower bound on commit time, unix seconds (inclusive). */
+  since?: number | null;
+  /** Upper bound on commit time, unix seconds (inclusive). */
+  until?: number | null;
+  /** Only commits that touched this path (relative to repo root). */
+  path?: string | null;
+}
+
 export interface BranchInfo {
   name: string;
   isHead: boolean;
