@@ -59,6 +59,7 @@ pub fn run() {
             commands::repo::append_gitignore,
             commands::repo::open_in_editor,
             commands::commits::get_log,
+            commands::commits::get_log_filtered,
             commands::commits::commits_since,
             commands::commits::commit,
             commands::commits::file_history,
