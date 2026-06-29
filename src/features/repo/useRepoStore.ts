@@ -120,7 +120,11 @@ interface RepoStoreState {
   stageHunk: (path: string, hunkIndex: number) => Promise<void>;
   unstageHunk: (path: string, hunkIndex: number) => Promise<void>;
   discardHunk: (path: string, hunkIndex: number) => Promise<void>;
-  commit: (message: string, amend?: boolean) => Promise<string | null>;
+  commit: (
+    message: string,
+    amend?: boolean,
+    signoff?: boolean,
+  ) => Promise<string | null>;
   reset: (target: string, mode: ResetMode) => Promise<void>;
   checkoutBranch: (name: string) => Promise<void>;
   checkoutRef: (reference: string) => Promise<void>;
@@ -370,11 +374,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
-  async commit(message, amend = false) {
+  async commit(message, amend = false, signoff = false) {
     const repo = get().current;
     if (!repo) return null;
     try {
-      const oid = await commitFn(repo.id, message, amend);
+      const oid = await commitFn(repo.id, message, amend, signoff);
       await get().refreshAll();
       return oid;
     } catch (e) {
