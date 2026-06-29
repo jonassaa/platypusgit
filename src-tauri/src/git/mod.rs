@@ -38,6 +38,22 @@ pub trait GitBackend: Send + Sync {
     /// Read the full content of a file from the worktree. Falls back to the
     /// HEAD blob when the worktree copy is missing (e.g. a deleted file).
     fn read_file_content(&self, repo_id: &RepoId, path: &Path) -> AppResult<FileContent>;
+    /// List every file in the tree at `revspec` (commit, branch, tag, or any
+    /// revspec). Resolves the revspec to a tree and walks it recursively.
+    /// Returns `FileStatus` entries with both sides `Unmodified` — the tree is
+    /// a historical snapshot, not the working state. `InvalidRef` if the
+    /// revspec can't be resolved.
+    fn list_files_at_rev(&self, repo_id: &RepoId, revspec: &str) -> AppResult<Vec<FileStatus>>;
+    /// Read the content of `path` from the tree at `revspec`. `InvalidRef` if
+    /// the revspec can't be resolved; `InvalidPath` if the path isn't in that
+    /// tree. The returned `FileContent.from_head` is true (content is from a
+    /// committed tree, not the worktree).
+    fn read_file_content_at_rev(
+        &self,
+        repo_id: &RepoId,
+        revspec: &str,
+        path: &Path,
+    ) -> AppResult<FileContent>;
     fn diff_commits(
         &self,
         repo_id: &RepoId,

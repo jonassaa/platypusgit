@@ -948,6 +948,88 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
+    fn list_files_at_rev(&self, repo_id: &RepoId, revspec: &str) -> AppResult<Vec<FileStatus>> {
+        self.with_repo(repo_id, |repo| {
+            let tree = repo
+                .revparse_single(revspec)
+                .map_err(|_| AppError::InvalidRef(revspec.to_string()))?
+                .peel_to_tree()?;
+
+            let mut out = Vec::new();
+            // Walk the tree pre-order, accumulating full paths for blobs only.
+            tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+                if entry.kind() == Some(git2::ObjectType::Blob) {
+                    let name = entry.name().unwrap_or("");
+                    let path = if root.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{root}{name}")
+                    };
+                    if !path.is_empty() {
+                        out.push(FileStatus {
+                            path,
+                            worktree: StatusFlag::Unmodified,
+                            index: StatusFlag::Unmodified,
+                        });
+                    }
+                }
+                git2::TreeWalkResult::Ok
+            })?;
+            Ok(out)
+        })
+    }
+
+    fn read_file_content_at_rev(
+        &self,
+        repo_id: &RepoId,
+        revspec: &str,
+        path: &Path,
+    ) -> AppResult<FileContent> {
+        let rel = path.to_path_buf();
+        let path_str = rel.to_string_lossy().into_owned();
+        self.with_repo(repo_id, |repo| {
+            let tree = repo
+                .revparse_single(revspec)
+                .map_err(|_| AppError::InvalidRef(revspec.to_string()))?
+                .peel_to_tree()?;
+
+            let entry = tree
+                .get_path(&rel)
+                .map_err(|_| AppError::InvalidPath(format!("file not found: {path_str}")))?;
+            let obj = entry.to_object(repo)?;
+            let blob = obj
+                .as_blob()
+                .ok_or_else(|| AppError::InvalidPath(format!("not a file: {path_str}")))?;
+            let content = blob.content();
+            let size = content.len() as u64;
+            if blob.is_binary() {
+                return Ok(FileContent {
+                    path: path_str,
+                    binary: true,
+                    text: None,
+                    from_head: true,
+                    size,
+                });
+            }
+            Ok(match std::str::from_utf8(content) {
+                Ok(s) => FileContent {
+                    path: path_str,
+                    binary: false,
+                    text: Some(s.to_string()),
+                    from_head: true,
+                    size,
+                },
+                Err(_) => FileContent {
+                    path: path_str,
+                    binary: true,
+                    text: None,
+                    from_head: true,
+                    size,
+                },
+            })
+        })
+    }
+
     fn diff_commits(
         &self,
         repo_id: &RepoId,
