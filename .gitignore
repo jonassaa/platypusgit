@@ -33,3 +33,7 @@ lerna-debug.log*
 site/node_modules
 site/dist
 site/.astro
+
+# local planning notes
+features.md
+implemented-features.md

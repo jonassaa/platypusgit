@@ -23,8 +23,6 @@ A dev-first alternative to TortoiseGit with "extreme usability" as the north sta
 - **Interactive rebase** — pick/reword/edit/squash/fixup/drop, continue/abort, base picker
 - **Remotes & network** — add/remove/rename/prune remotes, fetch/pull/push (with-lease/force), merge
 
-See [`implemented-features.md`](./implemented-features.md) for the full list.
-
 ## Install
 
 ### macOS (Homebrew)
