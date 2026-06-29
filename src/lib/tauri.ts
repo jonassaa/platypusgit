@@ -60,6 +60,30 @@ export async function readFileContent(
   return invoke<FileContent>("read_file_content", { repoId, path });
 }
 
+/**
+ * List every file in the tree at `revspec` (commit SHA, branch, tag, or any
+ * revspec). All entries are reported `Unmodified` — it's a historical snapshot.
+ */
+export async function listFilesAtRev(
+  repoId: string,
+  revspec: string,
+): Promise<FileStatus[]> {
+  return invoke<FileStatus[]>("list_files_at_rev", { repoId, revspec });
+}
+
+/** Read a file's content from the tree at `revspec`. */
+export async function readFileContentAtRev(
+  repoId: string,
+  revspec: string,
+  path: string,
+): Promise<FileContent> {
+  return invoke<FileContent>("read_file_content_at_rev", {
+    repoId,
+    revspec,
+    path,
+  });
+}
+
 export async function getLog(
   repoId: string,
   limit?: number,

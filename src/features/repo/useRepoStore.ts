@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   BranchInfo,
   CommitInfo,
+  FileContent,
   FileStatus,
   RebaseStatus,
   RebaseStep,
@@ -36,6 +37,8 @@ import {
   getLog,
   getStatus,
   listAllFiles,
+  listFilesAtRev as listFilesAtRevFn,
+  readFileContentAtRev as readFileContentAtRevFn,
   listBranches,
   listRemotes,
   listStashes,
@@ -112,6 +115,19 @@ interface RepoStoreState {
   openRepo: (path: string) => Promise<void>;
   refreshAll: () => Promise<void>;
   refreshAllFiles: () => Promise<void>;
+  /**
+   * List every file in the tree at `revspec` (commit/branch/tag/revspec).
+   * Returns the file list, or null on failure (error is set on the store).
+   */
+  listFilesAtRev: (revspec: string) => Promise<FileStatus[] | null>;
+  /**
+   * Read a file's content from the tree at `revspec`. Returns null on failure
+   * (error is set on the store).
+   */
+  readFileContentAtRev: (
+    revspec: string,
+    path: string,
+  ) => Promise<FileContent | null>;
   clearError: () => void;
   closeRepo: () => void;
   stage: (paths: string[]) => Promise<void>;
@@ -294,6 +310,28 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       set({ allFiles });
     } catch (e) {
       set({ error: toAppError(e) });
+    }
+  },
+
+  async listFilesAtRev(revspec) {
+    const repo = get().current;
+    if (!repo) return null;
+    try {
+      return await listFilesAtRevFn(repo.id, revspec);
+    } catch (e) {
+      set({ error: toAppError(e) });
+      return null;
+    }
+  },
+
+  async readFileContentAtRev(revspec, path) {
+    const repo = get().current;
+    if (!repo) return null;
+    try {
+      return await readFileContentAtRevFn(repo.id, revspec, path);
+    } catch (e) {
+      set({ error: toAppError(e) });
+      return null;
     }
   },
 
