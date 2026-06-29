@@ -8,6 +8,7 @@ import {
   PGFileTree,
   PGHunk,
   PGIconButton,
+  PGInput,
   PGPanel,
   PGResizeHandle,
   PGSearchInput,
@@ -17,6 +18,7 @@ import {
   KV,
   useContextMenu,
   usePaneWidth,
+  type ContextMenuItem,
   type DiffLineData,
   type PGFileTreeNode,
 } from "@/design";
@@ -30,7 +32,14 @@ import {
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
-import type { FileContent, FileDiff, FileStatus, StatusFlag } from "@/lib/types";
+import type {
+  BranchInfo,
+  FileContent,
+  FileDiff,
+  FileStatus,
+  StatusFlag,
+  TagInfo,
+} from "@/lib/types";
 
 type SortMode = "asc" | "desc";
 type HideKind = "Untracked" | "Ignored" | "Deleted";
@@ -71,9 +80,12 @@ export function RepoBrowserScreen() {
   const status = useRepoStore((s) => s.status);
   const allFiles = useRepoStore((s) => s.allFiles);
   const branches = useRepoStore((s) => s.branches);
+  const tags = useRepoStore((s) => s.tags);
   const commits = useRepoStore((s) => s.commits);
   const loading = useRepoStore((s) => s.loading);
   const refreshAllFiles = useRepoStore((s) => s.refreshAllFiles);
+  const listFilesAtRev = useRepoStore((s) => s.listFilesAtRev);
+  const readFileContentAtRev = useRepoStore((s) => s.readFileContentAtRev);
 
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   const [selected, setSelected] = React.useState<string | null>(null);
@@ -83,6 +95,12 @@ export function RepoBrowserScreen() {
   const [filterMode, setFilterMode] = React.useState<
     "all" | "changes" | "conflicts"
   >("changes");
+  // Revision being browsed. null = working tree / HEAD (default behavior).
+  // When set, the tree and previews come from that committed tree snapshot.
+  const [rev, setRev] = React.useState<string | null>(null);
+  const [revFiles, setRevFiles] = React.useState<FileStatus[]>([]);
+  const [revLoading, setRevLoading] = React.useState(false);
+  const browsingRev = rev !== null;
   const [hiddenKinds, setHiddenKinds] = React.useState<Set<HideKind>>(
     () => new Set(),
   );
@@ -109,7 +127,29 @@ export function RepoBrowserScreen() {
     }
   }, [filterMode, repo, refreshAllFiles]);
 
+  // Load the file tree of the selected revision. Clears when back to HEAD.
+  React.useEffect(() => {
+    if (!repo || rev === null) {
+      setRevFiles([]);
+      return;
+    }
+    let cancelled = false;
+    setRevLoading(true);
+    listFilesAtRev(rev)
+      .then((files) => {
+        if (!cancelled) setRevFiles(files ?? []);
+      })
+      .finally(() => {
+        if (!cancelled) setRevLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, rev, listFilesAtRev]);
+
   const filteredStatus = React.useMemo<FileStatus[]>(() => {
+    // Browsing a committed revision: show its whole tree, no status filtering.
+    if (browsingRev) return revFiles;
     let base: FileStatus[];
     switch (filterMode) {
       case "conflicts":
@@ -131,7 +171,7 @@ export function RepoBrowserScreen() {
     }
     if (hiddenKinds.size === 0) return base;
     return base.filter((s) => !isHidden(s, hiddenKinds));
-  }, [status, allFiles, filterMode, hiddenKinds]);
+  }, [status, allFiles, filterMode, hiddenKinds, browsingRev, revFiles]);
 
   const tree = React.useMemo<PGFileTreeNode[]>(() => {
     const t = buildStatusTree(filteredStatus);
@@ -152,12 +192,15 @@ export function RepoBrowserScreen() {
   const selectedFile = React.useMemo<FileStatus | null>(() => {
     if (!selected) return null;
     const path = selected.replace(/^\//, "");
+    if (browsingRev) {
+      return revFiles.find((s) => s.path === path) ?? null;
+    }
     return (
       status.find((s) => s.path === path) ??
       allFiles.find((s) => s.path === path) ??
       null
     );
-  }, [selected, status, allFiles]);
+  }, [selected, status, allFiles, browsingRev, revFiles]);
 
   const selectedIsUnmodified =
     !!selectedFile &&
@@ -172,7 +215,17 @@ export function RepoBrowserScreen() {
     }
     let cancelled = false;
     setDiffLoading(true);
-    if (selectedIsUnmodified) {
+    if (browsingRev && rev) {
+      // Historical snapshot: always show the file's content at that revision.
+      setDiff(null);
+      readFileContentAtRev(rev, selectedFile.path)
+        .then((c) => {
+          if (!cancelled) setFileContent(c);
+        })
+        .finally(() => {
+          if (!cancelled) setDiffLoading(false);
+        });
+    } else if (selectedIsUnmodified) {
       setDiff(null);
       readFileContent(repo.id, selectedFile.path)
         .then((c) => {
@@ -200,7 +253,7 @@ export function RepoBrowserScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selectedFile?.path, selectedIsUnmodified, repo]);
+  }, [selectedFile?.path, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev]);
 
   const breadcrumbItems = React.useMemo(() => {
     const root = repo?.path.split("/").filter(Boolean).pop() ?? "repository";
@@ -214,23 +267,29 @@ export function RepoBrowserScreen() {
         left={<PGBreadcrumb items={breadcrumbItems} />}
         right={
           <>
-            <PGButtonGroup
-              value={filterMode}
-              onChange={(v) =>
-                setFilterMode(v as "all" | "changes" | "conflicts")
-              }
-              options={[
-                { value: "all", label: "All", icon: "folder" },
-                { value: "changes", label: "Changes", icon: "edit" },
-                {
-                  value: "conflicts",
-                  label: conflictCount > 0
-                    ? `Conflicts (${conflictCount})`
-                    : "Conflicts",
-                  icon: "conflict",
-                },
-              ]}
-            />
+            {browsingRev ? (
+              <PGBadge tone="muted" icon="history">
+                Browsing {rev}
+              </PGBadge>
+            ) : (
+              <PGButtonGroup
+                value={filterMode}
+                onChange={(v) =>
+                  setFilterMode(v as "all" | "changes" | "conflicts")
+                }
+                options={[
+                  { value: "all", label: "All", icon: "folder" },
+                  { value: "changes", label: "Changes", icon: "edit" },
+                  {
+                    value: "conflicts",
+                    label: conflictCount > 0
+                      ? `Conflicts (${conflictCount})`
+                      : "Conflicts",
+                    icon: "conflict",
+                  },
+                ]}
+              />
+            )}
             <FilterMenuButton hiddenKinds={hiddenKinds} onToggle={(k) => {
               setHiddenKinds((prev) => {
                 const next = new Set(prev);
@@ -260,9 +319,19 @@ export function RepoBrowserScreen() {
               padding: "6px 8px",
               borderBottom: "1px solid var(--border-0)",
               display: "flex",
-              gap: 4,
+              flexDirection: "column",
+              gap: 6,
             }}
           >
+            <RevisionBar
+              rev={rev}
+              onChange={(r) => {
+                setRev(r);
+                setSelected(null);
+              }}
+              branches={branches}
+              tags={tags}
+            />
             <PGSearchInput
               placeholder="Find in tree…"
               shortcut="⌘⇧F"
@@ -270,7 +339,7 @@ export function RepoBrowserScreen() {
             />
           </div>
           <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
-            {tree.length === 0 && !loading && (
+            {tree.length === 0 && !loading && !revLoading && (
               <div
                 style={{
                   padding: 14,
@@ -279,14 +348,16 @@ export function RepoBrowserScreen() {
                   fontFamily: "var(--font-mono)",
                 }}
               >
-                {filterMode === "all"
-                  ? "No files."
-                  : filterMode === "conflicts"
-                    ? "No conflicts."
-                    : "Working tree clean."}
+                {browsingRev
+                  ? "No files at this revision."
+                  : filterMode === "all"
+                    ? "No files."
+                    : filterMode === "conflicts"
+                      ? "No conflicts."
+                      : "Working tree clean."}
               </div>
             )}
-            {loading && tree.length === 0 && (
+            {(loading || revLoading) && tree.length === 0 && (
               <div
                 style={{
                   padding: 14,
@@ -347,15 +418,21 @@ export function RepoBrowserScreen() {
                 {fileContent?.binary && (
                   <PGBadge tone="muted">binary</PGBadge>
                 )}
-                {fileContent?.fromHead && (
-                  <PGBadge tone="muted">from HEAD</PGBadge>
+                {browsingRev ? (
+                  <PGBadge tone="muted">@ {rev}</PGBadge>
+                ) : (
+                  fileContent?.fromHead && (
+                    <PGBadge tone="muted">from HEAD</PGBadge>
+                  )
                 )}
               </>
             ) : (
               <span style={{ color: "var(--fg-3)" }}>
-                {filterMode === "all"
-                  ? "Select a file to preview its content"
-                  : "Select a changed file to preview its diff"}
+                {browsingRev
+                  ? `Select a file to view its content at ${rev}`
+                  : filterMode === "all"
+                    ? "Select a file to preview its content"
+                    : "Select a changed file to preview its diff"}
               </span>
             )}
             <div style={{ flex: 1 }} />
@@ -703,6 +780,103 @@ function reverseTree(nodes: PGFileTreeNode[]): PGFileTreeNode[] {
     n.children
       ? { ...n, children: reverseTree(n.children) }
       : n,
+  );
+}
+
+/**
+ * Revision selector for the repo browser. Default (null) browses the working
+ * tree / HEAD. Pick a branch/tag from the quick menu, or type any revspec
+ * (commit SHA, `HEAD~3`, `tag^{}`, …) and press Enter.
+ */
+function RevisionBar({
+  rev,
+  onChange,
+  branches,
+  tags,
+}: {
+  rev: string | null;
+  onChange: (rev: string | null) => void;
+  branches: BranchInfo[];
+  tags: TagInfo[];
+}) {
+  const [draft, setDraft] = React.useState(rev ?? "");
+
+  // Keep the input in sync when the rev changes from outside (e.g. quick-pick).
+  React.useEffect(() => {
+    setDraft(rev ?? "");
+  }, [rev]);
+
+  const commit = () => {
+    const v = draft.trim();
+    onChange(v === "" ? null : v);
+  };
+
+  const { openAt, menu } = useContextMenu<null>(() => {
+    const items: ContextMenuItem[] = [
+      {
+        icon: rev === null ? "check" : "history",
+        label: "Working tree (HEAD)",
+        onClick: () => onChange(null),
+      },
+    ];
+    const localBranches = branches.filter((b) => !b.isRemote);
+    if (localBranches.length) {
+      items.push({ __menuTitle: "Branches" });
+      for (const b of localBranches) {
+        items.push({
+          icon: rev === b.name ? "check" : "branch",
+          label: b.name,
+          onClick: () => onChange(b.name),
+        });
+      }
+    }
+    if (tags.length) {
+      items.push({ __menuTitle: "Tags" });
+      for (const t of tags) {
+        items.push({
+          icon: rev === t.name ? "check" : "tag",
+          label: t.name,
+          onClick: () => onChange(t.name),
+        });
+      }
+    }
+    return items;
+  });
+
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+      <PGInput
+        value={draft}
+        onChange={setDraft}
+        placeholder="HEAD"
+        icon="history"
+        size="sm"
+        mono
+        title="Browse a revision — commit SHA, branch, tag, or revspec"
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setDraft(rev ?? "");
+        }}
+        onBlur={commit}
+        style={{ flex: 1, minWidth: 0 }}
+      />
+      <PGIconButton
+        icon="chevronDown"
+        size="sm"
+        title="Pick branch or tag"
+        active={rev !== null}
+        onClick={(e) => openAt(e.clientX, e.clientY + 4, null)}
+      />
+      {rev !== null && (
+        <PGIconButton
+          icon="x"
+          size="sm"
+          title="Back to working tree"
+          onClick={() => onChange(null)}
+        />
+      )}
+      {menu}
+    </div>
   );
 }
 
