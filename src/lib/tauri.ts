@@ -134,8 +134,9 @@ export async function commit(
   repoId: string,
   message: string,
   amend = false,
+  signoff = false,
 ): Promise<string> {
-  return invoke<string>("commit", { repoId, message, amend });
+  return invoke<string>("commit", { repoId, message, amend, signoff });
 }
 
 export async function discardPaths(repoId: string, paths: string[]): Promise<void> {
