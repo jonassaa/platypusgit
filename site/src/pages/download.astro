@@ -41,7 +41,8 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 
     <div class="method">
       <h3>Homebrew</h3>
-      <CodeBlock code={'brew install --cask jonassaa/platypusgit/platypusgit'} lang="bash" />
+      <CodeBlock code={'brew install --cask --no-quarantine jonassaa/platypusgit/platypusgit'} lang="bash" />
+      <p class="method-note">The app is ad-hoc signed but not notarized. <code>--no-quarantine</code> skips the macOS Gatekeeper flag so it launches with no "unidentified developer" prompt.</p>
     </div>
 
     <div class="method">
@@ -50,8 +51,8 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
     </div>
 
     <div class="method">
-      <h3>First launch — unsigned build</h3>
-      <p class="method-note">The macOS build is not yet notarized. On first launch macOS may say the app is damaged or from an unidentified developer. Clear the quarantine flag:</p>
+      <h3>First launch — DMG, unsigned build</h3>
+      <p class="method-note">DMG installs aren't notarized, so on first launch macOS may say the app is damaged or from an unidentified developer. Clear the quarantine flag (Homebrew's <code>--no-quarantine</code> already handles this):</p>
       <CodeBlock code={'xattr -cr /Applications/platypusgit.app'} lang="bash" />
       <p class="method-note">Or: <strong>System Settings → Privacy &amp; Security → Open Anyway</strong> for platypusgit.</p>
     </div>

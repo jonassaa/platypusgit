@@ -1,25 +1,5 @@
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { debug as logDebug, warn as logWarn, error as logError } from "@tauri-apps/plugin-log";
-
-const SLOW_INVOKE_MS = 250;
-
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const start = performance.now();
-  try {
-    const result = await rawInvoke<T>(cmd, args);
-    const ms = Math.round(performance.now() - start);
-    if (ms >= SLOW_INVOKE_MS) {
-      logWarn(`invoke ${cmd} slow: ${ms}ms`);
-    } else {
-      logDebug(`invoke ${cmd} ${ms}ms`);
-    }
-    return result;
-  } catch (err) {
-    const ms = Math.round(performance.now() - start);
-    logError(`invoke ${cmd} failed after ${ms}ms: ${String(err)}`);
-    throw err;
-  }
-}
 import type {
   BlameLine,
   BranchInfo,
@@ -40,6 +20,26 @@ import type {
   StashInfo,
   TagInfo,
 } from "./types";
+
+const SLOW_INVOKE_MS = 250;
+
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const start = performance.now();
+  try {
+    const result = await rawInvoke<T>(cmd, args);
+    const ms = Math.round(performance.now() - start);
+    if (ms >= SLOW_INVOKE_MS) {
+      logWarn(`invoke ${cmd} slow: ${ms}ms`);
+    } else {
+      logDebug(`invoke ${cmd} ${ms}ms`);
+    }
+    return result;
+  } catch (err) {
+    const ms = Math.round(performance.now() - start);
+    logError(`invoke ${cmd} failed after ${ms}ms: ${String(err)}`);
+    throw err;
+  }
+}
 
 export async function openRepo(path: string): Promise<RepoHandle> {
   return invoke<RepoHandle>("open_repo", { path });
