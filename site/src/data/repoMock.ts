@@ -19,19 +19,38 @@ export interface MockCommitRow {
   date: string;
   refs?: MockRef[];
   tag?: string;
+  fullSha?: string;
+  email?: string;
+  body?: string;
 }
 
 export const repoName = 'platypusgit';
+export const repoPath = '/Users/jonas/dev/fun/platypusgit/';
 export const headBranch = 'main';
 export const aheadBehind = { ahead: 2, behind: 0 };
+export const changedCount = 0;
+
+export const emails: Record<string, string> = {
+  'Jonas Aasberg': 'jonas.aasberg@clave.no',
+  'Lena Fischer': 'lena.fischer@example.dev',
+  'Tom Okafor': 'tom.okafor@example.dev',
+  'Priya Nair': 'priya.nair@example.dev',
+  'dependabot[bot]': '49699333+dependabot[bot]@users.noreply.github.com',
+};
 
 export const commits: MockCommitRow[] = [
   {
     oid: 'm9', parents: ['m8', 'sb2'], sha: 'a1f9c02',
+    fullSha: 'a1f9c0250014e17ce9357c69a05c676673bc79f5c',
     message: "Merge branch 'feature/side-by-side-diff'",
     author: 'Jonas Aasberg', date: '2 min ago',
+    email: 'jonas.aasberg@clave.no',
+    body:
+      'Brings the side-by-side diff view to main. Adds a toggle in the diff\n' +
+      'header and word-level intra-line highlighting on top of the existing\n' +
+      'inline renderer.',
     refs: [
-      { name: 'main', tone: 'accent', active: true, icon: 'branch' },
+      { name: 'HEAD → main', tone: 'accent', active: true, icon: 'flag' },
       { name: 'main', tone: 'accent', remote: 'origin', icon: 'branch' },
     ],
   },
