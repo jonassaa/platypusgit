@@ -3,6 +3,7 @@ import type {
   BranchInfo,
   CommitInfo,
   FileStatus,
+  LogFilter,
   RebaseStatus,
   RebaseStep,
   RemoteInfo,
@@ -34,6 +35,7 @@ import {
   fetch as fetchRemote,
   fetchAll,
   getLog,
+  getLogFiltered,
   getStatus,
   listAllFiles,
   listBranches,
@@ -77,6 +79,7 @@ import {
   type StashSaveOptions,
   type TagTarget,
 } from "@/lib/tauri";
+import { isFilterEmpty } from "@/features/commits/logFilter";
 import { useRecentsStore } from "./useRecentsStore";
 
 /**
@@ -103,6 +106,16 @@ interface RepoStoreState {
   stashes: StashInfo[];
   remotes: RemoteInfo[];
   commits: CommitInfo[];
+  /**
+   * Backend-filtered commit log, or null when no search is active. Kept
+   * separate from `commits` (the full HEAD log) so the History screen can fall
+   * back to the unfiltered set and apply its own client-side toggles.
+   */
+  searchResults: CommitInfo[] | null;
+  /** The active backend log filter (empty object when none). */
+  commitFilter: LogFilter;
+  /** True while a backend search is in flight. */
+  searching: boolean;
   loading: boolean;
   error: AppError | null;
   repoState: GitRepoState;
@@ -110,6 +123,11 @@ interface RepoStoreState {
   /** Active long-running ops keyed by op kind. */
   activity: RepoActivity;
   openRepo: (path: string) => Promise<void>;
+  /**
+   * Run a backend commit-log search. An empty filter clears the search and
+   * falls back to the full log. Sets `searchResults` + `commitFilter`.
+   */
+  searchCommits: (filter: LogFilter) => Promise<void>;
   refreshAll: () => Promise<void>;
   refreshAllFiles: () => Promise<void>;
   clearError: () => void;
@@ -205,6 +223,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   stashes: [],
   remotes: [],
   commits: [],
+  searchResults: null,
+  commitFilter: {},
+  searching: false,
   loading: false,
   error: null,
   repoState: "Clean",
@@ -225,10 +246,31 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         stashes: [],
         remotes: [],
         commits: [],
+        searchResults: null,
+        commitFilter: {},
       });
       await get().refreshAll();
     } catch (e) {
       set({ loading: false, error: toAppError(e) });
+    }
+  },
+
+  async searchCommits(filter) {
+    const repo = get().current;
+    if (!repo) return;
+    // Empty filter → clear the search, fall back to full log.
+    if (isFilterEmpty(filter)) {
+      set({ searchResults: null, commitFilter: {}, searching: false });
+      return;
+    }
+    set({ commitFilter: filter, searching: true });
+    try {
+      const results = await getLogFiltered(repo.id, filter, 500);
+      // Guard against a stale response overwriting a newer filter.
+      if (get().commitFilter !== filter) return;
+      set({ searchResults: results, searching: false });
+    } catch (e) {
+      set({ searching: false, error: toAppError(e) });
     }
   },
 
@@ -259,6 +301,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         rebaseStatus,
         loading: false,
       });
+      // Keep an active search in sync with the refreshed history.
+      const activeFilter = get().commitFilter;
+      if (!isFilterEmpty(activeFilter)) {
+        void get().searchCommits(activeFilter);
+      }
     } catch (e) {
       set({ loading: false, error: toAppError(e) });
     }
@@ -278,6 +325,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       stashes: [],
       remotes: [],
       commits: [],
+      searchResults: null,
+      commitFilter: {},
+      searching: false,
       error: null,
     });
   },

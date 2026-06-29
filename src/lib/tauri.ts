@@ -9,6 +9,7 @@ import type {
   FileContent,
   FileDiff,
   FileStatus,
+  LogFilter,
   PullMode,
   PushForce,
   RebaseStatus,
@@ -65,6 +66,19 @@ export async function getLog(
   limit?: number,
 ): Promise<CommitInfo[]> {
   return invoke<CommitInfo[]>("get_log", { repoId, limit });
+}
+
+/**
+ * Commit log filtered by `filter` (message/author/sha/date/path), newest-first.
+ * `limit` caps the number of *matching* commits. An empty filter behaves like
+ * `getLog`.
+ */
+export async function getLogFiltered(
+  repoId: string,
+  filter: LogFilter,
+  limit?: number,
+): Promise<CommitInfo[]> {
+  return invoke<CommitInfo[]>("get_log_filtered", { repoId, filter, limit });
 }
 
 /**
