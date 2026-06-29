@@ -681,6 +681,54 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
+    fn commits_since(&self, repo_id: &RepoId, base: &str) -> AppResult<Vec<CommitInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let ref_map = collect_ref_map(repo);
+
+            let head = match repo.head() {
+                Ok(h) => h.peel_to_commit()?.id(),
+                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Err(AppError::Unborn),
+                Err(e) => return Err(e.into()),
+            };
+
+            let base_oid = repo
+                .revparse_single(base)
+                .map_err(|_| AppError::InvalidRef(base.to_string()))?
+                .peel_to_commit()?
+                .id();
+
+            if base_oid == head {
+                return Ok(Vec::new());
+            }
+            // A rebase base must be an ancestor of HEAD (HEAD descends from it).
+            if !repo.graph_descendant_of(head, base_oid)? {
+                return Err(AppError::InvalidRef(format!(
+                    "{base} is not an ancestor of HEAD"
+                )));
+            }
+
+            let mut walk = repo.revwalk()?;
+            walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
+            walk.push(head)?;
+            walk.hide(base_oid)?;
+
+            let mut out = Vec::new();
+            for oid in walk {
+                let oid = oid?;
+                let commit = repo.find_commit(oid)?;
+                let refs: Vec<String> = ref_map
+                    .iter()
+                    .filter(|(o, _)| *o == oid)
+                    .map(|(_, name)| name.clone())
+                    .collect();
+                let mut info = commit_to_info(&commit);
+                info.refs = refs;
+                out.push(info);
+            }
+            Ok(out)
+        })
+    }
+
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff> {
         self.with_repo(repo_id, |repo| {
             let mut opts = DiffOptions::new();

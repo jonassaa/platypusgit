@@ -4,6 +4,8 @@ import { PGButton } from "@/design/primitives";
 import { PGEmpty } from "@/design";
 import type { CommitInfo } from "@/lib/types";
 import type { RebaseAction, RebaseStep } from "@/lib/types";
+import { commitsSince } from "@/lib/tauri";
+import { appErrorMessage } from "@/lib/errors";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { RebaseBasePicker } from "@/features/rebase/RebaseBasePicker";
@@ -108,36 +110,28 @@ export function RebaseScreen() {
   const [pickerNotice, setPickerNotice] = useState<string | null>(null);
   const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
 
-  /** Build a plan from commits strictly newer than `baseOid` (assumes commits is newest-first). */
-  const planFromBase = useCallback(
-    (baseOid: string): PlanRow[] | null => {
-      const idx = commits.findIndex((c) => c.oid === baseOid);
-      if (idx === -1) return null;
-      // Commits newer than base: indices [0, idx). idx itself is the base (excluded).
-      return commitsToPlan(commits.slice(0, idx));
-    },
-    [commits],
-  );
-
+  // Resolve the base through the backend so any revspec works — branch, tag,
+  // full or short hash, even commits outside the loaded log window. The backend
+  // returns base..HEAD (newest-first) and rejects a base that isn't an ancestor.
   const handlePickBase = useCallback(
-    (oid: string, label: string) => {
-      const built = planFromBase(oid);
-      if (!built) {
-        setPickerNotice(
-          `${label.split(" — ")[0]} is not on the current branch's history.`,
-        );
-        return;
+    async (oid: string, label: string) => {
+      if (!current) return;
+      const baseName = label.split(" — ")[0];
+      try {
+        const range = await commitsSince(current.id, oid);
+        if (range.length === 0) {
+          setPickerNotice(`No commits between HEAD and ${baseName}.`);
+          return;
+        }
+        setPlan(commitsToPlan(range));
+        setBaseLabel(label);
+        setPickerNotice(null);
+        setPickerOpen(false);
+      } catch (e) {
+        setPickerNotice(appErrorMessage(e));
       }
-      if (built.length === 0) {
-        setPickerNotice(`No commits between HEAD and ${label.split(" — ")[0]}.`);
-        return;
-      }
-      setPlan(built);
-      setBaseLabel(label);
-      setPickerNotice(null);
-      setPickerOpen(false);
     },
-    [planFromBase],
+    [current],
   );
 
   // Seed the plan from a NavIntent when the context menu fires rebase-plan.

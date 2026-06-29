@@ -67,6 +67,18 @@ export async function getLog(
   return invoke<CommitInfo[]>("get_log", { repoId, limit });
 }
 
+/**
+ * Commits in `base..HEAD` (reachable from HEAD, not from `base`), newest-first.
+ * `base` is any revspec — branch, tag, short or full oid. Rejects a `base` that
+ * can't be resolved or isn't an ancestor of HEAD.
+ */
+export async function commitsSince(
+  repoId: string,
+  base: string,
+): Promise<CommitInfo[]> {
+  return invoke<CommitInfo[]>("commits_since", { repoId, base });
+}
+
 export async function listBranches(repoId: string): Promise<BranchInfo[]> {
   return invoke<BranchInfo[]>("list_branches", { repoId });
 }

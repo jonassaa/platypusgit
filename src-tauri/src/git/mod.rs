@@ -20,6 +20,11 @@ pub trait GitBackend: Send + Sync {
     /// can browse the whole worktree (ignored files are still excluded).
     fn list_all_files(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>>;
+    /// Commits reachable from HEAD but not from `base` (the `base..HEAD` range),
+    /// newest-first. `base` is any revspec — branch, tag, short or full oid.
+    /// Errors with `InvalidRef` if `base` can't be resolved or is not an
+    /// ancestor of HEAD (a rebase base must be reachable from HEAD).
+    fn commits_since(&self, repo_id: &RepoId, base: &str) -> AppResult<Vec<CommitInfo>>;
     /// Commits that touched `path`, newest first, up to `limit`.
     fn file_history(
         &self,

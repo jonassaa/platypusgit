@@ -40,6 +40,9 @@ impl GitBackend for CliBackend {
     fn log(&self, _repo_id: &RepoId, _limit: usize) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
+    fn commits_since(&self, _repo_id: &RepoId, _base: &str) -> AppResult<Vec<CommitInfo>> {
+        Err(AppError::NotImplemented)
+    }
     fn file_history(
         &self,
         _repo_id: &RepoId,
