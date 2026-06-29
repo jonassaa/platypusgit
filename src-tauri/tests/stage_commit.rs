@@ -96,6 +96,7 @@ fn commit_from_staged_changes_advances_head() {
                 message: "update readme".into(),
                 amend: false,
                 author_override: None,
+                signoff: false,
             },
         )
         .expect("commit");
@@ -122,6 +123,7 @@ fn amend_replaces_tip() {
                 message: "oops".into(),
                 amend: false,
                 author_override: None,
+                signoff: false,
             },
         )
         .unwrap();
@@ -138,6 +140,7 @@ fn amend_replaces_tip() {
                 message: "update readme".into(),
                 amend: true,
                 author_override: None,
+                signoff: false,
             },
         )
         .unwrap();
@@ -145,6 +148,88 @@ fn amend_replaces_tip() {
     let log = backend.log(&handle.id, 10).unwrap();
     assert_eq!(log.len(), 2, "amend must not add a new commit");
     assert_eq!(log[0].summary, "update readme");
+}
+
+#[test]
+fn commit_with_signoff_appends_trailer_from_repo_identity() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    write_file(tr.path(), "README.md", "hello world\n");
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .stage(&handle.id, &[PathBuf::from("README.md")])
+        .unwrap();
+
+    backend
+        .commit(
+            &handle.id,
+            CommitOptions {
+                message: "update readme".into(),
+                amend: false,
+                author_override: None,
+                signoff: true,
+            },
+        )
+        .expect("commit");
+
+    // TempRepo configures user.name "Test User" / user.email "test@example.com".
+    let tip = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    let msg = tip.message().unwrap();
+    assert_eq!(
+        msg,
+        "update readme\n\nSigned-off-by: Test User <test@example.com>"
+    );
+}
+
+#[test]
+fn commit_signoff_does_not_duplicate_existing_trailer() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    write_file(tr.path(), "README.md", "hello world\n");
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .stage(&handle.id, &[PathBuf::from("README.md")])
+        .unwrap();
+
+    backend
+        .commit(
+            &handle.id,
+            CommitOptions {
+                message: "update readme\n\nSigned-off-by: Test User <test@example.com>"
+                    .into(),
+                amend: false,
+                author_override: None,
+                signoff: true,
+            },
+        )
+        .expect("commit");
+
+    let tip = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    let msg = tip.message().unwrap();
+    assert_eq!(msg.matches("Signed-off-by:").count(), 1);
+}
+
+#[test]
+fn commit_without_signoff_leaves_message_untouched() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    write_file(tr.path(), "README.md", "hello world\n");
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .stage(&handle.id, &[PathBuf::from("README.md")])
+        .unwrap();
+
+    backend
+        .commit(
+            &handle.id,
+            CommitOptions {
+                message: "update readme".into(),
+                amend: false,
+                author_override: None,
+                signoff: false,
+            },
+        )
+        .expect("commit");
+
+    let tip = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(tip.message().unwrap(), "update readme");
 }
 
 #[test]
@@ -163,6 +248,7 @@ fn commit_on_unborn_branch_creates_root() {
                 message: "initial".into(),
                 amend: false,
                 author_override: None,
+                signoff: false,
             },
         )
         .unwrap();

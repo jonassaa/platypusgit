@@ -124,6 +124,7 @@ pub fn with_conflicting_merge() -> TempRepo {
                     message: "feature change".into(),
                     amend: false,
                     author_override: None,
+                    signoff: false,
                 },
             )
             .unwrap();
@@ -139,6 +140,7 @@ pub fn with_conflicting_merge() -> TempRepo {
                     message: "main change".into(),
                     amend: false,
                     author_override: None,
+                    signoff: false,
                 },
             )
             .unwrap();

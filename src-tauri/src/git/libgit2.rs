@@ -1191,12 +1191,23 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String> {
-        use crate::git::signature::default_signature;
+        use crate::git::signature::{apply_signoff, default_signature};
 
         self.with_repo(repo_id, |repo| {
-            let sig = match opts.author_override {
+            let sig = match &opts.author_override {
                 Some(o) => git2::Signature::now(&o.name, &o.email)?,
                 None => default_signature(repo)?,
+            };
+
+            // Sign-off trailer uses the committer identity (repo config), which
+            // mirrors `git commit -s` even when the author is overridden.
+            let message = if opts.signoff {
+                let committer = default_signature(repo)?;
+                let name = committer.name().unwrap_or("");
+                let email = committer.email().unwrap_or("");
+                apply_signoff(&opts.message, name, email)
+            } else {
+                opts.message.clone()
             };
 
             let mut index = repo.index()?;
@@ -1217,7 +1228,7 @@ impl GitBackend for Libgit2Backend {
                     Some(&sig),
                     Some(&sig),
                     None,
-                    Some(&opts.message),
+                    Some(&message),
                     Some(&tree),
                 )?;
                 return Ok(new_oid.to_string());
@@ -1233,7 +1244,7 @@ impl GitBackend for Libgit2Backend {
                 Some("HEAD"),
                 &sig,
                 &sig,
-                &opts.message,
+                &message,
                 &tree,
                 &parent_refs,
             )?;

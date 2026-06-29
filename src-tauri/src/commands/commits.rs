@@ -39,6 +39,7 @@ pub async fn commit(
     repo_id: String,
     message: String,
     amend: bool,
+    signoff: Option<bool>,
 ) -> AppResult<String> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
@@ -46,6 +47,7 @@ pub async fn commit(
         message,
         amend,
         author_override: None,
+        signoff: signoff.unwrap_or(false),
     };
     tokio::task::spawn_blocking(move || backend.commit(&repo_id, opts))
         .await
