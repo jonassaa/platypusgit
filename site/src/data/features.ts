@@ -74,12 +74,6 @@ export const roadmap = [
   'Multi-repo tabs / fast recent-repo switcher',
 ];
 
-export const platforms = [
-  { os: 'macOS', ext: '.dmg', note: 'Universal (Apple Silicon + Intel)' },
-  { os: 'Windows', ext: '.msi', note: 'WebView2 (ships with Windows 11)' },
-  { os: 'Linux', ext: '.deb / .AppImage', note: 'webkit2gtk 4.1' },
-];
-
 export const changelog = [
   {
     version: '0.1.0',

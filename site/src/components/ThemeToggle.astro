@@ -1,15 +1,26 @@
 ---
 ---
-<button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme" type="button">
-  <span class="t-dark">◐</span>
+<button id="theme-toggle" class="theme-toggle" aria-label="Toggle light/dark theme" title="Toggle theme" type="button">
+  <svg class="ic ic-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="4"></circle>
+    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+  </svg>
+  <svg class="ic ic-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+  </svg>
 </button>
 <style>
   .theme-toggle {
     background: transparent; border: 1px solid var(--border-1); color: var(--fg-1);
     width: 32px; height: 32px; border-radius: var(--r-4); cursor: pointer;
-    font-size: 15px; line-height: 1; transition: border-color var(--t-fast), color var(--t-fast);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: border-color var(--t-fast), color var(--t-fast);
   }
-  .theme-toggle:hover { border-color: var(--border-2); color: var(--fg-0); }
+  .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  /* show sun in dark mode (click -> light), moon in light mode (click -> dark) */
+  .ic { display: none; }
+  :root[data-theme-mode="dark"] .ic-sun { display: block; }
+  :root[data-theme-mode="light"] .ic-moon { display: block; }
 </style>
 <script>
   const btn = document.getElementById('theme-toggle');
