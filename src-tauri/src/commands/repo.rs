@@ -59,6 +59,36 @@ pub async fn read_file_content(
 }
 
 #[tauri::command]
+pub async fn list_files_at_rev(
+    state: State<'_, AppState>,
+    repo_id: String,
+    revspec: String,
+) -> AppResult<Vec<FileStatus>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.list_files_at_rev(&repo_id, &revspec))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn read_file_content_at_rev(
+    state: State<'_, AppState>,
+    repo_id: String,
+    revspec: String,
+    path: String,
+) -> AppResult<FileContent> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path_buf = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || {
+        backend.read_file_content_at_rev(&repo_id, &revspec, &path_buf)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
 pub async fn append_gitignore(
     state: State<'_, AppState>,
     repo_id: String,
