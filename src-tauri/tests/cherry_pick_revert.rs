@@ -22,6 +22,7 @@ fn cherry_pick_applies_commit_onto_head() {
                 message: "add notes".into(),
                 amend: false,
                 author_override: None,
+                signoff: false,
             },
         )
         .unwrap();
@@ -49,6 +50,7 @@ fn revert_undoes_commit() {
                 message: "bad change".into(),
                 amend: false,
                 author_override: None,
+                signoff: false,
             },
         )
         .unwrap();
