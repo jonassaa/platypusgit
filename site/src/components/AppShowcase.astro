@@ -1,0 +1,230 @@
+---
+import Icon from './app/Icon.astro';
+import { layoutGraph } from '../lib/graphLayout.ts';
+import { commits, repoName, headBranch, aheadBehind } from '../data/repoMock.ts';
+
+const H = 26;
+const rows = layoutGraph(commits);
+
+function geom(lanes: any[]) {
+  const lines: any[] = [];
+  const paths: any[] = [];
+  for (const ln of lanes) {
+    const x = 12 + ln.col * 16;
+    const x2 = 12 + (ln.to ?? ln.col + 1) * 16;
+    if (ln.kind === 'line') lines.push({ x1: x, x2: x, y1: 0, y2: H, c: ln.color });
+    else if (ln.kind === 'half-top') lines.push({ x1: x, x2: x, y1: 0, y2: H / 2, c: ln.color });
+    else if (ln.kind === 'half-bot') lines.push({ x1: x, x2: x, y1: H / 2, y2: H, c: ln.color });
+    else if (ln.kind === 'diag') paths.push({ d: `M ${x} 0 C ${x} ${H / 2}, ${x2} ${H / 2}, ${x2} ${H}`, c: ln.color });
+    else if (ln.kind === 'fork-bot') paths.push({ d: `M ${x} ${H / 2} C ${x} ${H * 0.75}, ${x2} ${H * 0.75}, ${x2} ${H}`, c: ln.color });
+    else if (ln.kind === 'merge-top') paths.push({ d: `M ${x} 0 C ${x} ${H * 0.25}, ${x2} ${H * 0.25}, ${x2} ${H / 2}`, c: ln.color });
+  }
+  return { lines, paths };
+}
+
+const toneVar: Record<string, string> = {
+  accent: 'var(--accent)', violet: 'var(--accent-2)', green: 'var(--accent-3)',
+  amber: 'var(--accent-4)', red: 'var(--accent-5)',
+};
+
+const HUES = [235, 295, 155, 65, 25, 355, 195];
+function avatar(name: string) {
+  const hue = HUES[(name.charCodeAt(0) || 0) % HUES.length];
+  const initial = name.replace(/\[bot\]/, '').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  return { hue, initial };
+}
+
+const view = commits.map((c, i) => ({ c, g: geom(rows[i].lanes), node: rows[i].node, av: avatar(c.author) }));
+
+const activity = [
+  { name: 'commit', label: 'Commit' },
+  { name: 'history', label: 'History', active: true },
+  { name: 'branch', label: 'Branches' },
+  { name: 'cloud', label: 'Remotes' },
+  { name: 'archive', label: 'Stash' },
+];
+---
+<div class="win">
+  <!-- titlebar -->
+  <div class="win-tb">
+    <div class="tl"><span></span><span></span><span></span></div>
+    <div class="tb-center">
+      <button class="branch-chip" type="button">
+        <Icon name="branch" size={12} />
+        <span class="bc-name">{headBranch}</span>
+        {aheadBehind.ahead > 0 && <span class="bc-ab">↑{aheadBehind.ahead}</span>}
+        <Icon name="caret" size={12} />
+      </button>
+    </div>
+    <div class="tb-right">
+      <button class="tb-btn" type="button"><Icon name="refresh" size={13} /> Fetch</button>
+      <button class="tb-btn" type="button"><Icon name="pull" size={13} /> Pull</button>
+      <button class="tb-btn accent" type="button"><Icon name="push" size={13} /> Push</button>
+    </div>
+  </div>
+
+  <div class="win-body">
+    <!-- activity bar -->
+    <div class="actbar">
+      {activity.map((a) => (
+        <div class={'act' + (a.active ? ' on' : '')} title={a.label}><Icon name={a.name} size={18} /></div>
+      ))}
+      <div class="act bottom" title="Settings"><Icon name="settings" size={18} /></div>
+    </div>
+
+    <!-- main: history -->
+    <div class="main">
+      <div class="toolbar">
+        <div class="tool-title"><Icon name="history" size={14} /> History</div>
+        <div class="searchbox"><Icon name="search" size={12} /><span>Filter by message, author, SHA…</span></div>
+      </div>
+
+      <div class="colhead">
+        <span></span><span>SHA</span><span>Description</span><span>Author</span><span>Date</span>
+      </div>
+
+      <div class="rows">
+        {view.map(({ c, g, node, av }, i) => (
+          <div class={'row' + (i === 0 ? ' sel' : '')}>
+            {i === 0 && <span class="selbar"></span>}
+            <svg class="graph" width="140" height={H}>
+              {g.lines.map((l) => (
+                <line x1={l.x1} x2={l.x2} y1={l.y1} y2={l.y2} stroke={l.c} stroke-width="1.5" />
+              ))}
+              {g.paths.map((p) => (
+                <path d={p.d} stroke={p.c} stroke-width="1.5" fill="none" />
+              ))}
+              <circle cx={12 + node.col * 16} cy={H / 2} r="4" fill="var(--bg-0)" stroke={node.color} stroke-width="1.5" />
+              {node.solid && <circle cx={12 + node.col * 16} cy={H / 2} r="2.5" fill={node.color} />}
+              {node.merge && <circle cx={12 + node.col * 16} cy={H / 2} r="4" fill={node.color} stroke="var(--bg-0)" stroke-width="1.5" />}
+            </svg>
+
+            <span class="sha">{c.sha}</span>
+
+            <div class="desc">
+              {c.refs?.map((r) => (
+                <span class="pill" style={{ color: r.active ? 'var(--accent-ink)' : toneVar[r.tone], background: r.active ? toneVar[r.tone] : 'transparent', borderColor: toneVar[r.tone] }}>
+                  <Icon name={r.icon ?? 'branch'} size={10} />
+                  {r.remote && <span class="pill-remote">{r.remote}/</span>}{r.name}
+                </span>
+              ))}
+              {c.tag && (
+                <span class="tag"><Icon name="tag" size={10} />{c.tag}</span>
+              )}
+              <span class="msg">{c.message}</span>
+            </div>
+
+            <div class="author">
+              <span class="ava" style={{ color: `oklch(0.72 0.15 ${av.hue})`, background: `oklch(0.72 0.15 ${av.hue} / 0.22)`, borderColor: `oklch(0.72 0.15 ${av.hue} / 0.4)` }}>{av.initial}</span>
+              <span class="au-name">{c.author}</span>
+            </div>
+
+            <span class="date">{c.date}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+
+  <!-- status bar -->
+  <div class="win-sb">
+    <div class="sb-left">
+      <span class="sb-item"><Icon name="branch" size={11} /> {headBranch}</span>
+      <span class="sb-item">↑{aheadBehind.ahead} ↓{aheadBehind.behind}</span>
+      <span class="sb-item ok">● clean</span>
+    </div>
+    <div class="sb-right">
+      <span class="sb-item">{commits.length} commits</span>
+      <span class="sb-item">{repoName}</span>
+      <span class="sb-item">libgit2</span>
+    </div>
+  </div>
+</div>
+
+<style>
+  .win {
+    border: 1px solid var(--border-1); border-radius: var(--r-7); overflow: hidden;
+    background: var(--bg-0); box-shadow: var(--shadow-3); font-family: var(--font-mono);
+    --row-h: 26px;
+  }
+
+  /* titlebar */
+  .win-tb { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    height: 40px; padding: 0 var(--s-5); background: var(--bg-titlebar); border-bottom: 1px solid var(--border-0); }
+  .tl { display: flex; gap: 7px; }
+  .tl span { width: 11px; height: 11px; border-radius: 999px; background: var(--border-2); }
+  .tb-center { display: flex; justify-content: center; }
+  .branch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
+    background: var(--bg-2); border: 1px solid var(--border-1); border-radius: var(--r-4);
+    color: var(--fg-0); font-family: var(--font-mono); font-size: 12px; cursor: default; }
+  .bc-name { font-weight: 600; }
+  .bc-ab { color: var(--accent); font-size: 11px; }
+  .tb-right { display: flex; justify-content: flex-end; gap: var(--s-3); }
+  .tb-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+    background: transparent; border: 1px solid var(--border-1); border-radius: var(--r-4);
+    color: var(--fg-1); font-family: var(--font-mono); font-size: 12px; cursor: default; }
+  .tb-btn.accent { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+
+  .win-body { display: flex; height: 420px; }
+
+  /* activity bar */
+  .actbar { width: 48px; flex-shrink: 0; background: var(--bg-1); border-right: 1px solid var(--border-0);
+    display: flex; flex-direction: column; align-items: center; padding-top: var(--s-4); gap: var(--s-2); }
+  .act { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--r-4); color: var(--fg-3); }
+  .act.on { color: var(--accent); background: var(--bg-3); box-shadow: inset 2px 0 0 var(--accent); }
+  .act.bottom { margin-top: auto; margin-bottom: var(--s-4); }
+
+  /* main */
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .toolbar { display: flex; align-items: center; gap: var(--s-5); height: 38px; padding: 0 var(--s-5);
+    border-bottom: 1px solid var(--border-0); }
+  .tool-title { display: flex; align-items: center; gap: 6px; color: var(--fg-0); font-size: 13px; font-weight: 600; }
+  .searchbox { display: flex; align-items: center; gap: 6px; flex: 1; max-width: 320px; height: 24px;
+    padding: 0 8px; background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-4);
+    color: var(--fg-3); font-size: 11px; }
+
+  .colhead, .row { display: grid; grid-template-columns: 140px 70px 1fr 150px 90px; align-items: center; }
+  .colhead { height: 24px; padding-right: var(--s-5); border-bottom: 1px solid var(--border-0);
+    color: var(--fg-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .colhead span { padding-left: 4px; }
+
+  .rows { overflow: hidden; }
+  .row { height: var(--row-h); position: relative; font-size: 12px; border-bottom: 1px solid oklch(0.22 0.008 260 / 0.4); }
+  .row.sel { background: var(--bg-selection); }
+  .selbar { position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+  .graph { display: block; flex-shrink: 0; }
+  .sha { color: var(--fg-3); font-size: 11px; }
+
+  .desc { display: flex; align-items: center; gap: 6px; min-width: 0; padding-right: 10px; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px 0 4px;
+    font-size: 11px; border: 1px solid; border-radius: var(--r-2); white-space: nowrap; flex-shrink: 0; }
+  .pill-remote { opacity: 0.7; }
+  .tag { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 1px 6px;
+    font-size: 10px; font-weight: 500; letter-spacing: 0.02em; text-transform: uppercase;
+    color: var(--git-modified); background: oklch(0.75 0.14 75 / 0.18);
+    border: 1px solid oklch(0.75 0.14 75 / 0.35); border-radius: var(--r-2); flex-shrink: 0; }
+  .msg { color: var(--fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .author { display: flex; align-items: center; gap: 6px; color: var(--fg-2); min-width: 0; }
+  .ava { width: 16px; height: 16px; border: 1px solid; border-radius: var(--r-2); font-size: 9px;
+    font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .au-name { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .date { color: var(--fg-3); font-size: 11px; }
+
+  /* status bar */
+  .win-sb { display: flex; justify-content: space-between; align-items: center; height: 26px;
+    padding: 0 var(--s-5); background: var(--bg-titlebar); border-top: 1px solid var(--border-0);
+    color: var(--fg-3); font-size: 11px; }
+  .sb-left, .sb-right { display: flex; gap: var(--s-6); }
+  .sb-item { display: inline-flex; align-items: center; gap: 4px; }
+  .sb-item.ok { color: var(--git-added); }
+
+  @media (max-width: 760px) {
+    .win-body { height: 380px; }
+    .colhead, .row { grid-template-columns: 110px 0 1fr 0 70px; }
+    .colhead span:nth-child(2), .sha, .colhead span:nth-child(4), .author { display: none; }
+    .tb-btn span, .tb-right { display: none; }
+    .searchbox { display: none; }
+  }
+</style>

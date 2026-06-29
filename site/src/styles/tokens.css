@@ -31,12 +31,30 @@
   --accent: oklch(0.68 0.09 185);      /* teal #3E9B91-ish */
   --accent-ink: oklch(0.15 0.02 185);
   --accent-2: oklch(0.78 0.12 75);     /* amber #E6A95A-ish */
+  /* branch-pill tones (mirror app) */
+  --accent-3: oklch(0.72 0.15 155);
+  --accent-4: oklch(0.72 0.15 65);
+  --accent-5: oklch(0.72 0.15 25);
 
   --git-added: oklch(0.72 0.15 155);
   --git-added-bg: oklch(0.35 0.08 155 / 0.25);
   --git-removed: oklch(0.68 0.18 25);
   --git-removed-bg: oklch(0.35 0.10 25 / 0.25);
   --git-modified: oklch(0.75 0.14 75);
+  --git-renamed: oklch(0.72 0.15 235);
+  --git-conflict: oklch(0.72 0.15 325);
+  --git-untracked: oklch(0.72 0.12 295);
+
+  --bg-selection: oklch(0.35 0.03 260 / 0.4);
+
+  /* graph branch colors (mirror app) */
+  --graph-1: oklch(0.72 0.15 235);
+  --graph-2: oklch(0.72 0.15 295);
+  --graph-3: oklch(0.72 0.15 155);
+  --graph-4: oklch(0.72 0.15 65);
+  --graph-5: oklch(0.72 0.15 25);
+  --graph-6: oklch(0.72 0.15 355);
+  --graph-7: oklch(0.72 0.15 195);
 
   --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
   --shadow-2: 0 4px 12px rgba(0,0,0,0.35);
@@ -64,6 +82,7 @@
   --border-0: oklch(0.88 0.006 260);
   --border-1: oklch(0.82 0.007 260);
   --border-2: oklch(0.74 0.008 260);
+  --bg-selection: oklch(0.72 0.09 185 / 0.18);
   --shadow-1: 0 1px 2px rgba(0,0,0,0.08);
   --shadow-2: 0 4px 12px rgba(0,0,0,0.10);
   --shadow-3: 0 12px 40px rgba(0,0,0,0.14);
