@@ -31,12 +31,12 @@ See [`implemented-features.md`](./implemented-features.md) for the full list.
 
 ```bash
 brew tap jonassaa/platypusgit
-brew install --cask platypusgit
+brew install --cask --no-quarantine platypusgit
 ```
 
-The app is ad-hoc signed but not notarized, so the cask strips the macOS
-Gatekeeper quarantine flag on install — no "unidentified developer" prompt.
-Update with `brew upgrade --cask --greedy platypusgit`.
+The app is ad-hoc signed but not notarized. `--no-quarantine` skips the macOS
+Gatekeeper flag so it launches with no "unidentified developer" prompt (no
+`brew trust` needed). Update with `brew upgrade --cask --greedy platypusgit`.
 
 ### Other platforms
 
