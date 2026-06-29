@@ -1,16 +1,19 @@
 name: release
 
-# Every push to main cuts a release.
+# Code pushes to main cut a release. Doc/site/meta-only pushes do not
+# (see paths-ignore) — site changes deploy via site.yml instead.
 #
 # Version bump is driven by the latest commit message prefix:
 #   [major] -> X+1.0.0
 #   [minor] -> X.Y+1.0
 #   [patch] -> X.Y.Z+1   (also the default when no prefix is present)
 #
-# The computed version is tagged (vX.Y.Z), injected into the app manifests at
-# build time (no commit-back, so no trigger loop), and a macOS universal .dmg
-# is published to the GitHub Release under a STABLE filename so the Homebrew
-# cask can track releases/latest/download.
+# The computed version is injected into the app manifests at build time (no
+# commit-back, so no trigger loop). The tag (vX.Y.Z) is created by the release
+# publish step itself — so it only ever exists for a successful build, and the
+# next run's base-version math never advances past a failed build. A macOS
+# universal .dmg is published under a STABLE filename so the Homebrew cask can
+# track releases/latest/download.
 #
 # The app is ad-hoc signed (tauri.conf.json -> macOS.signingIdentity "-") but
 # NOT notarized — the Homebrew cask strips the Gatekeeper quarantine flag.
@@ -18,10 +21,18 @@ name: release
 on:
   push:
     branches: [main]
-    # Site-only changes deploy via site.yml — never cut an app release.
+    # Site-only changes deploy via site.yml. Docs/meta-only pushes never cut
+    # an app release — only code changes do.
     paths-ignore:
       - 'site/**'
       - '.github/workflows/site.yml'
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/FUNDING.yml'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
 
 permissions:
   contents: write
@@ -77,12 +88,6 @@ jobs:
           echo "Next: $tag (from base $base)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-
-      - name: Create and push tag
-        run: |
-          set -euo pipefail
-          git tag "${{ steps.bump.outputs.tag }}"
-          git push origin "${{ steps.bump.outputs.tag }}"
 
   macos-universal:
     needs: version
