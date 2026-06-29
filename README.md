@@ -25,6 +25,25 @@ A dev-first alternative to TortoiseGit with "extreme usability" as the north sta
 
 See [`implemented-features.md`](./implemented-features.md) for the full list.
 
+## Install
+
+### macOS (Homebrew)
+
+```bash
+brew tap jonassaa/platypusgit
+brew install --cask platypusgit
+```
+
+The app is ad-hoc signed but not notarized, so the cask strips the macOS
+Gatekeeper quarantine flag on install — no "unidentified developer" prompt.
+Update with `brew upgrade --cask --greedy platypusgit`.
+
+### Other platforms
+
+Grab the latest `.msi` (Windows), `.deb` / `.AppImage` (Linux) from
+[Releases](https://github.com/jonassaa/platypusgit/releases), or build from
+source (see below).
+
 ## Development
 
 ### Prerequisites

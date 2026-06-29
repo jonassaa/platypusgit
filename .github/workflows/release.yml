@@ -1,0 +1,64 @@
+name: release
+
+# Build and publish a macOS universal .dmg on every v* tag.
+# The dmg is uploaded under a STABLE name (no version in filename) so the
+# Homebrew cask can point at releases/latest/download/ and never needs a
+# per-release URL/sha bump.
+#
+# The app is ad-hoc signed (tauri.conf.json -> macOS.signingIdentity "-") but
+# NOT notarized — no paid Apple Developer account. The Homebrew cask strips the
+# Gatekeeper quarantine flag on install (see homebrew-platypusgit tap).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-universal:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust (universal targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build universal app
+        run: pnpm tauri build --target universal-apple-darwin
+
+      - name: Rename dmg to stable name
+        run: |
+          set -euo pipefail
+          src_dir="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+          dmg=$(ls "$src_dir"/*.dmg | head -n1)
+          cp "$dmg" "$src_dir/PlatypusGit_universal.dmg"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/PlatypusGit_universal.dmg
+          fail_on_unmatched_files: true
