@@ -24,9 +24,10 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { currentBranch, isStaged, isUnstaged, statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
-import type { DiffKind, FileDiff, FileStatus } from "@/lib/types";
+import type { CommitInfo, DiffKind, FileDiff, FileStatus } from "@/lib/types";
 
 interface FileSlot {
   path: string;
@@ -45,11 +46,15 @@ export function CommitPanelScreen() {
   const commitAction = useRepoStore((s) => s.commit);
   const pushAction = useRepoStore((s) => s.push);
   const activity = useRepoStore((s) => s.activity);
+  const commits = useRepoStore((s) => s.commits);
   const setNavIntent = useNavStore((s) => s.setIntent);
+  const addSignoff = useSettingsStore((s) => s.addSignoff);
+  const setSetting = useSettingsStore((s) => s.set);
   const [message, setMessage] = React.useState("");
   const [body, setBody] = React.useState("");
   const [amend, setAmend] = React.useState(false);
-  const [signoff, setSignoff] = React.useState(false);
+  // Sign-off toggle seeds from the persisted preference; toggling it writes back.
+  const [signoff, setSignoff] = React.useState(addSignoff);
   const [diffMode, setDiffMode] = React.useState<"unified" | "split">("unified");
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
   const changesPane = usePaneWidth(320, {
@@ -123,6 +128,30 @@ export function CommitPanelScreen() {
         },
       },
     ],
+  );
+
+  // Recent commit messages, newest-first, deduped by full message. Sourced from
+  // the already-loaded log so no extra backend round-trip is needed.
+  const recentMessages = React.useMemo(() => recentCommitMessages(commits), [
+    commits,
+  ]);
+
+  const applyRecent = React.useCallback((r: RecentMessage) => {
+    setMessage(r.subject);
+    setBody(r.body);
+  }, []);
+
+  const recentsMenu = useContextMenu<void>(() =>
+    recentMessages.length === 0
+      ? [{ __menuTitle: "No recent messages" }]
+      : [
+          { __menuTitle: "Recent messages" },
+          ...recentMessages.map((r) => ({
+            icon: "commit" as const,
+            label: r.subject,
+            onClick: () => applyRecent(r),
+          })),
+        ],
   );
 
   const staged = React.useMemo(
@@ -434,7 +463,27 @@ export function CommitPanelScreen() {
           minWidth: 0,
         }}
       >
-        <Header title="COMMIT MESSAGE" />
+        <Header
+          title="COMMIT MESSAGE"
+          action={
+            <PGButton
+              size="xs"
+              variant="ghost"
+              icon="history"
+              disabled={recentMessages.length === 0}
+              title="Insert a recent commit message"
+              onClick={(e) => {
+                const r = (
+                  e.currentTarget as HTMLElement
+                ).getBoundingClientRect();
+                recentsMenu.openAt(r.left, r.bottom + 4, undefined);
+              }}
+            >
+              Recent
+            </PGButton>
+          }
+        />
+        {recentsMenu.menu}
         <div
           style={{
             padding: 12,
@@ -512,7 +561,10 @@ export function CommitPanelScreen() {
             />
             <PGCheckbox
               checked={signoff}
-              onChange={setSignoff}
+              onChange={(v) => {
+                setSignoff(v);
+                setSetting("addSignoff", v);
+              }}
               label="Add Signed-off-by trailer"
             />
           </div>
@@ -551,8 +603,8 @@ export function CommitPanelScreen() {
               fullWidth
               disabled={(!amend && staged.length === 0) || !message.trim()}
               onClick={async () => {
-                const full = buildMessage(message, body, signoff);
-                const oid = await commitAction(full, amend);
+                const full = buildMessage(message, body);
+                const oid = await commitAction(full, amend, signoff);
                 if (oid) {
                   setMessage("");
                   setBody("");
@@ -582,8 +634,8 @@ export function CommitPanelScreen() {
               }
               onClick={async () => {
                 if (!headBranch || !defaultRemote) return;
-                const full = buildMessage(message, body, signoff);
-                const oid = await commitAction(full, amend);
+                const full = buildMessage(message, body);
+                const oid = await commitAction(full, amend, signoff);
                 if (!oid) return;
                 setMessage("");
                 setBody("");
@@ -605,16 +657,48 @@ function keyOf(f: FileSlot): string {
   return `${f.side}:${f.path}`;
 }
 
-function buildMessage(subject: string, body: string, signoff: boolean): string {
+function buildMessage(subject: string, body: string): string {
   const parts: string[] = [subject];
   if (body.trim()) parts.push("", body.trim());
-  if (signoff) {
-    const head = useRepoStore.getState().commits[0];
-    if (head?.author && head?.email) {
-      parts.push("", `Signed-off-by: ${head.author} <${head.email}>`);
-    }
-  }
   return parts.join("\n");
+}
+
+export interface RecentMessage {
+  subject: string;
+  body: string;
+}
+
+/**
+ * Recent commit messages for the dropdown, newest-first, deduped by full
+ * message text. Strips any `Signed-off-by:` trailer so re-selecting a message
+ * doesn't carry a stale sign-off (the toggle re-adds it on commit). Drops
+ * merge commits, which rarely make useful templates.
+ */
+export function recentCommitMessages(
+  commits: CommitInfo[],
+  limit = 15,
+): RecentMessage[] {
+  const out: RecentMessage[] = [];
+  const seen = new Set<string>();
+  for (const c of commits) {
+    if (c.parents.length > 1) continue; // skip merge commits
+    const subject = c.summary.trim();
+    if (!subject) continue;
+    const body = stripSignoff(c.body ?? "").trim();
+    const dedupeKey = `${subject}\n${body}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    out.push({ subject, body });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function stripSignoff(body: string): string {
+  return body
+    .split("\n")
+    .filter((line) => !/^Signed-off-by:\s/i.test(line.trim()))
+    .join("\n");
 }
 
 function diffToSplit(d: FileDiff): { left: SideLine[]; right: SideLine[] } {
