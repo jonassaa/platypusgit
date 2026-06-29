@@ -38,6 +38,7 @@ fn reset_hard_moves_head_and_cleans_worktree() {
                     message: "second".into(),
                     amend: false,
                     author_override: None,
+                    signoff: false,
                 },
             )
             .unwrap();
@@ -68,6 +69,7 @@ fn reset_soft_keeps_worktree() {
                 message: "second".into(),
                 amend: false,
                 author_override: None,
+                signoff: false,
             },
         )
         .unwrap();

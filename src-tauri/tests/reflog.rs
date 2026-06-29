@@ -87,6 +87,7 @@ fn read_reflog_classifies_amend_op() {
                 message: "second amended".into(),
                 amend: true,
                 author_override: None,
+                signoff: false,
             },
         )
         .unwrap();

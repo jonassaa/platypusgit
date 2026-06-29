@@ -150,6 +150,10 @@ pub struct CommitOptions {
     pub message: String,
     pub amend: bool,
     pub author_override: Option<AuthorOverride>,
+    /// When true, append a `Signed-off-by:` trailer using the committer
+    /// signature, matching `git commit -s` (deduped if already present).
+    #[serde(default)]
+    pub signoff: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
