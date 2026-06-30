@@ -17,6 +17,7 @@ import {
   type ThemeDef,
 } from "@/features/settings/useSettingsStore";
 import type { PullMode } from "@/lib/tauri";
+import { BUILTIN_PRESETS, useKeymapStore } from "@/features/keymap";
 
 export function SettingsScreen() {
   const s = useSettingsStore();
@@ -219,8 +220,39 @@ export function SettingsScreen() {
             }
           />
         </Section>
+
+        <KeyboardSection />
       </div>
     </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// KEYBOARD SECTION — keymap preset picker
+// ═════════════════════════════════════════════════════════════════════════════
+
+function KeyboardSection() {
+  const activePresetId = useKeymapStore((k) => k.activePresetId);
+  return (
+    <Section
+      title="Keyboard"
+      subtitle="Choose a keymap preset. Press ? anywhere to see the active bindings."
+    >
+      <Row
+        label="Keymap"
+        hint="Bindings apply across every screen. More presets coming."
+        control={
+          <PGSelect
+            value={activePresetId}
+            onChange={(v) => useKeymapStore.getState().setPreset(v)}
+            options={BUILTIN_PRESETS.map((p) => ({
+              value: p.id,
+              label: p.name,
+            }))}
+          />
+        }
+      />
+    </Section>
   );
 }
 
