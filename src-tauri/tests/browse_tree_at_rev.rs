@@ -104,6 +104,25 @@ fn rejects_unknown_revspec() {
     assert!(matches!(err, AppError::InvalidRef(_)), "got {err:?}");
 }
 
+/// A binary (non-UTF8) blob comes back flagged binary with no text — locking in
+/// the non-UTF8 branch of read_file_content_at_rev.
+#[test]
+fn reads_binary_blob_at_revision() {
+    use std::fs;
+
+    let tr = TempRepo::with_initial_commit("v1\n");
+    // Write bytes containing a NUL — invalid UTF-8, so git2 treats it as binary.
+    fs::write(tr.path().join("blob.bin"), [0u8, 1, 2, 0, 255, 0xfe]).expect("write binary");
+    tr.commit_all("add binary blob");
+    let (backend, handle) = tr.open_with_backend();
+
+    let content = backend
+        .read_file_content_at_rev(&handle.id, "HEAD", Path::new("blob.bin"))
+        .unwrap();
+    assert!(content.binary, "expected binary flag set");
+    assert_eq!(content.text, None);
+}
+
 /// A path that doesn't exist in the tree yields InvalidPath.
 #[test]
 fn rejects_missing_path_in_tree() {
