@@ -7,6 +7,42 @@ import { usePaletteStore } from "./usePaletteStore";
 import { fuzzyMatch } from "./fuzzyMatch";
 import { relativeTime } from "@/lib/derive";
 
+/**
+ * Render `text` with the characters at `indices` emphasized. Indices that fall
+ * outside the string are ignored. Empty indices → plain text.
+ */
+function highlight(text: string, indices: number[]): React.ReactNode {
+  if (indices.length === 0) return text;
+  const hit = new Set(indices);
+  const out: React.ReactNode[] = [];
+  let run = "";
+  let runHit = false;
+  const flush = (key: number) => {
+    if (run === "") return;
+    if (runHit) {
+      out.push(
+        <span
+          key={key}
+          style={{ color: "var(--color-accent)", fontWeight: 600 }}
+        >
+          {run}
+        </span>,
+      );
+    } else {
+      out.push(run);
+    }
+    run = "";
+  };
+  for (let i = 0; i < text.length; i++) {
+    const isHit = hit.has(i);
+    if (isHit !== runHit) flush(i);
+    run += text[i];
+    runHit = isHit;
+  }
+  flush(text.length);
+  return out;
+}
+
 type ResultType = "command" | "branch" | "file" | "commit";
 
 interface PaletteItem {
@@ -21,6 +57,13 @@ interface PaletteItem {
   detail?: string;
   icon: string;
   run: () => void;
+}
+
+/** A matched candidate plus the highlight positions for its rendered label. */
+interface ScoredRow {
+  item: PaletteItem;
+  score: number;
+  labelIndices: number[];
 }
 
 const TYPE_LABEL: Record<ResultType, string> = {
@@ -106,6 +149,7 @@ export function CommandPalette() {
   const [activeIndex, setActiveIndex] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const listRef = React.useRef<HTMLDivElement | null>(null);
+  const dialogRef = React.useRef<HTMLDivElement | null>(null);
 
   // Build the full candidate set (independent of query).
   const candidates = React.useMemo<PaletteItem[]>(() => {
@@ -153,7 +197,7 @@ export function CommandPalette() {
 
   // Filter + score + group + cap, then flatten for keyboard nav.
   const { flat, groups } = React.useMemo(() => {
-    const byType: Record<ResultType, { item: PaletteItem; score: number; indices: number[] }[]> = {
+    const byType: Record<ResultType, ScoredRow[]> = {
       command: [],
       branch: [],
       file: [],
@@ -162,15 +206,18 @@ export function CommandPalette() {
     for (const item of candidates) {
       const m = fuzzyMatch(query, item.search);
       if (!m.matched) continue;
-      byType[item.type].push({ item, score: m.score, indices: m.indices });
+      // `m.indices` index into `item.search`; the row renders `item.label`,
+      // so re-run the matcher against the label to get positions we can paint.
+      const labelIndices =
+        query.length === 0 ? [] : fuzzyMatch(query, item.label).indices;
+      byType[item.type].push({ item, score: m.score, labelIndices });
     }
-    const groupsOut: { type: ResultType; rows: PaletteItem[] }[] = [];
-    const flatOut: PaletteItem[] = [];
+    const groupsOut: { type: ResultType; rows: ScoredRow[] }[] = [];
+    const flatOut: ScoredRow[] = [];
     for (const type of TYPE_ORDER) {
       const sorted = byType[type]
         .sort((a, b) => b.score - a.score)
-        .slice(0, CAP[type])
-        .map((r) => r.item);
+        .slice(0, CAP[type]);
       if (sorted.length === 0) continue;
       groupsOut.push({ type, rows: sorted });
       flatOut.push(...sorted);
@@ -205,10 +252,10 @@ export function CommandPalette() {
 
   if (!open) return null;
 
-  const activate = (item: PaletteItem | undefined) => {
-    if (!item) return;
+  const activate = (row: ScoredRow | undefined) => {
+    if (!row) return;
     closePalette();
-    item.run();
+    row.item.run();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -232,6 +279,36 @@ export function CommandPalette() {
       activate(flat[activeIndex]);
       return;
     }
+    if (e.key === "Tab") {
+      // Focus trap: cycle through the dialog's focusable elements instead of
+      // letting Tab escape to the background behind the modal.
+      const root = dialogRef.current;
+      if (!root) return;
+      const focusable = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        inputRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (activeEl === first || !root.contains(activeEl)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (activeEl === last || !root.contains(activeEl)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
   };
 
   const sectionHeader = (label: string, count: number) => (
@@ -249,14 +326,15 @@ export function CommandPalette() {
     </div>
   );
 
-  const renderRow = (item: PaletteItem, flatIndex: number) => {
+  const renderRow = (row: ScoredRow, flatIndex: number) => {
+    const { item, labelIndices } = row;
     const active = flatIndex === activeIndex;
     return (
       <div
         key={item.id}
         data-pal-index={flatIndex}
         data-pal-type={item.type}
-        onClick={() => activate(item)}
+        onClick={() => activate(row)}
         onMouseEnter={() => setActiveIndex(flatIndex)}
         style={{
           display: "flex",
@@ -282,7 +360,7 @@ export function CommandPalette() {
             color: "var(--fg-0)",
           }}
         >
-          {item.label}
+          {highlight(item.label, labelIndices)}
         </span>
         {item.detail && (
           <span
@@ -328,6 +406,7 @@ export function CommandPalette() {
       }}
     >
       <div
+        ref={dialogRef}
         onKeyDown={onKeyDown}
         style={{
           width: WIDTH,
