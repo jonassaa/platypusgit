@@ -29,7 +29,12 @@ import { SettingsScreen } from "@/screens/Settings";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { useAction, useKeymapStore, CheatSheet } from "@/features/keymap";
+import {
+  useAction,
+  useKeymapStore,
+  useFocusStore,
+  CheatSheet,
+} from "@/features/keymap";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -136,6 +141,13 @@ export function AppShell() {
   useAction("nav.diff", () => setScreen("diff"), []);
   useAction("nav.reflog", () => setScreen("reflog"), []);
   useAction("nav.settings", () => setScreen("settings"), []);
+
+  // Pane focus traversal (Alt+Arrow) — moves the active pane along its
+  // neighbor graph. Panes register themselves via <PGPane>.
+  useAction("pane.focusLeft", () => useFocusStore.getState().move("left"), []);
+  useAction("pane.focusRight", () => useFocusStore.getState().move("right"), []);
+  useAction("pane.focusUp", () => useFocusStore.getState().move("up"), []);
+  useAction("pane.focusDown", () => useFocusStore.getState().move("down"), []);
 
   // Shortcut cheat-sheet overlay (?).
   const [cheatOpen, setCheatOpen] = React.useState(false);

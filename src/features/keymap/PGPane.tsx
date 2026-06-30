@@ -19,6 +19,7 @@ export function PGPane({
   style?: React.CSSProperties;
 }) {
   const focused = useFocusStore((s) => s.focused === id);
+  const ref = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(
     () => useFocusStore.getState().register(id, neighbors),
@@ -27,10 +28,21 @@ export function PGPane({
     [id, neighbors.left, neighbors.right, neighbors.up, neighbors.down],
   );
 
+  // Mirror logical focus onto the DOM: when this pane gains focus (e.g. via
+  // Alt+Arrow), move DOM focus into it — unless focus is already inside, so we
+  // don't steal it from an inner input. Keeps existing per-pane key handlers
+  // (tree arrows, etc.) receiving events that match the visible focus ring.
+  React.useEffect(() => {
+    const el = ref.current;
+    if (focused && el && !el.contains(document.activeElement)) el.focus();
+  }, [focused]);
+
   return (
     <div
+      ref={ref}
       data-pg-pane={id}
       data-pg-focused={focused ? "" : undefined}
+      tabIndex={-1}
       className={className}
       style={style}
       onMouseDown={() => useFocusStore.getState().focus(id)}

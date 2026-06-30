@@ -32,6 +32,7 @@ import {
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
+import { PGPane } from "@/features/keymap";
 import type {
   BranchInfo,
   FileContent,
@@ -311,7 +312,9 @@ export function RepoBrowserScreen() {
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         {/* File tree */}
-        <div
+        <PGPane
+          id="repo.tree"
+          neighbors={{ right: "repo.preview" }}
           style={{
             width: treePane.width,
             flexShrink: 0,
@@ -387,11 +390,13 @@ export function RepoBrowserScreen() {
               onActivate={(k) => setSelected(k)}
             />
           </div>
-        </div>
+        </PGPane>
         <PGResizeHandle onDrag={treePane.resize} />
 
         {/* Preview + meta */}
-        <div
+        <PGPane
+          id="repo.preview"
+          neighbors={{ left: "repo.tree", right: "repo.inspector" }}
           style={{
             flex: 1,
             minWidth: 0,
@@ -552,7 +557,7 @@ export function RepoBrowserScreen() {
                 </PGEmpty>
               )}
           </div>
-        </div>
+        </PGPane>
 
         <PGResizeHandle
           onDrag={(d) => inspectorPane.resize(-d)}
@@ -560,7 +565,9 @@ export function RepoBrowserScreen() {
         />
 
         {/* Right inspector */}
-        <div
+        <PGPane
+          id="repo.inspector"
+          neighbors={{ left: "repo.preview" }}
           style={{
             width: inspectorPane.width,
             flexShrink: 0,
@@ -695,7 +702,7 @@ export function RepoBrowserScreen() {
               {repo.path}
             </div>
           )}
-        </div>
+        </PGPane>
       </div>
     </>
   );
