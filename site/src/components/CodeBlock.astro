@@ -1,0 +1,31 @@
+---
+interface Props { code: string; lang?: string; }
+const { code, lang = 'bash' } = Astro.props;
+---
+<div class="codeblock" data-lang={lang}>
+  <button class="copy-btn" type="button" aria-label="Copy">copy</button>
+  <pre><code>{code}</code></pre>
+</div>
+<style>
+  .codeblock { position: relative; background: var(--bg-2); border: 1px solid var(--border-0);
+    border-radius: var(--r-5); overflow: hidden; }
+  .codeblock pre { margin: 0; padding: var(--s-6); overflow-x: auto; }
+  .codeblock code { font-family: var(--font-mono); font-size: 13px; color: var(--fg-1); line-height: 1.6; }
+  .copy-btn { position: absolute; top: var(--s-4); right: var(--s-4); background: var(--bg-3);
+    border: 1px solid var(--border-1); color: var(--fg-2); font-size: 11px; padding: 3px 8px;
+    border-radius: var(--r-3); cursor: pointer; font-family: var(--font-mono); }
+  .copy-btn:hover { color: var(--fg-0); border-color: var(--border-2); }
+</style>
+<script>
+  document.querySelectorAll('.codeblock').forEach((block) => {
+    const btn = block.querySelector('.copy-btn');
+    const code = block.querySelector('code');
+    btn?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(code?.textContent ?? '');
+        btn.textContent = 'copied';
+        setTimeout(() => (btn.textContent = 'copy'), 1500);
+      } catch {}
+    });
+  });
+</script>

@@ -1,0 +1,42 @@
+---
+import '../styles/tokens.css';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import { site } from '../data/site.ts';
+
+interface Props { title: string; description?: string; }
+const { title, description = site.description } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href={base + '/favicon.svg'} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <script is:inline>
+      (function () {
+        var mode = 'dark';
+        try {
+          var stored = localStorage.getItem('pg-site-theme');
+          if (stored === 'light' || stored === 'dark') {
+            mode = stored;
+          } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+            mode = 'light';
+          }
+        } catch (e) {}
+        document.documentElement.setAttribute('data-theme-mode', mode);
+      })();
+    </script>
+  </head>
+  <body>
+    <Nav />
+    <main><slot /></main>
+    <Footer />
+  </body>
+</html>

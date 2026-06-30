@@ -1,0 +1,42 @@
+---
+import { site } from '../data/site.ts';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const year = 2026;
+---
+<footer class="footer">
+  <div class="container footer-inner">
+    <div>
+      <div class="mono footer-brand">platypusgit</div>
+      <p class="footer-tag">{site.tagline}</p>
+    </div>
+    <div class="footer-cols">
+      <div>
+        <h4>Project</h4>
+        <a href={site.repo} target="_blank" rel="noopener">GitHub</a>
+        <a href={base + '/changelog'}>Changelog</a>
+        <a href={site.repo + '/blob/main/LICENSE'} target="_blank" rel="noopener">License (GPLv3)</a>
+      </div>
+      <div>
+        <h4>Get involved</h4>
+        <a href={site.repo + '/issues'} target="_blank" rel="noopener">Issues</a>
+        <a href={site.repo + '/blob/main/CONTRIBUTING.md'} target="_blank" rel="noopener">Contributing</a>
+        <a href={site.buyMeACoffee} target="_blank" rel="noopener">☕ Sponsor</a>
+      </div>
+    </div>
+  </div>
+  <div class="container footer-legal">
+    <span>© {year} {site.author}</span>
+    <span>{site.license}</span>
+  </div>
+</footer>
+<style>
+  .footer { border-top: 1px solid var(--border-0); margin-top: var(--s-13); padding: var(--s-11) 0 var(--s-8); background: var(--bg-1); }
+  .footer-inner { display: flex; justify-content: space-between; gap: var(--s-10); flex-wrap: wrap; }
+  .footer-brand { font-weight: 600; font-size: 16px; color: var(--fg-0); }
+  .footer-tag { color: var(--fg-2); font-size: 14px; margin: var(--s-2) 0 0; max-width: 260px; }
+  .footer-cols { display: flex; gap: var(--s-10); }
+  .footer-cols h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-3); margin: 0 0 var(--s-4); }
+  .footer-cols a { display: block; color: var(--fg-1); font-size: 14px; margin-bottom: var(--s-3); }
+  .footer-legal { display: flex; justify-content: space-between; margin-top: var(--s-9);
+    padding-top: var(--s-6); border-top: 1px solid var(--border-0); color: var(--fg-3); font-size: 13px; }
+</style>

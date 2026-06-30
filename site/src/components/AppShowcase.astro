@@ -1,0 +1,340 @@
+---
+import Icon from './app/Icon.astro';
+import { layoutGraph } from '../lib/graphLayout.ts';
+import {
+  commits, repoName, repoPath, headBranch, aheadBehind, changedCount, emails,
+} from '../data/repoMock.ts';
+
+const H = 26;
+const rows = layoutGraph(commits);
+
+function geom(lanes: any[]) {
+  const lines: any[] = [];
+  const paths: any[] = [];
+  for (const ln of lanes) {
+    const x = 12 + ln.col * 16;
+    const x2 = 12 + (ln.to ?? ln.col + 1) * 16;
+    if (ln.kind === 'line') lines.push({ x1: x, x2: x, y1: 0, y2: H, c: ln.color });
+    else if (ln.kind === 'half-top') lines.push({ x1: x, x2: x, y1: 0, y2: H / 2, c: ln.color });
+    else if (ln.kind === 'half-bot') lines.push({ x1: x, x2: x, y1: H / 2, y2: H, c: ln.color });
+    else if (ln.kind === 'diag') paths.push({ d: `M ${x} 0 C ${x} ${H / 2}, ${x2} ${H / 2}, ${x2} ${H}`, c: ln.color });
+    else if (ln.kind === 'fork-bot') paths.push({ d: `M ${x} ${H / 2} C ${x} ${H * 0.75}, ${x2} ${H * 0.75}, ${x2} ${H}`, c: ln.color });
+    else if (ln.kind === 'merge-top') paths.push({ d: `M ${x} 0 C ${x} ${H * 0.25}, ${x2} ${H * 0.25}, ${x2} ${H / 2}`, c: ln.color });
+  }
+  return { lines, paths };
+}
+
+const toneVar: Record<string, string> = {
+  accent: 'var(--accent)', violet: 'var(--accent-2)', green: 'var(--accent-3)',
+  amber: 'var(--accent-4)', red: 'var(--accent-5)',
+};
+
+const HUES = [235, 295, 155, 65, 25, 355, 195];
+function avatar(name: string) {
+  const hue = HUES[(name.charCodeAt(0) || 0) % HUES.length];
+  const initial = name.replace(/\[bot\]/, '').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  return { hue, initial };
+}
+
+const view = commits.map((c, i) => ({ c, g: geom(rows[i].lanes), node: rows[i].node, av: avatar(c.author) }));
+
+// selected = first commit; detail panel reflects it
+const sel = commits[0];
+const selAv = avatar(sel.author);
+const shaByOid: Record<string, string> = Object.fromEntries(commits.map((c) => [c.oid, c.sha]));
+const selParents = sel.parents.map((p) => shaByOid[p] ?? p);
+
+const activity = [
+  { name: 'folder', label: 'Repository' },
+  { name: 'commit', label: 'Commit' },
+  { name: 'history', label: 'History', active: true },
+  { name: 'branch', label: 'Branches' },
+  { name: 'merge', label: 'Conflicts' },
+  { name: 'cloud', label: 'Remotes' },
+  { name: 'archive', label: 'Stash' },
+  { name: 'diff', label: 'Diff' },
+  { name: 'clock', label: 'Reflog' },
+];
+const filters = ['All', 'Mine', 'This branch'];
+---
+<div class="win">
+  <!-- titlebar -->
+  <div class="win-tb">
+    <div class="tb-left">
+      <div class="tl"><span></span><span></span><span></span></div>
+      <span class="repo"><Icon name="folder" size={13} /> {repoName}</span>
+      <span class="tb-sep">/</span>
+      <button class="branch-chip" type="button">
+        <Icon name="branch" size={12} />
+        <span class="bc-name">{headBranch}</span>
+        <Icon name="caret" size={12} />
+      </button>
+    </div>
+    <div class="tb-right">
+      <button class="tb-btn" type="button"><Icon name="refresh" size={13} /> Refresh</button>
+      <button class="tb-btn" type="button"><Icon name="refresh" size={13} /> Fetch</button>
+      <button class="tb-btn" type="button"><Icon name="pull" size={13} /> Pull</button>
+      <button class="tb-btn accent" type="button"><Icon name="push" size={13} /> Push</button>
+      <span class="tb-gap"></span>
+      <button class="tb-btn ghost" type="button"><Icon name="close" size={13} /> Close repo</button>
+      <button class="tb-icon" type="button"><Icon name="settings" size={15} /></button>
+    </div>
+  </div>
+
+  <div class="win-body">
+    <!-- activity bar -->
+    <div class="actbar">
+      {activity.map((a) => (
+        <div class={'act' + (a.active ? ' on' : '')} title={a.label}><Icon name={a.name} size={18} /></div>
+      ))}
+      <div class="act bottom" title="Settings"><Icon name="settings" size={18} /></div>
+    </div>
+
+    <!-- right of activity bar -->
+    <div class="rmain">
+      <!-- toolbar -->
+      <div class="toolbar">
+        <div class="searchbox">
+          <Icon name="search" size={12} />
+          <span>Search commits, authors, refs…</span>
+          <kbd>⌘F</kbd>
+        </div>
+        <div class="seg">
+          {filters.map((f, i) => <button class={'seg-btn' + (i === 0 ? ' on' : '')} type="button">{f}</button>)}
+        </div>
+        <span class="tool-spacer"></span>
+        <button class="refs-btn" type="button">All refs <Icon name="caret" size={12} /></button>
+        <button class="tb-icon sm" type="button"><Icon name="funnel" size={14} /></button>
+        <button class="tb-icon sm" type="button"><Icon name="download" size={14} /></button>
+      </div>
+
+      <!-- list + detail -->
+      <div class="content">
+        <div class="listpane">
+          <div class="colhead">
+            <span>Graph</span><span>SHA</span><span>Subject</span><span>Author</span><span>Date</span>
+          </div>
+          <div class="rows">
+            {view.map(({ c, g, node, av }, i) => (
+              <div class={'row' + (i === 0 ? ' sel' : '')}>
+                {i === 0 && <span class="selbar"></span>}
+                <svg class="graph" width="140" height={H}>
+                  {g.lines.map((l) => (
+                    <line x1={l.x1} x2={l.x2} y1={l.y1} y2={l.y2} stroke={l.c} stroke-width="1.5" />
+                  ))}
+                  {g.paths.map((p) => (
+                    <path d={p.d} stroke={p.c} stroke-width="1.5" fill="none" />
+                  ))}
+                  <circle cx={12 + node.col * 16} cy={H / 2} r="4" fill="var(--bg-0)" stroke={node.color} stroke-width="1.5" />
+                  {node.solid && <circle cx={12 + node.col * 16} cy={H / 2} r="2.5" fill={node.color} />}
+                  {node.merge && <circle cx={12 + node.col * 16} cy={H / 2} r="4" fill={node.color} stroke="var(--bg-0)" stroke-width="1.5" />}
+                </svg>
+
+                <span class="sha">{c.sha}</span>
+
+                <div class="desc">
+                  {c.refs?.map((r) => (
+                    <span class="pill" style={{ color: r.active ? 'var(--accent-ink)' : toneVar[r.tone], background: r.active ? toneVar[r.tone] : 'transparent', borderColor: toneVar[r.tone] }}>
+                      <Icon name={r.icon ?? 'branch'} size={10} />
+                      {r.remote && <span class="pill-remote">{r.remote}/</span>}{r.name}
+                    </span>
+                  ))}
+                  {c.tag && <span class="tag"><Icon name="tag" size={10} />{c.tag}</span>}
+                  <span class="msg">{c.message}</span>
+                </div>
+
+                <div class="author">
+                  <span class="ava" style={{ color: `oklch(0.72 0.15 ${av.hue})`, background: `oklch(0.72 0.15 ${av.hue} / 0.22)`, borderColor: `oklch(0.72 0.15 ${av.hue} / 0.4)` }}>{av.initial}</span>
+                  <span class="au-name">{c.author}</span>
+                </div>
+
+                <span class="date">{c.date}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <!-- detail panel -->
+        <div class="detail">
+          <div class="d-shaline">commit <span class="d-sha">{sel.fullSha ?? sel.sha}</span></div>
+          <div class="d-subject">{sel.message}</div>
+          {sel.body && <pre class="d-body">{sel.body}</pre>}
+          <div class="d-meta">
+            <span class="ava sm" style={{ color: `oklch(0.72 0.15 ${selAv.hue})`, background: `oklch(0.72 0.15 ${selAv.hue} / 0.22)`, borderColor: `oklch(0.72 0.15 ${selAv.hue} / 0.4)` }}>{selAv.initial}</span>
+            <span class="d-author">{sel.author}</span>
+            <span class="d-email">&lt;{sel.email ?? emails[sel.author]}&gt;</span>
+          </div>
+          <div class="d-sub">
+            <span class="d-clock"><Icon name="clock" size={12} /> {sel.date}</span>
+            <span class="d-parent">parent: {selParents[0]}</span>
+          </div>
+
+          <div class="d-actions">
+            <button type="button"><Icon name="branch" size={12} /> Branch here</button>
+            <button type="button"><Icon name="tag" size={12} /> Tag</button>
+            <button type="button"><Icon name="commit" size={12} /> Cherry-pick</button>
+            <button type="button"><Icon name="undo" size={12} /> Revert</button>
+            <button type="button"><Icon name="copy" size={12} /> Copy SHA</button>
+          </div>
+
+          <div class="d-section">Parents <span class="d-count">{selParents.length}</span></div>
+          {selParents.map((p) => (
+            <div class="d-parent-row"><span class="d-sha2">{p}</span></div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- status bar -->
+  <div class="win-sb">
+    <div class="sb-left">
+      <span class="sb-item"><Icon name="branch" size={11} /> {headBranch}</span>
+      <span class="sb-item ok">● {changedCount} changed</span>
+    </div>
+    <div class="sb-right">
+      <span class="sb-item path">{repoPath}</span>
+    </div>
+  </div>
+</div>
+
+<style>
+  .win {
+    border: 1px solid var(--border-1); border-radius: var(--r-7); overflow: hidden;
+    background: var(--bg-0); box-shadow: var(--shadow-3); font-family: var(--font-mono);
+    --row-h: 26px;
+  }
+
+  /* titlebar */
+  .win-tb { display: flex; align-items: center; justify-content: space-between;
+    height: 40px; padding: 0 var(--s-5); background: var(--bg-titlebar); border-bottom: 1px solid var(--border-0); }
+  .tb-left { display: flex; align-items: center; gap: var(--s-4); min-width: 0; }
+  .tl { display: flex; gap: 7px; }
+  .tl span { width: 11px; height: 11px; border-radius: 999px; background: var(--border-2); }
+  .repo { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-1); font-size: 12px; }
+  .tb-sep { color: var(--fg-4); }
+  .branch-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px;
+    background: transparent; border: none; color: var(--accent); font-family: var(--font-mono); font-size: 12px;
+    font-weight: 600; cursor: default; }
+  .tb-right { display: flex; align-items: center; gap: var(--s-3); }
+  .tb-gap { width: var(--s-3); }
+  .tb-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+    background: transparent; border: 1px solid var(--border-1); border-radius: var(--r-4);
+    color: var(--fg-1); font-family: var(--font-mono); font-size: 12px; cursor: default; white-space: nowrap; }
+  .tb-btn.accent { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+  .tb-btn.ghost { border-color: transparent; color: var(--fg-2); }
+  .tb-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px;
+    background: transparent; border: 1px solid transparent; border-radius: var(--r-4); color: var(--fg-2); cursor: default; }
+  .tb-icon.sm { width: 24px; border-color: var(--border-1); }
+
+  .win-body { display: flex; height: 440px; }
+
+  /* activity bar */
+  .actbar { width: 48px; flex-shrink: 0; background: var(--bg-1); border-right: 1px solid var(--border-0);
+    display: flex; flex-direction: column; align-items: center; padding-top: var(--s-4); gap: var(--s-2); }
+  .act { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--r-4); color: var(--fg-3); }
+  .act.on { color: var(--accent); background: var(--bg-3); box-shadow: inset 2px 0 0 var(--accent); }
+  .act.bottom { margin-top: auto; margin-bottom: var(--s-4); }
+
+  .rmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  /* toolbar */
+  .toolbar { display: flex; align-items: center; gap: var(--s-4); height: 40px; padding: 0 var(--s-5);
+    border-bottom: 1px solid var(--border-0); }
+  .searchbox { display: flex; align-items: center; gap: 6px; width: 280px; height: 26px;
+    padding: 0 8px; background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-4);
+    color: var(--fg-3); font-size: 11px; }
+  .searchbox kbd { margin-left: auto; font-size: 10px; padding: 0 4px; border: 1px solid var(--border-1);
+    border-radius: var(--r-2); color: var(--fg-3); background: var(--bg-2); }
+  .seg { display: inline-flex; border: 1px solid var(--border-1); border-radius: var(--r-4); overflow: hidden; }
+  .seg-btn { height: 24px; padding: 0 10px; background: transparent; border: none; color: var(--fg-2);
+    font-family: var(--font-mono); font-size: 12px; cursor: default; }
+  .seg-btn.on { background: var(--bg-3); color: var(--fg-0); }
+  .tool-spacer { flex: 1; }
+  .refs-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+    background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--r-4);
+    color: var(--fg-1); font-family: var(--font-mono); font-size: 12px; cursor: default; }
+
+  .content { flex: 1; display: flex; min-height: 0; }
+  .listpane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  .colhead, .row { display: grid; grid-template-columns: 140px 64px 1fr 140px 80px; align-items: center; }
+  .colhead { height: 24px; padding-right: var(--s-5); border-bottom: 1px solid var(--border-0);
+    color: var(--fg-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .colhead span { padding-left: 4px; }
+  .colhead span:first-child { padding-left: 8px; }
+
+  .rows { overflow: hidden; flex: 1; }
+  .row { height: var(--row-h); position: relative; font-size: 12px; border-bottom: 1px solid oklch(0.22 0.008 260 / 0.4); }
+  .row.sel { background: var(--bg-selection); }
+  .selbar { position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+  .graph { display: block; flex-shrink: 0; }
+  .sha { color: var(--fg-3); font-size: 11px; }
+
+  .desc { display: flex; align-items: center; gap: 6px; min-width: 0; padding-right: 10px; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px 0 4px;
+    font-size: 11px; border: 1px solid; border-radius: var(--r-2); white-space: nowrap; flex-shrink: 0;
+    max-width: 180px; overflow: hidden; }
+  .pill-remote { opacity: 0.7; }
+  .tag { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 1px 6px;
+    font-size: 10px; font-weight: 500; letter-spacing: 0.02em; text-transform: uppercase;
+    color: var(--git-modified); background: oklch(0.75 0.14 75 / 0.18);
+    border: 1px solid oklch(0.75 0.14 75 / 0.35); border-radius: var(--r-2); flex-shrink: 0; }
+  .msg { color: var(--fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .author { display: flex; align-items: center; gap: 6px; color: var(--fg-2); min-width: 0; }
+  .ava { width: 16px; height: 16px; border: 1px solid; border-radius: var(--r-2); font-size: 9px;
+    font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .ava.sm { width: 18px; height: 18px; font-size: 9px; }
+  .au-name { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .date { color: var(--fg-3); font-size: 11px; }
+
+  /* detail panel */
+  .detail { width: 300px; flex-shrink: 0; border-left: 1px solid var(--border-0); background: var(--bg-1);
+    padding: var(--s-6); overflow: hidden; font-family: var(--font-sans); }
+  .d-shaline { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); margin-bottom: var(--s-5); }
+  .d-sha { color: var(--accent); }
+  .d-subject { font-size: 14px; font-weight: 600; color: var(--fg-0); line-height: 1.4; margin-bottom: var(--s-4); }
+  .d-body { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-2); line-height: 1.55;
+    white-space: pre-wrap; margin: 0 0 var(--s-6); }
+  .d-meta { display: flex; align-items: center; gap: 6px; margin-bottom: var(--s-3); flex-wrap: wrap; }
+  .d-author { color: var(--fg-0); font-size: 13px; }
+  .d-email { color: var(--fg-3); font-size: 12px; font-family: var(--font-mono); }
+  .d-sub { display: flex; align-items: center; gap: var(--s-6); color: var(--fg-3); font-size: 12px;
+    font-family: var(--font-mono); margin-bottom: var(--s-6); }
+  .d-clock { display: inline-flex; align-items: center; gap: 4px; }
+  .d-actions { display: flex; flex-wrap: wrap; gap: var(--s-3); padding-bottom: var(--s-6);
+    border-bottom: 1px solid var(--border-0); margin-bottom: var(--s-5); }
+  .d-actions button { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px;
+    background: var(--bg-2); border: 1px solid var(--border-1); border-radius: var(--r-4);
+    color: var(--fg-1); font-family: var(--font-sans); font-size: 12px; cursor: default; }
+  .d-section { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-3);
+    margin-bottom: var(--s-4); display: flex; align-items: center; gap: 6px; }
+  .d-count { background: var(--bg-3); border-radius: var(--r-2); padding: 0 5px; color: var(--fg-2); }
+  .d-parent-row { font-family: var(--font-mono); font-size: 12px; margin-bottom: var(--s-3); }
+  .d-sha2 { color: var(--accent); }
+
+  /* status bar */
+  .win-sb { display: flex; justify-content: space-between; align-items: center; height: 26px;
+    padding: 0 var(--s-5); background: var(--bg-titlebar); border-top: 1px solid var(--border-0);
+    color: var(--fg-3); font-size: 11px; }
+  .sb-left, .sb-right { display: flex; gap: var(--s-6); }
+  .sb-item { display: inline-flex; align-items: center; gap: 4px; }
+  .sb-item.ok { color: var(--git-added); }
+  .sb-item.path { color: var(--fg-3); }
+
+  @media (max-width: 900px) {
+    .detail { display: none; }
+    .tb-btn.ghost, .repo, .tb-sep { display: none; }
+  }
+  @media (max-width: 680px) {
+    .win-body { height: 400px; }
+    .colhead, .row { grid-template-columns: 110px 1fr 70px; }
+    .colhead span:nth-child(2), .colhead span:nth-child(4), .sha, .author { display: none; }
+    .tb-right .tb-btn { display: none; }
+    .tb-right .tb-btn.accent { display: inline-flex; }
+    .searchbox { width: auto; flex: 1; }
+    .refs-btn { display: none; }
+  }
+</style>

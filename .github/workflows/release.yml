@@ -1,0 +1,149 @@
+name: release
+
+# Code pushes to main cut a release. Doc/site/meta-only pushes do not
+# (see paths-ignore) — site changes deploy via site.yml instead.
+#
+# Version bump is driven by the latest commit message prefix:
+#   [major] -> X+1.0.0
+#   [minor] -> X.Y+1.0
+#   [patch] -> X.Y.Z+1   (also the default when no prefix is present)
+#
+# The computed version is injected into the app manifests at build time (no
+# commit-back, so no trigger loop). The tag (vX.Y.Z) is created by the release
+# publish step itself — so it only ever exists for a successful build, and the
+# next run's base-version math never advances past a failed build. A macOS
+# universal .dmg is published under a STABLE filename so the Homebrew cask can
+# track releases/latest/download.
+#
+# The app is ad-hoc signed (tauri.conf.json -> macOS.signingIdentity "-") but
+# NOT notarized — the Homebrew cask strips the Gatekeeper quarantine flag.
+
+on:
+  workflow_dispatch: # manual release trigger (e.g. after a history reset)
+  push:
+    branches: [main]
+    # Site-only changes deploy via site.yml. Docs/meta-only pushes never cut
+    # an app release — only code changes do.
+    paths-ignore:
+      - 'site/**'
+      - '.github/workflows/site.yml'
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/FUNDING.yml'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full tag history
+
+      - name: Compute version and tag
+        id: bump
+        run: |
+          set -euo pipefail
+          msg="$(git log -1 --pretty=%s)"
+          level=patch
+          case "$msg" in
+            \[major\]*) level=major ;;
+            \[minor\]*) level=minor ;;
+            \[patch\]*) level=patch ;;
+          esac
+          echo "Commit subject: $msg"
+          echo "Bump level: $level"
+
+          # Base = latest v* tag, else fall back to the manifest version.
+          last="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
+          if [ -z "$last" ]; then
+            last="v$(jq -r '.version' src-tauri/tauri.conf.json)"
+          fi
+          base="${last#v}"
+          IFS='.' read -r MA MI PA <<EOF
+          $base
+          EOF
+          MA=${MA:-0}; MI=${MI:-0}; PA=${PA:-0}
+
+          case "$level" in
+            major) MA=$((MA + 1)); MI=0; PA=0 ;;
+            minor) MI=$((MI + 1)); PA=0 ;;
+            patch) PA=$((PA + 1)) ;;
+          esac
+
+          version="${MA}.${MI}.${PA}"
+          tag="v${version}"
+          echo "Next: $tag (from base $base)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  macos-universal:
+    needs: version
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust (universal targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Inject version ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          tmp="$(mktemp)"
+          jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
+          jq --arg v "$v" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
+          sed -i '' -E "s/^version = \".*\"/version = \"$v\"/" src-tauri/Cargo.toml
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build universal app
+        run: pnpm tauri build --target universal-apple-darwin
+
+      - name: Rename dmg to stable name
+        run: |
+          set -euo pipefail
+          src_dir="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+          dmg="$(ls "$src_dir"/*.dmg | head -n1)"
+          cp "$dmg" "$src_dir/PlatypusGit_universal.dmg"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          generate_release_notes: true
+          files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/PlatypusGit_universal.dmg
+          fail_on_unmatched_files: true

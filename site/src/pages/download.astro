@@ -1,0 +1,139 @@
+---
+import Layout from '../layouts/Layout.astro';
+import CTAButton from '../components/CTAButton.astro';
+import CodeBlock from '../components/CodeBlock.astro';
+import { site } from '../data/site.ts';
+
+const buildSteps = `# Prerequisites: Node 22+, pnpm, Rust stable
+#   macOS:   xcode-select --install
+#   Linux:   libwebkit2gtk-4.1-dev build-essential libssl-dev
+#   Windows: WebView2 + MSVC Build Tools
+
+git clone ${site.repo}.git
+cd platypusgit
+pnpm install
+pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
+---
+<Layout title={'Download — ' + site.name}>
+  <section class="container page-head">
+    <h1>Download</h1>
+    <p class="lead">platypusgit runs on macOS, Windows, and Linux. Pick your platform below. Prebuilt binaries live on GitHub Releases.</p>
+    <div class="head-ctas">
+      <CTAButton href={site.releasesLatest} external>Latest release</CTAButton>
+      <CTAButton href={site.releases} variant="secondary" external>All releases</CTAButton>
+    </div>
+  </section>
+
+  <section class="container">
+    <div class="notice">
+      <strong>No published releases yet.</strong> The commands below are the intended install paths;
+      binaries appear on the <a href={site.releases} target="_blank" rel="noopener">Releases page</a>
+      once tagged. Until then, <a href="#build">build from source</a>.
+    </div>
+  </section>
+
+  <!-- INSTALL: macOS -->
+  <section class="container install" id="macos">
+    <div class="install-head">
+      <h2><span class="os-glyph"></span> macOS</h2>
+      <p>Apple Silicon &amp; Intel.</p>
+    </div>
+
+    <div class="method">
+      <h3>Homebrew</h3>
+      <CodeBlock code={'brew install --cask --no-quarantine jonassaa/platypusgit/platypusgit'} lang="bash" />
+      <p class="method-note">The app is ad-hoc signed but not notarized. <code>--no-quarantine</code> skips the macOS Gatekeeper flag so it launches with no "unidentified developer" prompt.</p>
+    </div>
+
+    <div class="method">
+      <h3>DMG</h3>
+      <p class="method-note">Download the <code>.dmg</code> from <a href={site.releases} target="_blank" rel="noopener">Releases</a> and drag <code>platypusgit.app</code> into <code>/Applications</code>.</p>
+    </div>
+
+    <div class="method">
+      <h3>First launch — DMG, unsigned build</h3>
+      <p class="method-note">DMG installs aren't notarized, so on first launch macOS may say the app is damaged or from an unidentified developer. Clear the quarantine flag (Homebrew's <code>--no-quarantine</code> already handles this):</p>
+      <CodeBlock code={'xattr -cr /Applications/platypusgit.app'} lang="bash" />
+      <p class="method-note">Or: <strong>System Settings → Privacy &amp; Security → Open Anyway</strong> for platypusgit.</p>
+    </div>
+  </section>
+
+  <!-- INSTALL: Windows -->
+  <section class="container install" id="windows">
+    <div class="install-head">
+      <h2><span class="os-glyph"></span> Windows</h2>
+      <p>Windows 10 &amp; 11. WebView2 ships with Windows 11.</p>
+    </div>
+
+    <div class="method">
+      <h3>winget</h3>
+      <CodeBlock code={'winget install platypusgit'} lang="powershell" />
+    </div>
+
+    <div class="method">
+      <h3>Installer (.msi)</h3>
+      <p class="method-note">Download the <code>.msi</code> from <a href={site.releases} target="_blank" rel="noopener">Releases</a> and run it.</p>
+    </div>
+
+    <div class="method">
+      <h3>First launch — unsigned build</h3>
+      <p class="method-note">The installer isn't code-signed yet, so Windows SmartScreen shows a warning. Click <strong>More info → Run anyway</strong> to proceed.</p>
+    </div>
+  </section>
+
+  <!-- INSTALL: Linux -->
+  <section class="container install" id="linux">
+    <div class="install-head">
+      <h2><span class="os-glyph"></span> Linux</h2>
+      <p>Needs <code>webkit2gtk 4.1</code>. Two formats — Debian package or portable AppImage.</p>
+    </div>
+
+    <div class="method">
+      <h3>Debian / Ubuntu (.deb)</h3>
+      <CodeBlock code={'sudo apt install ./platypusgit_0.1.0_amd64.deb'} lang="bash" />
+    </div>
+
+    <div class="method">
+      <h3>AppImage (portable)</h3>
+      <CodeBlock code={'chmod +x platypusgit_0.1.0_amd64.AppImage\n./platypusgit_0.1.0_amd64.AppImage'} lang="bash" />
+    </div>
+  </section>
+
+  <!-- BUILD FROM SOURCE -->
+  <section class="container build" id="build">
+    <h2>Build from source</h2>
+    <p class="lead">Standard Tauri toolchain. Works on all three platforms.</p>
+    <CodeBlock code={buildSteps} lang="bash" />
+    <p class="readme-link"><a href={site.repo + '#development'} target="_blank" rel="noopener">Full development guide on GitHub →</a></p>
+  </section>
+</Layout>
+
+<style>
+  .page-head { padding-top: var(--s-12); }
+  .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
+  .lead { color: var(--fg-2); font-size: 16px; max-width: 640px; margin: 0; }
+  .head-ctas { display: flex; gap: var(--s-4); margin-top: var(--s-7); flex-wrap: wrap; }
+  .notice { background: color-mix(in oklab, var(--accent-2) 12%, transparent);
+    border: 1px solid color-mix(in oklab, var(--accent-2) 40%, transparent);
+    color: var(--fg-1); padding: var(--s-5) var(--s-6); border-radius: var(--r-5);
+    margin: var(--s-10) 0 0; font-size: 14px; }
+  .notice a { color: var(--accent); }
+
+  .install { margin-top: var(--s-11); padding-bottom: var(--s-9); border-bottom: 1px solid var(--border-0); scroll-margin-top: 72px; }
+  .install-head { margin-bottom: var(--s-7); }
+  .install-head h2 { font-size: 26px; margin: 0 0 var(--s-2); display: flex; align-items: center; gap: var(--s-4); }
+  .install-head p { color: var(--fg-3); font-size: 14px; margin: 0; }
+  .os-glyph { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); display: inline-block; }
+
+  .method { margin-top: var(--s-7); max-width: 760px; }
+  .method h3 { font-size: 15px; margin: 0 0 var(--s-4); color: var(--fg-0); font-family: var(--font-sans); font-weight: 600; }
+  .method-note { color: var(--fg-2); font-size: 14px; margin: 0 0 var(--s-4); line-height: 1.6; }
+  .method-note code { background: var(--bg-2); border: 1px solid var(--border-0); border-radius: var(--r-2);
+    padding: 1px 5px; font-size: 12px; color: var(--fg-1); }
+  .method-note a { color: var(--accent); }
+
+  .build { margin-top: var(--s-12); scroll-margin-top: 72px; }
+  .build h2 { font-size: 26px; margin: 0 0 var(--s-3); }
+  .build .lead { margin-bottom: var(--s-7); }
+  .readme-link { margin-top: var(--s-6); font-size: 14px; }
+</style>

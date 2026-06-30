@@ -1,0 +1,264 @@
+@import "tailwindcss";
+@import "highlight.js/styles/github-dark.css";
+
+/* ============================================================
+ * PlatypusGit Design Tokens
+ * Dense, utilitarian, monospace-forward. Dark mode hero.
+ * ============================================================ */
+
+:root {
+  /* ===== TYPE ===== */
+  --font-sans: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Menlo", Consolas, monospace;
+  --font-display: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+
+  --fs-10: 10px;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-15: 15px;
+  --fs-17: 17px;
+  --fs-20: 20px;
+  --fs-28: 28px;
+  --fs-40: 40px;
+
+  --lh-tight: 1.2;
+  --lh-body: 1.45;
+  --lh-code: 1.55;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* ===== SPACING ===== */
+  --s-0: 0;
+  --s-1: 2px;
+  --s-2: 4px;
+  --s-3: 6px;
+  --s-4: 8px;
+  --s-5: 12px;
+  --s-6: 16px;
+  --s-7: 20px;
+  --s-8: 24px;
+  --s-9: 32px;
+  --s-10: 40px;
+  --s-11: 56px;
+
+  /* ===== RADIUS ===== */
+  --r-0: 0;
+  --r-1: 2px;
+  --r-2: 3px;
+  --r-3: 4px;
+  --r-4: 6px;
+  --r-5: 8px;
+  --r-6: 12px;
+  --r-win: 10px;
+
+  /* ===== DARK PALETTE (cool, default) ===== */
+  --bg-0: oklch(0.17 0.008 260);
+  --bg-1: oklch(0.195 0.008 260);
+  --bg-2: oklch(0.22 0.008 260);
+  --bg-3: oklch(0.255 0.008 260);
+  --bg-4: oklch(0.30 0.008 260);
+  --bg-titlebar: oklch(0.21 0.008 260);
+  --bg-selection: oklch(0.35 0.03 260 / 0.4);
+
+  --fg-0: oklch(0.96 0.005 260);
+  --fg-1: oklch(0.82 0.005 260);
+  --fg-2: oklch(0.65 0.008 260);
+  --fg-3: oklch(0.48 0.008 260);
+  --fg-4: oklch(0.38 0.008 260);
+
+  --border-0: oklch(0.27 0.008 260);
+  --border-1: oklch(0.33 0.008 260);
+  --border-2: oklch(0.42 0.008 260);
+
+  /* ===== ACCENTS ===== */
+  --accent: oklch(0.72 0.15 235);
+  --accent-2: oklch(0.72 0.15 295);
+  --accent-3: oklch(0.72 0.15 155);
+  --accent-4: oklch(0.72 0.15 65);
+  --accent-5: oklch(0.72 0.15 25);
+  --accent-ink: oklch(0.18 0.02 235);
+
+  /* ===== SEMANTIC (git states) ===== */
+  --git-added: oklch(0.72 0.15 155);
+  --git-added-bg: oklch(0.35 0.08 155 / 0.25);
+  --git-added-gutter: oklch(0.45 0.12 155 / 0.5);
+
+  --git-removed: oklch(0.68 0.18 25);
+  --git-removed-bg: oklch(0.35 0.10 25 / 0.25);
+  --git-removed-gutter: oklch(0.45 0.14 25 / 0.5);
+
+  --git-modified: oklch(0.75 0.14 75);
+  --git-modified-bg: oklch(0.35 0.08 75 / 0.2);
+
+  --git-renamed: oklch(0.72 0.15 235);
+  --git-conflict: oklch(0.72 0.15 325);
+  --git-untracked: oklch(0.72 0.12 295);
+  --git-staged: oklch(0.72 0.15 155);
+  --git-ignored: oklch(0.55 0.005 260);
+
+  /* graph branch colors */
+  --graph-1: oklch(0.72 0.15 235);
+  --graph-2: oklch(0.72 0.15 295);
+  --graph-3: oklch(0.72 0.15 155);
+  --graph-4: oklch(0.72 0.15 65);
+  --graph-5: oklch(0.72 0.15 25);
+  --graph-6: oklch(0.72 0.15 355);
+  --graph-7: oklch(0.72 0.15 195);
+
+  /* shadows */
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-2: 0 4px 12px rgba(0,0,0,0.35);
+  --shadow-3: 0 12px 40px rgba(0,0,0,0.5);
+  --shadow-inset: inset 0 1px 0 rgba(255,255,255,0.04);
+
+  --ring: 0 0 0 2px oklch(0.72 0.15 235 / 0.5);
+
+  /* density */
+  --row-h: 24px;
+
+  /* transitions */
+  --t-fast: 80ms cubic-bezier(0.4, 0, 0.2, 1);
+  --t-med: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+  --t-slow: 240ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  line-height: var(--lh-body);
+  color: var(--fg-0);
+  background: var(--bg-0);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "cv11", "ss01", "ss03";
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.pg-selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.mono { font-family: var(--font-mono); font-feature-settings: "calt", "liga"; }
+.display { font-family: var(--font-display); letter-spacing: -0.01em; }
+
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-1);
+  border-radius: 10px;
+  border: 2px solid var(--bg-0);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
+
+::selection { background: oklch(0.72 0.15 235 / 0.35); }
+
+.focusable:focus-visible { outline: none; box-shadow: var(--ring); }
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  padding: 1px 5px;
+  border-radius: var(--r-2);
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-bottom-width: 2px;
+  color: var(--fg-1);
+  line-height: 1;
+  display: inline-block;
+}
+
+/* ===== Animations ===== */
+@keyframes pg-spin { to { transform: rotate(360deg); } }
+.pg-spin > svg, .pg-spin { animation: pg-spin 1.2s linear infinite; }
+
+@keyframes pg-pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  70% { transform: scale(2); opacity: 0; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes pg-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+@keyframes pg-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.pg-fade-in { animation: pg-fade-in 200ms ease-out; }
+
+@keyframes pgCtxFadeIn {
+  from { opacity: 0; transform: translateY(-2px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes pg-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.pg-shimmer {
+  background: linear-gradient(90deg, var(--bg-1) 0%, var(--bg-3) 50%, var(--bg-1) 100%);
+  background-size: 200% 100%;
+  animation: pg-shimmer 1.8s ease-in-out infinite;
+}
+
+.pg-row  { display: flex; align-items: center; gap: 8px; }
+.pg-col  { display: flex; flex-direction: column; }
+.pg-fill { flex: 1; min-width: 0; min-height: 0; }
+
+/* ============================================================
+ * Code viewer — light-mode syntax overrides.
+ * highlight.js ships a single github-dark stylesheet globally; its
+ * tokens are too light on light backgrounds. Override with the
+ * github-light palette when the active theme is a light one.
+ * ============================================================ */
+[data-theme-mode="light"] .hljs { color: #1f2328; background: transparent; }
+[data-theme-mode="light"] .hljs-comment,
+[data-theme-mode="light"] .hljs-quote { color: #57606a; }
+[data-theme-mode="light"] .hljs-keyword,
+[data-theme-mode="light"] .hljs-selector-tag,
+[data-theme-mode="light"] .hljs-meta,
+[data-theme-mode="light"] .hljs-doctag { color: #cf222e; }
+[data-theme-mode="light"] .hljs-string,
+[data-theme-mode="light"] .hljs-regexp,
+[data-theme-mode="light"] .hljs-attr { color: #0a3069; }
+[data-theme-mode="light"] .hljs-number,
+[data-theme-mode="light"] .hljs-literal,
+[data-theme-mode="light"] .hljs-built_in,
+[data-theme-mode="light"] .hljs-symbol,
+[data-theme-mode="light"] .hljs-type { color: #0550ae; }
+[data-theme-mode="light"] .hljs-title,
+[data-theme-mode="light"] .hljs-name,
+[data-theme-mode="light"] .hljs-section,
+[data-theme-mode="light"] .hljs-title.class_,
+[data-theme-mode="light"] .hljs-title.function_ { color: #8250df; }
+[data-theme-mode="light"] .hljs-variable,
+[data-theme-mode="light"] .hljs-template-variable,
+[data-theme-mode="light"] .hljs-params { color: #953800; }
+[data-theme-mode="light"] .hljs-tag,
+[data-theme-mode="light"] .hljs-selector-id,
+[data-theme-mode="light"] .hljs-selector-class,
+[data-theme-mode="light"] .hljs-selector-attr,
+[data-theme-mode="light"] .hljs-selector-pseudo { color: #116329; }
+[data-theme-mode="light"] .hljs-addition { color: #0a3069; background: #dafbe1; }
+[data-theme-mode="light"] .hljs-deletion { color: #82071e; background: #ffebe9; }
+[data-theme-mode="light"] .hljs-emphasis { font-style: italic; }
+[data-theme-mode="light"] .hljs-strong { font-weight: 600; }

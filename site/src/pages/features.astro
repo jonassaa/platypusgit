@@ -1,0 +1,54 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { site } from '../data/site.ts';
+import { featureGroups, roadmap } from '../data/features.ts';
+---
+<Layout title={'Features — ' + site.name}>
+  <section class="container page-head">
+    <h1>Features</h1>
+    <p class="lead">Everything implemented end-to-end today. platypusgit is in active development — the list grows.</p>
+  </section>
+
+  <section class="container groups">
+    {featureGroups.map((g) => (
+      <div class="group">
+        <div class="group-head">
+          <h2>{g.title}</h2>
+          <p>{g.blurb}</p>
+        </div>
+        <ul class="group-list">
+          {g.items.map((i) => <li><span class="tick">✓</span>{i}</li>)}
+        </ul>
+      </div>
+    ))}
+  </section>
+
+  <section class="container roadmap">
+    <h2 class="roadmap-title">Planned</h2>
+    <p class="lead">On the roadmap, not yet shipped.</p>
+    <ul class="roadmap-list">
+      {roadmap.map((r) => <li><span class="soon mono">soon</span>{r}</li>)}
+    </ul>
+  </section>
+</Layout>
+
+<style>
+  .page-head { padding-top: var(--s-12); }
+  .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
+  .lead { color: var(--fg-2); font-size: 16px; max-width: 600px; margin: 0; }
+  .groups { margin-top: var(--s-11); display: grid; gap: var(--s-9); }
+  .group { display: grid; grid-template-columns: 280px 1fr; gap: var(--s-8);
+    padding-bottom: var(--s-9); border-bottom: 1px solid var(--border-0); }
+  .group-head h2 { font-size: 20px; margin: 0 0 var(--s-3); }
+  .group-head p { color: var(--fg-3); font-size: 14px; margin: 0; }
+  .group-list { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-4); }
+  .group-list li { display: flex; gap: var(--s-4); align-items: baseline; color: var(--fg-1); font-size: 15px; }
+  .tick { color: var(--git-added); font-weight: 700; }
+  .roadmap { margin-top: var(--s-11); }
+  .roadmap-title { font-size: 24px; margin: 0 0 var(--s-3); }
+  .roadmap-list { list-style: none; padding: 0; margin: var(--s-7) 0 0; display: grid; gap: var(--s-5); max-width: 720px; }
+  .roadmap-list li { display: flex; gap: var(--s-5); align-items: baseline; color: var(--fg-2); font-size: 15px; }
+  .soon { font-size: 11px; color: var(--accent-2); border: 1px solid var(--border-1);
+    padding: 2px 7px; border-radius: var(--r-3); flex-shrink: 0; }
+  @media (max-width: 720px) { .group { grid-template-columns: 1fr; gap: var(--s-5); } }
+</style>
