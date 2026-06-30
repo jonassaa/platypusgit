@@ -2347,19 +2347,26 @@ fn commit_to_info(commit: &git2::Commit<'_>) -> CommitInfo {
 
 /// Return `true` if `commit` touched `path` relative to any of its parents.
 /// For a root commit (no parents) the path simply has to exist in the tree.
+/// True if `commit` affected `path`.
+///
+/// For a root commit (no parents), matches if the path exists in the commit's
+/// tree. For a commit with parents, matches if the commit's tree differs from
+/// *any* parent for that path. This is broader than `git log -- <path>`'s
+/// first-parent simplification: a merge commit matches when it changed the path
+/// relative to any of its parents, not just the first. Intentional for a GUI —
+/// "did this commit touch the path" is the more useful question here.
 fn commit_touches_path(
     repo: &git2::Repository,
     commit: &git2::Commit<'_>,
     path: &std::path::Path,
 ) -> AppResult<bool> {
+    let commit_tree = commit.tree()?;
     if commit.parent_count() == 0 {
-        let tree = commit.tree()?;
-        return Ok(tree.get_path(path).is_ok());
+        return Ok(commit_tree.get_path(path).is_ok());
     }
     for i in 0..commit.parent_count() {
         let parent = commit.parent(i)?;
         let parent_tree = parent.tree()?;
-        let commit_tree = commit.tree()?;
         let mut opts = git2::DiffOptions::new();
         opts.pathspec(path);
         let diff = repo.diff_tree_to_tree(

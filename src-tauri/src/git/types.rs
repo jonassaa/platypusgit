@@ -53,7 +53,7 @@ pub struct CommitInfo {
 /// Filter applied to the commit log walk. All fields are ANDed together;
 /// an all-`None`/empty filter matches every commit (equivalent to a plain log).
 /// String matches are case-insensitive substring matches except `sha_prefix`,
-/// which matches the start of the full or short OID.
+/// which matches a prefix of the full OID (hex).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogFilter {
