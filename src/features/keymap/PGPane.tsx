@@ -11,21 +11,27 @@ export function PGPane({
   children,
   className,
   style,
+  isBar,
 }: {
   id: string;
   neighbors: Neighbors;
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
+  /** Marks the activity bar: never auto-grabs focus, excluded from content. */
+  isBar?: boolean;
 }) {
   const focused = useFocusStore((s) => s.focused === id);
   const ref = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(
-    () => useFocusStore.getState().register(id, neighbors),
+    () =>
+      useFocusStore
+        .getState()
+        .register(id, neighbors, { isBar, autoFocus: !isBar }),
     // Re-register when identity or any neighbor edge changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [id, neighbors.left, neighbors.right, neighbors.up, neighbors.down],
+    [id, neighbors.left, neighbors.right, neighbors.up, neighbors.down, isBar],
   );
 
   // Mirror logical focus onto the DOM: when this pane gains focus (e.g. via

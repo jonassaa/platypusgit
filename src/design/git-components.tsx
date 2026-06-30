@@ -188,6 +188,9 @@ export function PGFileTree({
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (flat.length === 0) return;
+    // Leave modifier+arrow combos (e.g. Alt+Arrow pane focus) to global
+    // keymap shortcuts — only handle bare arrows for in-tree navigation.
+    if (e.altKey || e.metaKey || e.ctrlKey) return;
     const cur = selectedIdx >= 0 ? selectedIdx : 0;
     const node = flat[cur];
     switch (e.key) {

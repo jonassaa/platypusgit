@@ -47,6 +47,35 @@ describe("dispatch", () => {
     expect(handled).toBe(false);
   });
 
+  it("dispatched in capture phase, fires even if a child stops bubbling", () => {
+    // Reproduces the Alt+Arrow regression: a focused element stops keydown
+    // during bubble, so a bubble-phase window listener never sees it. A
+    // capture-phase listener (how AppShell wires dispatch) must still fire.
+    const spy = vi.fn();
+    render(<Harness onFiles={spy} />);
+
+    const child = document.createElement("button");
+    document.body.appendChild(child);
+    child.addEventListener("keydown", (e) => e.stopPropagation()); // bubble stop
+
+    const captureListener = (e: KeyboardEvent) =>
+      useKeymapStore.getState().dispatch(e);
+    window.addEventListener("keydown", captureListener, true);
+
+    child.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "1",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    window.removeEventListener("keydown", captureListener, true);
+    document.body.removeChild(child);
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
   it("falls through to an outer handler when the inner one declines", () => {
     const outer = vi.fn(() => true);
     const inner = vi.fn(() => false); // declines

@@ -33,6 +33,8 @@ import {
   useAction,
   useKeymapStore,
   useFocusStore,
+  usePaneList,
+  PGPane,
   chordFor,
   CheatSheet,
   type ActionId,
@@ -137,12 +139,18 @@ export function AppShell() {
   // Single global keymap listener — resolves chord → action → handler. Replaces
   // the old inline ⌘1…⌘9 handler; the don't-fight-inputs rule now lives in the
   // dispatcher (see useKeymapStore).
+  //
+  // Capture phase: a global dispatcher must run before focused-element handlers
+  // (e.g. the file tree's arrow-key navigation) get the event. On bubble, those
+  // handlers — or the framework — can consume keys like Alt+Arrow first, so the
+  // window listener never sees them. The dispatcher's don't-fight-inputs guard
+  // keeps typing safe.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       useKeymapStore.getState().dispatch(e);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
   // Navigation actions — switch the active screen.
@@ -156,6 +164,12 @@ export function AppShell() {
   useAction("nav.diff", () => setScreen("diff"), []);
   useAction("nav.reflog", () => setScreen("reflog"), []);
   useAction("nav.settings", () => setScreen("settings"), []);
+
+  // On entering a screen, focus its first content pane so the keyboard is
+  // immediately live (runs on mount too → initial screen gets focus).
+  React.useEffect(() => {
+    useFocusStore.getState().requestContentFocus();
+  }, [screen]);
 
   // Pane focus traversal (Alt+Arrow) — moves the active pane along its
   // neighbor graph. Panes register themselves via <PGPane>.
@@ -324,15 +338,44 @@ function AppBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [hasChanges, presetId],
   );
+
+  // Activity bar as a keyboard pane: Alt+← focuses it, ↑/↓ move a highlight
+  // cursor, Enter switches to that screen.
+  const ACTIVITY_BAR_ID = "activitybar";
+  const barFocused = useFocusStore((s) => s.focused === ACTIVITY_BAR_ID);
+  const screenIndex = Math.max(
+    0,
+    items.findIndex((it) => it.id === screen),
+  );
+  const [highlight, setHighlight] = React.useState(screenIndex);
+  // Reset the highlight to the active screen each time the bar gains focus.
+  React.useEffect(() => {
+    if (barFocused) setHighlight(screenIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [barFocused]);
+  usePaneList({
+    paneId: ACTIVITY_BAR_ID,
+    count: items.length,
+    selectedIndex: highlight,
+    onSelect: setHighlight,
+    onActivate: (i) => {
+      const it = items[i];
+      if (it) setScreen(it.id as ScreenId);
+    },
+  });
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-      <PGActivityBar
-        value={screen}
-        onChange={(id) => setScreen(id as ScreenId)}
-        items={items}
-        settingsActive={screen === "settings"}
-        onSettingsClick={() => setScreen("settings")}
-      />
+      <PGPane id={ACTIVITY_BAR_ID} neighbors={{}} isBar style={{ flexShrink: 0 }}>
+        <PGActivityBar
+          value={screen}
+          onChange={(id) => setScreen(id as ScreenId)}
+          items={items}
+          settingsActive={screen === "settings"}
+          onSettingsClick={() => setScreen("settings")}
+          highlightIndex={barFocused ? highlight : undefined}
+        />
+      </PGPane>
       <div
         style={{
           flex: 1,

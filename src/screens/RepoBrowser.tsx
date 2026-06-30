@@ -314,7 +314,7 @@ export function RepoBrowserScreen() {
         {/* File tree */}
         <PGPane
           id="repo.tree"
-          neighbors={{ right: "repo.preview" }}
+          neighbors={{ left: "activitybar", right: "repo.preview" }}
           style={{
             width: treePane.width,
             flexShrink: 0,
