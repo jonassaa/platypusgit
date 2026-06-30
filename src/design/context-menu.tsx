@@ -4,6 +4,7 @@ import { PGIcon, type IconName } from "./icons";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
+import { chordFor } from "@/features/keymap";
 
 export interface ContextMenuItem {
   label?: ReactNode;
@@ -544,18 +545,21 @@ export function branchMenuItems(
     {
       icon: "sync",
       label: "Pull",
+      shortcut: chordFor("repo.pull"),
       disabled: !isCurrent || !upstream,
       onClick: () => useRepoStore.getState().pull(remote, name),
     },
     {
       icon: "push",
       label: "Push",
+      shortcut: chordFor("repo.push"),
       disabled: !isCurrent,
       onClick: () => useRepoStore.getState().push(remote, name),
     },
     {
       icon: "fetch",
       label: "Fetch",
+      shortcut: chordFor("repo.fetch"),
       onClick: () => useRepoStore.getState().fetch(remote),
     },
     { divider: true },

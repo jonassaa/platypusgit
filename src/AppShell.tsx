@@ -33,7 +33,9 @@ import {
   useAction,
   useKeymapStore,
   useFocusStore,
+  chordFor,
   CheatSheet,
+  type ActionId,
 } from "@/features/keymap";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { CommandPalette } from "@/features/palette/CommandPalette";
@@ -73,6 +75,19 @@ type ScreenId =
   | "fileHistory"
   | "blame"
   | "settings";
+
+// Maps each activity-bar item id to the navigation action whose chord it shows.
+const ACTIVITY_ACTION: Record<string, ActionId> = {
+  repo: "nav.files",
+  commit: "nav.commit",
+  history: "nav.history",
+  branches: "nav.branches",
+  conflict: "nav.conflict",
+  rebase: "nav.rebase",
+  remote: "nav.remote",
+  diff: "nav.diff",
+  reflog: "nav.reflog",
+};
 
 const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "repo", icon: "folder", label: "Files", shortcut: "⌘1" },
@@ -293,12 +308,21 @@ function AppBody({
   setScreen: (s: ScreenId) => void;
 }) {
   const hasChanges = useRepoStore((s) => s.status.length > 0);
+  // Re-derive shortcut labels when the active preset changes.
+  const presetId = useKeymapStore((s) => s.activePresetId);
   const items = React.useMemo(
     () =>
-      ACTIVITY_ITEMS.map((it) =>
-        it.id === "commit" ? { ...it, badge: hasChanges } : it,
-      ),
-    [hasChanges],
+      ACTIVITY_ITEMS.map((it) => {
+        const shortcut = chordFor(ACTIVITY_ACTION[it.id] ?? "nav.files");
+        return {
+          ...it,
+          shortcut: shortcut || it.shortcut,
+          ...(it.id === "commit" ? { badge: hasChanges } : {}),
+        };
+      }),
+    // presetId drives the shortcut recompute via chordFor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hasChanges, presetId],
   );
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
