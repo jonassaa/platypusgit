@@ -1,39 +1,30 @@
 name: release
 
-# Code pushes to main cut a release. Doc/site/meta-only pushes do not
-# (see paths-ignore) — site changes deploy via site.yml instead.
+# Releases are cut by PUBLISHING a GitHub Release: draft it in the UI, pick the
+# vX.Y.Z tag (GitHub creates the tag on publish), then publish when you're sure
+# it's good. Publishing triggers this workflow, which builds the macOS universal
+# .dmg and attaches it to that same release.
 #
-# Version bump is driven by the latest commit message prefix:
-#   [major] -> X+1.0.0
-#   [minor] -> X.Y+1.0
-#   [patch] -> X.Y.Z+1   (also the default when no prefix is present)
+# Nothing releases on a plain push to main — you control when "latest" moves by
+# choosing when to publish. Mark a release as a "prerelease" to build + attach
+# assets WITHOUT moving Homebrew's releases/latest pointer; flip prerelease off
+# later to promote it to latest (no rebuild needed).
 #
-# The computed version is injected into the app manifests at build time (no
-# commit-back, so no trigger loop). The tag (vX.Y.Z) is created by the release
-# publish step itself — so it only ever exists for a successful build, and the
-# next run's base-version math never advances past a failed build. A macOS
-# universal .dmg is published under a STABLE filename so the Homebrew cask can
-# track releases/latest/download.
+# Version is taken from the release tag (v0.0.4 -> 0.0.4) and injected into the
+# app manifests at build time. The .dmg is published under a STABLE filename so
+# the Homebrew cask can track releases/latest/download.
 #
 # The app is ad-hoc signed (tauri.conf.json -> macOS.signingIdentity "-") but
 # NOT notarized — the Homebrew cask strips the Gatekeeper quarantine flag.
 
 on:
-  workflow_dispatch: # manual release trigger (e.g. after a history reset)
-  push:
-    branches: [main]
-    # Site-only changes deploy via site.yml. Docs/meta-only pushes never cut
-    # an app release — only code changes do.
-    paths-ignore:
-      - 'site/**'
-      - '.github/workflows/site.yml'
-      - 'docs/**'
-      - '**/*.md'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/FUNDING.yml'
-      - '.github/PULL_REQUEST_TEMPLATE.md'
+  release:
+    types: [published]
+  workflow_dispatch: # re-run a build against an existing release tag
+    inputs:
+      tag:
+        description: 'Existing release tag to (re)build, e.g. v0.0.4'
+        required: true
 
 permissions:
   contents: write
@@ -46,55 +37,30 @@ jobs:
   version:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.bump.outputs.version }}
-      tag: ${{ steps.bump.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # need full tag history
-
-      - name: Compute version and tag
-        id: bump
+      - name: Resolve version from release tag
+        id: resolve
         run: |
           set -euo pipefail
-          msg="$(git log -1 --pretty=%s)"
-          level=patch
-          case "$msg" in
-            \[major\]*) level=major ;;
-            \[minor\]*) level=minor ;;
-            \[patch\]*) level=patch ;;
-          esac
-          echo "Commit subject: $msg"
-          echo "Bump level: $level"
-
-          # Base = latest v* tag, else fall back to the manifest version.
-          last="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
-          if [ -z "$last" ]; then
-            last="v$(jq -r '.version' src-tauri/tauri.conf.json)"
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          if [ -z "$tag" ]; then
+            echo "No release tag available" >&2
+            exit 1
           fi
-          base="${last#v}"
-          IFS='.' read -r MA MI PA <<EOF
-          $base
-          EOF
-          MA=${MA:-0}; MI=${MI:-0}; PA=${PA:-0}
-
-          case "$level" in
-            major) MA=$((MA + 1)); MI=0; PA=0 ;;
-            minor) MI=$((MI + 1)); PA=0 ;;
-            patch) PA=$((PA + 1)) ;;
-          esac
-
-          version="${MA}.${MI}.${PA}"
-          tag="v${version}"
-          echo "Next: $tag (from base $base)"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          version="${tag#v}"
+          echo "Tag: $tag  Version: $version"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   macos-universal:
     needs: version
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -139,11 +105,9 @@ jobs:
           dmg="$(ls "$src_dir"/*.dmg | head -n1)"
           cp "$dmg" "$src_dir/PlatypusGit_universal.dmg"
 
-      - name: Publish release
+      - name: Attach .dmg to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
-          name: ${{ needs.version.outputs.tag }}
-          generate_release_notes: true
           files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/PlatypusGit_universal.dmg
           fail_on_unmatched_files: true
