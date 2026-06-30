@@ -28,13 +28,17 @@ function initialPresetId(): string {
   }
 }
 
+/** A handler returns `false` to decline the event (fall through to an
+ *  outer handler / the browser); any other value counts as handled. */
+export type ActionHandler = () => boolean | void;
+
 interface KeymapState {
   activePresetId: string;
   reverse: Map<string, ActionId[]>;
-  /** Per-action handler stacks; innermost (last-registered) wins. */
-  handlers: Map<ActionId, (() => void)[]>;
+  /** Per-action handler stacks; innermost (last-registered) gets first refusal. */
+  handlers: Map<ActionId, ActionHandler[]>;
   setPreset: (id: string) => void;
-  register: (id: ActionId, handler: () => void) => () => void;
+  register: (id: ActionId, handler: ActionHandler) => () => void;
   /** Returns true if the event resolved to a handler and was prevented. */
   dispatch: (e: KeyboardEvent) => boolean;
 }
@@ -55,7 +59,7 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
       set({ activePresetId: id, reverse: buildReverseMap(presetById(id)) });
     },
 
-    register(id, handler) {
+    register(id: ActionId, handler: ActionHandler) {
       const arr = get().handlers.get(id) ?? [];
       arr.push(handler);
       get().handlers.set(id, arr);
@@ -77,10 +81,14 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
         const def = ACTIONS[id];
         if (editable && !def.allowInInput) continue;
         const hs = get().handlers.get(id);
-        if (hs && hs.length > 0) {
-          hs[hs.length - 1]();
-          e.preventDefault();
-          return true;
+        if (!hs) continue;
+        // Innermost-first; a handler may decline (return false), letting the
+        // next outer handler — or the browser — take the key.
+        for (let i = hs.length - 1; i >= 0; i--) {
+          if (hs[i]() !== false) {
+            e.preventDefault();
+            return true;
+          }
         }
       }
       return false;

@@ -16,8 +16,12 @@ export function usePaneList(opts: {
   onCollapse?: (i: number) => void;
 }): void {
   const isFocused = useFocusStore((s) => s.focused === opts.paneId);
-  const guard = (fn: () => void) => () => {
-    if (isFocused) fn();
+  // Decline (return false) when this pane isn't focused so the key falls
+  // through to another pane or the browser instead of being swallowed.
+  const guard = (fn: () => void) => (): boolean => {
+    if (!isFocused) return false;
+    fn();
+    return true;
   };
   const clamp = (i: number) => Math.max(0, Math.min(opts.count - 1, i));
 

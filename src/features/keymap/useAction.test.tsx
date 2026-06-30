@@ -46,4 +46,16 @@ describe("dispatch", () => {
     const handled = useKeymapStore.getState().dispatch(key({}));
     expect(handled).toBe(false);
   });
+
+  it("falls through to an outer handler when the inner one declines", () => {
+    const outer = vi.fn(() => true);
+    const inner = vi.fn(() => false); // declines
+    const store = useKeymapStore.getState();
+    store.register("nav.files", outer); // registered first = outer
+    store.register("nav.files", inner); // registered last = innermost
+    const handled = store.dispatch(key({}));
+    expect(handled).toBe(true);
+    expect(inner).toHaveBeenCalledOnce();
+    expect(outer).toHaveBeenCalledOnce();
+  });
 });

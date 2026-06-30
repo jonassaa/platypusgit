@@ -3,12 +3,12 @@
 // for an action wins (innermost component handles it).
 
 import { useEffect } from "react";
-import { useKeymapStore } from "./useKeymapStore";
+import { useKeymapStore, type ActionHandler } from "./useKeymapStore";
 import type { ActionId } from "./registry";
 
 export function useAction(
   id: ActionId,
-  handler: () => void,
+  handler: ActionHandler,
   deps: unknown[],
 ): void {
   useEffect(() => {
