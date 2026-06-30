@@ -28,6 +28,12 @@ describe("eventToChord", () => {
   it("keeps bare '?'", () => {
     expect(eventToChord(ev({ key: "?" }))).toBe("?");
   });
+  it("does not add Shift for a shifted symbol like '?'", () => {
+    expect(eventToChord(ev({ key: "?", shiftKey: true }))).toBe("?");
+  });
+  it("keeps Shift for a named key", () => {
+    expect(eventToChord(ev({ key: "Tab", shiftKey: true }))).toBe("Shift+Tab");
+  });
   it("returns null for lone modifier keydown", () => {
     expect(eventToChord(ev({ key: "Shift", shiftKey: true }))).toBe(null);
   });

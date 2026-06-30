@@ -29,6 +29,7 @@ import { SettingsScreen } from "@/screens/Settings";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useAction, useKeymapStore, CheatSheet } from "@/features/keymap";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -113,28 +114,33 @@ export function AppShell() {
     return () => window.clearInterval(id);
   }, [repo, autoFetchEnabled, autoFetchMinutes]);
 
+  // Single global keymap listener — resolves chord → action → handler. Replaces
+  // the old inline ⌘1…⌘9 handler; the don't-fight-inputs rule now lives in the
+  // dispatcher (see useKeymapStore).
   React.useEffect(() => {
-    if (!repo) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey || e.altKey) return;
-      const n = parseInt(e.key, 10);
-      if (!Number.isFinite(n) || n < 1 || n > ACTIVITY_ITEMS.length) return;
-      const t = e.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
-      e.preventDefault();
-      setScreen(ACTIVITY_ITEMS[n - 1].id as ScreenId);
+      useKeymapStore.getState().dispatch(e);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [repo]);
+  }, []);
+
+  // Navigation actions — switch the active screen.
+  useAction("nav.files", () => setScreen("repo"), []);
+  useAction("nav.commit", () => setScreen("commit"), []);
+  useAction("nav.history", () => setScreen("history"), []);
+  useAction("nav.branches", () => setScreen("branches"), []);
+  useAction("nav.conflict", () => setScreen("conflict"), []);
+  useAction("nav.rebase", () => setScreen("rebase"), []);
+  useAction("nav.remote", () => setScreen("remote"), []);
+  useAction("nav.diff", () => setScreen("diff"), []);
+  useAction("nav.reflog", () => setScreen("reflog"), []);
+  useAction("nav.settings", () => setScreen("settings"), []);
+
+  // Shortcut cheat-sheet overlay (?).
+  const [cheatOpen, setCheatOpen] = React.useState(false);
+  useAction("app.cheatSheet", () => setCheatOpen((v) => !v), []);
+  useAction("app.closeOverlay", () => setCheatOpen(false), []);
 
   // Global ⌘P / Ctrl+P opens the command palette. Ignored when typing in an
   // input/textarea/contentEditable, matching the ⌘1…⌘9 handling above.
@@ -218,6 +224,7 @@ export function AppShell() {
       }}
     >
       <AppTitlebar onOpenSettings={() => setScreen("settings")} />
+      <CheatSheet open={cheatOpen} onClose={() => setCheatOpen(false)} />
       {error && (
         <div
           role="alert"
@@ -366,6 +373,11 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     }
     store.push(upstream[0], upstream[1]);
   };
+
+  // Repository actions reachable from the keyboard (mirror the titlebar buttons).
+  useAction("repo.fetch", onFetch, [repo]);
+  useAction("repo.pull", onPull, [repo, upstream, defaultPullMode]);
+  useAction("repo.push", onPush, [repo, upstream]);
 
   return (
     <>

@@ -19,15 +19,20 @@ type ChordEvent = Pick<
  *  lone modifier keypress (which is never itself a chord). */
 export function eventToChord(e: ChordEvent): string | null {
   if (LONE_MODS.has(e.key)) return null;
+  let base = e.key;
+  if (base.length === 1) base = base.toUpperCase();
+  // For shifted symbols (e.g. "?" = Shift+/), the shift is already baked into
+  // the produced character — don't double-count it as a Shift modifier. Only
+  // letters and named keys (ArrowLeft, Enter, …) carry an explicit Shift.
+  const isLetter = base.length === 1 && /[A-Z]/.test(base);
+  const isNamed = base.length > 1;
   const parts: string[] = [];
   // `Mod` = platform-primary accelerator: ⌘ on mac, Ctrl elsewhere.
   if (e.metaKey || (e.ctrlKey && !IS_MAC)) parts.push("Mod");
   // A literal Ctrl on mac (distinct from Mod) keeps its own slot.
   if (e.ctrlKey && IS_MAC && !e.metaKey) parts.push("Ctrl");
   if (e.altKey) parts.push("Alt");
-  if (e.shiftKey) parts.push("Shift");
-  let base = e.key;
-  if (base.length === 1) base = base.toUpperCase();
+  if (e.shiftKey && (isLetter || isNamed)) parts.push("Shift");
   parts.push(base);
   return parts.join("+");
 }
