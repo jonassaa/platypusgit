@@ -38,7 +38,7 @@ export interface CommitInfo {
 
 /**
  * Backend commit-log filter. All set fields are ANDed. String matches are
- * case-insensitive substring matches except `shaPrefix` (matches start of OID).
+ * case-insensitive substring matches except `shaPrefix` (matches a prefix of the full OID, hex).
  * Mirrors Rust `LogFilter` in `git/types.rs`.
  */
 export interface LogFilter {
