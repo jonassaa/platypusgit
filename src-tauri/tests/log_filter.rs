@@ -228,6 +228,152 @@ fn limit_caps_matching_commits() {
     assert_eq!(summaries(&out), vec!["refactor alpha module"]);
 }
 
+// --- path filter on root / merge commits ---
+
+/// Seed a repo whose first commit (root, no parents) creates `root.txt`,
+/// then a second ordinary commit touching `b.txt`. The root commit is the
+/// `parent_count() == 0` branch of `commit_touches_path`.
+#[test]
+fn path_filter_matches_root_commit() {
+    let tr = TempRepo::fresh();
+    commit_as(&tr, "root.txt", "1\n", "root commit", "Alice", "alice@example.com", 1000);
+    commit_as(&tr, "b.txt", "1\n", "second commit", "Bob", "bob@example.com", 2000);
+    let (backend, handle) = tr.open_with_backend();
+
+    // Matching path on the root commit.
+    let hit = backend
+        .log_filtered(
+            &handle.id,
+            &LogFilter {
+                path: Some("root.txt".into()),
+                ..Default::default()
+            },
+            100,
+        )
+        .unwrap();
+    assert_eq!(summaries(&hit), vec!["root commit"]);
+
+    // Non-matching path: present in no commit's tree change set.
+    let miss = backend
+        .log_filtered(
+            &handle.id,
+            &LogFilter {
+                path: Some("nope.txt".into()),
+                ..Default::default()
+            },
+            100,
+        )
+        .unwrap();
+    assert!(miss.is_empty());
+}
+
+/// Build a merge commit whose tree differs from one parent (added `merged.txt`)
+/// but matches neither parent for an unrelated path. Exercises the
+/// OR-over-parents branch of `commit_touches_path`.
+fn seeded_with_merge() -> TempRepo {
+    let tr = TempRepo::fresh();
+
+    // All borrows of `tr.repo` are confined to this block so they drop before
+    // `tr` is returned/moved.
+    {
+        let repo = &tr.repo;
+        let sig = Signature::new("Mona", "mona@example.com", &git2::Time::new(1000, 0)).unwrap();
+
+        // Stage `files` into the index and write a commit with `parents`.
+        let stage_commit = |files: &[(&str, &str)], msg: &str, parents: &[git2::Oid]| -> git2::Oid {
+            for (name, body) in files {
+                write_file(tr.path(), name, body);
+            }
+            let mut index = repo.index().unwrap();
+            for (name, _) in files {
+                index.add_path(Path::new(name)).unwrap();
+            }
+            index.write().unwrap();
+            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+            let parent_commits: Vec<git2::Commit> =
+                parents.iter().map(|o| repo.find_commit(*o).unwrap()).collect();
+            let parent_refs: Vec<&git2::Commit> = parent_commits.iter().collect();
+            repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parent_refs)
+                .unwrap()
+        };
+
+        // Root commit on main: base.txt
+        let base = stage_commit(&[("base.txt", "base\n")], "base", &[]);
+
+        // Feature branch off base: adds feature.txt
+        let base_commit = repo.find_commit(base).unwrap();
+        repo.branch("feature", &base_commit, false).unwrap();
+        drop(base_commit);
+        repo.set_head("refs/heads/feature").unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        let feat = stage_commit(&[("feature.txt", "feat\n")], "feature", &[base]);
+
+        // Back to main, add main.txt
+        repo.set_head("refs/heads/main").unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        let main = stage_commit(&[("main.txt", "main\n")], "main work", &[base]);
+
+        // Merge feature into main; merge commit also introduces merged.txt.
+        // Tree = base + main.txt + feature.txt + merged.txt.
+        stage_commit(
+            &[("main.txt", "main\n"), ("feature.txt", "feat\n"), ("merged.txt", "merged\n")],
+            "merge feature",
+            &[main, feat],
+        );
+    }
+
+    tr
+}
+
+#[test]
+fn path_filter_matches_merge_commit() {
+    let tr = seeded_with_merge();
+    let (backend, handle) = tr.open_with_backend();
+
+    // merged.txt was introduced by the merge commit itself — differs from
+    // BOTH parents, so it matches.
+    let merged = backend
+        .log_filtered(
+            &handle.id,
+            &LogFilter {
+                path: Some("merged.txt".into()),
+                ..Default::default()
+            },
+            100,
+        )
+        .unwrap();
+    assert_eq!(summaries(&merged), vec!["merge feature"]);
+
+    // feature.txt: the merge's tree matches the feature parent but differs
+    // from the main parent → OR-over-parents matches the merge commit too.
+    let feat = backend
+        .log_filtered(
+            &handle.id,
+            &LogFilter {
+                path: Some("feature.txt".into()),
+                ..Default::default()
+            },
+            100,
+        )
+        .unwrap();
+    assert_eq!(summaries(&feat), vec!["merge feature", "feature"]);
+
+    // Non-matching path: never present anywhere → no commit matches.
+    let miss = backend
+        .log_filtered(
+            &handle.id,
+            &LogFilter {
+                path: Some("ghost.txt".into()),
+                ..Default::default()
+            },
+            100,
+        )
+        .unwrap();
+    assert!(miss.is_empty());
+}
+
 #[test]
 fn unborn_head_returns_empty() {
     let tr = TempRepo::fresh();
