@@ -2,7 +2,6 @@
 import { defineConfig } from 'astro/config';
 
 export default defineConfig({
-  site: 'https://jonassaa.github.io',
-  base: '/platypusgit',
+  site: 'https://www.platypusgit.com',
   trailingSlash: 'ignore',
 });
