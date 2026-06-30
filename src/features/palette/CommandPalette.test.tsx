@@ -9,6 +9,11 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { mockInvoke } from "@/test/invokeMock";
 import type { BranchInfo, CommitInfo } from "@/lib/types";
 
+// Result labels render matched chars inside emphasized <span>s, so a label's
+// text is split across child nodes. Match on the row's combined textContent.
+const rowText = (label: string) => (_content: string, el: Element | null) =>
+  el?.getAttribute("data-pal-index") != null && el.textContent?.includes(label) === true;
+
 const mkBranch = (name: string, isHead = false): BranchInfo => ({
   name,
   isHead,
@@ -84,7 +89,7 @@ describe("CommandPalette", () => {
     await user.click(input);
     await user.keyboard("History");
 
-    await waitFor(() => expect(screen.getByText("Go to History")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(rowText("Go to History"))).toBeTruthy());
 
     await user.keyboard("{ArrowDown}{Enter}");
 
@@ -113,7 +118,7 @@ describe("CommandPalette", () => {
     await user.click(input);
     await user.keyboard("featurex");
 
-    const row = await screen.findByText("feature/x");
+    const row = await screen.findByText(rowText("feature/x"));
     await user.click(row);
 
     await waitFor(() => expect(checkedOut).toBe("feature/x"));
@@ -132,7 +137,7 @@ describe("CommandPalette", () => {
     await user.click(input);
     await user.keyboard("Fix the bug");
 
-    const row = await screen.findByText("Fix the bug");
+    const row = await screen.findByText(rowText("Fix the bug"));
     await user.click(row);
 
     await waitFor(() => {
@@ -141,6 +146,43 @@ describe("CommandPalette", () => {
         oid: "abcdef1234",
       });
     });
+  });
+
+  it("emphasizes the matched characters in a result label", async () => {
+    const user = userEvent.setup();
+    usePaletteStore.setState({ open: true, query: "" });
+    render(<CommandPalette />);
+    await screen.findByRole("dialog");
+
+    const input = screen.getByPlaceholderText(/Search branches/i);
+    await user.click(input);
+    await user.keyboard("History");
+
+    const row = await screen.findByText(rowText("Go to History"));
+    // The matched chars ("History") render inside an emphasized <span> using
+    // the accent color, so the label is split across child nodes.
+    const emphasized = Array.from(row.querySelectorAll("span")).filter((s) =>
+      (s.getAttribute("style") ?? "").includes("--color-accent"),
+    );
+    expect(emphasized.length).toBeGreaterThan(0);
+    expect(emphasized.map((s) => s.textContent).join("")).toContain("History");
+  });
+
+  it("traps Tab focus inside the dialog", async () => {
+    const user = userEvent.setup();
+    usePaletteStore.setState({ open: true, query: "" });
+    render(<CommandPalette />);
+    const dialog = await screen.findByRole("dialog");
+
+    const input = screen.getByPlaceholderText(/Search branches/i);
+    await user.click(input);
+    await user.keyboard("{Tab}");
+    // Focus must remain within the dialog rather than escaping to <body>.
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(document.body);
+
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
   it("closes on Escape", async () => {
