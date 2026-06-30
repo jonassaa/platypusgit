@@ -65,16 +65,36 @@ export const featureGroups = [
 
 // Roadmap teaser (from features.md P0/P1 — clearly "planned")
 export const roadmap = [
-  'Commit/log search — filter by message, author, SHA, date, path',
   'Side-by-side diff view + intra-line highlighting',
-  'Command palette / fuzzy finder (⌘P)',
-  'Browse full repo file tree at any revision',
   'Branch compare — branch↔branch and branch↔working tree',
   'GPG/SSH commit + tag signing with verified badge',
   'Multi-repo tabs / fast recent-repo switcher',
+  'Quick merge/rebase from the branch picker',
+  'Partial/hunk-level stash + rename + compare to working tree',
 ];
 
 export const changelog = [
+  {
+    version: '0.0.3',
+    date: '2026-06-30',
+    status: 'feature',
+    notes: [
+      'Recent commit messages — a "Recent" button in the commit panel refills the message from your recent commit subjects/bodies (newest-first, de-duplicated, skips merges).',
+      'Sign-off (-s) toggle — appends a Signed-off-by trailer from your committer identity with full `git commit -s` semantics (idempotent, correct blank-line separation, git-accurate trailer-key rule); applied on normal and amend commits. Preference persists and stays in sync with Settings.',
+      'Browse the repo tree at any revision — type a revspec (SHA, branch, tag, HEAD~2, …) or quick-pick a branch/tag to list the full file tree and view file contents as they were then, with syntax highlighting and binary-blob handling.',
+      'Commit / log search in History — filter by message, author, SHA prefix, date range, and path, with free-text qualifiers (author: / path: / sha: / since: / until: / message:). Backend-filtered over a revwalk; results render through the commit graph.',
+    ],
+  },
+  {
+    version: '0.0.2',
+    date: '2026-06-30',
+    status: 'feature',
+    notes: [
+      'Command palette / fuzzy finder — open with ⌘P / Ctrl+P to jump to any branch, file, recent commit, or app command from one overlay.',
+      'Fuzzy matching ranks consecutive runs, word boundaries, and camelCase; keyboard-first navigation (↑/↓, Enter) with match highlighting and a trapped focus ring.',
+      'Selecting a result acts on it: branches check out, files open in the diff view, commits show their diff, commands switch screens.',
+    ],
+  },
   {
     version: '0.0.1',
     date: '2026-06-30',
