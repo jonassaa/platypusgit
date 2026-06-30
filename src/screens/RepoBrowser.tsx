@@ -119,6 +119,14 @@ export function RepoBrowserScreen() {
 
   const head = currentBranch(branches);
 
+  // Reset browse state when the repo changes (switch repos / close). Otherwise
+  // the previous repo's revspec lingers, applied to the new repo — surfacing a
+  // spurious InvalidRef. Working tree (null) is the default.
+  React.useEffect(() => {
+    setRev(null);
+    setSelected(null);
+  }, [repo?.id]);
+
   // Refresh the full file list each time the user picks "All" so the tree
   // reflects newly created / deleted files.
   React.useEffect(() => {
