@@ -262,3 +262,10 @@ kbd {
 [data-theme-mode="light"] .hljs-deletion { color: #82071e; background: #ffebe9; }
 [data-theme-mode="light"] .hljs-emphasis { font-style: italic; }
 [data-theme-mode="light"] .hljs-strong { font-weight: 600; }
+
+/* Keyboard-navigation focus ring — marks the active pane for keyboard users. */
+[data-pg-pane] { outline: none; }
+[data-pg-pane][data-pg-focused] {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: 4px;
+}
