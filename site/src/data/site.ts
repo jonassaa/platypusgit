@@ -12,12 +12,23 @@ export const site = {
 };
 
 // Per-OS downloads shown on the landing page. `available: false` renders a
-// non-clickable "Coming soon" button. Only macOS ships a build today.
+// non-clickable "Coming soon" button. macOS, Windows, and Linux all ship
+// builds via the release workflow.
 export const downloads = [
   { key: 'macos', label: 'macOS', anchor: '/download#macos', note: 'Apple Silicon & Intel · .dmg', available: true },
-  { key: 'windows', label: 'Windows', anchor: '/download#windows', note: 'Windows 10 & 11 · .msi', available: false },
-  { key: 'linux', label: 'Linux', anchor: '/download#linux', note: '.deb & AppImage', available: false },
+  { key: 'windows', label: 'Windows', anchor: '/download#windows', note: 'Windows 10 & 11 · .msi', available: true },
+  { key: 'linux', label: 'Linux', anchor: '/download#linux', note: '.deb & AppImage', available: true },
 ] as const;
+
+// Direct download links to the stable-named assets the release workflow
+// attaches to every published GitHub Release (releases/latest/download/...).
+const releaseAsset = (file: string) => `${site.releases}/latest/download/${file}`;
+export const assets = {
+  macosDmg: releaseAsset('PlatypusGit_universal.dmg'),
+  windowsMsi: releaseAsset('PlatypusGit_x64.msi'),
+  linuxDeb: releaseAsset('PlatypusGit_amd64.deb'),
+  linuxAppImage: releaseAsset('PlatypusGit_amd64.AppImage'),
+};
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 

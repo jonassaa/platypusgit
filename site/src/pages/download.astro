@@ -3,7 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 import OsIcon from '../components/OsIcon.astro';
-import { site } from '../data/site.ts';
+import { site, assets } from '../data/site.ts';
 
 const buildSteps = `# Prerequisites: Node 22+, pnpm, Rust stable
 #   macOS:   xcode-select --install
@@ -32,9 +32,11 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 
   <section class="container">
     <div class="notice">
-      <strong>No published releases yet.</strong> The commands below are the intended install paths;
-      binaries appear on the <a href={site.releases} target="_blank" rel="noopener">Releases page</a>
-      once tagged. Until then, <a href="#build">build from source</a>.
+      <strong>Builds are early pre-releases.</strong> Every published release attaches prebuilt
+      binaries for all three platforms — macOS <code>.dmg</code>, Windows <code>.msi</code>,
+      Linux <code>.deb</code> &amp; <code>.AppImage</code>. Grab the newest from the
+      <a href={site.releases} target="_blank" rel="noopener">Releases page</a>, or
+      <a href="#build">build from source</a>.
     </div>
   </section>
 
@@ -53,7 +55,8 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 
     <div class="method">
       <h3>DMG</h3>
-      <p class="method-note">Download the <code>.dmg</code> from <a href={site.releases} target="_blank" rel="noopener">Releases</a> and drag <code>platypusgit.app</code> into <code>/Applications</code>.</p>
+      <p class="method-note">Download the universal <code>.dmg</code> and drag <code>platypusgit.app</code> into <code>/Applications</code>.</p>
+      <CTAButton href={assets.macosDmg} external>Download .dmg</CTAButton>
     </div>
 
     <div class="method">
@@ -72,13 +75,9 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
     </div>
 
     <div class="method">
-      <h3>winget</h3>
-      <CodeBlock code={'winget install platypusgit'} lang="powershell" />
-    </div>
-
-    <div class="method">
       <h3>Installer (.msi)</h3>
-      <p class="method-note">Download the <code>.msi</code> from <a href={site.releases} target="_blank" rel="noopener">Releases</a> and run it.</p>
+      <p class="method-note">Download the 64-bit <code>.msi</code> and run it.</p>
+      <CTAButton href={assets.windowsMsi} external>Download .msi</CTAButton>
     </div>
 
     <div class="method">
@@ -96,12 +95,16 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 
     <div class="method">
       <h3>Debian / Ubuntu (.deb)</h3>
-      <CodeBlock code={'sudo apt install ./platypusgit_0.1.0_amd64.deb'} lang="bash" />
+      <p class="method-note">Download the package, then install it:</p>
+      <CodeBlock code={'sudo apt install ./PlatypusGit_amd64.deb'} lang="bash" />
+      <CTAButton href={assets.linuxDeb} external>Download .deb</CTAButton>
     </div>
 
     <div class="method">
       <h3>AppImage (portable)</h3>
-      <CodeBlock code={'chmod +x platypusgit_0.1.0_amd64.AppImage\n./platypusgit_0.1.0_amd64.AppImage'} lang="bash" />
+      <p class="method-note">Download, make it executable, and run — no install needed:</p>
+      <CodeBlock code={'chmod +x PlatypusGit_amd64.AppImage\n./PlatypusGit_amd64.AppImage'} lang="bash" />
+      <CTAButton href={assets.linuxAppImage} external>Download .AppImage</CTAButton>
     </div>
   </section>
 

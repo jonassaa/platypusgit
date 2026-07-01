@@ -2,8 +2,11 @@ name: release
 
 # Releases are cut by PUBLISHING a GitHub Release: draft it in the UI, pick the
 # vX.Y.Z tag (GitHub creates the tag on publish), then publish when you're sure
-# it's good. Publishing triggers this workflow, which builds the macOS universal
-# .dmg and attaches it to that same release.
+# it's good. Publishing triggers this workflow, which builds per-platform bundles
+# and attaches them to that same release:
+#   - macOS  universal .dmg   (PlatypusGit_universal.dmg)
+#   - Windows x64 .msi         (PlatypusGit_x64.msi)
+#   - Linux  amd64 .deb + .AppImage (PlatypusGit_amd64.deb / .AppImage)
 #
 # Nothing releases on a plain push to main — you control when "latest" moves by
 # choosing when to publish. Mark a release as a "prerelease" to build + attach
@@ -110,4 +113,131 @@ jobs:
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/PlatypusGit_universal.dmg
+          fail_on_unmatched_files: true
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Inject version ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          tmp="$(mktemp)"
+          jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
+          jq --arg v "$v" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
+          sed -i -E "s/^version = \".*\"/version = \"$v\"/" src-tauri/Cargo.toml
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app
+        run: pnpm tauri build
+
+      - name: Rename bundle to stable name
+        shell: bash
+        run: |
+          set -euo pipefail
+          msi_dir="src-tauri/target/release/bundle/msi"
+          cp "$(ls "$msi_dir"/*.msi | head -n1)" "$msi_dir/PlatypusGit_x64.msi"
+
+      - name: Attach installer to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          files: src-tauri/target/release/bundle/msi/PlatypusGit_x64.msi
+          fail_on_unmatched_files: true
+
+  linux:
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Install system deps
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Inject version ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          tmp="$(mktemp)"
+          jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
+          jq --arg v "$v" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
+          sed -i -E "s/^version = \".*\"/version = \"$v\"/" src-tauri/Cargo.toml
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app
+        run: pnpm tauri build
+
+      - name: Rename bundles to stable names
+        run: |
+          set -euo pipefail
+          deb_dir="src-tauri/target/release/bundle/deb"
+          appimage_dir="src-tauri/target/release/bundle/appimage"
+          cp "$(ls "$deb_dir"/*.deb | head -n1)" "$deb_dir/PlatypusGit_amd64.deb"
+          cp "$(ls "$appimage_dir"/*.AppImage | head -n1)" "$appimage_dir/PlatypusGit_amd64.AppImage"
+
+      - name: Attach bundles to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          files: |
+            src-tauri/target/release/bundle/deb/PlatypusGit_amd64.deb
+            src-tauri/target/release/bundle/appimage/PlatypusGit_amd64.AppImage
           fail_on_unmatched_files: true
