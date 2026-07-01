@@ -18,6 +18,7 @@ import {
   type DirtyChoice,
 } from "@/features/reflog/DirtyTreeDialog";
 import { relativeTime } from "@/lib/derive";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import type { FileDiff, ReflogOp } from "@/lib/types";
 
 function opLabel(op: ReflogOp): string {
@@ -194,14 +195,17 @@ export function ReflogScreen() {
       </PGToolbar>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <div
+        <PGPane
+          id="reflog.list"
           style={{
             width: "35%",
             minWidth: 280,
             borderRight: "1px solid var(--border-0)",
-            overflow: "auto",
+            display: "flex",
+            flexDirection: "column",
           }}
         >
+          <FocusableScroll style={{ flex: 1 }} ariaLabel="Reflog entries">
           {loading && (
             <div style={{ padding: 16 }}>
               <PGSpinner />
@@ -224,9 +228,14 @@ export function ReflogScreen() {
               onClick={() => void selectEntry(e.oid)}
             />
           ))}
-        </div>
+          </FocusableScroll>
+        </PGPane>
 
-        <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
+        <PGPane
+          id="reflog.detail"
+          style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}
+        >
+          <FocusableScroll style={{ flex: 1, padding: 12 }} ariaLabel="Reflog entry detail">
           {!selectedEntry && (
             <PGEmpty title="Pick an entry">
               Select a reflog entry on the left to preview where HEAD was at
@@ -263,7 +272,8 @@ export function ReflogScreen() {
               </div>
             </div>
           )}
-        </div>
+          </FocusableScroll>
+        </PGPane>
       </div>
 
       {actionOpen && selectedEntry && (

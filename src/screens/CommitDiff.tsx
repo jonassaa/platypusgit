@@ -4,6 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { diffCommits } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
 type Target =
@@ -59,11 +60,12 @@ export function CommitDiffScreen() {
 
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-      <div style={{
-        width: 260, overflow: "auto",
+      <PGPane id="commitDiff.files" style={{
+        width: 260,
         borderRight: "1px solid var(--border-0)",
         fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)",
       }}>
+        <FocusableScroll style={{ height: "100%" }} ariaLabel="Changed files">
         <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-0)" }}>
           {target.kind === "commit-vs-wt"
             ? `${target.oid.slice(0, 7)} → HEAD`
@@ -86,8 +88,10 @@ export function CommitDiffScreen() {
             {d.path}
           </div>
         ))}
-      </div>
-      <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
+        </FocusableScroll>
+      </PGPane>
+      <PGPane id="commitDiff.view" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+      <FocusableScroll style={{ flex: 1, padding: 12 }} ariaLabel="Diff">
         {current && current.hunks.map((h, i) => (
           <div key={i} style={{ marginBottom: 16 }}>
             <div style={{ color: "var(--fg-3)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)" }}>
@@ -106,7 +110,8 @@ export function CommitDiffScreen() {
             ))}
           </div>
         ))}
-      </div>
+      </FocusableScroll>
+      </PGPane>
     </div>
   );
 }

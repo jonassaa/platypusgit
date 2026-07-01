@@ -19,6 +19,7 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import type { BranchInfo, StashInfo, TagInfo } from "@/lib/types";
 
 type Selection =
@@ -197,7 +198,8 @@ export function BranchesScreen() {
         fetching={!!activity.fetch}
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+        <PGPane id="branches.list" style={{ flex: 1, minWidth: 0 }}>
+          <FocusableScroll ariaLabel="Refs list">
           <div style={{ minWidth: totalWidth }}>
             <div
               style={{
@@ -531,13 +533,15 @@ export function BranchesScreen() {
               </div>
             ))}
           </div>
-        </div>
+          </FocusableScroll>
+        </PGPane>
 
         <PGResizeHandle
           onDrag={(d) => inspectorPane.resize(-d)}
           side="left"
         />
-        <div
+        <PGPane
+          id="branches.detail"
           style={{
             width: inspectorPane.width,
             borderLeft: "1px solid var(--border-0)",
@@ -575,7 +579,7 @@ export function BranchesScreen() {
             {selectedTag && <TagActions tag={selectedTag} />}
             {selectedStash && <StashActions stash={selectedStash} />}
           </div>
-        </div>
+        </PGPane>
       </div>
       {branchMenu}
       {tagMenu}

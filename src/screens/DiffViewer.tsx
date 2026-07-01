@@ -20,6 +20,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
 export function DiffViewerScreen() {
@@ -217,16 +218,17 @@ export function DiffViewerScreen() {
           background: "var(--bg-0)",
         }}
       >
-        <div
+        <PGPane
+          id="diff.files"
           style={{
             width: listPane.width,
             flexShrink: 0,
             borderRight: "1px solid var(--border-0)",
             background: "var(--bg-1)",
-            overflow: "auto",
             minWidth: 0,
           }}
         >
+          <FocusableScroll style={{ height: "100%" }} ariaLabel="Changed files">
           {filtered.map((f) => (
             <div
               key={f.path}
@@ -263,9 +265,11 @@ export function DiffViewerScreen() {
               </span>
             </div>
           ))}
-        </div>
+          </FocusableScroll>
+        </PGPane>
         <PGResizeHandle onDrag={listPane.resize} />
-        <div
+        <PGPane
+          id="diff.view"
           style={{
             flex: 1,
             minWidth: 0,
@@ -288,7 +292,7 @@ export function DiffViewerScreen() {
             <PGEmpty icon="file" title="Binary file" />
           )}
           {!diffLoading && findFiltered && !findFiltered.binary && mode === "unified" && (
-            <div style={{ flex: 1, overflow: "auto" }}>
+            <FocusableScroll style={{ flex: 1 }} ariaLabel="Diff">
               {findFiltered.hunks.length === 0 && findQuery.trim() && (
                 <PGEmpty icon="search" title="No matches" />
               )}
@@ -300,12 +304,12 @@ export function DiffViewerScreen() {
                   expanded={true}
                 />
               ))}
-            </div>
+            </FocusableScroll>
           )}
           {!diffLoading && findFiltered && !findFiltered.binary && mode === "split" && (
             <PGSideBySideDiff left={split.left} right={split.right} />
           )}
-        </div>
+        </PGPane>
       </div>
     </>
   );

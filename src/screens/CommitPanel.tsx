@@ -25,6 +25,7 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import { currentBranch, isStaged, isUnstaged, statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
 import type { CommitInfo, DiffKind, FileDiff, FileStatus } from "@/lib/types";
@@ -229,7 +230,8 @@ export function CommitPanelScreen() {
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
       {/* Column 1: change list */}
-      <div
+      <PGPane
+        id="commit.files"
         style={{
           width: changesPane.width,
           flexShrink: 0,
@@ -282,7 +284,7 @@ export function CommitPanelScreen() {
             />
           ))}
         </div>
-        <div style={{ flex: 1, overflow: "auto" }}>
+        <FocusableScroll style={{ flex: 1 }} ariaLabel="Changed files">
           <Header
             title="CHANGES"
             badge={<PGBadge tone="warn">{unstaged.length}</PGBadge>}
@@ -330,12 +332,13 @@ export function CommitPanelScreen() {
               onToggle={() => stage([f.path])}
             />
           ))}
-        </div>
-      </div>
+        </FocusableScroll>
+      </PGPane>
       <PGResizeHandle onDrag={changesPane.resize} />
 
       {/* Column 2: diff */}
-      <div
+      <PGPane
+        id="commit.diff"
         style={{
           flex: 1,
           minWidth: 0,
@@ -381,7 +384,7 @@ export function CommitPanelScreen() {
             }}
           />
         </div>
-        <div style={{ flex: 1, overflow: "auto" }}>
+        <FocusableScroll style={{ flex: 1 }} ariaLabel="Diff">
           {diffLoading && (
             <div
               style={{
@@ -445,14 +448,15 @@ export function CommitPanelScreen() {
             diffMode === "split" && (
               <PGSideBySideDiff {...diffToSplit(diff)} />
             )}
-        </div>
+        </FocusableScroll>
         {moreMenu.menu}
-      </div>
+      </PGPane>
 
       <PGResizeHandle onDrag={(d) => composerPane.resize(-d)} side="left" />
 
       {/* Column 3: message composer */}
-      <div
+      <PGPane
+        id="commit.message"
         style={{
           width: composerPane.width,
           flexShrink: 0,
@@ -540,6 +544,7 @@ export function CommitPanelScreen() {
               onChange={setBody}
               rows={8}
               mono
+              className="focusable"
               style={{ flex: 1 }}
             />
           </div>
@@ -647,7 +652,7 @@ export function CommitPanelScreen() {
             </PGButton>
           </div>
         </div>
-      </div>
+      </PGPane>
       {fileMenu}
     </div>
   );

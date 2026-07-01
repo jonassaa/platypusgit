@@ -13,6 +13,7 @@ import {
   useContextMenu,
   usePaneWidth,
 } from "@/design";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch } from "@/lib/derive";
 import { conflictSides } from "@/lib/tauri";
@@ -42,18 +43,21 @@ function repoStateLabel(state: RepoState): string | null {
 // ─── SideColumn ─────────────────────────────────────────────────────────────
 
 function SideColumn({
+  id,
   label,
   color,
   content,
   loading,
 }: {
+  id: string;
   label: string;
   color: string;
   content: string | null;
   loading: boolean;
 }) {
   return (
-    <div
+    <PGPane
+      id={id}
       style={{
         flex: 1,
         minWidth: 0,
@@ -76,10 +80,10 @@ function SideColumn({
       >
         {label}
       </div>
-      <div
+      <FocusableScroll
+        ariaLabel={label}
         style={{
           flex: 1,
-          overflow: "auto",
           padding: "8px 12px",
           fontFamily: "var(--font-mono)",
           fontSize: "var(--fs-12)",
@@ -94,8 +98,8 @@ function SideColumn({
         ) : (
           <span style={{ color: "var(--fg-3)" }}>(no content)</span>
         )}
-      </div>
-    </div>
+      </FocusableScroll>
+    </PGPane>
   );
 }
 
@@ -270,6 +274,7 @@ function ConflictDetail({ path }: { path: string }) {
           {/* 3-column diff */}
           <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
             <SideColumn
+              id="conflict.ours"
               label="OURS"
               color="var(--accent)"
               content={sides?.ours ?? null}
@@ -277,6 +282,7 @@ function ConflictDetail({ path }: { path: string }) {
             />
             <div style={{ width: 1, background: "var(--border-0)" }} />
             <SideColumn
+              id="conflict.base"
               label="BASE"
               color="var(--fg-2)"
               content={sides?.base ?? null}
@@ -284,6 +290,7 @@ function ConflictDetail({ path }: { path: string }) {
             />
             <div style={{ width: 1, background: "var(--border-0)" }} />
             <SideColumn
+              id="conflict.theirs"
               label="THEIRS"
               color="var(--accent-2, var(--fg-1))"
               content={sides?.theirs ?? null}
@@ -407,7 +414,8 @@ export function ConflictScreen() {
         unresolved={unresolved}
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <div
+        <PGPane
+          id="conflict.files"
           style={{
             width: listPane.width,
             flexShrink: 0,
@@ -421,13 +429,13 @@ export function ConflictScreen() {
           <PGSectionHeader>
             CONFLICTING FILES ({conflicts.length})
           </PGSectionHeader>
-          <div
+          <FocusableScroll
+            ariaLabel="Conflicting files"
             style={{
               padding: 10,
               display: "flex",
               flexDirection: "column",
               gap: 6,
-              overflow: "auto",
               flex: 1,
             }}
           >
@@ -451,14 +459,14 @@ export function ConflictScreen() {
                 }}
               />
             ))}
-          </div>
+          </FocusableScroll>
           <PGProgressBar
             value={(resolved / Math.max(1, conflicts.length)) * 100}
             tone="success"
             height={2}
             style={{ borderRadius: 0 }}
           />
-        </div>
+        </PGPane>
         <PGResizeHandle onDrag={listPane.resize} />
 
         {selectedConflict ? (

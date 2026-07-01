@@ -4,6 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { fileHistory } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import type { CommitInfo } from "@/lib/types";
 
 export function FileHistoryScreen() {
@@ -44,7 +45,7 @@ export function FileHistoryScreen() {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <PGPane id="fileHistory.list" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{
         padding: "8px 12px",
         borderBottom: "1px solid var(--border-0)",
@@ -58,7 +59,7 @@ export function FileHistoryScreen() {
       {!loading && !error && commits.length === 0 && (
         <PGEmpty icon="history" title="No commits touched this file" />
       )}
-      <div style={{ flex: 1, overflow: "auto" }}>
+      <FocusableScroll style={{ flex: 1 }}>
         {commits.map((c) => (
           <div key={c.oid} style={{
             display: "flex",
@@ -73,7 +74,7 @@ export function FileHistoryScreen() {
             <span style={{ color: "var(--fg-3)" }}>{c.author}</span>
           </div>
         ))}
-      </div>
-    </div>
+      </FocusableScroll>
+    </PGPane>
   );
 }

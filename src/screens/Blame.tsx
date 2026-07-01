@@ -4,6 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { blameFile } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import type { BlameLine } from "@/lib/types";
 
 export function BlameScreen() {
@@ -44,7 +45,7 @@ export function BlameScreen() {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <PGPane id="blame.content" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{
         padding: "8px 12px",
         borderBottom: "1px solid var(--border-0)",
@@ -55,8 +56,8 @@ export function BlameScreen() {
       </div>
       {loading && <div style={{ padding: 12 }}><PGSpinner /></div>}
       {error && <div style={{ padding: 12, color: "var(--git-removed)" }}>{error}</div>}
-      <div style={{
-        flex: 1, overflow: "auto",
+      <FocusableScroll style={{
+        flex: 1,
         fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)",
       }}>
         {lines.map((l) => (
@@ -74,7 +75,7 @@ export function BlameScreen() {
             <span style={{ flex: 1 }}>{l.content}</span>
           </div>
         ))}
-      </div>
-    </div>
+      </FocusableScroll>
+    </PGPane>
   );
 }
