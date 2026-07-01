@@ -18,15 +18,15 @@ const year = 2026;
       </div>
       <div>
         <h4>Get involved</h4>
-        <a href={site.repo + '/issues'} target="_blank" rel="noopener">Issues</a>
+        <a href={site.repo + '/issues'} target="_blank" rel="noopener">Issues &amp; feature requests</a>
         <a href={site.repo + '/blob/main/CONTRIBUTING.md'} target="_blank" rel="noopener">Contributing</a>
-        <a href={site.buyMeACoffee} target="_blank" rel="noopener">☕ Sponsor</a>
+        <a href={base + '/support'}>♥ Support the project</a>
       </div>
     </div>
   </div>
   <div class="container footer-legal">
+    <span>Free &amp; open source under <a href={site.repo + '/blob/main/LICENSE'} target="_blank" rel="noopener">{site.license}</a></span>
     <span>© {year} {site.author}</span>
-    <span>{site.license}</span>
   </div>
 </footer>
 <style>
@@ -39,4 +39,6 @@ const year = 2026;
   .footer-cols a { display: block; color: var(--fg-1); font-size: 14px; margin-bottom: var(--s-3); }
   .footer-legal { display: flex; justify-content: space-between; margin-top: var(--s-9);
     padding-top: var(--s-6); border-top: 1px solid var(--border-0); color: var(--fg-3); font-size: 13px; }
+  .footer-legal a { color: var(--fg-2); }
+  .footer-legal a:hover { color: var(--accent); }
 </style>

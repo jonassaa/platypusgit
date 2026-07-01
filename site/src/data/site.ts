@@ -11,6 +11,14 @@ export const site = {
   author: 'Jonas Aasberg',
 };
 
+// Per-OS downloads shown on the landing page. `available: false` renders a
+// non-clickable "Coming soon" button. Only macOS ships a build today.
+export const downloads = [
+  { key: 'macos', label: 'macOS', anchor: '/download#macos', note: 'Apple Silicon & Intel · .dmg', available: true },
+  { key: 'windows', label: 'Windows', anchor: '/download#windows', note: 'Windows 10 & 11 · .msi', available: false },
+  { key: 'linux', label: 'Linux', anchor: '/download#linux', note: '.deb & AppImage', available: false },
+] as const;
+
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 export const nav = [
