@@ -214,7 +214,7 @@ Do not create empty / merge commits. Do not amend published commits without aski
 
 - **Never commit directly to `main`.** Branch first: `feat/...`, `fix/...`, `chore/...`, `docs/...`.
 - Work as a series of small, focused commits on the feature branch (Conventional Commits throughout).
-- Keep the branch current by **rebasing onto `main`**, not merging `main` in — history stays linear, no merge commits on the branch.
-- Integrate via **rebase and merge** (replays branch commits onto `main`). Not squash, not merge-commit. `main` keeps the individual commits with a linear history.
+- Keep the branch current by **rebasing onto `main`**, not merging `main` in — keeps a clean branch and simple conflict resolution.
+- Integrate via **squash and merge** — the whole branch collapses into a single commit on `main`. Write a clear Conventional-Commit PR title + description; that becomes the squash commit message. Individual branch commits need not each be buildable, since they collapse on merge.
 - Resolve conflicts during rebase; force-push the branch (`--force-with-lease`) after rebasing.
 - Branch and open a PR even for assistant-driven work — don't push straight to `main`.

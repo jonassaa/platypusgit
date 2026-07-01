@@ -11,8 +11,8 @@
 ## Checklist
 
 - [ ] One logical change, focused PR
-- [ ] Branched off `main`; rebased onto latest `main` (no merge commits — we **rebase and merge**)
-- [ ] Commit messages follow Conventional Commits (`feat(scope): …`); each commit is meaningful and buildable
+- [ ] Branched off `main`; rebased onto latest `main` (PR is **squash-merged** into one commit)
+- [ ] PR title follows Conventional Commits (`feat(scope): …`) — it becomes the squash commit message
 - [ ] `pnpm tsc --noEmit` passes
 - [ ] `cargo test --manifest-path src-tauri/Cargo.toml` passes
 - [ ] `pnpm test` passes

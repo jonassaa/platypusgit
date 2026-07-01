@@ -98,12 +98,12 @@ chore: bump tauri to 2.x
 
 ## Branching & merge workflow
 
-We use **feature branches + rebase and merge**. `main` stays linear with no merge commits.
+We use **feature branches + squash and merge**. Each PR lands on `main` as a single commit, so `main` stays linear.
 
 1. Branch off `main` — `feat/...`, `fix/...`, `chore/...`, `docs/...`. Never commit to `main` directly.
 2. Build the change as a series of small, focused commits (Conventional Commits throughout).
 3. Keep the branch current by **rebasing onto `main`** (`git rebase main`), not by merging `main` in. Force-push with `--force-with-lease` after a rebase.
-4. PRs are integrated with GitHub's **Rebase and merge** — your commits are replayed onto `main` as-is. Avoid squash and merge-commit. Keep each commit meaningful and buildable, since they all land on `main`.
+4. PRs are integrated with GitHub's **Squash and merge** — all your commits collapse into one commit on `main`. Write a clear Conventional-Commit PR title + description; it becomes the squash commit message.
 
 ## Pull requests
 
