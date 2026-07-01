@@ -60,6 +60,8 @@ jobs:
   macos-universal:
     needs: version
     runs-on: macos-14
+    outputs:
+      sha256: ${{ steps.sha.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,6 +109,15 @@ jobs:
           src_dir="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
           dmg="$(ls "$src_dir"/*.dmg | head -n1)"
           cp "$dmg" "$src_dir/PlatypusGit_universal.dmg"
+
+      - name: Compute .dmg sha256
+        id: sha
+        run: |
+          set -euo pipefail
+          f="src-tauri/target/universal-apple-darwin/release/bundle/dmg/PlatypusGit_universal.dmg"
+          sum="$(shasum -a 256 "$f" | awk '{print $1}')"
+          echo "sha256: $sum"
+          echo "sha256=$sum" >> "$GITHUB_OUTPUT"
 
       - name: Attach .dmg to release
         uses: softprops/action-gh-release@v2
@@ -241,3 +252,64 @@ jobs:
             src-tauri/target/release/bundle/deb/PlatypusGit_amd64.deb
             src-tauri/target/release/bundle/appimage/PlatypusGit_amd64.AppImage
           fail_on_unmatched_files: true
+
+  # Pin the Homebrew cask to this release: rewrite version + sha256 in
+  # jonassaa/homebrew-platypusgit and commit straight to that tap's main.
+  #
+  # Only real (non-prerelease) PUBLISHED releases bump the cask — prereleases
+  # and manual workflow_dispatch rebuilds are skipped so "brew install" never
+  # jumps to an unfinished build. Requires the macOS build's sha256 output.
+  #
+  # Cross-repo push: GITHUB_TOKEN can't reach the tap, so we mint a short-lived
+  # token from a GitHub App installed on the tap (app id in vars.TAP_APP_ID,
+  # private key in secrets.TAP_APP_PRIVATE_KEY). The commit is attributed to
+  # github-actions[bot].
+  bump-cask:
+    needs: [version, macos-universal]
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    steps:
+      - name: Mint tap token from GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: jonassaa
+          repositories: homebrew-platypusgit
+
+      - name: Checkout tap
+        uses: actions/checkout@v4
+        with:
+          repository: jonassaa/homebrew-platypusgit
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+
+      - name: Rewrite cask version + sha256
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          sha="${{ needs.macos-universal.outputs.sha256 }}"
+          if [ -z "$sha" ]; then
+            echo "Empty sha256 from macos-universal job" >&2
+            exit 1
+          fi
+          f="tap/Casks/platypusgit.rb"
+          sed -i -E "s/^  version \".*\"/  version \"$v\"/" "$f"
+          sed -i -E "s/^  sha256 \".*\"/  sha256 \"$sha\"/" "$f"
+          echo "--- updated cask ---"
+          grep -E '^  (version|sha256|url)' "$f"
+
+      - name: Commit & push to tap main
+        run: |
+          set -euo pipefail
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Cask already up to date — nothing to commit"
+            exit 0
+          fi
+          git add Casks/platypusgit.rb
+          git commit -m "chore: bump platypusgit to ${{ needs.version.outputs.version }}"
+          git push
