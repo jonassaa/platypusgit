@@ -32,7 +32,7 @@ import {
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
-import { PGPane } from "@/features/keymap";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import type {
   BranchInfo,
   FileContent,
@@ -314,7 +314,6 @@ export function RepoBrowserScreen() {
         {/* File tree */}
         <PGPane
           id="repo.tree"
-          neighbors={{ left: "activitybar", right: "repo.preview" }}
           style={{
             width: treePane.width,
             flexShrink: 0,
@@ -396,7 +395,6 @@ export function RepoBrowserScreen() {
         {/* Preview + meta */}
         <PGPane
           id="repo.preview"
-          neighbors={{ left: "repo.tree", right: "repo.inspector" }}
           style={{
             flex: 1,
             minWidth: 0,
@@ -489,7 +487,7 @@ export function RepoBrowserScreen() {
               Blame
             </PGButton>
           </div>
-          <div style={{ flex: 1, overflow: "auto" }}>
+          <FocusableScroll style={{ flex: 1 }} ariaLabel="File preview">
             {!selectedFile && (
               <PGEmpty
                 icon="fileCode"
@@ -556,7 +554,7 @@ export function RepoBrowserScreen() {
                   Couldn&apos;t produce a diff for this file.
                 </PGEmpty>
               )}
-          </div>
+          </FocusableScroll>
         </PGPane>
 
         <PGResizeHandle
@@ -567,7 +565,6 @@ export function RepoBrowserScreen() {
         {/* Right inspector */}
         <PGPane
           id="repo.inspector"
-          neighbors={{ left: "repo.preview" }}
           style={{
             width: inspectorPane.width,
             flexShrink: 0,

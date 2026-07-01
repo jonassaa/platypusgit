@@ -366,7 +366,7 @@ function AppBody({
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-      <PGPane id={ACTIVITY_BAR_ID} neighbors={{}} isBar style={{ flexShrink: 0 }}>
+      <PGPane id={ACTIVITY_BAR_ID} isBar style={{ flexShrink: 0 }}>
         <PGActivityBar
           value={screen}
           onChange={(id) => setScreen(id as ScreenId)}

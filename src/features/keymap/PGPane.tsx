@@ -1,20 +1,23 @@
-// PGPane — wraps a focusable region. Registers itself with the focus store,
-// renders a focus ring via data-pg-focused (styled in index.css), and grabs
-// focus on click. Pane-scoped actions (list.*, pane.*) target the focused pane.
+// PGPane — wraps a focusable region. Registers its element with the focus store
+// (geometry drives Alt+Arrow traversal), renders a focus ring via
+// data-pg-focused, and grabs focus on click.
+//
+// On gaining focus it delegates DOM focus to an inner `.focusable` element if
+// present (so a pane's own arrow-key handler receives events), else focuses the
+// wrapper. Any focus landing inside the pane syncs the store, keeping the ring
+// in step with real DOM focus.
 
 import React from "react";
-import { useFocusStore, type Neighbors } from "./useFocusStore";
+import { useFocusStore } from "./useFocusStore";
 
 export function PGPane({
   id,
-  neighbors,
   children,
   className,
   style,
   isBar,
 }: {
   id: string;
-  neighbors: Neighbors;
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
@@ -24,23 +27,22 @@ export function PGPane({
   const focused = useFocusStore((s) => s.focused === id);
   const ref = React.useRef<HTMLDivElement>(null);
 
-  React.useEffect(
-    () =>
-      useFocusStore
-        .getState()
-        .register(id, neighbors, { isBar, autoFocus: !isBar }),
-    // Re-register when identity or any neighbor edge changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [id, neighbors.left, neighbors.right, neighbors.up, neighbors.down, isBar],
-  );
+  React.useEffect(() => {
+    return useFocusStore.getState().register(id, ref.current, {
+      isBar,
+      autoFocus: !isBar,
+    });
+  }, [id, isBar]);
 
-  // Mirror logical focus onto the DOM: when this pane gains focus (e.g. via
-  // Alt+Arrow), move DOM focus into it — unless focus is already inside, so we
-  // don't steal it from an inner input. Keeps existing per-pane key handlers
-  // (tree arrows, etc.) receiving events that match the visible focus ring.
+  // Move real DOM focus to the pane's inner focusable target (or the wrapper)
+  // whenever this pane becomes the focused pane — unless focus is already inside.
   React.useEffect(() => {
     const el = ref.current;
-    if (focused && el && !el.contains(document.activeElement)) el.focus();
+    if (!focused || !el) return;
+    if (el.contains(document.activeElement)) return;
+    const target =
+      el.querySelector<HTMLElement>(".focusable, [data-pg-focus-target]") ?? el;
+    target.focus({ preventScroll: false });
   }, [focused]);
 
   return (
@@ -52,6 +54,7 @@ export function PGPane({
       className={className}
       style={style}
       onMouseDown={() => useFocusStore.getState().focus(id)}
+      onFocusCapture={() => useFocusStore.getState().focus(id)}
     >
       {children}
     </div>

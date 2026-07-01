@@ -1,44 +1,64 @@
-// Focus model — tracks which pane currently holds focus and the spatial
-// neighbor graph between panes. Alt+Arrow actions call `move` to traverse it.
-// Panes register themselves via <PGPane> on mount.
+// Focus model — tracks which pane holds focus. Panes register their DOM element
+// via <PGPane>; Alt+Arrow traversal (`move`) picks the nearest pane by geometry
+// (see spatial.ts), so no screen has to hand-code a neighbor graph.
 //
-// The activity bar registers as a special "bar" pane: it never auto-grabs focus
-// and is excluded from "first content pane" resolution, but it is reachable via
-// the neighbor graph (Alt+Arrow) and as the move target from content edges.
+// The activity bar registers as a "bar" pane: it never auto-grabs focus and is
+// excluded from "first content pane" resolution, but is reachable spatially
+// (it's the leftmost pane, so Alt+Left from any content pane finds it).
 
 import { create } from "zustand";
-
-export type Neighbors = {
-  left?: string;
-  right?: string;
-  up?: string;
-  down?: string;
-};
+import { pickNeighbor, topLeftmost, type Dir, type Rect } from "./spatial";
 
 interface RegisterOpts {
-  /** Auto-grab focus when this is the first content pane / a focus is pending.
-   *  Default true. The bar passes false. */
   autoFocus?: boolean;
-  /** Marks the activity bar — excluded from content-focus resolution. */
   isBar?: boolean;
+}
+
+interface PaneEntry {
+  el: HTMLElement | null;
+  isBar: boolean;
 }
 
 interface FocusState {
   focused: string | null;
-  panes: Map<string, Neighbors>;
-  /** Registration order, used to find the "first" content pane. */
+  panes: Map<string, PaneEntry>;
   order: string[];
   barId: string | null;
-  /** Set when a screen switch wants the next content pane to take focus. */
   pendingContentFocus: boolean;
-  register: (id: string, neighbors: Neighbors, opts?: RegisterOpts) => () => void;
+  register: (
+    id: string,
+    el: HTMLElement | null,
+    opts?: RegisterOpts,
+  ) => () => void;
   focus: (id: string) => void;
-  move: (dir: keyof Neighbors) => void;
-  /** Focus the first registered content pane now, or arm it for the next one. */
+  move: (dir: Dir) => void;
   requestContentFocus: () => void;
 }
 
-function firstContentId(s: Pick<FocusState, "order" | "barId" | "panes">): string | null {
+function rectOf(el: HTMLElement | null): Rect | null {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  // jsdom / detached nodes report an all-zero rect — treat as unusable.
+  if (r.width === 0 && r.height === 0) return null;
+  return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+}
+
+function contentPanes(s: FocusState): { id: string; rect: Rect }[] {
+  const out: { id: string; rect: Rect }[] = [];
+  for (const id of s.order) {
+    const entry = s.panes.get(id);
+    if (!entry || entry.isBar) continue;
+    const rect = rectOf(entry.el);
+    if (rect) out.push({ id, rect });
+  }
+  return out;
+}
+
+function firstContentId(s: FocusState): string | null {
+  const withRects = contentPanes(s);
+  const spatial = topLeftmost(withRects);
+  if (spatial) return spatial;
+  // Fallback (no layout, e.g. tests): first non-bar pane in registration order.
   return s.order.find((id) => id !== s.barId && s.panes.has(id)) ?? null;
 }
 
@@ -49,16 +69,18 @@ export const useFocusStore = create<FocusState>((set, get) => ({
   barId: null,
   pendingContentFocus: false,
 
-  register(id, neighbors, opts) {
+  register(id, el, opts) {
     const isBar = opts?.isBar ?? false;
     const autoFocus = opts?.autoFocus ?? true;
-    get().panes.set(id, neighbors);
+    get().panes.set(id, { el, isBar });
     if (!get().order.includes(id)) set({ order: [...get().order, id] });
     if (isBar) set({ barId: id });
 
-    // Claim focus when this is a content pane and either nothing is focused yet
-    // (initial load) or a screen switch armed a pending content-focus request.
-    if (autoFocus && !isBar && (get().pendingContentFocus || get().focused === null)) {
+    if (
+      autoFocus &&
+      !isBar &&
+      (get().pendingContentFocus || get().focused === null)
+    ) {
       set({ focused: id, pendingContentFocus: false });
     }
 
@@ -67,7 +89,6 @@ export const useFocusStore = create<FocusState>((set, get) => ({
       set({ order: get().order.filter((x) => x !== id) });
       if (get().barId === id) set({ barId: null });
       if (get().focused === id) {
-        // Prefer falling back to another content pane, else the bar, else none.
         const next = firstContentId(get()) ?? get().barId ?? null;
         set({ focused: next });
       }
@@ -79,15 +100,24 @@ export const useFocusStore = create<FocusState>((set, get) => ({
   },
 
   move(dir) {
-    const cur = get().focused;
-    if (!cur) return;
-    // From the bar, Alt+Right enters the content area's first pane.
-    if (cur === get().barId && dir === "right") {
-      get().requestContentFocus();
+    const s = get();
+    const cur = s.focused;
+    if (!cur) {
+      // Nothing focused yet → enter the first content pane.
+      s.requestContentFocus();
       return;
     }
-    const next = get().panes.get(cur)?.[dir];
-    if (next && get().panes.has(next)) set({ focused: next });
+    const curEl = s.panes.get(cur)?.el ?? null;
+    const curRect = rectOf(curEl);
+    const candidates: { id: string; rect: Rect }[] = [];
+    for (const id of s.order) {
+      if (id === cur) continue;
+      const rect = rectOf(s.panes.get(id)?.el ?? null);
+      if (rect) candidates.push({ id, rect });
+    }
+    if (!curRect || candidates.length === 0) return;
+    const next = pickNeighbor(curRect, candidates, dir);
+    if (next) set({ focused: next });
   },
 
   requestContentFocus() {

@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useFocusStore } from "./useFocusStore";
 
+// Geometry-dependent behavior (move/first-pane spatial ordering) is covered by
+// spatial.test.ts — jsdom has no layout, so these tests exercise registration,
+// ordering fallback, bar exclusion and pending-focus only.
+
 function reset() {
   useFocusStore.setState({
     focused: null,
@@ -16,50 +20,40 @@ describe("useFocusStore", () => {
 
   it("bar pane does not auto-grab focus; first content pane does", () => {
     const s = useFocusStore.getState();
-    s.register("activitybar", {}, { isBar: true, autoFocus: false });
+    s.register("activitybar", null, { isBar: true, autoFocus: false });
     expect(useFocusStore.getState().focused).toBe(null);
-    s.register("repo.tree", { left: "activitybar" });
+    expect(useFocusStore.getState().barId).toBe("activitybar");
+    s.register("repo.tree", null);
     expect(useFocusStore.getState().focused).toBe("repo.tree");
   });
 
   it("requestContentFocus focuses the first non-bar pane", () => {
     const s = useFocusStore.getState();
-    s.register("activitybar", {}, { isBar: true, autoFocus: false });
-    s.register("repo.tree", {});
-    s.register("repo.preview", {});
+    s.register("activitybar", null, { isBar: true, autoFocus: false });
+    s.register("repo.tree", null);
+    s.register("repo.preview", null);
     useFocusStore.setState({ focused: "activitybar" });
     useFocusStore.getState().requestContentFocus();
     expect(useFocusStore.getState().focused).toBe("repo.tree");
-  });
-
-  it("move right from the bar enters the content area", () => {
-    const s = useFocusStore.getState();
-    s.register("activitybar", {}, { isBar: true, autoFocus: false });
-    s.register("repo.tree", { left: "activitybar" });
-    useFocusStore.setState({ focused: "activitybar" });
-    useFocusStore.getState().move("right");
-    expect(useFocusStore.getState().focused).toBe("repo.tree");
-  });
-
-  it("move left from the leftmost content pane reaches the bar", () => {
-    const s = useFocusStore.getState();
-    s.register("activitybar", {}, { isBar: true, autoFocus: false });
-    s.register("repo.tree", { left: "activitybar" });
-    useFocusStore.setState({ focused: "repo.tree" });
-    useFocusStore.getState().move("left");
-    expect(useFocusStore.getState().focused).toBe("activitybar");
   });
 
   it("a pending content-focus request is claimed by the next content pane", () => {
     const s = useFocusStore.getState();
-    s.register("activitybar", {}, { isBar: true, autoFocus: false });
+    s.register("activitybar", null, { isBar: true, autoFocus: false });
     useFocusStore.setState({ focused: "activitybar" });
-    // No content panes yet → request is armed.
     useFocusStore.getState().requestContentFocus();
     expect(useFocusStore.getState().pendingContentFocus).toBe(true);
-    // Next content pane to mount claims it.
-    s.register("history.list", {});
+    s.register("history.list", null);
     expect(useFocusStore.getState().focused).toBe("history.list");
     expect(useFocusStore.getState().pendingContentFocus).toBe(false);
+  });
+
+  it("unregistering the focused pane falls back to another content pane", () => {
+    const s = useFocusStore.getState();
+    const un = s.register("a", null);
+    s.register("b", null);
+    expect(useFocusStore.getState().focused).toBe("a");
+    un();
+    expect(useFocusStore.getState().focused).toBe("b");
   });
 });

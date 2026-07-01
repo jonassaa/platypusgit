@@ -2,55 +2,37 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
 import { PGPane } from "./PGPane";
 import { useFocusStore } from "./useFocusStore";
-import { useKeymapStore } from "./useKeymapStore";
-import { useAction } from "./useAction";
 
-function FocusActions() {
-  useAction("pane.focusRight", () => useFocusStore.getState().move("right"), []);
-  return null;
-}
-
-const altRight = () =>
-  ({
-    key: "ArrowRight",
-    altKey: true,
-    metaKey: false,
-    ctrlKey: false,
-    shiftKey: false,
-    preventDefault() {},
-    target: document.body,
-  }) as unknown as KeyboardEvent;
-
-describe("focus model", () => {
+describe("PGPane", () => {
   beforeEach(() => {
-    useFocusStore.setState({ focused: null, panes: new Map() });
-    useKeymapStore.setState({ handlers: new Map() });
+    useFocusStore.setState({
+      focused: null,
+      panes: new Map(),
+      order: [],
+      barId: null,
+      pendingContentFocus: false,
+    });
   });
 
-  it("Alt+ArrowRight moves focus to the declared right neighbor", () => {
-    render(
-      <>
-        <FocusActions />
-        <PGPane id="a" neighbors={{ right: "b" }}>
-          A
-        </PGPane>
-        <PGPane id="b" neighbors={{ left: "a" }}>
-          B
-        </PGPane>
-      </>,
-    );
-    useFocusStore.getState().focus("a");
-    const handled = useKeymapStore.getState().dispatch(altRight());
-    expect(handled).toBe(true);
-    expect(useFocusStore.getState().focused).toBe("b");
+  it("registers on mount and the first content pane takes focus", () => {
+    render(<PGPane id="solo">S</PGPane>);
+    expect(useFocusStore.getState().focused).toBe("solo");
+    expect(useFocusStore.getState().panes.has("solo")).toBe(true);
   });
 
-  it("first registered pane takes focus automatically", () => {
+  it("a bar pane does not auto-grab focus", () => {
     render(
-      <PGPane id="solo" neighbors={{}}>
-        S
+      <PGPane id="bar" isBar>
+        B
       </PGPane>,
     );
-    expect(useFocusStore.getState().focused).toBe("solo");
+    expect(useFocusStore.getState().focused).toBe(null);
+    expect(useFocusStore.getState().barId).toBe("bar");
+  });
+
+  it("unregisters on unmount", () => {
+    const { unmount } = render(<PGPane id="solo">S</PGPane>);
+    unmount();
+    expect(useFocusStore.getState().panes.has("solo")).toBe(false);
   });
 });
