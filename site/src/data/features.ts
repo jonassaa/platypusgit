@@ -75,6 +75,24 @@ export const roadmap = [
 
 export const changelog = [
   {
+    version: '0.0.5',
+    date: '2026-07-01',
+    status: 'build',
+    notes: [
+      'Windows `.msi` now builds — added an `.ico` to the icon set so the Windows bundler stops failing.',
+      'Multi-platform release assets: macOS universal `.dmg`, Windows x64 `.msi`, Linux amd64 `.deb` + `.AppImage`.',
+    ],
+  },
+  {
+    version: '0.0.4',
+    date: '2026-07-01',
+    status: 'build',
+    notes: [
+      'First release built for all three platforms via CI — macOS `.dmg`, Windows `.msi`, Linux `.deb` + `.AppImage`.',
+      'Validates the Windows and Linux build jobs; assets attach automatically once the release workflow completes.',
+    ],
+  },
+  {
     version: '0.0.3',
     date: '2026-06-30',
     status: 'feature',
