@@ -215,6 +215,8 @@ Do not create empty / merge commits. Do not amend published commits without aski
 - **Never commit directly to `main`.** Branch first: `feat/...`, `fix/...`, `chore/...`, `docs/...`.
 - Work as a series of small, focused commits on the feature branch (Conventional Commits throughout).
 - Keep the branch current by **rebasing onto `main`**, not merging `main` in — history stays linear, no merge commits on the branch.
-- Integrate via **rebase and merge** (replays branch commits onto `main`). Not squash, not merge-commit. `main` keeps the individual commits with a linear history.
+- Integrate via **squash and merge** — a `main` ruleset enforces squash-only (`allowed_merge_methods: ["squash"]`); merge-commit and rebase-merge are blocked. `main` gets one commit per PR, linear history.
+- Since the PR squashes to a single commit anyway, squash the branch's commits into one locally (`git reset --soft origin/main` + one Conventional Commit) before merging so the squashed commit message is clean rather than an auto-concatenation.
+- **Always rebase onto the latest `main` right before merging** (`git fetch origin && git rebase origin/main`, then force-push). Never merge a PR whose branch is behind `main`.
 - Resolve conflicts during rebase; force-push the branch (`--force-with-lease`) after rebasing.
 - Branch and open a PR even for assistant-driven work — don't push straight to `main`.
