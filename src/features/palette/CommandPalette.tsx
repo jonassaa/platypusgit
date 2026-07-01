@@ -4,13 +4,12 @@ import { PGIcon, PGSearchInput } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "./usePaletteStore";
+import { buildCommands } from "./commands";
 import { fuzzyMatch } from "./fuzzyMatch";
+import { frecencyScore, bumpFrecency, loadFrecency, recentIds } from "./frecency";
 import { relativeTime } from "@/lib/derive";
+import type { PaletteItem, ResultType } from "./types";
 
-/**
- * Render `text` with the characters at `indices` emphasized. Indices that fall
- * outside the string are ignored. Empty indices → plain text.
- */
 function highlight(text: string, indices: number[]): React.ReactNode {
   if (indices.length === 0) return text;
   const hit = new Set(indices);
@@ -21,10 +20,7 @@ function highlight(text: string, indices: number[]): React.ReactNode {
     if (run === "") return;
     if (runHit) {
       out.push(
-        <span
-          key={key}
-          style={{ color: "var(--color-accent)", fontWeight: 600 }}
-        >
+        <span key={key} style={{ color: "var(--color-accent)", fontWeight: 600 }}>
           {run}
         </span>,
       );
@@ -43,23 +39,6 @@ function highlight(text: string, indices: number[]): React.ReactNode {
   return out;
 }
 
-type ResultType = "command" | "branch" | "file" | "commit";
-
-interface PaletteItem {
-  type: ResultType;
-  /** Stable key for React + nav. */
-  id: string;
-  /** String the fuzzy matcher runs against. */
-  search: string;
-  /** Primary label shown to the user. */
-  label: string;
-  /** Optional muted secondary detail. */
-  detail?: string;
-  icon: string;
-  run: () => void;
-}
-
-/** A matched candidate plus the highlight positions for its rendered label. */
 interface ScoredRow {
   item: PaletteItem;
   score: number;
@@ -72,89 +51,47 @@ const TYPE_LABEL: Record<ResultType, string> = {
   file: "Files",
   commit: "Commits",
 };
-
 const TYPE_ORDER: ResultType[] = ["command", "branch", "file", "commit"];
-
-// Per-type caps so a huge repo can't drown out other types.
-const CAP: Record<ResultType, number> = {
-  command: 12,
-  branch: 8,
-  file: 12,
-  commit: 8,
-};
-
+const CHIPS: { kind: import("./types").ChipKind; label: string }[] = [
+  { kind: "all", label: "All" },
+  { kind: "command", label: "Commands" },
+  { kind: "branch", label: "Branches" },
+  { kind: "file", label: "Files" },
+  { kind: "commit", label: "Commits" },
+];
+const CAP: Record<ResultType, number> = { command: 12, branch: 8, file: 12, commit: 8 };
+const QUICK_IDS = ["action:push-current", "action:pull-current", "screen:commit", "action:fetch-all"];
 const WIDTH = 560;
-
-/**
- * Static app-command / screen-switch entries. Screen switches go through the
- * `switch-screen` nav intent so the palette stays decoupled from AppShell's
- * local screen state.
- */
-function buildCommands(): PaletteItem[] {
-  const nav = useNavStore.getState();
-  const screen = (id: string, label: string, icon: string, shortcut?: string): PaletteItem => ({
-    type: "command",
-    id: `screen:${id}`,
-    search: `${label} ${id}`,
-    label: `Go to ${label}`,
-    detail: shortcut,
-    icon,
-    run: () => nav.setIntent({ kind: "switch-screen", screen: id }),
-  });
-  const repo = useRepoStore.getState();
-  return [
-    screen("repo", "Files", "folder", "⌘1"),
-    screen("commit", "Commit", "commit", "⌘2"),
-    screen("history", "History", "history", "⌘3"),
-    screen("branches", "Branches", "branch", "⌘4"),
-    screen("conflict", "Conflicts", "conflict", "⌘5"),
-    screen("rebase", "Rebase", "rebase", "⌘6"),
-    screen("remote", "Remotes", "link", "⌘7"),
-    screen("diff", "Diff viewer", "fileCode", "⌘8"),
-    screen("reflog", "Reflog", "clock", "⌘9"),
-    screen("settings", "Settings", "settings"),
-    {
-      type: "command",
-      id: "action:fetch-all",
-      search: "Fetch all remotes",
-      label: "Fetch all remotes",
-      icon: "fetch",
-      run: () => void repo.fetchAll(),
-    },
-    {
-      type: "command",
-      id: "action:refresh",
-      search: "Refresh repository",
-      label: "Refresh repository",
-      icon: "sync",
-      run: () => void repo.refreshAll(),
-    },
-  ];
-}
 
 export function CommandPalette() {
   const open = usePaletteStore((s) => s.open);
+  const stack = usePaletteStore((s) => s.stack);
   const query = usePaletteStore((s) => s.query);
   const setQuery = usePaletteStore((s) => s.setQuery);
   const closePalette = usePaletteStore((s) => s.closePalette);
+  const popStep = usePaletteStore((s) => s.popStep);
+  const activeChip = usePaletteStore((s) => s.activeChip);
+  const setChip = usePaletteStore((s) => s.setChip);
 
   const repoOpen = useRepoStore((s) => !!s.current);
   const branches = useRepoStore((s) => s.branches);
   const allFiles = useRepoStore((s) => s.allFiles);
   const commits = useRepoStore((s) => s.commits);
-  const checkoutBranch = useRepoStore((s) => s.checkoutBranch);
-  const refreshAllFiles = useRepoStore((s) => s.refreshAllFiles);
   const setIntent = useNavStore((s) => s.setIntent);
+
+  const step = stack[stack.length - 1];
+
+  const frecency = React.useMemo(() => loadFrecency(), [open, stack.length]);
 
   const [activeIndex, setActiveIndex] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const listRef = React.useRef<HTMLDivElement | null>(null);
   const dialogRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Build the full candidate set (independent of query).
+  // Root-step candidate set: commands (catalog) + live branch/file/commit rows.
   const candidates = React.useMemo<PaletteItem[]>(() => {
+    if (step.kind !== "root") return [];
     const items: PaletteItem[] = buildCommands();
-
     for (const b of branches) {
       items.push({
         type: "branch",
@@ -163,10 +100,9 @@ export function CommandPalette() {
         label: b.name,
         detail: b.isRemote ? "remote" : (b.upstream ?? undefined),
         icon: "branch",
-        run: () => void checkoutBranch(b.name),
+        run: () => { closePalette(); void useRepoStore.getState().checkoutBranch(b.name); },
       });
     }
-
     for (const f of allFiles) {
       const slash = f.path.lastIndexOf("/");
       items.push({
@@ -176,10 +112,9 @@ export function CommandPalette() {
         label: slash >= 0 ? f.path.slice(slash + 1) : f.path,
         detail: slash >= 0 ? f.path.slice(0, slash) : undefined,
         icon: "file",
-        run: () => setIntent({ kind: "diff-file", path: f.path }),
+        run: () => { closePalette(); setIntent({ kind: "diff-file", path: f.path }); },
       });
     }
-
     for (const c of commits) {
       items.push({
         type: "commit",
@@ -188,100 +123,122 @@ export function CommandPalette() {
         label: c.summary,
         detail: `${c.shortOid} · ${relativeTime(c.timestamp)}`,
         icon: "commit",
-        run: () => setIntent({ kind: "commit-vs-wt", oid: c.oid }),
+        run: () => { closePalette(); setIntent({ kind: "commit-vs-wt", oid: c.oid }); },
       });
     }
-
     return items;
-  }, [branches, allFiles, commits, checkoutBranch, setIntent]);
+  }, [step.kind, branches, allFiles, commits, closePalette, setIntent]);
 
-  // Filter + score + group + cap, then flatten for keyboard nav.
+  // Source list for the active step: root → candidates; pick → step.items.
+  const source: PaletteItem[] =
+    step.kind === "root" ? candidates : step.kind === "pick" ? step.items : [];
+
+  // Filter + score + (root only) group + cap, then flatten for keyboard nav.
   const { flat, groups } = React.useMemo(() => {
-    const byType: Record<ResultType, ScoredRow[]> = {
-      command: [],
-      branch: [],
-      file: [],
-      commit: [],
-    };
-    for (const item of candidates) {
-      const m = fuzzyMatch(query, item.search);
-      if (!m.matched) continue;
-      // `m.indices` index into `item.search`; the row renders `item.label`,
-      // so re-run the matcher against the label to get positions we can paint.
-      const labelIndices =
-        query.length === 0 ? [] : fuzzyMatch(query, item.label).indices;
-      byType[item.type].push({ item, score: m.score, labelIndices });
+    const byType: Record<ResultType, ScoredRow[]> = { command: [], branch: [], file: [], commit: [] };
+    for (const item of source) {
+      const mSearch = fuzzyMatch(query, item.search);
+      const mLabel = item.search !== item.label ? fuzzyMatch(query, item.label) : mSearch;
+      const best = mSearch.score >= mLabel.score ? mSearch : mLabel;
+      if (!best.matched) continue;
+      const labelIndices = query.length === 0 ? [] : mLabel.indices;
+      const boosted = best.score + frecencyScore(frecency, item.id, Date.now());
+      byType[item.type].push({ item, score: boosted, labelIndices });
     }
     const groupsOut: { type: ResultType; rows: ScoredRow[] }[] = [];
     const flatOut: ScoredRow[] = [];
     for (const type of TYPE_ORDER) {
-      const sorted = byType[type]
-        .sort((a, b) => b.score - a.score)
-        .slice(0, CAP[type]);
+      const sorted = byType[type].sort((a, b) => b.score - a.score).slice(0, CAP[type]);
       if (sorted.length === 0) continue;
       groupsOut.push({ type, rows: sorted });
       flatOut.push(...sorted);
     }
     return { flat: flatOut, groups: groupsOut };
-  }, [candidates, query]);
+  }, [source, query]);
 
-  // When opened: focus input, refresh the lazy file list, reset state.
   React.useEffect(() => {
     if (!open) return;
     setActiveIndex(0);
-    if (repoOpen) void refreshAllFiles();
+    if (repoOpen) void useRepoStore.getState().refreshAllFiles();
     const t = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(t);
-  }, [open, repoOpen, refreshAllFiles]);
+  }, [open, repoOpen, stack.length]);
 
-  React.useEffect(() => {
-    setActiveIndex(0);
-  }, [query]);
+  // Home-screen rows (computed before early return so navRows is available for effects).
+  const byId = (id: string) => candidates.find((c) => c.id === id);
+  const quickRows: PaletteItem[] =
+    step.kind === "root" && query === "" && activeChip === "all"
+      ? QUICK_IDS.map(byId).filter((x): x is PaletteItem => x != null)
+      : [];
+  const recentRows: PaletteItem[] =
+    step.kind === "root" && query === "" && activeChip === "all"
+      ? recentIds(frecency, 6)
+          .map(byId)
+          .filter((x): x is PaletteItem => x != null)
+      : [];
+  const showEmptyHome =
+    step.kind === "root" &&
+    query === "" &&
+    activeChip === "all" &&
+    (quickRows.length > 0 || recentRows.length > 0);
 
-  React.useEffect(() => {
-    if (activeIndex >= flat.length) setActiveIndex(Math.max(0, flat.length - 1));
-  }, [flat.length, activeIndex]);
+  const navRows: ScoredRow[] = showEmptyHome
+    ? [...quickRows, ...recentRows].map((item) => ({ item, score: 0, labelIndices: [] }))
+    : flat;
 
-  // Keep the active row scrolled into view.
+  React.useEffect(() => { setActiveIndex(0); }, [query]);
   React.useEffect(() => {
-    const el = listRef.current?.querySelector<HTMLElement>(
-      `[data-pal-index="${activeIndex}"]`,
-    );
+    if (activeIndex >= navRows.length) setActiveIndex(Math.max(0, navRows.length - 1));
+  }, [navRows.length, activeIndex]);
+  React.useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-pal-index="${activeIndex}"]`);
     el?.scrollIntoView?.({ block: "nearest" });
   }, [activeIndex]);
+
+  // ---- input step submit ----
+  const [inputError, setInputError] = React.useState<string | null>(null);
+  const submitInput = () => {
+    if (step.kind !== "input") return;
+    const err = step.validate?.(query) ?? null;
+    if (err) { setInputError(err); return; }
+    setInputError(null);
+    step.onSubmit(query);
+  };
+  React.useEffect(() => { setInputError(null); }, [stack.length]);
 
   if (!open) return null;
 
   const activate = (row: ScoredRow | undefined) => {
     if (!row) return;
-    closePalette();
+    const id = row.item.id;
     row.item.run();
+    if (!usePaletteStore.getState().open) bumpFrecency(id, Date.now());
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
+    if (e.key === "Tab" && e.ctrlKey && step.kind === "root") {
       e.preventDefault();
-      closePalette();
+      const i = CHIPS.findIndex((c) => c.kind === activeChip);
+      const next = (i + (e.shiftKey ? CHIPS.length - 1 : 1)) % CHIPS.length;
+      setChip(CHIPS[next].kind);
       return;
+    }
+    if (e.key === "Escape") { e.preventDefault(); popStep(); return; }
+    if (e.key === "Backspace" && query === "" && stack.length > 1) {
+      e.preventDefault(); popStep(); return;
+    }
+    if (step.kind === "input") {
+      if (e.key === "Enter") { e.preventDefault(); submitInput(); }
+      return; // input step has no list nav
     }
     if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveIndex((i) => Math.min(flat.length - 1, i + 1));
-      return;
+      e.preventDefault(); setActiveIndex((i) => Math.min(navRows.length - 1, i + 1)); return;
     }
     if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveIndex((i) => Math.max(0, i - 1));
-      return;
+      e.preventDefault(); setActiveIndex((i) => Math.max(0, i - 1)); return;
     }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      activate(flat[activeIndex]);
-      return;
-    }
+    if (e.key === "Enter") { e.preventDefault(); activate(navRows[activeIndex]); return; }
     if (e.key === "Tab") {
-      // Focus trap: cycle through the dialog's focusable elements instead of
-      // letting Tab escape to the background behind the modal.
       const root = dialogRef.current;
       if (!root) return;
       const focusable = Array.from(
@@ -289,39 +246,23 @@ export function CommandPalette() {
           'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
         ),
       ).filter((el) => el.offsetParent !== null || el === document.activeElement);
-      if (focusable.length === 0) {
-        e.preventDefault();
-        inputRef.current?.focus();
-        return;
-      }
+      if (focusable.length === 0) { e.preventDefault(); inputRef.current?.focus(); return; }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       const activeEl = document.activeElement as HTMLElement | null;
       if (e.shiftKey) {
-        if (activeEl === first || !root.contains(activeEl)) {
-          e.preventDefault();
-          last.focus();
-        }
+        if (activeEl === first || !root.contains(activeEl)) { e.preventDefault(); last.focus(); }
       } else {
-        if (activeEl === last || !root.contains(activeEl)) {
-          e.preventDefault();
-          first.focus();
-        }
+        if (activeEl === last || !root.contains(activeEl)) { e.preventDefault(); first.focus(); }
       }
     }
   };
 
   const sectionHeader = (label: string, count: number) => (
-    <div
-      style={{
-        padding: "8px 12px 2px",
-        fontFamily: "var(--font-mono)",
-        fontSize: "var(--fs-10)",
-        color: "var(--fg-2)",
-        textTransform: "uppercase",
-        letterSpacing: "0.05em",
-      }}
-    >
+    <div style={{
+      padding: "8px 12px 2px", fontFamily: "var(--font-mono)", fontSize: "var(--fs-10)",
+      color: "var(--fg-2)", textTransform: "uppercase", letterSpacing: "0.05em",
+    }}>
       {label} <span style={{ color: "var(--fg-3)" }}>({count})</span>
     </div>
   );
@@ -337,45 +278,25 @@ export function CommandPalette() {
         onClick={() => activate(row)}
         onMouseEnter={() => setActiveIndex(flatIndex)}
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          height: 30,
-          padding: "0 12px",
-          background: active ? "var(--bg-selection)" : "transparent",
-          cursor: "pointer",
-          fontFamily: "var(--font-mono)",
-          fontSize: "var(--fs-12)",
+          display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 12px",
+          background: active ? "var(--bg-selection)" : "transparent", cursor: "pointer",
+          fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)",
         }}
       >
         <PGIcon name={item.icon} size={13} style={{ color: "var(--fg-2)" }} />
-        <span
-          title={item.label}
-          style={{
-            flexShrink: 0,
-            maxWidth: 360,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            color: "var(--fg-0)",
-          }}
-        >
+        <span title={item.label} style={{
+          flexShrink: 0, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: item.danger ? "var(--git-removed)" : "var(--fg-0)",
+        }}>
           {highlight(item.label, labelIndices)}
         </span>
         {item.detail && (
-          <span
-            title={item.detail}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              textAlign: "right",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              color: "var(--fg-3)",
-              fontSize: "var(--fs-10)",
-            }}
-          >
+          <span title={item.detail} style={{
+            flex: 1, minWidth: 0, textAlign: "right", overflow: "hidden",
+            textOverflow: "ellipsis", whiteSpace: "nowrap",
+            color: "var(--fg-3)", fontSize: "var(--fs-10)",
+          }}>
             {item.detail}
           </span>
         )}
@@ -385,74 +306,115 @@ export function CommandPalette() {
 
   let runningIndex = 0;
 
+  // Breadcrumb of step titles (root excluded).
+  const crumbs = stack
+    .map((s) => (s.kind === "root" ? null : s.title))
+    .filter((t): t is string => t != null);
+
+  const placeholder =
+    step.kind === "input" ? step.placeholder
+    : step.kind === "pick" ? `Filter ${step.title.toLowerCase()}…`
+    : "Search branches, files, commits, commands…";
+
   const content = (
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-      onMouseDown={(e) => {
-        // Backdrop click (outside the panel) closes.
-        if (e.target === e.currentTarget) closePalette();
-      }}
+      role="dialog" aria-modal="true" aria-label="Command palette"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) closePalette(); }}
       style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 200,
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "flex-start",
-        paddingTop: "12vh",
+        position: "fixed", inset: 0, zIndex: 200, display: "flex",
+        justifyContent: "center", alignItems: "flex-start", paddingTop: "12vh",
         background: "rgba(0,0,0,0.45)",
       }}
     >
       <div
-        ref={dialogRef}
-        onKeyDown={onKeyDown}
+        ref={dialogRef} onKeyDown={onKeyDown}
         style={{
-          width: WIDTH,
-          maxWidth: "90vw",
-          maxHeight: "60vh",
-          background: "var(--bg-1)",
-          border: "1px solid var(--border-1)",
-          borderRadius: "var(--r-3)",
-          boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
+          width: WIDTH, maxWidth: "90vw", maxHeight: "60vh", background: "var(--bg-1)",
+          border: "1px solid var(--border-1)", borderRadius: "var(--r-3)",
+          boxShadow: "0 12px 40px rgba(0,0,0,0.45)", display: "flex",
+          flexDirection: "column", overflow: "hidden",
         }}
       >
+        {crumbs.length > 0 && (
+          <div style={{
+            padding: "6px 12px", borderBottom: "1px solid var(--border-0)",
+            fontFamily: "var(--font-mono)", fontSize: "var(--fs-10)", color: "var(--fg-2)",
+          }}>
+            {crumbs.join(" › ")}
+          </div>
+        )}
         <div style={{ padding: 8, borderBottom: "1px solid var(--border-0)" }}>
           <PGSearchInput
-            value={query}
-            onChange={setQuery}
-            placeholder="Search branches, files, commits, commands…"
-            inputRef={inputRef}
+            value={query} onChange={setQuery} placeholder={placeholder} inputRef={inputRef}
           />
-        </div>
-        <div ref={listRef} style={{ flex: 1, overflow: "auto", paddingBottom: 4 }}>
-          {flat.length === 0 ? (
-            <div
-              style={{
-                padding: 16,
-                fontSize: "var(--fs-12)",
-                color: "var(--fg-3)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              {query ? `No matches for "${query}".` : "Type to search."}
+          {step.kind === "input" && inputError && (
+            <div style={{
+              padding: "4px 4px 0", fontSize: "var(--fs-10)",
+              color: "var(--git-removed)", fontFamily: "var(--font-mono)",
+            }}>
+              {inputError}
             </div>
-          ) : (
-            groups.map((g) => {
-              const rows = (
+          )}
+          {step.kind === "root" && (
+            <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+              {CHIPS.map((c) => (
+                <button
+                  key={c.kind}
+                  onClick={() => setChip(c.kind)}
+                  aria-pressed={activeChip === c.kind}
+                  style={{
+                    padding: "2px 8px", borderRadius: "var(--r-2)",
+                    fontFamily: "var(--font-mono)", fontSize: "var(--fs-10)",
+                    border: "1px solid var(--border-1)", cursor: "pointer",
+                    background: activeChip === c.kind ? "var(--color-accent)" : "transparent",
+                    color: activeChip === c.kind ? "var(--bg-0)" : "var(--fg-2)",
+                  }}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {step.kind === "input" ? (
+          <div style={{
+            padding: 12, fontSize: "var(--fs-11)", color: "var(--fg-3)",
+            fontFamily: "var(--font-mono)",
+          }}>
+            Press Enter to confirm · Esc to go back
+          </div>
+        ) : (
+          <div ref={listRef} style={{ flex: 1, overflow: "auto", paddingBottom: 4 }}>
+            {showEmptyHome ? (
+              <>
+                {quickRows.length > 0 && sectionHeader("Quick actions", quickRows.length)}
+                {quickRows.map((item) =>
+                  renderRow({ item, score: 0, labelIndices: [] }, runningIndex++),
+                )}
+                {recentRows.length > 0 && sectionHeader("Recent", recentRows.length)}
+                {recentRows.map((item) =>
+                  renderRow({ item, score: 0, labelIndices: [] }, runningIndex++),
+                )}
+              </>
+            ) : flat.length === 0 ? (
+              <div style={{
+                padding: 16, fontSize: "var(--fs-12)", color: "var(--fg-3)",
+                fontFamily: "var(--font-mono)",
+              }}>
+                {query ? `No matches for "${query}".` : "Type to search."}
+              </div>
+            ) : step.kind === "pick" ? (
+              flat.map((row) => renderRow(row, runningIndex++))
+            ) : (
+              (activeChip === "all" ? groups : groups.filter((g) => g.type === activeChip)).map((g) => (
                 <React.Fragment key={g.type}>
                   {sectionHeader(TYPE_LABEL[g.type], g.rows.length)}
                   {g.rows.map((item) => renderRow(item, runningIndex++))}
                 </React.Fragment>
-              );
-              return rows;
-            })
-          )}
-        </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

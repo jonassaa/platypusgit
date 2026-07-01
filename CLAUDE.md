@@ -128,6 +128,8 @@ features/            Per-feature: components + Zustand store colocated
 ├── commits/         graphLayout + buildRebasePlan (both tested)
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
 ├── settings/        useSettingsStore (autoFetch, defaultPullMode, etc.)
+├── palette/         usePaletteStore (step stack + chips), commands (catalog),
+│                    frecency, CommandPalette (⌘P runner: nav + search + actions)
 └── diff/            diff-specific components
 
 lib/
