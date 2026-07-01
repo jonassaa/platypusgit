@@ -8,11 +8,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     <a class="brand" href={base + '/'}>
       <img src={base + '/logo.svg'} alt="" width="28" height="28" />
       <span class="brand-name mono">platypusgit</span>
+      <span class="alpha mono">alpha</span>
     </a>
     <nav class="nav-links">
       {nav.map((n) => <a href={n.href}>{n.label}</a>)}
-      <a href={site.repo} target="_blank" rel="noopener">GitHub</a>
-      <a class="coffee" href={site.buyMeACoffee} target="_blank" rel="noopener">☕ Sponsor</a>
+      <a href={base + '/support'}>Support</a>
+      <a class="chip" href={site.repo} target="_blank" rel="noopener">View on GitHub ↗</a>
       <ThemeToggle />
     </nav>
   </div>
@@ -24,10 +25,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   .brand { display: flex; align-items: center; gap: var(--s-3); color: var(--fg-0); }
   .brand:hover { text-decoration: none; }
   .brand-name { font-weight: 600; font-size: 15px; }
+  .alpha { display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: lowercase;
+    color: var(--accent-ink); padding: 3px 8px; border-radius: 999px; line-height: 1;
+    background: linear-gradient(120deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent),
+      0 2px 8px color-mix(in oklab, var(--accent) 35%, transparent); }
   .nav-links { display: flex; align-items: center; gap: var(--s-6); }
   .nav-links a { color: var(--fg-1); font-size: 14px; }
   .nav-links a:hover { color: var(--fg-0); text-decoration: none; }
-  .coffee { border: 1px solid var(--border-1); padding: 5px 10px; border-radius: var(--r-4); }
-  .coffee:hover { border-color: var(--accent); color: var(--accent) !important; }
-  @media (max-width: 640px) { .nav-links { gap: var(--s-4); } .nav-links a:not(.coffee) { font-size: 13px; } }
+  .chip { border: 1px solid var(--border-1); padding: 5px 10px; border-radius: var(--r-4); white-space: nowrap; }
+  .chip:hover { border-color: var(--accent); color: var(--accent) !important; }
+  @media (max-width: 640px) { .nav-links { gap: var(--s-4); } .nav-links a:not(.chip) { font-size: 13px; } }
 </style>

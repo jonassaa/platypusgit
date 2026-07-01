@@ -1,0 +1,76 @@
+---
+import Layout from '../layouts/Layout.astro';
+import CTAButton from '../components/CTAButton.astro';
+import { site } from '../data/site.ts';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<Layout title={'Support the project — ' + site.name}>
+  <section class="container page-head">
+    <h1>Support the project</h1>
+    <p class="lead">
+      platypusgit is free and open source, and it always will be. There's no paid tier,
+      no license to buy, and no account to create. It's built and maintained in spare
+      time — if it saves you some, you can help keep it moving.
+    </p>
+  </section>
+
+  <section class="container ways">
+    <div class="way">
+      <h2>♥ Sponsor</h2>
+      <p>
+        A one-off or recurring contribution goes straight toward development time,
+        signing certificates, and keeping releases coming. Every bit helps and none
+        of it is expected.
+      </p>
+      <CTAButton href={site.buyMeACoffee} external>Sponsor the project ↗</CTAButton>
+    </div>
+
+    <div class="way">
+      <h2>★ Star it on GitHub</h2>
+      <p>
+        Costs nothing and helps other developers find the project. Starring the repo
+        is genuinely one of the most useful things you can do.
+      </p>
+      <CTAButton href={site.repo} variant="secondary" external>Star on GitHub ↗</CTAButton>
+    </div>
+
+    <div class="way">
+      <h2>⚑ Report bugs & request features</h2>
+      <p>
+        platypusgit is in active development. Found a rough edge or want something it
+        doesn't do yet? Open an issue — feature proposals and bug reports shape what
+        gets built next.
+      </p>
+      <CTAButton href={site.repo + '/issues'} variant="secondary" external>Open an issue ↗</CTAButton>
+    </div>
+
+    <div class="way">
+      <h2>⌨ Contribute code</h2>
+      <p>
+        It's GPLv3 and the code is open. Pick up an issue, send a pull request, or help
+        with docs and translations. Start with the contributing guide.
+      </p>
+      <CTAButton href={site.repo + '/blob/main/CONTRIBUTING.md'} variant="secondary" external>Contributing guide ↗</CTAButton>
+    </div>
+
+    <div class="way">
+      <h2>◆ Spread the word</h2>
+      <p>
+        Tell a colleague, post about it, or write it up. Word of mouth is how small
+        open-source tools grow.
+      </p>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .page-head { padding-top: var(--s-12); }
+  .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
+  .lead { color: var(--fg-2); font-size: 16px; max-width: 640px; margin: 0; line-height: 1.6; }
+  .ways { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--s-8); margin-top: var(--s-11); }
+  .way { border: 1px solid var(--border-0); background: var(--bg-1); border-radius: var(--r-6);
+    padding: var(--s-7); display: flex; flex-direction: column; align-items: flex-start; }
+  .way h2 { font-size: 19px; margin: 0 0 var(--s-4); color: var(--accent); }
+  .way p { color: var(--fg-2); font-size: 15px; line-height: 1.6; margin: 0 0 var(--s-6); flex: 1; }
+  @media (max-width: 720px) { .ways { grid-template-columns: 1fr; } }
+</style>

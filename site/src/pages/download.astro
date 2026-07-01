@@ -2,6 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import CodeBlock from '../components/CodeBlock.astro';
+import OsIcon from '../components/OsIcon.astro';
 import { site } from '../data/site.ts';
 
 const buildSteps = `# Prerequisites: Node 22+, pnpm, Rust stable
@@ -22,6 +23,11 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
       <CTAButton href={site.releasesLatest} external>Latest release</CTAButton>
       <CTAButton href={site.releases} variant="secondary" external>All releases</CTAButton>
     </div>
+    <div class="os-tabs" data-os-tabs>
+      <button class="os-tab" data-os="macos" type="button"><OsIcon os="macos" size={15} /> macOS</button>
+      <button class="os-tab" data-os="windows" type="button"><OsIcon os="windows" size={15} /> Windows</button>
+      <button class="os-tab" data-os="linux" type="button"><OsIcon os="linux" size={15} /> Linux</button>
+    </div>
   </section>
 
   <section class="container">
@@ -33,9 +39,9 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   </section>
 
   <!-- INSTALL: macOS -->
-  <section class="container install" id="macos">
+  <section class="container install" id="macos" data-os-section="macos">
     <div class="install-head">
-      <h2><span class="os-glyph"></span> macOS</h2>
+      <h2><OsIcon os="macos" size={22} /> macOS</h2>
       <p>Apple Silicon &amp; Intel.</p>
     </div>
 
@@ -59,9 +65,9 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   </section>
 
   <!-- INSTALL: Windows -->
-  <section class="container install" id="windows">
+  <section class="container install" id="windows" data-os-section="windows">
     <div class="install-head">
-      <h2><span class="os-glyph"></span> Windows</h2>
+      <h2><OsIcon os="windows" size={20} /> Windows</h2>
       <p>Windows 10 &amp; 11. WebView2 ships with Windows 11.</p>
     </div>
 
@@ -82,9 +88,9 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   </section>
 
   <!-- INSTALL: Linux -->
-  <section class="container install" id="linux">
+  <section class="container install" id="linux" data-os-section="linux">
     <div class="install-head">
-      <h2><span class="os-glyph"></span> Linux</h2>
+      <h2><OsIcon os="linux" size={22} /> Linux</h2>
       <p>Needs <code>webkit2gtk 4.1</code>. Two formats — Debian package or portable AppImage.</p>
     </div>
 
@@ -108,8 +114,53 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   </section>
 </Layout>
 
+<script>
+  // OS selector: sniff platform (or honor #hash), show that install section.
+  (function () {
+    var sections = Array.from(document.querySelectorAll('[data-os-section]'));
+    var tabs = Array.from(document.querySelectorAll('.os-tab'));
+    if (!sections.length || !tabs.length) return;
+    var known = ['macos', 'windows', 'linux'];
+
+    function detect() {
+      var hash = (location.hash || '').replace('#', '');
+      if (known.indexOf(hash) !== -1) return hash;
+      return 'macos';
+    }
+
+    function select(os) {
+      sections.forEach(function (s) { s.hidden = s.getAttribute('data-os-section') !== os; });
+      tabs.forEach(function (t) { t.classList.toggle('on', t.getAttribute('data-os') === os); });
+    }
+
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () {
+        var os = t.getAttribute('data-os');
+        select(os);
+        history.replaceState(null, '', '#' + os);
+      });
+    });
+
+    select(detect());
+    window.addEventListener('hashchange', function () {
+      var hash = (location.hash || '').replace('#', '');
+      if (known.indexOf(hash) !== -1) select(hash);
+    });
+  })();
+</script>
+
 <style>
   .page-head { padding-top: var(--s-12); }
+  .os-tabs { display: inline-flex; margin-top: var(--s-8); border: 1px solid var(--border-1);
+    border-radius: var(--r-5); overflow: hidden; }
+  .os-tab { display: inline-flex; align-items: center; gap: 7px; padding: 8px 18px; background: transparent;
+    border: none; border-right: 1px solid var(--border-1);
+    color: var(--fg-2); font-family: var(--font-sans); font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: background var(--t-fast), color var(--t-fast); }
+  .os-tab:last-child { border-right: none; }
+  .os-tab:hover { color: var(--fg-0); }
+  .os-tab.on { background: var(--accent); color: var(--accent-ink); }
+  [data-os-section][hidden] { display: none; }
   .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
   .lead { color: var(--fg-2); font-size: 16px; max-width: 640px; margin: 0; }
   .head-ctas { display: flex; gap: var(--s-4); margin-top: var(--s-7); flex-wrap: wrap; }
