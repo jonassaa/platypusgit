@@ -73,8 +73,8 @@ describe("CommandPalette", () => {
     usePaletteStore.setState({ open: true, query: "" });
     render(<CommandPalette />);
     expect(await screen.findByRole("dialog")).toBeTruthy();
-    // Default commands are always present.
-    expect(screen.getByText("Go to History")).toBeTruthy();
+    // Empty query shows home screen — Quick actions section is visible.
+    expect(screen.getByText("Quick actions")).toBeTruthy();
   });
 
   it("filters by query and fires switch-screen intent on Enter", async () => {
@@ -196,5 +196,100 @@ describe("CommandPalette", () => {
     await user.keyboard("{Escape}");
 
     await waitFor(() => expect(usePaletteStore.getState().open).toBe(false));
+  });
+
+  it("runs a direct command and closes (Go to Branches)", async () => {
+    const user = userEvent.setup();
+    usePaletteStore.getState().openPalette();
+    render(<CommandPalette />);
+    await user.keyboard("Go to Branches");
+    await user.keyboard("{Enter}");
+    expect(useNavStore.getState().intent).toEqual({ kind: "switch-screen", screen: "branches" });
+    expect(usePaletteStore.getState().open).toBe(false);
+  });
+
+  it("merge command opens an inline branch-pick step", async () => {
+    const user = userEvent.setup();
+    useRepoStore.setState({ branches: [mkBranch("main", true), mkBranch("feat/x")] });
+    usePaletteStore.getState().openPalette();
+    render(<CommandPalette />);
+    await user.keyboard("Merge branch");
+    await user.keyboard("{Enter}");
+    // palette still open, now on a pick step titled "Merge into current"
+    expect(usePaletteStore.getState().open).toBe(true);
+    expect(usePaletteStore.getState().stack.at(-1)?.kind).toBe("pick");
+    expect(await screen.findByText("Merge into current")).toBeTruthy();
+  });
+
+  it("Escape pops a step before closing", async () => {
+    const user = userEvent.setup();
+    useRepoStore.setState({ branches: [mkBranch("main", true), mkBranch("feat/x")] });
+    usePaletteStore.getState().openPalette();
+    usePaletteStore.getState().pushStep({ kind: "pick", title: "T", items: [] });
+    render(<CommandPalette />);
+    await user.keyboard("{Escape}");
+    expect(usePaletteStore.getState().open).toBe(true);  // popped to root
+    await user.keyboard("{Escape}");
+    expect(usePaletteStore.getState().open).toBe(false); // closed from root
+  });
+
+  it("chip filters the root list to one type", async () => {
+    const user = userEvent.setup();
+    useRepoStore.setState({ branches: [mkBranch("feature-foo")] });
+    usePaletteStore.getState().openPalette();
+    render(<CommandPalette />);
+    // click Branches chip — empty query already shows all items (fuzzyMatch always matches "")
+    await user.click(screen.getByRole("button", { name: "Branches" }));
+    expect(usePaletteStore.getState().activeChip).toBe("branch");
+    // command rows should be gone; branch rows should remain
+    // (palette renders into a portal on document.body, not inside render container)
+    expect(document.querySelectorAll('[data-pal-type="command"]').length).toBe(0);
+    expect(document.querySelectorAll('[data-pal-type="branch"]').length).toBeGreaterThan(0);
+  });
+
+  it("shows Quick actions on empty query when a branch is checked out", async () => {
+    useRepoStore.setState({ branches: [mkBranch("main", true)] });
+    usePaletteStore.getState().openPalette();
+    render(<CommandPalette />);
+    expect(await screen.findByText("Quick actions")).toBeTruthy();
+    expect(screen.getByText(rowText("Fetch all remotes"))).toBeTruthy();
+  });
+
+  it("shows Recent items from frecency on empty query", async () => {
+    const { bumpFrecency } = await import("./frecency");
+    bumpFrecency("screen:history", Date.now());
+    usePaletteStore.getState().openPalette();
+    render(<CommandPalette />);
+    expect(await screen.findByText("Recent")).toBeTruthy();
+  });
+
+  it("activating a direct command bumps frecency for its id", async () => {
+    const user = userEvent.setup();
+    useRepoStore.setState({ remotes: [] });
+    usePaletteStore.getState().openPalette();
+    render(<CommandPalette />);
+    await user.keyboard("Fetch all");
+    await waitFor(() => expect(screen.getByText(rowText("Fetch all remotes"))).toBeTruthy());
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(usePaletteStore.getState().open).toBe(false));
+    const { loadFrecency } = await import("./frecency");
+    const f = loadFrecency();
+    expect(f["action:fetch-all"]).toBeDefined();
+    expect(f["action:fetch-all"].count).toBeGreaterThan(0);
+  });
+
+  it("activating a step-opener does NOT bump frecency for its id", async () => {
+    const user = userEvent.setup();
+    useRepoStore.setState({ branches: [mkBranch("main", true), mkBranch("feat/y")] });
+    usePaletteStore.getState().openPalette();
+    render(<CommandPalette />);
+    await user.keyboard("Merge branch");
+    await waitFor(() => expect(screen.getByText(rowText("Merge branch into current…"))).toBeTruthy());
+    await user.keyboard("{Enter}");
+    // palette still open (pushed a step)
+    expect(usePaletteStore.getState().open).toBe(true);
+    const { loadFrecency } = await import("./frecency");
+    const f = loadFrecency();
+    expect(f["action:merge"]).toBeUndefined();
   });
 });
