@@ -28,13 +28,12 @@ A dev-first alternative to TortoiseGit with "extreme usability" as the north sta
 ### macOS (Homebrew)
 
 ```bash
-brew tap jonassaa/platypusgit
-brew install --cask --no-quarantine platypusgit
+brew install --cask jonassaa/platypusgit/platypusgit
 ```
 
-The app is ad-hoc signed but not notarized. `--no-quarantine` skips the macOS
-Gatekeeper flag so it launches with no "unidentified developer" prompt (no
-`brew trust` needed). Update with `brew upgrade --cask --greedy platypusgit`.
+The app is ad-hoc signed but not notarized. The cask clears the macOS
+Gatekeeper quarantine flag on install, so it launches with no "unidentified
+developer" prompt. Update with `brew upgrade --cask --greedy platypusgit`.
 
 ### Other platforms
 
