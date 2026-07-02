@@ -26,6 +26,7 @@ export interface PGFileTreeNode {
 
 export interface PGFileTreeRowProps {
   name: string;
+  path?: string;
   indent?: number;
   kind?: "file" | "folder";
   status?: string;
@@ -40,6 +41,7 @@ export interface PGFileTreeRowProps {
 
 export function PGFileTreeRow({
   name,
+  path,
   indent = 0,
   kind = "file",
   status,
@@ -54,6 +56,7 @@ export function PGFileTreeRow({
   const [hover, setHover] = React.useState(false);
   return (
     <div
+      data-path={path}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -244,6 +247,7 @@ export function PGFileTree({
         <PGFileTreeRow
           key={f.key}
           name={f.node.name}
+          path={f.key.replace(/^\//, "")}
           indent={f.indent}
           kind={f.hasChildren ? "folder" : "file"}
           status={f.node.status}
@@ -298,6 +302,7 @@ export function PGChangeRow({
   const dir = parts.join("/");
   return (
     <div
+      data-path={path}
       onClick={onClick}
       onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}
@@ -333,12 +338,14 @@ export function PGChangeRow({
         />
       )}
       {staged !== undefined && (
-        <PGCheckbox
-          checked={staged}
-          onChange={(v) => {
-            onToggle?.(v);
-          }}
-        />
+        <span data-testid="row-toggle">
+          <PGCheckbox
+            checked={staged}
+            onChange={(v) => {
+              onToggle?.(v);
+            }}
+          />
+        </span>
       )}
       <PGStatusMark kind={status} size={14} />
       <PGIcon
@@ -730,6 +737,7 @@ export function PGHunk({
           Discard
         </PGButton>
         <PGButton
+          data-testid="hunk-stage"
           size="xs"
           variant={staged ? "outline" : "primary"}
           onClick={onStage}
@@ -1017,6 +1025,8 @@ export function PGCommitRow({
   const [hover, setHover] = React.useState(false);
   return (
     <div
+      data-testid="commit-row"
+      data-sha={sha}
       onClick={onClick}
       onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}

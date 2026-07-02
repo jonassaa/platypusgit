@@ -31,6 +31,7 @@ uuid = { version = "1.23.1", features = ["v4", "serde"] }
 tokio = { version = "1.52.1", features = ["rt-multi-thread", "macros", "sync", "process"] }
 tauri-plugin-log = "2.8.0"
 log = "0.4.29"
+tauri-plugin-wdio-webdriver = "1.2.0"
 
 [dev-dependencies]
 tempfile = "3"

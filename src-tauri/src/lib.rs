@@ -11,7 +11,7 @@ use crate::{git::libgit2::Libgit2Backend, state::AppState};
 pub fn run() {
     let backend = Arc::new(Libgit2Backend::new());
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -28,7 +28,13 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_os::init());
+
+    // WebDriver server for E2E tests. Debug builds only.
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .setup(|_app| {
             log::info!(
                 "platypusgit starting v{}",

@@ -300,6 +300,7 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
                 : "No branches in this repo."}
               <div style={{ marginTop: 8 }}>
                 <span
+                  data-testid="branch-create"
                   onClick={() => requestCreate(query.trim() || "main")}
                   style={{
                     color: "var(--accent)",

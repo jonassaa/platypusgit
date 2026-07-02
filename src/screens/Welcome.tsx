@@ -139,6 +139,8 @@ export function WelcomeScreen() {
                 return (
                   <div
                     key={r.path}
+                    data-testid="recent-repo"
+                    data-path={r.path}
                     style={{
                       display: "flex",
                       alignItems: "center",

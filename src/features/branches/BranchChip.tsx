@@ -33,6 +33,7 @@ export function BranchChip({ onClick }: BranchChipProps) {
     <>
       <button
         ref={ref}
+        data-testid="branch-chip"
         onClick={() => ref.current && onClick(ref.current)}
         onContextMenu={(e) => onContextMenu(e, head ?? null)}
         onMouseEnter={() => setHover(true)}
