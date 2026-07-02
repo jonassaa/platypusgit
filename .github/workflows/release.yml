@@ -261,9 +261,12 @@ jobs:
   # Pin the Homebrew cask to this release: rewrite version + sha256 in
   # jonassaa/homebrew-platypusgit and commit straight to that tap's main.
   #
-  # Only real (non-prerelease) PUBLISHED releases bump the cask — prereleases
-  # and manual workflow_dispatch rebuilds are skipped so "brew install" never
-  # jumps to an unfinished build. Requires the macOS build's sha256 output.
+  # Runs on: (a) a non-prerelease published release, and (b) a manual
+  # workflow_dispatch against an explicit tag. Plain prereleases are skipped
+  # so "brew install" never jumps to an unfinished build. Note: flipping an
+  # already-published prerelease off via the API/UI emits release.edited, not
+  # release.released, so it does NOT auto-bump — use workflow_dispatch to bump
+  # an existing tag on demand. Requires the macOS build's sha256 output.
   #
   # Cross-repo push: GITHUB_TOKEN can't reach the tap, so we mint a short-lived
   # token from a GitHub App installed on the tap (app id in vars.TAP_APP_ID,
@@ -272,7 +275,7 @@ jobs:
   bump-cask:
     needs: [version, macos-universal]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Mint tap token from GitHub App
         id: app-token
