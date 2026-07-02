@@ -28,8 +28,17 @@ import { BlameScreen } from "@/screens/Blame";
 import { SettingsScreen } from "@/screens/Settings";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { headUpstream } from "@/features/repo/ops";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { usePaletteStore } from "@/features/palette/usePaletteStore";
+import {
+  useKeymapStore,
+  useFocusStore,
+  usePaneList,
+  PGPane,
+  chordFor,
+  CheatSheet,
+  type ActionId,
+} from "@/features/keymap";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { BranchChip } from "@/features/branches/BranchChip";
@@ -41,17 +50,6 @@ import {
   isUnstaged,
   totalAheadBehind,
 } from "@/lib/derive";
-
-/** Derive the [remote, branch] pair from the HEAD branch's upstream tracking ref. */
-function headUpstream(
-  upstream: string | null | undefined,
-  headName: string | undefined,
-): [string, string] | null {
-  if (!upstream) return null;
-  const idx = upstream.indexOf("/");
-  if (idx < 0) return [upstream, headName ?? upstream];
-  return [upstream.slice(0, idx), upstream.slice(idx + 1)];
-}
 
 type ScreenId =
   | "repo"
@@ -67,6 +65,19 @@ type ScreenId =
   | "fileHistory"
   | "blame"
   | "settings";
+
+// Maps each activity-bar item id to the navigation action whose chord it shows.
+const ACTIVITY_ACTION: Record<string, ActionId> = {
+  repo: "nav.files",
+  commit: "nav.commit",
+  history: "nav.history",
+  branches: "nav.branches",
+  conflict: "nav.conflict",
+  rebase: "nav.rebase",
+  remote: "nav.remote",
+  diff: "nav.diff",
+  reflog: "nav.reflog",
+};
 
 const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "repo", icon: "folder", label: "Files", shortcut: "⌘1" },
@@ -113,51 +124,27 @@ export function AppShell() {
     return () => window.clearInterval(id);
   }, [repo, autoFetchEnabled, autoFetchMinutes]);
 
-  React.useEffect(() => {
-    if (!repo) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey || e.altKey) return;
-      const n = parseInt(e.key, 10);
-      if (!Number.isFinite(n) || n < 1 || n > ACTIVITY_ITEMS.length) return;
-      const t = e.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
-      e.preventDefault();
-      setScreen(ACTIVITY_ITEMS[n - 1].id as ScreenId);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [repo]);
-
-  // Global ⌘P / Ctrl+P opens the command palette. Ignored when typing in an
-  // input/textarea/contentEditable, matching the ⌘1…⌘9 handling above.
+  // Single global keymap listener — resolves chord → action → handler or
+  // default runner (see actions.ts). Navigation, palette, repo ops, pane
+  // traversal, and the cheat-sheet are all catalog default runners now; this
+  // component only routes screen switches (via nav intents) below.
+  //
+  // Capture phase: a global dispatcher must run before focused-element handlers
+  // (e.g. the file tree's arrow-key navigation) get the event. Local handlers
+  // check e.defaultPrevented so a dispatched key isn't double-handled.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey || e.altKey) return;
-      if (e.key !== "p" && e.key !== "P") return;
-      const t = e.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
-      e.preventDefault();
-      usePaletteStore.getState().openPalette();
+      useKeymapStore.getState().dispatch(e);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, []);
+
+  // On entering a screen, focus its first content pane so the keyboard is
+  // immediately live (runs on mount too → initial screen gets focus).
+  React.useEffect(() => {
+    useFocusStore.getState().requestContentFocus();
+  }, [screen]);
 
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
@@ -218,6 +205,7 @@ export function AppShell() {
       }}
     >
       <AppTitlebar onOpenSettings={() => setScreen("settings")} />
+      <CheatSheet />
       {error && (
         <div
           role="alert"
@@ -274,22 +262,60 @@ function AppBody({
   setScreen: (s: ScreenId) => void;
 }) {
   const hasChanges = useRepoStore((s) => s.status.length > 0);
+  // Re-derive shortcut labels when the active preset changes.
+  const presetId = useKeymapStore((s) => s.activePresetId);
   const items = React.useMemo(
     () =>
-      ACTIVITY_ITEMS.map((it) =>
-        it.id === "commit" ? { ...it, badge: hasChanges } : it,
-      ),
-    [hasChanges],
+      ACTIVITY_ITEMS.map((it) => {
+        const shortcut = chordFor(ACTIVITY_ACTION[it.id] ?? "nav.files");
+        return {
+          ...it,
+          shortcut: shortcut || it.shortcut,
+          ...(it.id === "commit" ? { badge: hasChanges } : {}),
+        };
+      }),
+    // presetId drives the shortcut recompute via chordFor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hasChanges, presetId],
   );
+
+  // Activity bar as a keyboard pane: Alt+← focuses it, ↑/↓ move a highlight
+  // cursor, Enter switches to that screen.
+  const ACTIVITY_BAR_ID = "activitybar";
+  const barFocused = useFocusStore((s) => s.focused === ACTIVITY_BAR_ID);
+  const screenIndex = Math.max(
+    0,
+    items.findIndex((it) => it.id === screen),
+  );
+  const [highlight, setHighlight] = React.useState(screenIndex);
+  // Reset the highlight to the active screen each time the bar gains focus.
+  React.useEffect(() => {
+    if (barFocused) setHighlight(screenIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [barFocused]);
+  usePaneList({
+    paneId: ACTIVITY_BAR_ID,
+    count: items.length,
+    selectedIndex: highlight,
+    onSelect: setHighlight,
+    onActivate: (i) => {
+      const it = items[i];
+      if (it) setScreen(it.id as ScreenId);
+    },
+  });
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-      <PGActivityBar
-        value={screen}
-        onChange={(id) => setScreen(id as ScreenId)}
-        items={items}
-        settingsActive={screen === "settings"}
-        onSettingsClick={() => setScreen("settings")}
-      />
+      <PGPane id={ACTIVITY_BAR_ID} isBar style={{ flexShrink: 0 }}>
+        <PGActivityBar
+          value={screen}
+          onChange={(id) => setScreen(id as ScreenId)}
+          items={items}
+          settingsActive={screen === "settings"}
+          onSettingsClick={() => setScreen("settings")}
+          highlightIndex={barFocused ? highlight : undefined}
+        />
+      </PGPane>
       <div
         style={{
           flex: 1,
@@ -347,6 +373,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     if (typeof selected === "string") await openStore(selected);
   };
 
+  // Same ops the keymap default runners and palette use (features/repo/ops.ts).
   const onFetch = () => {
     store.fetchAll();
   };

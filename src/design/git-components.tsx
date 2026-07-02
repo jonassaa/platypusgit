@@ -57,6 +57,8 @@ export function PGFileTreeRow({
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      data-pg-row=""
+      data-selected={selected ? "" : undefined}
       style={{
         display: "flex",
         alignItems: "center",
@@ -66,11 +68,8 @@ export function PGFileTreeRow({
         paddingRight: 8,
         fontSize: "var(--fs-12)",
         fontFamily: "var(--font-mono)",
-        background: selected
-          ? "var(--bg-selection)"
-          : hover
-            ? "var(--bg-2)"
-            : "transparent",
+        // Selected background comes from the focus-aware [data-pg-row] CSS.
+        background: !selected && hover ? "var(--bg-2)" : undefined,
         color: status === "I" ? "var(--fg-3)" : "var(--fg-0)",
         cursor: "pointer",
         userSelect: "none",
@@ -187,7 +186,11 @@ export function PGFileTree({
   };
 
   const handleKey = (e: React.KeyboardEvent) => {
+    if (e.defaultPrevented) return;
     if (flat.length === 0) return;
+    // Leave modifier+arrow combos (e.g. Alt+Arrow pane focus) to global
+    // keymap shortcuts — only handle bare arrows for in-tree navigation.
+    if (e.altKey || e.metaKey || e.ctrlKey) return;
     const cur = selectedIdx >= 0 ? selectedIdx : 0;
     const node = flat[cur];
     switch (e.key) {
@@ -302,17 +305,15 @@ export function PGChangeRow({
       onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      data-pg-row=""
+      data-selected={selected ? "" : undefined}
       style={{
         display: "flex",
         alignItems: "center",
         gap: 6,
         height: "var(--row-h)",
         padding: "0 8px",
-        background: selected
-          ? "var(--bg-selection)"
-          : hover
-            ? "var(--bg-2)"
-            : "transparent",
+        background: !selected && hover ? "var(--bg-2)" : undefined,
         cursor: "pointer",
         fontFamily: "var(--font-mono)",
         fontSize: "var(--fs-12)",
@@ -1021,16 +1022,14 @@ export function PGCommitRow({
       onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      data-pg-row=""
+      data-selected={selected ? "" : undefined}
       style={{
         display: "grid",
         gridTemplateColumns: "140px 70px 1fr 150px 90px",
         alignItems: "center",
         height: 26,
-        background: selected
-          ? "var(--bg-selection)"
-          : hover
-            ? "var(--bg-2)"
-            : "transparent",
+        background: !selected && hover ? "var(--bg-2)" : undefined,
         fontFamily: "var(--font-mono)",
         fontSize: "var(--fs-12)",
         cursor: "pointer",
@@ -1283,6 +1282,8 @@ export function PGConflictRow({
     <div
       onClick={onClick}
       onContextMenu={onContextMenu}
+      data-pg-row=""
+      data-selected={selected ? "" : undefined}
       style={{
         padding: 0,
         background: resolved

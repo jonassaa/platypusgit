@@ -32,6 +32,7 @@ import {
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 import type {
   BranchInfo,
   FileContent,
@@ -311,7 +312,8 @@ export function RepoBrowserScreen() {
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         {/* File tree */}
-        <div
+        <PGPane
+          id="repo.tree"
           style={{
             width: treePane.width,
             flexShrink: 0,
@@ -387,11 +389,12 @@ export function RepoBrowserScreen() {
               onActivate={(k) => setSelected(k)}
             />
           </div>
-        </div>
+        </PGPane>
         <PGResizeHandle onDrag={treePane.resize} />
 
         {/* Preview + meta */}
-        <div
+        <PGPane
+          id="repo.preview"
           style={{
             flex: 1,
             minWidth: 0,
@@ -484,7 +487,7 @@ export function RepoBrowserScreen() {
               Blame
             </PGButton>
           </div>
-          <div style={{ flex: 1, overflow: "auto" }}>
+          <FocusableScroll style={{ flex: 1 }} ariaLabel="File preview">
             {!selectedFile && (
               <PGEmpty
                 icon="fileCode"
@@ -551,8 +554,8 @@ export function RepoBrowserScreen() {
                   Couldn&apos;t produce a diff for this file.
                 </PGEmpty>
               )}
-          </div>
-        </div>
+          </FocusableScroll>
+        </PGPane>
 
         <PGResizeHandle
           onDrag={(d) => inspectorPane.resize(-d)}
@@ -560,7 +563,8 @@ export function RepoBrowserScreen() {
         />
 
         {/* Right inspector */}
-        <div
+        <PGPane
+          id="repo.inspector"
           style={{
             width: inspectorPane.width,
             flexShrink: 0,
@@ -695,7 +699,7 @@ export function RepoBrowserScreen() {
               {repo.path}
             </div>
           )}
-        </div>
+        </PGPane>
       </div>
     </>
   );

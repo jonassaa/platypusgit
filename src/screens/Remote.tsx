@@ -9,6 +9,7 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch, totalAheadBehind } from "@/lib/derive";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 
 export function RemoteScreen() {
   const branches = useRepoStore((s) => s.branches);
@@ -74,7 +75,8 @@ export function RemoteScreen() {
           gap: 14,
         }}
       >
-        <div
+        <PGPane
+          id="remote.detail"
           style={{
             padding: 14,
             border: "1px solid var(--border-0)",
@@ -82,6 +84,7 @@ export function RemoteScreen() {
             background: "var(--bg-1)",
           }}
         >
+          <FocusableScroll ariaLabel="Sync status">
           <div
             style={{
               display: "flex",
@@ -194,9 +197,11 @@ export function RemoteScreen() {
               Push {ahead ? `↑${ahead}` : ""}
             </PGButton>
           </div>
-        </div>
+          </FocusableScroll>
+        </PGPane>
 
-        <div>
+        <PGPane id="remote.list">
+          <FocusableScroll ariaLabel="Remotes list">
           <PGSectionHeader
             actions={
               <PGButton
@@ -245,7 +250,8 @@ export function RemoteScreen() {
               }}
             />
           ))}
-        </div>
+          </FocusableScroll>
+        </PGPane>
       </div>
     </div>
   );

@@ -4,15 +4,18 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { fileHistory } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
+import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { CommitInfo } from "@/lib/types";
 
 export function FileHistoryScreen() {
   const repo = useRepoStore((s) => s.current);
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
+  const setNavIntent = useNavStore((s) => s.setIntent);
 
   const [path, setPath] = React.useState<string | null>(null);
   const [commits, setCommits] = React.useState<CommitInfo[]>([]);
+  const [selected, setSelected] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -29,11 +32,23 @@ export function FileHistoryScreen() {
     setLoading(true);
     setError(null);
     fileHistory(repo.id, path)
-      .then((c) => { if (!cancelled) setCommits(c); })
+      .then((c) => { if (!cancelled) { setCommits(c); setSelected(0); } })
       .catch((e) => { if (!cancelled) setError(appErrorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [repo?.id, path]);
+
+  // Keyboard: arrows move the commit selection, Enter opens the commit's diff.
+  usePaneList({
+    paneId: "fileHistory.list",
+    count: commits.length,
+    selectedIndex: selected,
+    onSelect: setSelected,
+    onActivate: (i) => {
+      const c = commits[i];
+      if (c) setNavIntent({ kind: "commit-vs-wt", oid: c.oid });
+    },
+  });
 
   if (!path) {
     return (
@@ -44,7 +59,7 @@ export function FileHistoryScreen() {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <PGPane id="fileHistory.list" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{
         padding: "8px 12px",
         borderBottom: "1px solid var(--border-0)",
@@ -58,22 +73,29 @@ export function FileHistoryScreen() {
       {!loading && !error && commits.length === 0 && (
         <PGEmpty icon="history" title="No commits touched this file" />
       )}
-      <div style={{ flex: 1, overflow: "auto" }}>
-        {commits.map((c) => (
-          <div key={c.oid} style={{
-            display: "flex",
-            gap: 10,
-            padding: "6px 12px",
-            borderBottom: "1px solid var(--border-0)",
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--fs-12)",
-          }}>
+      <FocusableScroll style={{ flex: 1 }}>
+        {commits.map((c, i) => (
+          <div
+            key={c.oid}
+            onClick={() => setSelected(i)}
+            data-pg-row=""
+            data-selected={selected === i ? "" : undefined}
+            style={{
+              display: "flex",
+              gap: 10,
+              padding: "6px 12px",
+              borderBottom: "1px solid var(--border-0)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--fs-12)",
+              cursor: "pointer",
+            }}
+          >
             <span style={{ color: "var(--fg-3)" }}>{c.shortOid}</span>
             <span style={{ flex: 1 }}>{c.summary}</span>
             <span style={{ color: "var(--fg-3)" }}>{c.author}</span>
           </div>
         ))}
-      </div>
-    </div>
+      </FocusableScroll>
+    </PGPane>
   );
 }
