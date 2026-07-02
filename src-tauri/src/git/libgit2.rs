@@ -285,6 +285,14 @@ enum StatusSide {
     Index,
 }
 
+/// libgit2 reports an untracked directory that is itself a git repository
+/// (e.g. an unregistered submodule) as a single status entry whose path ends
+/// in `/`, since it won't recurse across a nested repo boundary. Such entries
+/// aren't diffable or stageable as a regular file.
+fn is_embedded_repo_path(p: &Path) -> bool {
+    p.to_string_lossy().ends_with('/')
+}
+
 fn map_status_flag(s: Status, side: StatusSide) -> StatusFlag {
     match side {
         StatusSide::Worktree => {
@@ -855,6 +863,9 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff> {
+        if is_embedded_repo_path(path) {
+            return Err(AppError::EmbeddedRepo(path.to_string_lossy().to_string()));
+        }
         self.with_repo(repo_id, |repo| {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
@@ -1270,6 +1281,9 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn stage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
+        if let Some(p) = paths.iter().find(|p| is_embedded_repo_path(p)) {
+            return Err(AppError::EmbeddedRepo(p.to_string_lossy().to_string()));
+        }
         self.with_repo(repo_id, |repo| {
             let mut index = repo.index()?;
             for p in paths {

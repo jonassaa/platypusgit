@@ -16,6 +16,7 @@ import {
   PGStatusMark,
   PGToolbar,
   KV,
+  pgFlash,
   useContextMenu,
   usePaneWidth,
   type ContextMenuItem,
@@ -29,6 +30,7 @@ import {
   relativeTime,
   statusMark,
 } from "@/lib/derive";
+import { appErrorMessage } from "@/lib/errors";
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
@@ -197,17 +199,17 @@ export function RepoBrowserScreen() {
 
   // Derive the FileStatus entry that corresponds to the selected path key.
   // PGFileTree keys are path-prefixed by PG_FILETREE in the form "/a/b/c".
+  // buildStatusTree() drops empty path segments, so an embedded-repo entry
+  // (FileStatus.path ending in "/") loses its trailing slash in the key —
+  // fall back to matching it with the slash restored.
   const selectedFile = React.useMemo<FileStatus | null>(() => {
     if (!selected) return null;
     const path = selected.replace(/^\//, "");
+    const matches = (s: FileStatus) => s.path === path || s.path === `${path}/`;
     if (browsingRev) {
-      return revFiles.find((s) => s.path === path) ?? null;
+      return revFiles.find(matches) ?? null;
     }
-    return (
-      status.find((s) => s.path === path) ??
-      allFiles.find((s) => s.path === path) ??
-      null
-    );
+    return status.find(matches) ?? allFiles.find(matches) ?? null;
   }, [selected, status, allFiles, browsingRev, revFiles]);
 
   const selectedIsUnmodified =
@@ -251,8 +253,11 @@ export function RepoBrowserScreen() {
         .then((d) => {
           if (!cancelled) setDiff(d);
         })
-        .catch(() => {
-          if (!cancelled) setDiff(null);
+        .catch((e) => {
+          if (!cancelled) {
+            setDiff(null);
+            pgFlash(appErrorMessage(e));
+          }
         })
         .finally(() => {
           if (!cancelled) setDiffLoading(false);
