@@ -218,6 +218,7 @@ export function PGActivityBar({
           >
             <button
               onClick={() => onChange?.(it.id)}
+              data-activity={it.id}
               style={{
                 width: 44,
                 height: 40,

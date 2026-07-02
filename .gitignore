@@ -29,6 +29,9 @@ lerna-debug.log*
 # worktrees
 .worktrees
 
+# e2e binary snapshot (built by `pnpm test:e2e`)
+e2e/.bin
+
 # marketing site
 site/node_modules
 site/dist

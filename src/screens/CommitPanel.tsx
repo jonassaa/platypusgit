@@ -240,7 +240,10 @@ export function CommitPanelScreen() {
           minWidth: 0,
         }}
       >
-        <div style={{ borderBottom: "1px solid var(--border-0)" }}>
+        <div
+          data-testid="staged-list"
+          style={{ borderBottom: "1px solid var(--border-0)" }}
+        >
           <Header
             title="STAGED"
             badge={<PGBadge tone="success">{staged.length}</PGBadge>}
@@ -282,7 +285,7 @@ export function CommitPanelScreen() {
             />
           ))}
         </div>
-        <div style={{ flex: 1, overflow: "auto" }}>
+        <div data-testid="changes-list" style={{ flex: 1, overflow: "auto" }}>
           <Header
             title="CHANGES"
             badge={<PGBadge tone="warn">{unstaged.length}</PGBadge>}
@@ -511,7 +514,7 @@ export function CommitPanelScreen() {
                 </span>
               }
             />
-            <PGInput value={message} onChange={setMessage} mono size="lg" />
+            <PGInput value={message} onChange={setMessage} mono size="lg" data-testid="commit-subject" />
           </div>
           <div
             style={{
@@ -611,6 +614,7 @@ export function CommitPanelScreen() {
                   setAmend(false);
                 }
               }}
+              data-testid="commit-button"
             >
               {amend ? "Amend" : "Commit"}
             </PGButton>

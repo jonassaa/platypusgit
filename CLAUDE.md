@@ -46,7 +46,7 @@ pnpm test                                   # vitest (unit logic + component tes
 
 ## Testing
 
-Three layers, each run independently:
+Four layers, each run independently:
 
 - **Rust backend integration** — `cargo test --manifest-path src-tauri/Cargo.toml`.
   Covers every `GitBackend` op against real temp repos via the `TempRepo` fixture
@@ -57,10 +57,47 @@ Three layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-
-Full webview-level E2E (WebdriverIO + `tauri-driver`) is not wired up. Tauri's
-native WebDriver bridge does not yet support macOS, so we skip it on dev
-machines and rely on the three layers above.
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (6 files, 10
+  tests, ~6s spec time locally) drive the real debug binary: real webview →
+  real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
+  Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
+  driver or paid service — so it runs on macOS (WKWebView) and on Linux CI
+  (WebKitGTK).
+  - `pnpm test:e2e` = `test:e2e:build` (a tauri debug build with
+    `--features tauri/custom-protocol --config src-tauri/tauri.e2e.conf.json`,
+    snapshotting the binary to gitignored `e2e/.bin/`) followed by
+    `test:e2e:run` (wdio against that snapshot). Frontend or Rust change →
+    run the full `pnpm test:e2e`; spec-only change → `pnpm test:e2e:run`
+    reuses the existing binary.
+  - `src-tauri/tauri.e2e.conf.json` is a config overlay that turns on
+    `withGlobalTauri` for E2E builds only — release and regular dev builds
+    are untouched. `armDriverBridge()` (`e2e/support/app.ts`) then hands
+    `window.__TAURI__.core` to the embedded driver after every page load.
+    Skip either piece and every driver command pays a 5s window-focus-check
+    penalty (a ~13min suite instead of ~6s).
+  - The driver can't synthesize a right-click: context menus are opened via
+    the in-page `jsContextMenu` helper (see `e2e/specs/status-stage.e2e.ts`);
+    everything else uses real WebDriver clicks.
+  - Selector conventions: `button*=Text` (PGButton span-wraps its label, so
+    bare button-text selectors don't match) and tag-scoped text selectors
+    (`div*=`, `span*=` — bare `*=` is partial-link-text and only matches
+    anchors). Native `window.prompt`/`window.confirm` are stubbed via
+    `stubNativeDialogs()`, since WebDriver can't drive native dialogs.
+  - Sparse `data-*` attributes added where selectors would be brittle:
+    `recent-repo` + `data-path`, `branch-chip`, `data-activity` (activity
+    bar), `staged-list`/`changes-list` + row `data-path`, `row-toggle`,
+    `commit-subject`, `commit-button`, `branch-create`, `commit-row` +
+    `data-sha`, `hunk-stage`, and `PGFileTreeRow`'s `data-path`.
+  - CI: `.github/workflows/e2e.yml` (ubuntu-latest + xvfb, on PRs to `main`
+    and on push to `main`) runs `pnpm test:e2e:build` then
+    `xvfb-run --auto-servernum pnpm test:e2e:run`.
+  - `pnpm.overrides["@wdio/native-utils"] = "2.5.0"` in `package.json` pins
+    around a broken dep pin shipped by `@wdio/tauri-service@1.2.0` — don't
+    remove it or you'll be re-bisecting this from scratch.
+  - Debug builds also serve WebDriver on port 4445. Close any running
+    `pnpm tauri dev` instance before `pnpm test:e2e:run` — otherwise the
+    service can attach to the dev instance instead of the E2E binary and
+    clear its `localStorage`.
 
 ## Architecture
 
