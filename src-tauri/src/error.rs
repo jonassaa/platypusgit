@@ -44,6 +44,9 @@ pub enum AppError {
 
     #[error("network error: {0}")]
     Network(String),
+
+    #[error("'{0}' contains its own .git directory (embedded/nested repository) and can't be diffed or staged as a file — add it as a submodule or add it to .gitignore")]
+    EmbeddedRepo(String),
 }
 
 impl From<git2::Error> for AppError {
