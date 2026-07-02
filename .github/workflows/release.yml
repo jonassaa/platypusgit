@@ -22,7 +22,12 @@ name: release
 
 on:
   release:
-    types: [published]
+    # published: initial publish of a release/prerelease.
+    # released:  a prerelease flipped to a full release (promotion) — this
+    #            event does NOT re-fire published, so it's needed for the
+    #            "publish prerelease, then flip off prerelease to promote"
+    #            flow to build + bump the cask.
+    types: [published, released]
   workflow_dispatch: # re-run a build against an existing release tag
     inputs:
       tag:
