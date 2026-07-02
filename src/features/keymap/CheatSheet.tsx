@@ -1,34 +1,33 @@
 // CheatSheet — shortcut reference overlay (toggled by `?`). Rows are derived
 // entirely from the action catalog + active preset; no hardcoded key lists, so
-// it always reflects the live keymap.
+// it always reflects the live keymap. Open/close state lives in the overlay
+// store so the `app.cheatSheet` / `app.closeOverlay` default runners drive it.
 
-import { ACTIONS, ALL_ACTION_IDS, type ActionCategory } from "./registry";
+import { ACTIONS, ALL_ACTION_IDS, type ActionCategory } from "./actions";
 import { presetById } from "./presets";
 import { formatChord } from "./chord";
 import { useKeymapStore } from "./useKeymapStore";
+import { useOverlayStore } from "./useOverlayStore";
 
 const CATEGORY_ORDER: ActionCategory[] = [
   "Navigation",
+  "Repository",
+  "Palette",
   "Panes",
   "Lists & trees",
-  "Repository",
   "App",
 ];
 
-export function CheatSheet({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+export function CheatSheet() {
+  const open = useOverlayStore((s) => s.cheatSheetOpen);
+  const close = useOverlayStore((s) => s.closeCheatSheet);
   const presetId = useKeymapStore((s) => s.activePresetId);
   if (!open) return null;
   const preset = presetById(presetId);
 
   return (
     <div
-      onMouseDown={onClose}
+      onMouseDown={close}
       style={{
         position: "fixed",
         inset: 0,
@@ -48,11 +47,23 @@ export function CheatSheet({
           padding: 20,
           maxHeight: "80vh",
           overflow: "auto",
-          minWidth: 440,
+          minWidth: 480,
           color: "var(--fg-0)",
         }}
       >
-        <h2 style={{ marginBottom: 14, fontSize: 16 }}>Keyboard shortcuts</h2>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginBottom: 14,
+          }}
+        >
+          <h2 style={{ fontSize: 16 }}>Keyboard shortcuts</h2>
+          <span style={{ color: "var(--fg-3)", fontSize: 11 }}>
+            {preset.name}
+          </span>
+        </div>
         {CATEGORY_ORDER.map((cat) => {
           const ids = ALL_ACTION_IDS.filter(
             (id) => ACTIONS[id].category === cat,

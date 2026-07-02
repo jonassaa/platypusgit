@@ -32,6 +32,8 @@ interface FocusState {
   ) => () => void;
   focus: (id: string) => void;
   move: (dir: Dir) => void;
+  /** Tab-cycle panes in reading order (top-left → bottom-right), wrapping. */
+  cycle: (delta: 1 | -1) => void;
   requestContentFocus: () => void;
 }
 
@@ -118,6 +120,33 @@ export const useFocusStore = create<FocusState>((set, get) => ({
     if (!curRect || candidates.length === 0) return;
     const next = pickNeighbor(curRect, candidates, dir);
     if (next) set({ focused: next });
+  },
+
+  cycle(delta) {
+    const s = get();
+    // Reading order: rows first (top, tolerating small offsets), then left.
+    const all: { id: string; rect: Rect }[] = [];
+    for (const id of s.order) {
+      const rect = rectOf(s.panes.get(id)?.el ?? null);
+      if (rect) all.push({ id, rect });
+    }
+    if (all.length === 0) {
+      // No layout (tests) — fall back to registration order.
+      const ids = s.order.filter((id) => s.panes.has(id));
+      if (ids.length === 0) return;
+      const cur = s.focused ? ids.indexOf(s.focused) : -1;
+      const next = ids[(cur + delta + ids.length) % ids.length];
+      set({ focused: next });
+      return;
+    }
+    all.sort((a, b) => {
+      const rowDiff = a.rect.top - b.rect.top;
+      if (Math.abs(rowDiff) > 8) return rowDiff;
+      return a.rect.left - b.rect.left;
+    });
+    const idx = s.focused ? all.findIndex((p) => p.id === s.focused) : -1;
+    const next = all[(idx + delta + all.length) % all.length];
+    set({ focused: next.id });
   },
 
   requestContentFocus() {

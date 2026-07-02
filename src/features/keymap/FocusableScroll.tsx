@@ -21,6 +21,9 @@ export function FocusableScroll({
   const ref = React.useRef<HTMLDivElement>(null);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // The global dispatcher (capture phase) may have already routed this key
+    // to a pane-list handler — don't also scroll.
+    if (e.defaultPrevented) return;
     if (e.altKey || e.metaKey || e.ctrlKey) return;
     const el = ref.current;
     if (!el) return;

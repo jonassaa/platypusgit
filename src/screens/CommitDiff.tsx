@@ -4,7 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { diffCommits } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
-import { PGPane, FocusableScroll } from "@/features/keymap";
+import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
 type Target =
@@ -52,6 +52,18 @@ export function CommitDiffScreen() {
     return () => { cancelled = true; };
   }, [repo?.id, target]);
 
+  // Keyboard: arrows move the file selection while the list pane is focused.
+  const selectedIndex = Math.max(0, diffs.findIndex((d) => d.path === selected));
+  usePaneList({
+    paneId: "commitDiff.files",
+    count: diffs.length,
+    selectedIndex,
+    onSelect: (i) => {
+      const d = diffs[i];
+      if (d) setSelected(d.path);
+    },
+  });
+
   if (!target) {
     return <PGEmpty icon="diff" title="No diff target">Pick "Compare…" from a context menu.</PGEmpty>;
   }
@@ -79,10 +91,11 @@ export function CommitDiffScreen() {
           <div
             key={d.path}
             onClick={() => setSelected(d.path)}
+            data-pg-row=""
+            data-selected={d.path === selected ? "" : undefined}
             style={{
               padding: "4px 12px",
               cursor: "pointer",
-              background: d.path === selected ? "var(--bg-1)" : "transparent",
             }}
           >
             {d.path}

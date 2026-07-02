@@ -1,8 +1,13 @@
 // usePaneList — standardizes arrow-key list/tree navigation for a pane. Up/down
-// move selection, left/right collapse/expand, Enter activates. Handlers only
-// fire while the owning pane is focused, so multiple lists coexist without
-// fighting over the arrow keys.
+// move selection, left/right collapse/expand, Enter activates, Space toggles
+// (stage/unstage), Home/End jump. Handlers register with the pane's id, so the
+// dispatcher only delivers them while that pane holds focus — multiple lists
+// coexist without fighting over the arrow keys.
+//
+// The selected row is kept in view: rows opt in by carrying `data-pg-row` and
+// `data-selected` attributes (also what the focus-aware selection CSS keys on).
 
+import React from "react";
 import { useFocusStore } from "./useFocusStore";
 import { useAction } from "./useAction";
 
@@ -14,40 +19,55 @@ export function usePaneList(opts: {
   onActivate?: (i: number) => void;
   onExpand?: (i: number) => void;
   onCollapse?: (i: number) => void;
+  onToggle?: (i: number) => void;
 }): void {
-  const isFocused = useFocusStore((s) => s.focused === opts.paneId);
-  // Decline (return false) when this pane isn't focused so the key falls
-  // through to another pane or the browser instead of being swallowed.
-  const guard = (fn: () => void) => (): boolean => {
-    if (!isFocused) return false;
+  const { paneId, count, selectedIndex } = opts;
+  const isFocused = useFocusStore((s) => s.focused === paneId);
+  const reg = { paneId };
+  // Decline (return false) on empty lists so the key falls through.
+  const guard = (fn: (() => void) | undefined) => (): boolean => {
+    if (count === 0 || !fn) return false;
     fn();
     return true;
   };
-  const clamp = (i: number) => Math.max(0, Math.min(opts.count - 1, i));
+  const clamp = (i: number) => Math.max(0, Math.min(count - 1, i));
+  const deps = [selectedIndex, count, isFocused];
 
-  useAction(
-    "list.up",
-    guard(() => opts.onSelect(clamp(opts.selectedIndex - 1))),
-    [isFocused, opts.selectedIndex, opts.count],
-  );
-  useAction(
-    "list.down",
-    guard(() => opts.onSelect(clamp(opts.selectedIndex + 1))),
-    [isFocused, opts.selectedIndex, opts.count],
-  );
+  useAction("list.up", guard(() => opts.onSelect(clamp(selectedIndex - 1))), deps, reg);
+  useAction("list.down", guard(() => opts.onSelect(clamp(selectedIndex + 1))), deps, reg);
+  useAction("list.top", guard(() => opts.onSelect(0)), deps, reg);
+  useAction("list.bottom", guard(() => opts.onSelect(count - 1)), deps, reg);
   useAction(
     "list.activate",
-    guard(() => opts.onActivate?.(opts.selectedIndex)),
-    [isFocused, opts.selectedIndex],
+    opts.onActivate ? guard(() => opts.onActivate?.(selectedIndex)) : () => false,
+    deps,
+    reg,
   );
   useAction(
     "list.expand",
-    guard(() => opts.onExpand?.(opts.selectedIndex)),
-    [isFocused, opts.selectedIndex],
+    opts.onExpand ? guard(() => opts.onExpand?.(selectedIndex)) : () => false,
+    deps,
+    reg,
   );
   useAction(
     "list.collapse",
-    guard(() => opts.onCollapse?.(opts.selectedIndex)),
-    [isFocused, opts.selectedIndex],
+    opts.onCollapse ? guard(() => opts.onCollapse?.(selectedIndex)) : () => false,
+    deps,
+    reg,
   );
+  useAction(
+    "list.toggle",
+    opts.onToggle ? guard(() => opts.onToggle?.(selectedIndex)) : () => false,
+    deps,
+    reg,
+  );
+
+  // Keep the selected row visible while driving the list from the keyboard.
+  React.useEffect(() => {
+    if (!isFocused) return;
+    const row = document.querySelector<HTMLElement>(
+      `[data-pg-pane="${paneId}"] [data-pg-row][data-selected]`,
+    );
+    row?.scrollIntoView?.({ block: "nearest" });
+  }, [selectedIndex, isFocused, paneId]);
 }

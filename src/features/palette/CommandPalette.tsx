@@ -4,6 +4,7 @@ import { PGIcon, PGSearchInput } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "./usePaletteStore";
+import { chordFor, useKeymapStore } from "@/features/keymap";
 import { buildCommands } from "./commands";
 import { fuzzyMatch } from "./fuzzyMatch";
 import { frecencyScore, bumpFrecency, loadFrecency, recentIds } from "./frecency";
@@ -73,6 +74,8 @@ export function CommandPalette() {
   const activeChip = usePaletteStore((s) => s.activeChip);
   const setChip = usePaletteStore((s) => s.setChip);
 
+  // Chord chips re-render when the user switches keymap preset.
+  useKeymapStore((s) => s.activePresetId);
   const repoOpen = useRepoStore((s) => !!s.current);
   const branches = useRepoStore((s) => s.branches);
   const allFiles = useRepoStore((s) => s.allFiles);
@@ -216,6 +219,9 @@ export function CommandPalette() {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Keys already routed by the global dispatcher (e.g. Escape closing the
+    // cheat-sheet stacked above the palette) must not double-fire here.
+    if (e.defaultPrevented) return;
     if (e.key === "Tab" && e.ctrlKey && step.kind === "root") {
       e.preventDefault();
       const i = CHIPS.findIndex((c) => c.kind === activeChip);
@@ -270,6 +276,7 @@ export function CommandPalette() {
   const renderRow = (row: ScoredRow, flatIndex: number) => {
     const { item, labelIndices } = row;
     const active = flatIndex === activeIndex;
+    const chord = item.actionId ? chordFor(item.actionId) : "";
     return (
       <div
         key={item.id}
@@ -291,14 +298,17 @@ export function CommandPalette() {
         }}>
           {highlight(item.label, labelIndices)}
         </span>
-        {item.detail && (
-          <span title={item.detail} style={{
-            flex: 1, minWidth: 0, textAlign: "right", overflow: "hidden",
-            textOverflow: "ellipsis", whiteSpace: "nowrap",
-            color: "var(--fg-3)", fontSize: "var(--fs-10)",
-          }}>
-            {item.detail}
-          </span>
+        <span style={{
+          flex: 1, minWidth: 0, textAlign: "right", overflow: "hidden",
+          textOverflow: "ellipsis", whiteSpace: "nowrap",
+          color: "var(--fg-3)", fontSize: "var(--fs-10)",
+        }} title={item.detail}>
+          {item.detail}
+        </span>
+        {chord && (
+          <kbd data-pal-chord="" style={{ flexShrink: 0, color: "var(--fg-2)" }}>
+            {chord}
+          </kbd>
         )}
       </div>
     );

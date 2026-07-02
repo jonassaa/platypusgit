@@ -64,6 +64,8 @@
   --bg-4: oklch(0.30 0.008 260);
   --bg-titlebar: oklch(0.21 0.008 260);
   --bg-selection: oklch(0.35 0.03 260 / 0.4);
+  --bg-selection-dim: oklch(0.35 0.015 260 / 0.22);
+  --bg-selection-focused: oklch(0.45 0.09 235 / 0.35);
 
   --fg-0: oklch(0.96 0.005 260);
   --fg-1: oklch(0.82 0.005 260);
@@ -263,9 +265,26 @@ kbd {
 [data-theme-mode="light"] .hljs-emphasis { font-style: italic; }
 [data-theme-mode="light"] .hljs-strong { font-weight: 600; }
 
-/* Keyboard-navigation focus ring — marks the active pane for keyboard users. */
-[data-pg-pane] { outline: none; }
-[data-pg-pane][data-pg-focused] {
-  box-shadow: inset 0 0 0 2px var(--accent);
-  border-radius: 4px;
+/* ── Keyboard navigation ────────────────────────────────────────────────────
+   Focus ring marks the active pane; row selection is focus-aware — vivid in
+   the focused pane, dimmed everywhere else (JetBrains-style). */
+[data-pg-pane] { outline: none; position: relative; }
+[data-pg-pane][data-pg-focused]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: inset 0 0 0 1px oklch(0.72 0.15 235 / 0.85);
+}
+
+/* Selected row: dim when its pane is inactive… */
+[data-pg-row][data-selected] { background: var(--bg-selection-dim); }
+/* …vivid + accent edge while its pane holds keyboard focus. */
+[data-pg-pane][data-pg-focused] [data-pg-row][data-selected] {
+  background: var(--bg-selection-focused);
+}
+/* Panes that aren't keyboard-managed (e.g. popovers) keep the base tone. */
+[data-pg-row][data-selected]:not([data-pg-pane] [data-pg-row]) {
+  background: var(--bg-selection);
 }

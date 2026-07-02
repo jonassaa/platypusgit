@@ -13,7 +13,7 @@ import {
   useContextMenu,
   usePaneWidth,
 } from "@/design";
-import { PGPane, FocusableScroll } from "@/features/keymap";
+import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch } from "@/lib/derive";
 import { conflictSides } from "@/lib/tauri";
@@ -384,6 +384,14 @@ export function ConflictScreen() {
   React.useEffect(() => {
     setSelected((prev) => (prev >= conflicts.length ? 0 : prev));
   }, [conflicts.length]);
+
+  // Keyboard: arrows move the conflict selection while the list pane is focused.
+  usePaneList({
+    paneId: "conflict.files",
+    count: conflicts.length,
+    selectedIndex: selected,
+    onSelect: setSelected,
+  });
 
   if (conflicts.length === 0) {
     return (

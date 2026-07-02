@@ -28,9 +28,9 @@ import { BlameScreen } from "@/screens/Blame";
 import { SettingsScreen } from "@/screens/Settings";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { headUpstream } from "@/features/repo/ops";
 import { useNavStore } from "@/features/nav/useNavStore";
 import {
-  useAction,
   useKeymapStore,
   useFocusStore,
   usePaneList,
@@ -39,7 +39,6 @@ import {
   CheatSheet,
   type ActionId,
 } from "@/features/keymap";
-import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { BranchChip } from "@/features/branches/BranchChip";
@@ -51,17 +50,6 @@ import {
   isUnstaged,
   totalAheadBehind,
 } from "@/lib/derive";
-
-/** Derive the [remote, branch] pair from the HEAD branch's upstream tracking ref. */
-function headUpstream(
-  upstream: string | null | undefined,
-  headName: string | undefined,
-): [string, string] | null {
-  if (!upstream) return null;
-  const idx = upstream.indexOf("/");
-  if (idx < 0) return [upstream, headName ?? upstream];
-  return [upstream.slice(0, idx), upstream.slice(idx + 1)];
-}
 
 type ScreenId =
   | "repo"
@@ -136,15 +124,14 @@ export function AppShell() {
     return () => window.clearInterval(id);
   }, [repo, autoFetchEnabled, autoFetchMinutes]);
 
-  // Single global keymap listener — resolves chord → action → handler. Replaces
-  // the old inline ⌘1…⌘9 handler; the don't-fight-inputs rule now lives in the
-  // dispatcher (see useKeymapStore).
+  // Single global keymap listener — resolves chord → action → handler or
+  // default runner (see actions.ts). Navigation, palette, repo ops, pane
+  // traversal, and the cheat-sheet are all catalog default runners now; this
+  // component only routes screen switches (via nav intents) below.
   //
   // Capture phase: a global dispatcher must run before focused-element handlers
-  // (e.g. the file tree's arrow-key navigation) get the event. On bubble, those
-  // handlers — or the framework — can consume keys like Alt+Arrow first, so the
-  // window listener never sees them. The dispatcher's don't-fight-inputs guard
-  // keeps typing safe.
+  // (e.g. the file tree's arrow-key navigation) get the event. Local handlers
+  // check e.defaultPrevented so a dispatched key isn't double-handled.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       useKeymapStore.getState().dispatch(e);
@@ -153,58 +140,11 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  // Navigation actions — switch the active screen.
-  useAction("nav.files", () => setScreen("repo"), []);
-  useAction("nav.commit", () => setScreen("commit"), []);
-  useAction("nav.history", () => setScreen("history"), []);
-  useAction("nav.branches", () => setScreen("branches"), []);
-  useAction("nav.conflict", () => setScreen("conflict"), []);
-  useAction("nav.rebase", () => setScreen("rebase"), []);
-  useAction("nav.remote", () => setScreen("remote"), []);
-  useAction("nav.diff", () => setScreen("diff"), []);
-  useAction("nav.reflog", () => setScreen("reflog"), []);
-  useAction("nav.settings", () => setScreen("settings"), []);
-
   // On entering a screen, focus its first content pane so the keyboard is
   // immediately live (runs on mount too → initial screen gets focus).
   React.useEffect(() => {
     useFocusStore.getState().requestContentFocus();
   }, [screen]);
-
-  // Pane focus traversal (Alt+Arrow) — moves the active pane along its
-  // neighbor graph. Panes register themselves via <PGPane>.
-  useAction("pane.focusLeft", () => useFocusStore.getState().move("left"), []);
-  useAction("pane.focusRight", () => useFocusStore.getState().move("right"), []);
-  useAction("pane.focusUp", () => useFocusStore.getState().move("up"), []);
-  useAction("pane.focusDown", () => useFocusStore.getState().move("down"), []);
-
-  // Shortcut cheat-sheet overlay (?).
-  const [cheatOpen, setCheatOpen] = React.useState(false);
-  useAction("app.cheatSheet", () => setCheatOpen((v) => !v), []);
-  useAction("app.closeOverlay", () => setCheatOpen(false), []);
-
-  // Global ⌘P / Ctrl+P opens the command palette. Ignored when typing in an
-  // input/textarea/contentEditable, matching the ⌘1…⌘9 handling above.
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey || e.altKey) return;
-      if (e.key !== "p" && e.key !== "P") return;
-      const t = e.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
-      e.preventDefault();
-      usePaletteStore.getState().openPalette();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
@@ -265,7 +205,7 @@ export function AppShell() {
       }}
     >
       <AppTitlebar onOpenSettings={() => setScreen("settings")} />
-      <CheatSheet open={cheatOpen} onClose={() => setCheatOpen(false)} />
+      <CheatSheet />
       {error && (
         <div
           role="alert"
@@ -433,6 +373,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     if (typeof selected === "string") await openStore(selected);
   };
 
+  // Same ops the keymap default runners and palette use (features/repo/ops.ts).
   const onFetch = () => {
     store.fetchAll();
   };
@@ -452,11 +393,6 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     }
     store.push(upstream[0], upstream[1]);
   };
-
-  // Repository actions reachable from the keyboard (mirror the titlebar buttons).
-  useAction("repo.fetch", onFetch, [repo]);
-  useAction("repo.pull", onPull, [repo, upstream, defaultPullMode]);
-  useAction("repo.push", onPush, [repo, upstream]);
 
   return (
     <>

@@ -25,7 +25,7 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { PGPane, FocusableScroll } from "@/features/keymap";
+import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import { currentBranch, isStaged, isUnstaged, statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
 import type { CommitInfo, DiffKind, FileDiff, FileStatus } from "@/lib/types";
@@ -217,6 +217,29 @@ export function CommitPanelScreen() {
     [staged],
   );
 
+  // Keyboard: one selection across both sections (staged first, matching the
+  // rendered order). Space stages/unstages the selected file, Rider-style.
+  const combined = React.useMemo(() => [...staged, ...unstaged], [staged, unstaged]);
+  const combinedIndex = Math.max(
+    0,
+    combined.findIndex((f) => selected && keyOf(f) === keyOf(selected)),
+  );
+  usePaneList({
+    paneId: "commit.files",
+    count: combined.length,
+    selectedIndex: combinedIndex,
+    onSelect: (i) => {
+      const f = combined[i];
+      if (f) setSelectedKey(keyOf(f));
+    },
+    onToggle: (i) => {
+      const f = combined[i];
+      if (!f) return;
+      if (f.side === "staged") unstage([f.path]);
+      else stage([f.path]);
+    },
+  });
+
   if (!loading && staged.length === 0 && unstaged.length === 0) {
     return (
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
@@ -277,7 +300,7 @@ export function CommitPanelScreen() {
               staged
               additions={countAdd(f.status)}
               deletions={countDel(f.status)}
-              selected={selectedKey === keyOf(f)}
+              selected={!!selected && keyOf(selected) === keyOf(f)}
               onClick={() => setSelectedKey(keyOf(f))}
               onContextMenu={(e) => onFileCtx(e, f)}
               onToggle={() => unstage([f.path])}
@@ -326,7 +349,7 @@ export function CommitPanelScreen() {
               staged={false}
               additions={countAdd(f.status)}
               deletions={countDel(f.status)}
-              selected={selectedKey === keyOf(f)}
+              selected={!!selected && keyOf(selected) === keyOf(f)}
               onClick={() => setSelectedKey(keyOf(f))}
               onContextMenu={(e) => onFileCtx(e, f)}
               onToggle={() => stage([f.path])}

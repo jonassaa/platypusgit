@@ -1,18 +1,32 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { CheatSheet } from "./CheatSheet";
+import { useOverlayStore } from "./useOverlayStore";
+import { ALL_ACTION_IDS, ACTIONS } from "./actions";
+import { useKeymapStore } from "./useKeymapStore";
 
 describe("CheatSheet", () => {
+  beforeEach(() => {
+    useKeymapStore.getState().setPreset("rider");
+  });
+
   it("renders nothing when closed", () => {
-    const { container } = render(<CheatSheet open={false} onClose={() => {}} />);
+    useOverlayStore.setState({ cheatSheetOpen: false });
+    const { container } = render(<CheatSheet />);
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders a row per action with its chord when open", () => {
-    render(<CheatSheet open onClose={() => {}} />);
-    expect(screen.getByText("Go to Files")).toBeTruthy();
-    expect(screen.getByText("Show keyboard shortcuts")).toBeTruthy();
-    // chord for nav.files contains the digit 1 in either glyph or word form
-    expect(screen.getByText(/1/)).toBeTruthy();
+  it("renders a row for every catalog action when open", () => {
+    useOverlayStore.setState({ cheatSheetOpen: true });
+    render(<CheatSheet />);
+    for (const id of ALL_ACTION_IDS) {
+      expect(screen.getByText(ACTIONS[id].title)).toBeTruthy();
+    }
+  });
+
+  it("shows the active preset name", () => {
+    useOverlayStore.setState({ cheatSheetOpen: true });
+    render(<CheatSheet />);
+    expect(screen.getByText(/Rider/)).toBeTruthy();
   });
 });

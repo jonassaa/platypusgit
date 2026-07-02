@@ -20,7 +20,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
-import { PGPane, FocusableScroll } from "@/features/keymap";
+import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
 export function DiffViewerScreen() {
@@ -104,6 +104,21 @@ export function DiffViewerScreen() {
   }, [diff, findQuery]);
 
   const split = React.useMemo(() => diffToSplit(findFiltered), [findFiltered]);
+
+  // Keyboard: arrows move the file selection while the list pane is focused.
+  const selectedIndex = Math.max(
+    0,
+    filtered.findIndex((f) => f.path === selectedPath),
+  );
+  usePaneList({
+    paneId: "diff.files",
+    count: filtered.length,
+    selectedIndex,
+    onSelect: (i) => {
+      const f = filtered[i];
+      if (f) setSelectedPath(f.path);
+    },
+  });
 
   if (status.length === 0) {
     return (
@@ -233,6 +248,8 @@ export function DiffViewerScreen() {
             <div
               key={f.path}
               onClick={() => setSelectedPath(f.path)}
+              data-pg-row=""
+              data-selected={selectedPath === f.path ? "" : undefined}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -242,10 +259,6 @@ export function DiffViewerScreen() {
                 fontFamily: "var(--font-mono)",
                 fontSize: "var(--fs-12)",
                 cursor: "pointer",
-                background:
-                  selectedPath === f.path
-                    ? "var(--bg-selection)"
-                    : "transparent",
                 color: "var(--fg-0)",
                 borderLeft:
                   selectedPath === f.path

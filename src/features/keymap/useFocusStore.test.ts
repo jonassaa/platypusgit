@@ -56,4 +56,37 @@ describe("useFocusStore", () => {
     un();
     expect(useFocusStore.getState().focused).toBe("b");
   });
+
+  describe("cycle (Tab order)", () => {
+    it("cycles panes in registration order without layout, wrapping", () => {
+      const s = useFocusStore.getState();
+      s.register("a", null);
+      s.register("b", null);
+      s.register("c", null);
+      useFocusStore.setState({ focused: "a" });
+      useFocusStore.getState().cycle(1);
+      expect(useFocusStore.getState().focused).toBe("b");
+      useFocusStore.getState().cycle(1);
+      expect(useFocusStore.getState().focused).toBe("c");
+      useFocusStore.getState().cycle(1); // wraps
+      expect(useFocusStore.getState().focused).toBe("a");
+    });
+
+    it("cycles backwards with Shift+Tab, wrapping to the end", () => {
+      const s = useFocusStore.getState();
+      s.register("a", null);
+      s.register("b", null);
+      useFocusStore.setState({ focused: "a" });
+      useFocusStore.getState().cycle(-1);
+      expect(useFocusStore.getState().focused).toBe("b");
+    });
+
+    it("focuses the first pane when nothing is focused yet", () => {
+      const s = useFocusStore.getState();
+      s.register("a", null, { autoFocus: false });
+      useFocusStore.setState({ focused: null });
+      useFocusStore.getState().cycle(1);
+      expect(useFocusStore.getState().focused).toBe("a");
+    });
+  });
 });

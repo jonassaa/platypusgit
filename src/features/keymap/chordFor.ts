@@ -3,7 +3,7 @@
 
 import { presetById } from "./presets";
 import { formatChord } from "./chord";
-import type { ActionId } from "./registry";
+import type { ActionId } from "./actions";
 import { useKeymapStore } from "./useKeymapStore";
 
 export function chordFor(id: ActionId): string {

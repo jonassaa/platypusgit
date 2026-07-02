@@ -129,7 +129,14 @@ features/            Per-feature: components + Zustand store colocated
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
 ├── settings/        useSettingsStore (autoFetch, defaultPullMode, etc.)
 ├── palette/         usePaletteStore (step stack + chips), commands (catalog),
-│                    frecency, CommandPalette (⌘P runner: nav + search + actions)
+│                    frecency, CommandPalette (⌘P runner: nav + search + actions;
+│                    rows show live keymap chords via PaletteItem.actionId)
+├── keymap/          Keyboard system (see specs/2026-07-02-keyboard-navigation-v2):
+│                    actions.ts (catalog + default runners), presets.ts (rider
+│                    default + classic), useKeymapStore (dispatcher: pane-scope
+│                    enforcement, DoubleShift, input policy), useFocusStore
+│                    (spatial Alt+Arrow + Tab cycling), usePaneList (list nav),
+│                    PGPane / FocusableScroll / CheatSheet
 └── diff/            diff-specific components
 
 lib/
@@ -145,7 +152,9 @@ lib/
 ### Navigation model
 
 - Activity bar = primary screen switcher, persisted to `localStorage["pg-screen"]`.
-- `⌘1…⌘9` switch activity items (ignored inside inputs/textareas).
+- Keyboard: everything routes through `features/keymap` (action catalog +
+  preset bindings; rider preset default). Modifier chords work while typing;
+  bare keys don't. `?` opens the cheat-sheet.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
 - Settings is a screen too, reached via titlebar gear or activity-bar settings slot.
 

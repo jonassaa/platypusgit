@@ -35,6 +35,22 @@ describe("buildCommands", () => {
     ]));
   });
 
+  it("links rows to keymap actions so chord chips render", () => {
+    const byId = new Map(buildCommands().map((i) => [i.id, i]));
+    expect(byId.get("screen:repo")?.actionId).toBe("nav.files");
+    expect(byId.get("screen:commit")?.actionId).toBe("nav.commit");
+    expect(byId.get("screen:settings")?.actionId).toBe("nav.settings");
+    expect(byId.get("action:fetch-all")?.actionId).toBe("repo.fetch");
+    expect(byId.get("action:refresh")?.actionId).toBe("repo.refresh");
+  });
+
+  it("links push/pull rows to repo actions when a branch is current", () => {
+    setRepo({ branches: [mkBranch("main", true, "origin/main")] });
+    const byId = new Map(buildCommands().map((i) => [i.id, i]));
+    expect(byId.get("action:push-current")?.actionId).toBe("repo.push");
+    expect(byId.get("action:pull-current")?.actionId).toBe("repo.pull");
+  });
+
   it("omits stash-pop when there are no stashes", () => {
     expect(ids()).not.toContain("action:stash-pop-latest");
   });

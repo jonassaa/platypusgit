@@ -18,7 +18,7 @@ import {
   type DirtyChoice,
 } from "@/features/reflog/DirtyTreeDialog";
 import { relativeTime } from "@/lib/derive";
-import { PGPane, FocusableScroll } from "@/features/keymap";
+import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { FileDiff, ReflogOp } from "@/lib/types";
 
 function opLabel(op: ReflogOp): string {
@@ -132,6 +132,22 @@ export function ReflogScreen() {
     }
     setActionOpen(true);
   }
+
+  // Keyboard: arrows move the entry selection, Enter opens the action dialog.
+  const selectedIndex = Math.max(
+    0,
+    entries.findIndex((e) => e.oid === selectedOid),
+  );
+  usePaneList({
+    paneId: "reflog.list",
+    count: entries.length,
+    selectedIndex,
+    onSelect: (i) => {
+      const e = entries[i];
+      if (e) void selectEntry(e.oid);
+    },
+    onActivate: () => openActionDialog(),
+  });
 
   if (!repo) {
     return (
