@@ -1,14 +1,12 @@
 import { $, expect } from "@wdio/globals";
 import { dirtyRepo, TempRepo } from "../support/tempRepo";
 import {
+  changeRow,
   openRepo,
   resetApp,
   stubNativeDialogs,
   switchScreen,
 } from "../support/app";
-
-const changeRow = (p: string) =>
-  $(`[data-testid="changes-list"] [data-path="${p}"]`);
 
 describe("stash", () => {
   let repo: TempRepo;

@@ -28,6 +28,10 @@ pub struct RebaseState {
     pub total: usize,
     pub completed: usize,
     pub pause_reason: Option<String>,
+    /// Branch tip before `rebase_start` moved it — `rebase_abort` restores
+    /// this rather than just resetting to wherever the in-progress rebase
+    /// happened to stop (see `rebase_abort` doc comment).
+    pub orig_head: String,
 }
 
 pub struct Libgit2Backend {
@@ -181,8 +185,19 @@ impl Libgit2Backend {
             };
 
             let Some(step) = step_opt else {
-                // Plan exhausted — rebase complete.
-                return self.rebase_status(repo_id);
+                // Plan exhausted — rebase complete. Capture the final status
+                // before dropping the in-memory state so this call's caller
+                // still sees the completed count, but remove the entry so a
+                // later `rebase_status` poll (banner) or `abort_operation`
+                // call doesn't treat this finished rebase as still
+                // in-progress/abortable via its now-stale `orig_head`.
+                let status = self.rebase_status(repo_id)?;
+                let mut rebases = self
+                    .rebases
+                    .lock()
+                    .map_err(|e| AppError::Internal(e.to_string()))?;
+                rebases.remove(repo_id);
+                return Ok(status);
             };
 
             match step.action {
@@ -1934,8 +1949,9 @@ impl GitBackend for Libgit2Backend {
             .ok_or_else(|| AppError::InvalidRef("rebase plan contains only drops".into()))?;
         let first_oid_str = first_step.oid.clone();
 
-        // Verify worktree is clean and reset HEAD to the parent of the first commit.
-        self.with_repo(repo_id, |repo| {
+        // Verify worktree is clean, remember the pre-rebase tip (so an abort
+        // can restore it), and reset HEAD to the parent of the first commit.
+        let orig_head = self.with_repo(repo_id, |repo| {
             let statuses = repo.statuses(None)?;
             if statuses.iter().any(|s| {
                 let b = s.status();
@@ -1951,6 +1967,8 @@ impl GitBackend for Libgit2Backend {
                 ));
             }
 
+            let orig_head = repo.head()?.peel_to_commit()?.id().to_string();
+
             let first_commit = repo
                 .revparse_single(&first_oid_str)
                 .map_err(|_| AppError::InvalidRef(first_oid_str.clone()))?
@@ -1959,7 +1977,7 @@ impl GitBackend for Libgit2Backend {
                 AppError::InvalidRef("first rebase commit has no parent".into())
             })?;
             repo.reset(parent.as_object(), git2::ResetType::Hard, None)?;
-            Ok(())
+            Ok(orig_head)
         })?;
 
         let total = plan.len();
@@ -1974,6 +1992,7 @@ impl GitBackend for Libgit2Backend {
                 total,
                 completed: 0,
                 pause_reason: None,
+                orig_head,
             },
         );
         drop(rebases);
@@ -1996,20 +2015,29 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn rebase_abort(&self, repo_id: &RepoId) -> AppResult<()> {
-        // Drop in-memory state.
+        // Drop in-memory state, keeping the pre-rebase tip it recorded.
         let mut rebases = self
             .rebases
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        rebases.remove(repo_id);
+        let orig_head = rebases.remove(repo_id).map(|s| s.orig_head);
         drop(rebases);
 
         self.with_repo(repo_id, |repo| {
             repo.cleanup_state()?;
-            if let Ok(head) = repo.head() {
-                let head_commit = head.peel_to_commit()?;
-                repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)?;
-            }
+            // Restore the branch to where it was before `rebase_start` moved
+            // it, not wherever the in-progress rebase happened to stop —
+            // `rebase_start` advances the branch tip commit-by-commit as
+            // picks land, so "current HEAD" at abort time is mid-rebase
+            // progress, not the pre-rebase position (mirrors `git rebase
+            // --abort` restoring ORIG_HEAD). Fall back to current HEAD only
+            // if we somehow have no recorded state (e.g. abort called
+            // without a matching start).
+            let target = match &orig_head {
+                Some(oid) => repo.revparse_single(oid)?.peel_to_commit()?,
+                None => repo.head()?.peel_to_commit()?,
+            };
+            repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
             Ok(())
         })
     }
@@ -2158,12 +2186,33 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn abort_operation(&self, repo_id: &RepoId) -> AppResult<()> {
+        // If an interactive rebase is tracked for this repo, prefer its
+        // recorded pre-rebase tip (`orig_head`) as the reset target —
+        // converges this generic conflict-screen/palette abort with
+        // `rebase_abort`. Otherwise a mid-rebase abort here would hard-reset
+        // to "current HEAD", which during a paused rebase is wherever the
+        // in-progress rebase happened to stop, not the pre-rebase position.
+        // Remove the entry either way: leaving it behind would keep
+        // `rebase_status` reporting `in_progress` after this abort, and a
+        // later `rebase_abort` would then reuse the stale `orig_head` to
+        // hard-reset again — silently discarding commits made since.
+        let orig_head = {
+            let mut rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases.remove(repo_id).map(|s| s.orig_head)
+        };
+
         self.with_repo(repo_id, |repo| {
-            let head = match repo.head() {
-                Ok(h) => h.peel_to_commit()?,
-                Err(_) => return Err(AppError::Unborn),
+            let target = match &orig_head {
+                Some(oid) => repo.revparse_single(oid)?.peel_to_commit()?,
+                None => match repo.head() {
+                    Ok(h) => h.peel_to_commit()?,
+                    Err(_) => return Err(AppError::Unborn),
+                },
             };
-            repo.reset(head.as_object(), git2::ResetType::Hard, None)?;
+            repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
             repo.cleanup_state()?;
             Ok(())
         })

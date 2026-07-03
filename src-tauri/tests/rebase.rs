@@ -240,14 +240,129 @@ fn rebase_abort_resets_to_pre_rebase_head() {
     let status_after = backend.rebase_status(&handle.id).unwrap();
     assert!(!status_after.in_progress, "status should show no rebase in progress");
 
-    // HEAD should be at the tip of the original history (oids[1] = last commit before rebase).
+    // HEAD should be restored to the tip of the original history — not left
+    // wherever the in-progress rebase happened to stop. `rebase_start` moves
+    // the branch tip forward commit-by-commit as picks land, so "current
+    // HEAD" at abort time is mid-rebase progress, not the pre-rebase
+    // position; `rebase_abort` must restore the recorded pre-rebase tip
+    // (mirrors `git rebase --abort` restoring ORIG_HEAD).
     let head_after = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
-    // After abort, HEAD should be at the last position before the rebase reset it.
-    // The rebase reset HEAD to parent of oids[0] (= "initial") and then applied oids[0].
-    // After abort, HEAD stays at that position (abort does hard reset to current HEAD,
-    // which is oids[0] after it was applied). The test verifies the rebase state is gone.
-    let _ = head_before;
-    let _ = head_after;
-    // The important invariant: rebase_status shows in_progress=false.
-    assert!(!backend.rebase_status(&handle.id).unwrap().in_progress);
+    assert_eq!(head_after, head_before, "abort should restore the pre-rebase HEAD");
+}
+
+// ─── 8. generic abort_operation converges with rebase_abort ─────────────────
+//
+// `abort_operation` is the generic conflict-screen/palette abort — it's not
+// rebase-specific and historically just hard-reset to current HEAD +
+// cleanup_state(), without touching the `RebaseState` map. During a paused
+// rebase, "current HEAD" is wherever the in-progress rebase happened to
+// stop, not the pre-rebase tip, and the stale `RebaseState` entry left
+// behind kept `rebase_status` reporting `in_progress`. Worse, a later
+// `rebase_abort` would then use that stale entry's `orig_head` to hard-reset
+// again — discarding any commits made since this abort.
+
+#[test]
+fn abort_operation_clears_rebase_state_and_restores_pre_rebase_head() {
+    use support::fs::write_file;
+
+    // Same "pick B onto root, then pick A" conflict setup as
+    // `rebase_conflict_pauses` above.
+    let tr = TempRepo::with_initial_commit("line1\n");
+    write_file(tr.path(), "conflict.txt", "version A\n");
+    {
+        let mut index = tr.repo.index().unwrap();
+        index.add_path(std::path::Path::new("conflict.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = tr.repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("T", "t@t").unwrap();
+        let parent = tr.repo.head().unwrap().peel_to_commit().unwrap();
+        tr.repo.commit(Some("HEAD"), &sig, &sig, "commit A", &tree, &[&parent]).unwrap();
+    }
+    let oid_a = tr.repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+
+    write_file(tr.path(), "conflict.txt", "version B\n");
+    {
+        let mut index = tr.repo.index().unwrap();
+        index.add_path(std::path::Path::new("conflict.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = tr.repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("T", "t@t").unwrap();
+        let parent = tr.repo.head().unwrap().peel_to_commit().unwrap();
+        tr.repo.commit(Some("HEAD"), &sig, &sig, "commit B", &tree, &[&parent]).unwrap();
+    }
+    let oid_b = tr.repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+
+    let (backend, handle) = tr.open_with_backend();
+
+    // Pre-rebase tip — current HEAD (commit B) before `rebase_start` moves it.
+    let head_before = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+
+    let plan = vec![
+        RebaseStep { oid: oid_b.clone(), action: RebaseAction::Pick, message: None },
+        RebaseStep { oid: oid_a.clone(), action: RebaseAction::Pick, message: None },
+    ];
+    let status = backend.rebase_start(&handle.id, plan).unwrap();
+    assert!(status.in_progress, "should be paused after conflict");
+
+    // The Conflict screen / palette abort path — NOT `rebase_abort`.
+    backend.abort_operation(&handle.id).unwrap();
+
+    let status_after = backend.rebase_status(&handle.id).unwrap();
+    assert!(
+        !status_after.in_progress,
+        "abort_operation must remove the RebaseState entry, not just reset the worktree"
+    );
+
+    let head_after = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    assert_eq!(
+        head_after, head_before,
+        "abort_operation should restore the pre-rebase HEAD (converging with rebase_abort), \
+         not wherever the in-progress rebase happened to stop"
+    );
+}
+
+// ─── 9. sweeping RebaseState on successful completion ────────────────────────
+
+#[test]
+fn rebase_completion_clears_rebase_state() {
+    let tr = TempRepo::with_initial_commit("root\n");
+    let oids = linear_history(&tr, 3); // commits 0, 1, 2
+
+    let (backend, handle) = tr.open_with_backend();
+
+    // Pre-rebase tip — recorded by `rebase_start` as `orig_head`.
+    let head_before = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+
+    // Drop the middle commit so the post-rebase tip is structurally
+    // different from the pre-rebase tip (a plan that reproduces the exact
+    // same history can cherry-pick to byte-identical commits, which would
+    // make this test pass by coincidence rather than by actually exercising
+    // state removal).
+    let plan = vec![
+        step(&oids[0], RebaseAction::Pick),
+        step(&oids[1], RebaseAction::Drop),
+        step(&oids[2], RebaseAction::Pick),
+    ];
+    let status = backend.rebase_start(&handle.id, plan).unwrap();
+    assert!(!status.in_progress, "no conflicts expected, rebase should finish");
+
+    let status_after = backend.rebase_status(&handle.id).unwrap();
+    assert!(!status_after.in_progress, "no rebase in progress after completion");
+
+    let head_after_rebase = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    assert_ne!(head_after_rebase, head_before, "sanity: dropping a commit must move the tip");
+
+    // Prove the in-memory RebaseState entry itself is gone, not just that
+    // in_progress happens to read false because completed == total: calling
+    // abort_operation on a finished rebase must be a no-op that leaves HEAD
+    // alone, not a hard reset back to the pre-rebase tip using a stale
+    // orig_head (which would silently discard the completed rebase).
+    backend.abort_operation(&handle.id).unwrap();
+    let head_after_abort = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    assert_eq!(
+        head_after_abort, head_after_rebase,
+        "abort_operation after a completed rebase must not discard it"
+    );
 }

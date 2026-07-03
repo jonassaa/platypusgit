@@ -1,9 +1,6 @@
 import { browser, $, expect } from "@wdio/globals";
 import { dirtyRepo, TempRepo } from "../support/tempRepo";
-import { openRepo, resetApp, switchScreen } from "../support/app";
-
-const changeRow = (p: string) =>
-  $(`[data-testid="changes-list"] [data-path="${p}"]`);
+import { changeRow, openRepo, resetApp, switchScreen } from "../support/app";
 
 describe("commit", () => {
   let repo: TempRepo;

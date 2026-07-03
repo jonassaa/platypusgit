@@ -404,10 +404,22 @@ function CommitActionRow({ commit }: { commit: CommitInfo }) {
       <PGButton size="sm" variant="outline" icon="tag" onClick={tagHere}>
         Tag
       </PGButton>
-      <PGButton size="sm" variant="outline" icon="commit" onClick={cherryPick}>
+      <PGButton
+        size="sm"
+        variant="outline"
+        icon="commit"
+        data-testid="commit-cherry-pick"
+        onClick={cherryPick}
+      >
         Cherry-pick
       </PGButton>
-      <PGButton size="sm" variant="outline" icon="x" onClick={revert}>
+      <PGButton
+        size="sm"
+        variant="outline"
+        icon="x"
+        data-testid="commit-revert"
+        onClick={revert}
+      >
         Revert
       </PGButton>
       <PGButton

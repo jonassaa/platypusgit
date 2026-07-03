@@ -161,6 +161,7 @@ function ConflictHeader({
         tone="danger"
         icon="x"
         disabled={repoState === "Clean"}
+        data-testid="conflict-abort"
         onClick={() => {
           if (
             window.confirm(
@@ -176,6 +177,7 @@ function ConflictHeader({
         variant="primary"
         icon="merge"
         disabled={unresolved > 0 || repoState === "Clean"}
+        data-testid="conflict-finalize"
         onClick={() => useRepoStore.getState().continueOperation()}
       >
         Finalize
@@ -317,6 +319,7 @@ function ConflictDetail({ path }: { path: string }) {
               size="sm"
               variant="outline"
               icon="chevronLeft"
+              data-testid="accept-ours"
               onClick={() => acceptOurs(path)}
             >
               Accept ours
@@ -325,6 +328,7 @@ function ConflictDetail({ path }: { path: string }) {
               size="sm"
               variant="outline"
               icon="chevronRight"
+              data-testid="accept-theirs"
               onClick={() => acceptTheirs(path)}
             >
               Accept theirs
@@ -333,6 +337,7 @@ function ConflictDetail({ path }: { path: string }) {
               size="sm"
               variant="primary"
               icon="check"
+              data-testid="mark-resolved"
               onClick={() => markResolved([path])}
             >
               Mark worktree as resolved

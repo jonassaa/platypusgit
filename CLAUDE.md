@@ -57,8 +57,8 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (6 files, 10
-  tests, ~6s spec time locally) drive the real debug binary: real webview →
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (10 files, 23
+  tests — 22 passing + 1 skipped pending #27) drive the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
   driver or paid service — so it runs on macOS (WKWebView) and on Linux CI
@@ -76,8 +76,14 @@ Four layers, each run independently:
     Skip either piece and every driver command pays a 5s window-focus-check
     penalty (a ~13min suite instead of ~6s).
   - The driver can't synthesize a right-click: context menus are opened via
-    the in-page `jsContextMenu` helper (see `e2e/specs/status-stage.e2e.ts`);
+    the in-page `jsContextMenu` helper (see `e2e/support/app.ts`);
     everything else uses real WebDriver clicks.
+  - Danger-op flows (merge/conflict, rebase, reset, cherry-pick/revert,
+    reflog) covered by phase 2 specs. Context menus (incl. the reset hover
+    submenu) driven via `jsContextMenu`/`jsHoverMenuItem`/`jsClickMenuItem`
+    and row lookups via `changeRow`/`stagedRow`, all promoted to
+    `e2e/support/app.ts`. Fixtures: `conflictRepo`, `cherryRepo`,
+    `rebaseConflictRepo`, plus `TempRepo.hasRef`.
   - Selector conventions: `button*=Text` (PGButton span-wraps its label, so
     bare button-text selectors don't match) and tag-scoped text selectors
     (`div*=`, `span*=` — bare `*=` is partial-link-text and only matches

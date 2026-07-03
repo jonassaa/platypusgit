@@ -1,11 +1,14 @@
 import { browser, $, expect } from "@wdio/globals";
 import { dirtyRepo, TempRepo } from "../support/tempRepo";
-import { openRepo, resetApp, switchScreen } from "../support/app";
-
-const stagedRow = (p: string) =>
-  $(`[data-testid="staged-list"] [data-path="${p}"]`);
-const changeRow = (p: string) =>
-  $(`[data-testid="changes-list"] [data-path="${p}"]`);
+import {
+  changeRow,
+  jsClickMenuItem,
+  jsContextMenu,
+  openRepo,
+  resetApp,
+  stagedRow,
+  switchScreen,
+} from "../support/app";
 
 // PGCheckbox's native <input type="checkbox"> is the only element whose
 // programmatic click reliably toggles + fires React's onChange (the visible
@@ -17,29 +20,6 @@ const rowToggle = (list: "staged-list" | "changes-list", p: string) =>
   $(
     `[data-testid="${list}"] [data-path="${p}"] [data-testid="row-toggle"] input`,
   );
-
-/** Open a context menu via an in-page `contextmenu` MouseEvent.
- *
- * This is the one interaction that cannot be a real WebDriver action: the
- * embedded driver's actions endpoint only synthesizes mousedown/mouseup/
- * click events and never `contextmenu` (verified in
- * tauri-plugin-wdio-webdriver 1.2.0 executor source and empirically —
- * `click({ button: "right" })` completes without error but no menu opens). */
-const jsContextMenu = (selector: string) =>
-  browser.execute((sel: string) => {
-    const el = document.querySelector(sel) as HTMLElement | null;
-    if (!el) throw new Error(`jsContextMenu: element not found: ${sel}`);
-    const r = el.getBoundingClientRect();
-    el.dispatchEvent(
-      new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        clientX: r.x + r.width / 2,
-        clientY: r.y + r.height / 2,
-        button: 2,
-      }),
-    );
-  }, selector);
 
 describe("status & staging", () => {
   let repo: TempRepo;
@@ -91,12 +71,11 @@ describe("status & staging", () => {
     await jsContextMenu('[data-testid="changes-list"] [data-path="a.txt"]');
     // Menu items are divs with the label in an inner <span> (no native menu;
     // useContextMenu renders a portal).
-    const discardItem = $("span=Discard changes");
-    await discardItem.waitForDisplayed({
+    await $("span=Discard changes").waitForDisplayed({
       timeout: 30_000,
       timeoutMsg: "Discard changes menu item never appeared",
     });
-    await discardItem.click();
+    await jsClickMenuItem("Discard changes");
     await browser.waitUntil(
       async () => !(await changeRow("a.txt").isExisting()),
       { timeout: 30_000, timeoutMsg: "a.txt still listed after discard" },
