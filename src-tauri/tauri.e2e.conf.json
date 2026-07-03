@@ -1,5 +1,16 @@
 {
   "app": {
-    "withGlobalTauri": true
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "default",
+        {
+          "identifier": "e2e-focus",
+          "description": "E2E-only: let the wdio harness force window focus (ensureMacAppFocus in e2e/support/app.ts). The unbundled debug binary doesn't reliably win foreground focus at launch; without focus WKWebView reports the page hidden and isDisplayed() lies.",
+          "windows": ["main"],
+          "permissions": ["core:window:allow-set-focus"]
+        }
+      ]
+    }
   }
 }

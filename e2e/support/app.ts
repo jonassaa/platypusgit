@@ -60,6 +60,61 @@ export async function armDriverBridge(): Promise<void> {
   );
 }
 
+/** macOS focus self-heal (issue #32).
+ *
+ * The e2e debug binary is unbundled and doesn't reliably win foreground
+ * focus at launch. When another app (e.g. Remote Desktop) holds foreground,
+ * WKWebView reports `document.visibilityState === "hidden"` /
+ * `document.hasFocus() === false`, and WebDriver's isDisplayed() returns
+ * false for elements that exist in the DOM — waits then die with "... never
+ * appeared". @wdio/tauri-service's own self-heal (ensureActiveWindowFocus)
+ * can't help: it invokes `plugin:wdio|get_window_states`, which
+ * tauri-plugin-wdio-webdriver 1.2.0 (latest as of 2026-07) does not ship —
+ * and our wdio.conf disables that check anyway (see guard 1 there).
+ *
+ * So we self-heal here: if the page reports unfocused/hidden, call the
+ * window's own `setFocus()` through the global Tauri API. On macOS that is
+ * tao's `makeKeyAndOrderFront` + `activateIgnoringOtherApps:YES` — forces
+ * activation over whatever app holds foreground, no Automation/TCC prompt
+ * (unlike osascript). Requires `core:window:allow-set-focus`, granted by the
+ * e2e-only inline capability in src-tauri/tauri.e2e.conf.json.
+ *
+ * No-op off macOS: Linux CI (xvfb) never loses focus and must not be
+ * touched. Cheap when already focused (one execute, no setFocus call), so
+ * it runs at session start AND before every test (wdio.conf hooks) to heal
+ * mid-suite focus steals too. Call sites assume an armed, settled page —
+ * don't call it mid-refresh. */
+export async function ensureMacAppFocus(): Promise<void> {
+  if (process.platform !== "darwin") return;
+  await browser.waitUntil(
+    () =>
+      browser.execute(() => {
+        const focused =
+          document.visibilityState === "visible" && document.hasFocus();
+        if (!focused) {
+          const w = window as unknown as Record<string, any>;
+          // Fire-and-forget: focus lands asynchronously (main-thread hop in
+          // tao); the next poll observes it. Swallow rejection so a missing
+          // permission surfaces as this wait's timeoutMsg, not an unhandled
+          // rejection in the page.
+          w.__TAURI__?.window
+            ?.getCurrentWindow?.()
+            ?.setFocus?.()
+            ?.catch?.(() => {});
+        }
+        return focused;
+      }),
+    {
+      timeout: 15_000,
+      interval: 250,
+      timeoutMsg:
+        "webview never reported visible+focused after setFocus() retries — " +
+        "is core:window:allow-set-focus granted (src-tauri/tauri.e2e.conf.json " +
+        "e2e-focus capability), and was the binary rebuilt with that config?",
+    },
+  );
+}
+
 export async function resetApp(): Promise<void> {
   await browser.execute(() => localStorage.clear());
   await browser.refresh();

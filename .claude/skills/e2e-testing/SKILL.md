@@ -31,6 +31,12 @@ Two conf-level guards eliminate the historical "suite suddenly takes minutes" fl
 
 **Flake bands:** healthy full suite ≈ 30s–1.5min. Sustained runs >2.5min, or single commands taking 5–30s, mean a guard above was lost or a new refresh site skipped the settle-gate pattern — check conf + the newest refresh site, not the specs.
 
+## Focus self-heal (macOS — `ensureMacAppFocus`, don't remove)
+
+The unbundled debug binary doesn't reliably win foreground focus at launch. An unfocused/occluded WKWebView reports the page hidden (`visibilityState: "hidden"`, `hasFocus() === false`), and `isDisplayed()` then returns false for elements that ARE in the DOM — every `waitForDisplayed` dies with "... never appeared" (issue #32). The service's own self-heal can't fire: it invokes `plugin:wdio|get_window_states`, which `tauri-plugin-wdio-webdriver` 1.2.0 (latest as of 2026-07; pair pinned service+plugin) does not ship — and guard 1 above disables the check anyway.
+
+Fix in tree: `ensureMacAppFocus()` (`e2e/support/app.ts`) — if the page reports hidden/unfocused, calls the window's own `setFocus()` via the global Tauri API (tao: `makeKeyAndOrderFront` + `activateIgnoringOtherApps` — wins focus from any app, no osascript/TCC prompt) and retries until the page reports visible+focused. Runs in wdio.conf `before` (session start) and `beforeTest` (heals mid-suite steals; one cheap execute when already focused). Needs `core:window:allow-set-focus`, granted ONLY by the e2e inline capability in `src-tauri/tauri.e2e.conf.json` — prod capability set untouched. No-op off macOS; Linux CI (xvfb) never loses focus. If a future service+plugin release ships `get_window_states`, the upstream self-heal still stays disabled by guard 1 — keep `ensureMacAppFocus` regardless.
+
 ## Selectors
 
 | Need | Use | Never |
@@ -85,10 +91,12 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
 3. Suite slow? → flake bands above (bridge), not the spec.
 4. Selector fights >20min → capture outerHTML evidence, then fix or escalate; never fake a flow by shelling `git` for the action under test.
 5. "X never appeared" while the DOM provably contains X (dump outerHTML to
-   check) → focus race: another app holds foreground, WKWebView reports
-   `visibilityState: "hidden"`, and `isDisplayed()` lies. Minimize/quit
-   focus-stealing apps (e.g. Remote Desktop) and rerun; see issue on local
-   focus flake. CI (xvfb) is immune.
+   check) → focus race: WKWebView reports `visibilityState: "hidden"` and
+   `isDisplayed()` lies. `ensureMacAppFocus` (see focus self-heal section)
+   should heal this at session start and before each test — if it still
+   happens, check that the `before`/`beforeTest` hooks and the `e2e-focus`
+   capability (`src-tauri/tauri.e2e.conf.json`) are intact, and that the
+   binary was rebuilt after any capability change. CI (xvfb) is immune.
 
 ## Before committing
 
