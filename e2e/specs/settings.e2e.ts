@@ -5,6 +5,7 @@ import {
 import {
   openRepo, reopenRepo, resetApp, stubNativeDialogs, confirmCallCount,
   openPalette, paletteDialog, paletteInput, switchScreen, stagedRow,
+  executeOnce,
 } from "../support/app";
 
 /** Open the Settings screen via the titlebar gear. */
@@ -41,7 +42,9 @@ async function clickPaletteRow(text: string): Promise<void> {
  * `span*=...` work there without this helper.
  */
 async function clickSettingsToggleRow(labelText: string): Promise<void> {
-  const ok = await browser.execute((text: string) => {
+  // executeOnce: a driver-retry re-run would click the toggle twice,
+  // flipping the setting straight back (issue #35).
+  const ok = await executeOnce((text: string) => {
     const divs = Array.from(document.querySelectorAll("div"));
     const labelDiv = divs.find(
       (d) => d.children.length === 0 && d.textContent?.trim() === text,

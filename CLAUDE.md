@@ -61,8 +61,8 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (13 files, 47
-  tests — 46 passing + 1 skipped pending #27) drive the real debug binary: real webview →
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (14 files, 50
+  tests — 49 passing + 1 skipped pending #27) drive the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
   driver or paid service — so it runs on macOS (WKWebView) and on Linux CI
