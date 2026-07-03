@@ -18,13 +18,18 @@ pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc EXCLU
 
 **Stale-binary trap:** `test:e2e:run` tests whatever binary is in `e2e/.bin/`. A green run after touching `src/` proves nothing unless a full `test:e2e` ran after the change. Plain `cargo build` silently rewrites `target/debug/platypusgit` WITHOUT `custom-protocol` (blank window) — that's why the snapshot exists. Close any running dev app first: debug builds all serve WebDriver on port 4445 and the runner may attach to the dev instance and clear its localStorage.
 
-## Driver bridge (the 5-seconds-per-command failure)
+## Suite-speed guards (wdio.conf.ts `before` hook — don't remove)
 
-The embedded driver's focus-check polls 5s for `window.__wdio_original_core__` on EVERY find/click when unarmed. `armDriverBridge()` (`e2e/support/app.ts`) hands it `window.__TAURI__.core` (exists only in e2e builds via `src-tauri/tauri.e2e.conf.json`).
+Two conf-level guards eliminate the historical "suite suddenly takes minutes" flakes. Both live in the `before` hook; removing either brings a stall class back:
+
+1. **`browser.tauri.switchWindow("main")`** — sets the service's session-wide "user switched windows" flag, which makes its per-command focus check (`ensureActiveWindowFocus`) skip forever. Unskipped, that check runs a direct-eval script before EVERY find/click that polls 5s for `window.__wdio_original_core__` whenever the page is unarmed. Single-window app: focus management has nothing to manage.
+2. **`browser.setTimeout({ script: 2500 })` — macOS ONLY.** The driver's default W3C script timeout is 30s. An `execute()` that lands while a `browser.refresh()` navigation is mid-document-swap gets its WKWebView completion handler silently dropped; the driver waits the FULL script timeout, then the caller retries. Uncapped, this produced random ~30s stalls per spec (moving between specs run to run). Locally all in-page scripts finish in ms, so 2.5s only bounds the hang. **Never apply the cap on Linux CI:** under xvfb legitimate executes can exceed 2.5s, and a script that times out but still ran gets retried — double-running side-effectful helpers (bit us: merge-conflict flow desync, `mark-resolved` never found).
+
+`armDriverBridge()` (`e2e/support/app.ts`) hands `window.__TAURI__.core` (e2e builds only, via `src-tauri/tauri.e2e.conf.json`) to the driver's direct-eval channel. With guard 1 active it's belt-and-braces (only `browser.tauri.*` calls need it), but keep the pattern: it doubles as the post-refresh settle gate.
 
 **Reload race:** after `browser.refresh()`, an immediate arm can land on the OUTGOING document (it also has `__TAURI__`), leaving the new page unarmed. The only trustworthy "navigation settled" signal is a matched WebDriver find. **Rule: any new `browser.refresh()` call site must wait for a real element, then call `armDriverBridge()` again** — see `resetApp`/`openRepo`/`waitRepoLoaded` for the pattern.
 
-**Flake bands:** healthy full suite ≈ 20s–2.5min. A run >5min, or single commands taking 5–30s, means the bridge is unarmed somewhere — check the newest refresh site, not the specs.
+**Flake bands:** healthy full suite ≈ 30s–1.5min. Sustained runs >2.5min, or single commands taking 5–30s, mean a guard above was lost or a new refresh site skipped the settle-gate pattern — check conf + the newest refresh site, not the specs.
 
 ## Selectors
 
