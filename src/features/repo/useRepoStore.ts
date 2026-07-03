@@ -118,6 +118,12 @@ interface RepoStoreState {
   searchResults: CommitInfo[] | null;
   /** The active backend log filter (empty object when none). */
   commitFilter: LogFilter;
+  /**
+   * Revspec the log walk starts from, or null for HEAD. Scoping applies to
+   * `commits` AND backend searches, so every consumer of the log (History,
+   * palette pickers, context menus) sees the browsed ref's commits.
+   */
+  logRef: string | null;
   /** True while a backend search is in flight. */
   searching: boolean;
   loading: boolean;
@@ -140,6 +146,12 @@ interface RepoStoreState {
    * falls back to the full log. Sets `searchResults` + `commitFilter`.
    */
   searchCommits: (filter: LogFilter) => Promise<void>;
+  /**
+   * Scope the commit log to `refspec` (null = HEAD) and reload it. An active
+   * search is re-run under the new scope. Errors (e.g. InvalidRef) are set on
+   * the store; the previous list is kept.
+   */
+  setLogRef: (refspec: string | null) => Promise<void>;
   refreshAll: () => Promise<void>;
   refreshAllFiles: () => Promise<void>;
   /**
@@ -254,6 +266,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   commits: [],
   searchResults: null,
   commitFilter: {},
+  logRef: null,
   searching: false,
   loading: false,
   error: null,
@@ -279,6 +292,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         searchResults: null,
         commitFilter: {},
         lastRebaseSummary: null,
+        logRef: null,
       });
       await get().refreshAll();
     } catch (e) {
@@ -295,13 +309,37 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       return;
     }
     set({ commitFilter: filter, searching: true });
+    const refspec = get().logRef;
     try {
-      const results = await getLogFiltered(repo.id, filter, 500);
-      // Guard against a stale response overwriting a newer filter.
-      if (get().commitFilter !== filter) return;
+      const results = await getLogFiltered(repo.id, filter, 500, refspec);
+      // Guard against a stale response overwriting a newer filter or scope.
+      if (get().commitFilter !== filter || get().logRef !== refspec) return;
       set({ searchResults: results, searching: false });
     } catch (e) {
       set({ searching: false, error: toAppError(e) });
+    }
+  },
+
+  async setLogRef(refspec) {
+    const repo = get().current;
+    if (!repo) {
+      set({ logRef: refspec });
+      return;
+    }
+    set({ logRef: refspec, loading: true, error: null });
+    try {
+      const commits = await getLog(repo.id, 500, refspec);
+      // Guard against a stale response overwriting a newer scope.
+      if (get().logRef !== refspec) return;
+      set({ commits, loading: false });
+      // Re-run an active search under the new scope.
+      const activeFilter = get().commitFilter;
+      if (!isFilterEmpty(activeFilter)) {
+        void get().searchCommits(activeFilter);
+      }
+    } catch (e) {
+      if (get().logRef !== refspec) return;
+      set({ loading: false, error: toAppError(e) });
     }
   },
 
@@ -309,6 +347,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     const repo = get().current;
     if (!repo) return;
     set({ loading: true, error: null });
+    const logRef = get().logRef;
     try {
       const [status, branches, tags, stashes, remotes, commits, repoState, rebaseStatus] =
         await Promise.all([
@@ -317,7 +356,14 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           listTags(repo.id),
           listStashes(repo.id),
           listRemotes(repo.id),
-          getLog(repo.id, 500),
+          getLog(repo.id, 500, logRef).catch((e) => {
+            // The browsed ref may have vanished since it was selected (e.g.
+            // the branch was deleted) — fall back to HEAD instead of failing
+            // the whole refresh.
+            if (logRef === null) throw e;
+            set({ logRef: null });
+            return getLog(repo.id, 500);
+          }),
           repoStateFn(repo.id),
           rebaseStatusFn(repo.id),
         ]);
@@ -358,6 +404,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       commits: [],
       searchResults: null,
       commitFilter: {},
+      logRef: null,
       searching: false,
       lastRebaseSummary: null,
       error: null,

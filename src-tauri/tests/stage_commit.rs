@@ -102,7 +102,7 @@ fn commit_from_staged_changes_advances_head() {
         .expect("commit");
 
     assert_eq!(oid.len(), 40);
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     assert_eq!(log.len(), 2, "should have initial + new commit");
     assert_eq!(log[0].summary, "update readme");
 }
@@ -145,7 +145,7 @@ fn amend_replaces_tip() {
         )
         .unwrap();
 
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     assert_eq!(log.len(), 2, "amend must not add a new commit");
     assert_eq!(log[0].summary, "update readme");
 }
@@ -253,7 +253,7 @@ fn commit_on_unborn_branch_creates_root() {
         )
         .unwrap();
 
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     assert_eq!(log.len(), 1);
     assert!(log[0].parents.is_empty());
 }

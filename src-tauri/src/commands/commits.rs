@@ -11,11 +11,12 @@ pub async fn get_log(
     state: State<'_, AppState>,
     repo_id: String,
     limit: Option<usize>,
+    refspec: Option<String>,
 ) -> AppResult<Vec<CommitInfo>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let limit = limit.unwrap_or(500);
-    tokio::task::spawn_blocking(move || backend.log(&repo_id, limit))
+    tokio::task::spawn_blocking(move || backend.log(&repo_id, refspec.as_deref(), limit))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
@@ -26,13 +27,16 @@ pub async fn get_log_filtered(
     repo_id: String,
     filter: LogFilter,
     limit: Option<usize>,
+    refspec: Option<String>,
 ) -> AppResult<Vec<CommitInfo>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let limit = limit.unwrap_or(500);
-    tokio::task::spawn_blocking(move || backend.log_filtered(&repo_id, &filter, limit))
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
+    tokio::task::spawn_blocking(move || {
+        backend.log_filtered(&repo_id, &filter, refspec.as_deref(), limit)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]

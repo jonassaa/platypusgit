@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-07-03-ref-scoped-log-*` — History ref selector; log walk from any revspec (#27).
 - `2026-07-03-e2e-phase3-*` — e2e phase 3: remote/palette/settings coverage, dead-settings audit.
 - `2026-04-24-centralized-branch-ui-*` — sidebar removed, titlebar branch chip + popover picker.
 - `2026-04-23-reflog-viewer-*` — reflog screen + dirty-tree handling.
@@ -62,7 +63,7 @@ Four layers, each run independently:
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
 - **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (14 files, 50
-  tests — 49 passing + 1 skipped pending #27) drive the real debug binary: real webview →
+  tests, all passing) drive the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
   driver or paid service — so it runs on macOS (WKWebView) and on Linux CI

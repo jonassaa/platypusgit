@@ -85,24 +85,35 @@ export async function readFileContentAtRev(
   });
 }
 
+/**
+ * Commit log, newest-first. `refspec` scopes the walk start: omitted/null
+ * walks from HEAD; any revspec (branch, tag, oid) walks from that commit.
+ */
 export async function getLog(
   repoId: string,
   limit?: number,
+  refspec?: string | null,
 ): Promise<CommitInfo[]> {
-  return invoke<CommitInfo[]>("get_log", { repoId, limit });
+  return invoke<CommitInfo[]>("get_log", { repoId, limit, refspec });
 }
 
 /**
  * Commit log filtered by `filter` (message/author/sha/date/path), newest-first.
  * `limit` caps the number of *matching* commits. An empty filter behaves like
- * `getLog`.
+ * `getLog`. `refspec` scopes the walk exactly as in `getLog`.
  */
 export async function getLogFiltered(
   repoId: string,
   filter: LogFilter,
   limit?: number,
+  refspec?: string | null,
 ): Promise<CommitInfo[]> {
-  return invoke<CommitInfo[]>("get_log_filtered", { repoId, filter, limit });
+  return invoke<CommitInfo[]>("get_log_filtered", {
+    repoId,
+    filter,
+    limit,
+    refspec,
+  });
 }
 
 /**

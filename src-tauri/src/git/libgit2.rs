@@ -457,6 +457,45 @@ fn git_apply(repo_path: &Path, extra_args: &[&str], patch_text: &str) -> AppResu
     Ok(())
 }
 
+/// Push the log walk's start commit onto `walk`. `None` starts at HEAD and
+/// returns `Ok(false)` when HEAD is unborn (caller returns an empty log).
+/// `Some(spec)` starts at any revspec (branch, tag, short/full oid) peeled to
+/// a commit — `InvalidRef` when it can't be resolved. Returns `Ok(true)` when
+/// a start point was pushed.
+fn push_log_start(
+    repo: &Repository,
+    walk: &mut git2::Revwalk,
+    refspec: Option<&str>,
+) -> AppResult<bool> {
+    match refspec {
+        // Unborn HEAD (no commits yet) → nothing to walk. Detect via head()
+        // up front: push_head() surfaces it as a generic "ref not found".
+        None => match repo.head() {
+            Ok(_) => {
+                walk.push_head()?;
+                Ok(true)
+            }
+            Err(e)
+                if matches!(
+                    e.code(),
+                    git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(e.into()),
+        },
+        Some(spec) => {
+            let commit = repo
+                .revparse_single(spec)
+                .and_then(|obj| obj.peel_to_commit())
+                .map_err(|_| AppError::InvalidRef(spec.to_string()))?;
+            walk.push(commit.id())?;
+            Ok(true)
+        }
+    }
+}
+
 /// Map git2's per-ref lookup by target OID. Scans once per log call.
 fn collect_ref_map(repo: &Repository) -> Vec<(git2::Oid, String)> {
     let mut out = Vec::new();
@@ -668,16 +707,18 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>> {
+    fn log(
+        &self,
+        repo_id: &RepoId,
+        refspec: Option<&str>,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
         self.with_repo(repo_id, |repo| {
             let ref_map = collect_ref_map(repo);
             let mut walk = repo.revwalk()?;
             walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-            // If HEAD is unborn we have no commits to walk.
-            match walk.push_head() {
-                Ok(()) => {}
-                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(Vec::new()),
-                Err(e) => return Err(e.into()),
+            if !push_log_start(repo, &mut walk, refspec)? {
+                return Ok(Vec::new());
             }
 
             let mut out = Vec::with_capacity(limit.min(4096));
@@ -701,11 +742,12 @@ impl GitBackend for Libgit2Backend {
         &self,
         repo_id: &RepoId,
         filter: &LogFilter,
+        refspec: Option<&str>,
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>> {
         // No filter set → identical to a plain log walk.
         if filter.is_empty() {
-            return self.log(repo_id, limit);
+            return self.log(repo_id, refspec, limit);
         }
 
         // Normalize filter terms once.
@@ -735,25 +777,12 @@ impl GitBackend for Libgit2Backend {
             .map(std::path::PathBuf::from);
 
         self.with_repo(repo_id, |repo| {
-            // Unborn HEAD (no commits yet) → nothing to walk. Detect up front
-            // since push_head() surfaces this as a generic "ref not found".
-            match repo.head() {
-                Ok(_) => {}
-                Err(e)
-                    if matches!(
-                        e.code(),
-                        git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound
-                    ) =>
-                {
-                    return Ok(Vec::new())
-                }
-                Err(e) => return Err(e.into()),
-            }
-
             let ref_map = collect_ref_map(repo);
             let mut walk = repo.revwalk()?;
             walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-            walk.push_head()?;
+            if !push_log_start(repo, &mut walk, refspec)? {
+                return Ok(Vec::new());
+            }
 
             let mut out = Vec::new();
             for oid in walk {

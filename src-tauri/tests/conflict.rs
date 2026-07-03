@@ -116,7 +116,7 @@ fn continue_operation_creates_two_parent_merge_commit() {
     assert_eq!(oid.len(), 40);
 
     // The new commit has two parents.
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     assert_eq!(log[0].parents.len(), 2, "merge commit should have two parents");
     assert!(matches!(
         backend.repo_state(&handle.id).unwrap(),

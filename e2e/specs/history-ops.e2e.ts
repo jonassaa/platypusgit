@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import { cherryRepo, TempRepo } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
-  jsContextMenu, jsHoverMenuItem, jsClickMenuItem,
+  jsContextMenu, jsHoverMenuItem, jsClickMenuItem, jsSelectValue,
 } from "../support/app";
 
 describe("history danger ops", () => {
@@ -47,41 +47,23 @@ describe("history danger ops", () => {
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 
-  // BLOCKED — pending #27 (ref-scoped log).
-  //
-  // All three documented fallback paths (History "All" filter → context
-  // menu → in-page ⌘P palette) draw the commit list from the exact same
-  // frontend state, `useRepoStore.commits`, which the backend populates
-  // via a revwalk that only ever calls `push_head()` — see `log()` and
-  // `log_filtered()` in src-tauri/src/git/libgit2.rs. There is no code
-  // path anywhere in the backend that unions in other refs, so a commit
-  // that only exists on an unmerged branch (cherry.txt on `feature`) can
-  // never appear while `main` is checked out, no matter which client-side
-  // filter/search/picker is used on top of that list.
-  //
-  // Verified empirically against the live e2e build (cherryRepo, HEAD on
-  // main):
-  //   1. History screen, "All" filterKind button clicked: the rendered
-  //      `[data-testid="commit-row"]` set is exactly the 3 main-branch
-  //      commits (fix: update a.txt / feat: add b.txt / feat: add a.txt).
-  //      "feat: cherry commit" never renders — nothing to right-click for
-  //      the context-menu fallback either, since it reads the same rows.
-  //   2. In-page palette (`window.dispatchEvent(new KeyboardEvent("keydown",
-  //      {key:"p", metaKey:true, bubbles:true}))` opens
-  //      `[role="dialog"][aria-label="Command palette"]` fine) → "Cherry-pick
-  //      commit…" step lists the identical 3 commits
-  //      (`commitItems()` in features/palette/commands.ts sources
-  //      `repoState().commits`, the same array).
-  //
-  // Per the task brief: do not fake this by shelling `git cherry-pick`.
-  // Fixing it for real needs a backend change (e.g. a "log another ref"
-  // command) that's out of scope for this E2E task.
-  it.skip("cherry-picks the feature commit onto main — BLOCKED, no UI path surfaces an unmerged branch's commits (see comment above)", async () => {
-    await $("button*=All").click();
+  // #27 (ref-scoped log): the History toolbar ref selector scopes the
+  // backend log walk to any local branch, so an unmerged branch's commits
+  // (cherry.txt on `feature`) become browsable — and cherry-pickable via
+  // the detail action row — while `main` is checked out.
+  it("cherry-picks the feature commit onto main via the ref selector", async () => {
+    // Scope the log to the unmerged `feature` branch. jsSelectValue, not
+    // selectByAttribute: WebKitGTK accepts the option click without firing a
+    // React-visible change event (see helper doc), so the log never rescopes.
+    await $('[data-testid="history-ref-select"]').waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "history ref selector missing",
+    });
+    await jsSelectValue('[data-testid="history-ref-select"]', "feature");
     const row = $('[data-testid="commit-row"]*=feat: cherry commit');
     await row.waitForDisplayed({
       timeout: 15_000,
-      timeoutMsg: "feature commit not visible under All filter — see fallback note",
+      timeoutMsg: "feature commit not visible after scoping log to feature",
     });
     await row.click();
     await $('[data-testid="commit-cherry-pick"]').waitForDisplayed({

@@ -37,13 +37,19 @@ impl GitBackend for CliBackend {
     fn list_all_files(&self, _repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
         Err(AppError::NotImplemented)
     }
-    fn log(&self, _repo_id: &RepoId, _limit: usize) -> AppResult<Vec<CommitInfo>> {
+    fn log(
+        &self,
+        _repo_id: &RepoId,
+        _refspec: Option<&str>,
+        _limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
     fn log_filtered(
         &self,
         _repo_id: &RepoId,
         _filter: &LogFilter,
+        _refspec: Option<&str>,
         _limit: usize,
     ) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)

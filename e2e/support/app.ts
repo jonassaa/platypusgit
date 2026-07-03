@@ -426,3 +426,32 @@ export async function jsKey(selector: string, key: string): Promise<void> {
   );
   if (!ok) throw new Error(`jsKey: element not found: ${selector}`);
 }
+
+/** Set a native `<select>`'s value and fire the `change` event React listens
+ *  for. Never drive selects with WebDriver's `selectByAttribute`: it clicks
+ *  the `<option>`, which WebKitGTK under xvfb accepts WITHOUT surfacing a
+ *  change event to React — observed on CI (#40 run 28663060615): the History
+ *  ref selector "selected" the branch, yet the log never rescoped and the
+ *  spec timed out. The prototype value setter bypasses React's input value
+ *  tracking so the dispatched event is actually seen by the onChange. */
+export async function jsSelectValue(selector: string, value: string): Promise<void> {
+  // executeOnce: re-setting the same value on a driver retry is harmless,
+  // but every side-effectful in-page script keeps the once-per-call guard.
+  const ok = await executeOnce(
+    (sel: string, v: string) => {
+      const el = document.querySelector(sel) as HTMLSelectElement | null;
+      if (!el) return false;
+      const desc = Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      );
+      if (desc && desc.set) desc.set.call(el, v);
+      else el.value = v;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    },
+    selector,
+    value,
+  );
+  if (!ok) throw new Error(`jsSelectValue: select not found: ${selector}`);
+}
