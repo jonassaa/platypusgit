@@ -459,6 +459,7 @@ export function BranchesScreen() {
             {visibleStashes.map((s) => (
               <div
                 key={`stash:${s.index}`}
+                data-stash-index={s.index}
                 onClick={() => setSelection({ kind: "stash", index: s.index })}
                 onContextMenu={(e) =>
                   onStashCtx(e, { index: s.index, name: `stash@{${s.index}}` })

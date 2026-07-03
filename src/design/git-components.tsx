@@ -1291,6 +1291,8 @@ export function PGConflictRow({
 
   return (
     <div
+      data-testid="conflict-row"
+      data-path={path}
       onClick={onClick}
       onContextMenu={onContextMenu}
       style={{
@@ -1577,6 +1579,8 @@ export function PGRebaseRow({
   const current = actions.find((a) => a.value === action) || actions[0];
   return (
     <div
+      data-testid="rebase-row"
+      data-sha={sha}
       style={{
         display: "flex",
         alignItems: "center",

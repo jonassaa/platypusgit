@@ -523,6 +523,10 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await mergeBranchFn(repo.id, name);
       await get().refreshAll();
     } catch (e) {
+      // refreshAll clears `error` as its first act, so refresh before
+      // recording the error — otherwise the two synchronous `set()` calls
+      // land in the same React batch and the error is wiped before render.
+      await get().refreshAll();
       set({ error: toAppError(e) });
     }
   },
@@ -534,6 +538,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await rebaseOntoFn(repo.id, upstream);
       await get().refreshAll();
     } catch (e) {
+      // See mergeBranch's catch: refresh first, error last, so it isn't
+      // batched away by refreshAll's own `error: null` reset.
+      await get().refreshAll();
       set({ error: toAppError(e) });
     }
   },
@@ -642,6 +649,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await cherryPick(repo.id, oid);
       await get().refreshAll();
     } catch (e) {
+      // See mergeBranch's catch: refresh first, error last, so it isn't
+      // batched away by refreshAll's own `error: null` reset.
+      await get().refreshAll();
       set({ error: toAppError(e) });
     }
   },
@@ -653,6 +663,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await revertFn(repo.id, oid);
       await get().refreshAll();
     } catch (e) {
+      // See mergeBranch's catch: refresh first, error last, so it isn't
+      // batched away by refreshAll's own `error: null` reset.
+      await get().refreshAll();
       set({ error: toAppError(e) });
     }
   },

@@ -88,10 +88,22 @@ function RebaseBanner({
       >
         {nextIndex}/{total}
       </span>
-      <PGButton size="sm" variant="outline" onClick={onAbort} icon="x">
+      <PGButton
+        size="sm"
+        variant="outline"
+        onClick={onAbort}
+        icon="x"
+        data-testid="rebase-abort"
+      >
         Abort
       </PGButton>
-      <PGButton size="sm" variant="primary" onClick={onContinue} icon="check">
+      <PGButton
+        size="sm"
+        variant="primary"
+        onClick={onContinue}
+        icon="check"
+        data-testid="rebase-continue"
+      >
         Continue
       </PGButton>
     </div>
@@ -283,6 +295,7 @@ export function RebaseScreen() {
               icon="rebase"
               onClick={handleStart}
               disabled={plan.length === 0}
+              data-testid="rebase-start"
             >
               Start rebase
             </PGButton>
