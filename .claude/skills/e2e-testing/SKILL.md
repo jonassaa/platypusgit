@@ -45,6 +45,14 @@ WebDriver cannot drive `window.prompt`/`confirm`, right-click, or hover here.
 
 - `stubNativeDialogs({promptText, confirm})` — call AFTER the last page (re)load (reloads wipe stubs) and BEFORE the triggering click.
 - `jsContextMenu(selector, {text})` opens the app's portal context menu; `jsClickMenuItem(label)` clicks an item; `jsHoverMenuItem(label)` opens hover submenus (e.g. History → "Reset current branch to here"). All in `e2e/support/app.ts` — extend the helper there, never inline in a spec.
+- `stubNativeDialogs({promptQueue: ["a", "b"]})` — multi-prompt flows (Add
+  remote asks name THEN url; a single promptText would set name === url).
+  Confirm calls are counted: `confirmCallCount()` is the positive signal
+  that a confirm gate fired (there is no UI signal when a user "cancels").
+- Palette: `openPalette()` (js-dispatched ⌘P — the driver can't synthesize
+  Meta chords), `jsKey(paletteInput, "Enter"|"Escape")` for control keys,
+  `setValue(paletteInput)` for typing. Scope EVERY palette selector under
+  `paletteDialog` — it's portaled to body over the live screen.
 
 ## Fixtures & assertions
 
@@ -55,6 +63,12 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
 - The store reads status at `openRepo`; **dirty files must exist on disk BEFORE openRepo** or the UI won't know.
 - History shows HEAD-reachable commits only (issue #27) — unmerged-ref commits appear nowhere.
 - Root commit's "Interactive rebase from here" silently no-ops.
+- `remoteRepo()` pairs a work repo with a local bare `origin`. `makeBehind`
+  rewinds `refs/remotes/origin/main` so fetch has something to discover —
+  but that same rewind makes `--force-with-lease` fail ("stale info").
+  Force-push tests use `makeDiverged` (accurate remote-tracking) instead.
+- Titlebar Fetch/Pull/Push are unambiguous `button*=` targets only while a
+  non-Remote screen is active — the Remote screen adds two more sets.
 
 **Assertion contract:** repo truth (`repo.git(...)`, `repo.read(...)`) is the acceptance, as plain `expect`s AFTER a UI wait; UI text is the wait condition. `waitUntil` on repo truth only when no UI signal exists — say so in a comment. Every wait: `timeout` + `timeoutMsg`. Never `pause()`.
 
@@ -64,6 +78,11 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
 2. Inspect real DOM, don't guess: `await browser.execute(() => document.querySelector('[role="dialog"]')?.outerHTML)`.
 3. Suite slow? → flake bands above (bridge), not the spec.
 4. Selector fights >20min → capture outerHTML evidence, then fix or escalate; never fake a flow by shelling `git` for the action under test.
+5. "X never appeared" while the DOM provably contains X (dump outerHTML to
+   check) → focus race: another app holds foreground, WKWebView reports
+   `visibilityState: "hidden"`, and `isDisplayed()` lies. Minimize/quit
+   focus-stealing apps (e.g. Remote Desktop) and rerun; see issue on local
+   focus flake. CI (xvfb) is immune.
 
 ## Before committing
 

@@ -1692,6 +1692,8 @@ export interface PGRemoteRowProps {
   onFetch?: () => void;
   onPush?: () => void;
   onPull?: () => void;
+  onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
+  "data-remote"?: string;
 }
 
 export function PGRemoteRow({
@@ -1703,9 +1705,13 @@ export function PGRemoteRow({
   onFetch,
   onPush,
   onPull,
+  onContextMenu,
+  "data-remote": dataRemote,
 }: PGRemoteRowProps) {
   return (
     <div
+      onContextMenu={onContextMenu}
+      data-remote={dataRemote}
       style={{
         padding: 10,
         background: "var(--bg-1)",

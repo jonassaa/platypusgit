@@ -6,9 +6,12 @@ import {
   PGRemoteRow,
   PGSectionHeader,
   pgFlash,
+  remoteMenuItems,
+  useContextMenu,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch, totalAheadBehind } from "@/lib/derive";
+import type { RemoteInfo } from "@/lib/types";
 
 export function RemoteScreen() {
   const branches = useRepoStore((s) => s.branches);
@@ -52,6 +55,9 @@ export function RemoteScreen() {
     if (!url) return;
     store.addRemote(name, url);
   };
+
+  const { onContextMenu: onRemoteCtx, menu: remoteMenu } =
+    useContextMenu<RemoteInfo>((r) => remoteMenuItems(r));
 
   return (
     <div
@@ -223,6 +229,8 @@ export function RemoteScreen() {
               key={r.name}
               name={r.name}
               url={r.url ?? "(no url)"}
+              data-remote={r.name}
+              onContextMenu={(e) => onRemoteCtx(e, r)}
               ahead={0}
               behind={0}
               onFetch={() => store.fetch(r.name)}
@@ -247,6 +255,7 @@ export function RemoteScreen() {
           ))}
         </div>
       </div>
+      {remoteMenu}
     </div>
   );
 }

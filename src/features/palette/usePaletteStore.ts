@@ -35,6 +35,12 @@ export const usePaletteStore = create<PaletteState>((set) => ({
   setChip: (activeChip) => set({ activeChip }),
   pushStep: (step) =>
     set((s) => ({
+      // A pushed step must be visible. Chained flows (reset → pick commit →
+      // pick mode, rename-branch → pick → input, push-tag, stash-branch) run
+      // through pick-item builders whose run() calls closePalette() before
+      // onPick pushes the follow-up step — without reopening here that step
+      // lands on a closed (unmounted) palette and is unreachable.
+      open: true,
       stack: [...s.stack, step],
       query: step.kind === "input" && step.initial != null ? step.initial : "",
     })),

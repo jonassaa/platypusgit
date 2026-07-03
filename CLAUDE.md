@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-07-03-e2e-phase3-*` — e2e phase 3: remote/palette/settings coverage, dead-settings audit.
 - `2026-04-24-centralized-branch-ui-*` — sidebar removed, titlebar branch chip + popover picker.
 - `2026-04-23-reflog-viewer-*` — reflog screen + dirty-tree handling.
 - `2026-04-23-commit-graph-layout-*` — graph layout engine for history view.
@@ -60,8 +61,8 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (10 files, 23
-  tests — 22 passing + 1 skipped pending #27) drive the real debug binary: real webview →
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (13 files, 47
+  tests — 46 passing + 1 skipped pending #27) drive the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
   driver or paid service — so it runs on macOS (WKWebView) and on Linux CI
@@ -69,18 +70,13 @@ Four layers, each run independently:
   - `pnpm test:e2e` = `test:e2e:build` (a tauri debug build with
     `--features tauri/custom-protocol --config src-tauri/tauri.e2e.conf.json`,
     snapshotting the binary to gitignored `e2e/.bin/`) followed by
-    `test:e2e:run` (wdio against that snapshot). Frontend or Rust change →
-    run the full `pnpm test:e2e`; spec-only change → `pnpm test:e2e:run`
-    reuses the existing binary.
+    `test:e2e:run` (wdio against that snapshot). Any src/ or src-tauri/
+    change requires the full `pnpm test:e2e` — `test:e2e:run` silently
+    tests the old snapshot; spec-only change → `pnpm test:e2e:run`.
   - **Before writing or debugging any e2e spec, read the `e2e-testing`
     project skill** (`.claude/skills/e2e-testing/SKILL.md`) — selector
     conventions and traps, driver-bridge/5s-penalty rules, native-dialog
     stubbing, fixture geometry gotchas, rebuild discipline, debugging flow.
-  - `pnpm test:e2e` = `test:e2e:build` (debug build with
-    `--features tauri/custom-protocol --config src-tauri/tauri.e2e.conf.json`,
-    snapshot → gitignored `e2e/.bin/`) + `test:e2e:run`. Any src/ or
-    src-tauri/ change requires the full `pnpm test:e2e` — `test:e2e:run`
-    silently tests the old snapshot.
   - CI: `.github/workflows/e2e.yml` (ubuntu-latest + xvfb, PRs to `main` +
     push to `main`).
   - `pnpm.overrides["@wdio/native-utils"] = "2.5.0"` pins around a broken
