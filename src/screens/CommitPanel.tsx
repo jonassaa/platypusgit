@@ -50,6 +50,7 @@ export function CommitPanelScreen() {
   const setNavIntent = useNavStore((s) => s.setIntent);
   const addSignoff = useSettingsStore((s) => s.addSignoff);
   const setSetting = useSettingsStore((s) => s.set);
+  const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const [message, setMessage] = React.useState("");
   const [body, setBody] = React.useState("");
   const [amend, setAmend] = React.useState(false);
@@ -189,7 +190,7 @@ export function CommitPanelScreen() {
     let cancelled = false;
     setDiffLoading(true);
     setDiffError(null);
-    getDiff(repo.id, selected.path, kind)
+    getDiff(repo.id, selected.path, kind, diffContextLines)
       .then((d) => {
         if (!cancelled) setDiff(d);
       })
@@ -202,7 +203,7 @@ export function CommitPanelScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selected?.path, selected?.side, repo]);
+  }, [selected?.path, selected?.side, repo, diffContextLines]);
 
   const headBranch = currentBranch(branches);
   const defaultRemote = remotes[0] ?? null;

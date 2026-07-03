@@ -112,7 +112,7 @@ fn diff_commits_returns_per_file_diffs_between_two_commits() {
     let grandparent_oid = commits[2].oid.clone();
 
     let diffs = backend
-        .diff_commits(&handle.id, &grandparent_oid, &head_oid)
+        .diff_commits(&handle.id, &grandparent_oid, &head_oid, 3)
         .unwrap();
 
     // grandparent -> HEAD adds two.txt and three.txt.

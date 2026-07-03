@@ -308,10 +308,22 @@ export function applyTheme(theme: ThemeDef) {
   root.dataset.themeMode = theme.mode;
 }
 
+/** Apply UI density by writing the row-height slot to CSS vars on :root. */
+export function applyDensity(density: "compact" | "comfortable") {
+  const root = document.documentElement;
+  root.style.setProperty("--row-h", density === "comfortable" ? "28px" : "24px");
+  root.dataset.density = density;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // STORE
 // ═════════════════════════════════════════════════════════════════════════════
 
+// Removed settings (persisted keys are dropped by load()'s known-key filter):
+// - signCommits: GPG/SSH signing needs real key plumbing; a toggle that only
+//   pretends to sign erodes trust. Re-add together with actual signing.
+// - showWhitespaceInDiff: no cheap consumer — libgit2's whitespace flags
+//   invert the semantics and would desync hunk indices from staging.
 interface PersistedState {
   activeThemeId: string;
   customThemes: ThemeDef[];
@@ -322,9 +334,7 @@ interface PersistedState {
   pruneOnFetch: boolean;
   confirmForcePush: boolean;
   autoStashBeforePull: boolean;
-  signCommits: boolean;
   addSignoff: boolean;
-  showWhitespaceInDiff: boolean;
   diffContextLines: number;
 }
 
@@ -353,9 +363,7 @@ const DEFAULTS: PersistedState = {
   pruneOnFetch: true,
   confirmForcePush: true,
   autoStashBeforePull: true,
-  signCommits: false,
   addSignoff: false,
-  showWhitespaceInDiff: false,
   diffContextLines: 3,
 };
 
@@ -363,8 +371,17 @@ function load(): PersistedState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULTS };
-    const parsed = JSON.parse(raw) as Partial<PersistedState>;
-    return { ...DEFAULTS, ...parsed };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // Only pick keys that still exist in the schema, so settings removed in
+    // newer versions (e.g. signCommits, showWhitespaceInDiff) don't leak
+    // stale properties into the store state.
+    const out = { ...DEFAULTS };
+    for (const key of Object.keys(DEFAULTS) as (keyof PersistedState)[]) {
+      if (key in parsed) {
+        (out as Record<string, unknown>)[key] = parsed[key];
+      }
+    }
+    return out;
   } catch {
     return { ...DEFAULTS };
   }
@@ -389,9 +406,7 @@ function snapshot(s: SettingsState): PersistedState {
     pruneOnFetch: s.pruneOnFetch,
     confirmForcePush: s.confirmForcePush,
     autoStashBeforePull: s.autoStashBeforePull,
-    signCommits: s.signCommits,
     addSignoff: s.addSignoff,
-    showWhitespaceInDiff: s.showWhitespaceInDiff,
     diffContextLines: s.diffContextLines,
   };
 }
@@ -616,18 +631,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   set(key, value) {
     set({ [key]: value } as Partial<SettingsState>);
     persist(snapshot(get()));
+    if (key === "uiDensity") {
+      applyDensity(get().uiDensity);
+    }
   },
 
   reset() {
     set({ ...DEFAULTS });
     persist(DEFAULTS);
     applyTheme(BUILTIN_THEMES[0]);
+    applyDensity(DEFAULTS.uiDensity);
   },
 }));
 
-// Apply active theme on module load so there's no flash before first render.
+// Apply active theme + density on module load so there's no flash before
+// first render.
 {
   const s = useSettingsStore.getState();
   const active = findTheme(s, s.activeThemeId) ?? BUILTIN_THEMES[0];
   applyTheme(active);
+  applyDensity(s.uiDensity);
 }

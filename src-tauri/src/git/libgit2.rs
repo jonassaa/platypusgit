@@ -869,11 +869,17 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff> {
+    fn diff(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        kind: DiffKind,
+        context_lines: u32,
+    ) -> AppResult<FileDiff> {
         self.with_repo(repo_id, |repo| {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
-            opts.context_lines(3);
+            opts.context_lines(context_lines);
             // Include untracked files as if their full content were a new addition
             // so the diff viewer shows file contents for newly created files.
             if matches!(kind, DiffKind::WorktreeToIndex | DiffKind::WorktreeToHead) {
@@ -1175,6 +1181,7 @@ impl GitBackend for Libgit2Backend {
         repo_id: &RepoId,
         from_oid: &str,
         to_oid: &str,
+        context_lines: u32,
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
             let from = repo.revparse_single(from_oid)?.peel_to_commit()?.id();
@@ -1183,7 +1190,7 @@ impl GitBackend for Libgit2Backend {
             let to_tree = repo.find_commit(to)?.tree()?;
 
             let mut opts = DiffOptions::new();
-            opts.context_lines(3);
+            opts.context_lines(context_lines);
             let mut diff =
                 repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))?;
 
@@ -1337,11 +1344,17 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn stage_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()> {
+    fn stage_hunk(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        context_lines: u32,
+    ) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
-            opts.context_lines(3);
+            opts.context_lines(context_lines);
             let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
 
             // Find delta for path, then count hunks via Patch.
@@ -1377,12 +1390,18 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn unstage_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()> {
+    fn unstage_hunk(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        context_lines: u32,
+    ) -> AppResult<()> {
         // Build patch text from the IndexToHead diff, then `git apply --cached --reverse`.
         let patch_text = self.with_repo(repo_id, |repo| {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
-            opts.context_lines(3);
+            opts.context_lines(context_lines);
             let head_tree = match repo.head() {
                 Ok(h) => Some(h.peel_to_tree()?),
                 Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
@@ -1397,12 +1416,18 @@ impl GitBackend for Libgit2Backend {
         git_apply(&repo_path, &["--cached", "--reverse"], &patch_text)
     }
 
-    fn discard_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()> {
+    fn discard_hunk(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        context_lines: u32,
+    ) -> AppResult<()> {
         // Build patch text from the WorktreeToIndex diff, then `git apply --reverse`.
         let patch_text = self.with_repo(repo_id, |repo| {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
-            opts.context_lines(3);
+            opts.context_lines(context_lines);
             let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
             let delta_index = find_delta_index(&diff, path)?;
             patch_text_for_hunk(&diff, delta_index, hunk_index)

@@ -69,6 +69,7 @@ fn worktree_diff_has_exactly_two_hunks_before_staging() {
             &handle.id,
             &std::path::Path::new("data.txt"),
             platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            3,
         )
         .expect("diff");
     assert_eq!(
@@ -83,7 +84,7 @@ fn stage_hunk_0_stages_only_first_region() {
     let (_tr, backend, handle) = repo_with_two_worktree_hunks();
 
     backend
-        .stage_hunk(&handle.id, &std::path::Path::new("data.txt"), 0)
+        .stage_hunk(&handle.id, &std::path::Path::new("data.txt"), 0, 3)
         .expect("stage_hunk 0");
 
     // After staging hunk 0 the IndexToHead diff should have 1 hunk (line 3 change).
@@ -92,6 +93,7 @@ fn stage_hunk_0_stages_only_first_region() {
             &handle.id,
             &std::path::Path::new("data.txt"),
             platypusgit_lib::git::types::DiffKind::IndexToHead,
+            3,
         )
         .expect("index diff");
     assert_eq!(
@@ -106,6 +108,7 @@ fn stage_hunk_0_stages_only_first_region() {
             &handle.id,
             &std::path::Path::new("data.txt"),
             platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            3,
         )
         .expect("worktree diff");
     assert_eq!(
@@ -128,7 +131,7 @@ fn stage_hunk_1_stages_only_second_region() {
     let (_tr, backend, handle) = repo_with_two_worktree_hunks();
 
     backend
-        .stage_hunk(&handle.id, &std::path::Path::new("data.txt"), 1)
+        .stage_hunk(&handle.id, &std::path::Path::new("data.txt"), 1, 3)
         .expect("stage_hunk 1");
 
     // IndexToHead diff: 1 hunk staged (line 17 change).
@@ -137,6 +140,7 @@ fn stage_hunk_1_stages_only_second_region() {
             &handle.id,
             &std::path::Path::new("data.txt"),
             platypusgit_lib::git::types::DiffKind::IndexToHead,
+            3,
         )
         .expect("index diff");
     assert_eq!(index_diff.hunks.len(), 1, "index should have 1 hunk (line 17)");
@@ -147,6 +151,7 @@ fn stage_hunk_1_stages_only_second_region() {
             &handle.id,
             &std::path::Path::new("data.txt"),
             platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            3,
         )
         .expect("worktree diff");
     assert_eq!(wt_diff.hunks.len(), 1, "worktree should have 1 hunk remaining (line 3)");
@@ -174,6 +179,7 @@ fn unstage_hunk_0_removes_only_first_region_from_index() {
             &handle.id,
             &std::path::Path::new("data.txt"),
             platypusgit_lib::git::types::DiffKind::IndexToHead,
+            3,
         )
         .expect("index diff before unstage");
     assert_eq!(
@@ -184,7 +190,7 @@ fn unstage_hunk_0_removes_only_first_region_from_index() {
 
     // Unstage hunk 0 (line 3 change).
     backend
-        .unstage_hunk(&handle.id, &std::path::Path::new("data.txt"), 0)
+        .unstage_hunk(&handle.id, &std::path::Path::new("data.txt"), 0, 3)
         .expect("unstage_hunk 0");
 
     // Only 1 hunk should remain staged.
@@ -193,6 +199,7 @@ fn unstage_hunk_0_removes_only_first_region_from_index() {
             &handle.id,
             &std::path::Path::new("data.txt"),
             platypusgit_lib::git::types::DiffKind::IndexToHead,
+            3,
         )
         .expect("index diff after unstage");
     assert_eq!(
@@ -208,7 +215,7 @@ fn discard_hunk_0_reverts_only_first_region_in_worktree() {
 
     // Discard hunk 0 (line 3 change) from the worktree.
     backend
-        .discard_hunk(&handle.id, &std::path::Path::new("data.txt"), 0)
+        .discard_hunk(&handle.id, &std::path::Path::new("data.txt"), 0, 3)
         .expect("discard_hunk 0");
 
     // WorktreeToIndex diff: only 1 hunk should remain (line 17).
@@ -217,6 +224,7 @@ fn discard_hunk_0_reverts_only_first_region_in_worktree() {
             &handle.id,
             &std::path::Path::new("data.txt"),
             platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            3,
         )
         .expect("worktree diff after discard");
     assert_eq!(
@@ -255,6 +263,7 @@ fn stage_hunk_out_of_range_returns_error() {
         &handle.id,
         &std::path::Path::new("data.txt"),
         99,
+        3,
     );
     assert!(result.is_err(), "out-of-range hunk index should return an error");
 }
@@ -289,6 +298,7 @@ fn worktree_diff_includes_untracked_file_content() {
             &handle.id,
             &std::path::Path::new("new.txt"),
             platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            3,
         )
         .expect("diff");
 
@@ -302,4 +312,76 @@ fn worktree_diff_includes_untracked_file_content() {
         .collect();
     assert_eq!(added, vec!["alpha", "beta", "gamma"]);
     assert_eq!(diff.additions, 3);
+}
+
+#[test]
+fn context_lines_widens_hunks_and_merges_nearby_changes() {
+    // The two edits (lines 3 and 17) are 13 unchanged lines apart. With the
+    // default context of 3 they form two separate hunks; with a context of 10
+    // the context regions overlap and libgit2 merges them into one hunk.
+    let (_tr, backend, handle) = repo_with_two_worktree_hunks();
+
+    let narrow = backend
+        .diff(
+            &handle.id,
+            &std::path::Path::new("data.txt"),
+            platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            3,
+        )
+        .expect("diff context=3");
+    assert_eq!(narrow.hunks.len(), 2, "context=3 should keep 2 separate hunks");
+
+    let wide = backend
+        .diff(
+            &handle.id,
+            &std::path::Path::new("data.txt"),
+            platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            10,
+        )
+        .expect("diff context=10");
+    assert_eq!(wide.hunks.len(), 1, "context=10 should merge into 1 hunk");
+
+    // Zero context: hunks shrink to just the changed lines.
+    let zero = backend
+        .diff(
+            &handle.id,
+            &std::path::Path::new("data.txt"),
+            platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            0,
+        )
+        .expect("diff context=0");
+    assert_eq!(zero.hunks.len(), 2, "context=0 keeps 2 hunks");
+    let ctx_lines = zero
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .filter(|l| matches!(l.kind, platypusgit_lib::git::types::DiffLineKind::Context))
+        .count();
+    assert_eq!(ctx_lines, 0, "context=0 should include no context lines");
+}
+
+#[test]
+fn stage_hunk_with_wide_context_stages_merged_hunk() {
+    // With context=10 the two edits form ONE hunk; staging index 0 with the
+    // same context must stage both regions — proving the context width used
+    // for display is the one used for application.
+    let (_tr, backend, handle) = repo_with_two_worktree_hunks();
+
+    backend
+        .stage_hunk(&handle.id, &std::path::Path::new("data.txt"), 0, 10)
+        .expect("stage_hunk 0 with context=10");
+
+    let wt_diff = backend
+        .diff(
+            &handle.id,
+            &std::path::Path::new("data.txt"),
+            platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            10,
+        )
+        .expect("worktree diff after staging");
+    assert_eq!(
+        wt_diff.hunks.len(),
+        0,
+        "staging the merged hunk should leave nothing unstaged"
+    );
 }

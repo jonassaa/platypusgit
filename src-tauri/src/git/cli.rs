@@ -59,7 +59,13 @@ impl GitBackend for CliBackend {
     ) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
-    fn diff(&self, _repo_id: &RepoId, _path: &Path, _kind: DiffKind) -> AppResult<FileDiff> {
+    fn diff(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _kind: DiffKind,
+        _context_lines: u32,
+    ) -> AppResult<FileDiff> {
         Err(AppError::NotImplemented)
     }
     fn read_file_content(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<FileContent> {
@@ -81,6 +87,7 @@ impl GitBackend for CliBackend {
         _repo_id: &RepoId,
         _from_oid: &str,
         _to_oid: &str,
+        _context_lines: u32,
     ) -> AppResult<Vec<FileDiff>> {
         Err(AppError::NotImplemented)
     }
@@ -93,13 +100,31 @@ impl GitBackend for CliBackend {
     fn discard(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn stage_hunk(&self, _repo_id: &RepoId, _path: &Path, _hunk_index: usize) -> AppResult<()> {
+    fn stage_hunk(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _hunk_index: usize,
+        _context_lines: u32,
+    ) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn unstage_hunk(&self, _repo_id: &RepoId, _path: &Path, _hunk_index: usize) -> AppResult<()> {
+    fn unstage_hunk(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _hunk_index: usize,
+        _context_lines: u32,
+    ) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn discard_hunk(&self, _repo_id: &RepoId, _path: &Path, _hunk_index: usize) -> AppResult<()> {
+    fn discard_hunk(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _hunk_index: usize,
+        _context_lines: u32,
+    ) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
     fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<String> {

@@ -83,6 +83,7 @@ import {
   type TagTarget,
 } from "@/lib/tauri";
 import { isFilterEmpty } from "@/features/commits/logFilter";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useRecentsStore } from "./useRecentsStore";
 
 /**
@@ -429,11 +430,13 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
+  // Hunk ops pass the same diffContextLines the viewers used for getDiff so
+  // the backend recomputes an identical hunk list — indices stay aligned.
   async stageHunk(path, hunkIndex) {
     const repo = get().current;
     if (!repo) return;
     try {
-      await stageHunk(repo.id, path, hunkIndex);
+      await stageHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
@@ -444,7 +447,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     const repo = get().current;
     if (!repo) return;
     try {
-      await unstageHunk(repo.id, path, hunkIndex);
+      await unstageHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
@@ -455,7 +458,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     const repo = get().current;
     if (!repo) return;
     try {
-      await discardHunk(repo.id, path, hunkIndex);
+      await discardHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
@@ -743,7 +746,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     setActivity("fetch", `Fetching ${remote}…`);
     try {
-      await fetchRemote(repo.id, remote);
+      await fetchRemote(repo.id, remote, useSettingsStore.getState().pruneOnFetch);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
@@ -757,7 +760,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     setActivity("fetch", "Fetching all remotes…");
     try {
-      await fetchAll(repo.id);
+      await fetchAll(repo.id, useSettingsStore.getState().pruneOnFetch);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
@@ -771,9 +774,32 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     setActivity("pull", `Pulling ${remote}/${branch}…`);
     try {
+      // Carry over uncommitted work when the setting is on: stash → pull →
+      // pop, mirroring checkoutBranch's auto-stash. stashSave returns null
+      // when the tree is clean, so this is a no-op in the common case. If
+      // the pull fails, the stash is deliberately NOT popped — the work
+      // stays safe in the stash list rather than colliding with a conflicted
+      // worktree (same policy as checkoutBranch).
+      let stashed: string | null = null;
+      if (useSettingsStore.getState().autoStashBeforePull) {
+        setActivity("pull", "Stashing changes…");
+        stashed = await stashSave(repo.id, {
+          message: `auto: pull ${remote}/${branch}`,
+          includeUntracked: true,
+          keepIndex: false,
+        });
+        setActivity("pull", `Pulling ${remote}/${branch}…`);
+      }
       await pullRemote(repo.id, remote, branch, mode);
+      if (stashed) {
+        setActivity("pull", "Restoring stashed changes…");
+        await stashPop(repo.id, 0);
+      }
       await get().refreshAll();
     } catch (e) {
+      // See mergeBranch's catch: refresh first, error last, so it isn't
+      // batched away by refreshAll's own `error: null` reset.
+      await get().refreshAll();
       set({ error: toAppError(e) });
     } finally {
       setActivity("pull", null);
