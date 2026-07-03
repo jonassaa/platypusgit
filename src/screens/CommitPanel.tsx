@@ -16,6 +16,7 @@ import {
   PGResizeHandle,
   PGTextarea,
   fileMenuItems,
+  multiFileMenuItems,
   pgFlash,
   useContextMenu,
   usePaneWidth,
@@ -26,6 +27,13 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { currentBranch, isStaged, isUnstaged, statusMark } from "@/lib/derive";
+import {
+  clickSelection,
+  emptySelection,
+  primarySelectedKey,
+  pruneSelection,
+  type Selection,
+} from "@/lib/selection";
 import { getDiff } from "@/lib/tauri";
 import type { CommitInfo, DiffKind, FileDiff, FileStatus } from "@/lib/types";
 
@@ -57,7 +65,7 @@ export function CommitPanelScreen() {
   // Sign-off toggle seeds from the persisted preference; toggling it writes back.
   const [signoff, setSignoff] = React.useState(addSignoff);
   const [diffMode, setDiffMode] = React.useState<"unified" | "split">("unified");
-  const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
+  const [sel, setSel] = React.useState<Selection>(emptySelection);
   const changesPane = usePaneWidth(320, {
     min: 220,
     max: 720,
@@ -73,11 +81,15 @@ export function CommitPanelScreen() {
   const [diffError, setDiffError] = React.useState<string | null>(null);
 
   const { onContextMenu: onFileCtx, menu: fileMenu } = useContextMenu<FileSlot>(
-    (f) =>
-      fileMenuItems({
+    (f) => {
+      if (f && sel.keys.length > 1 && sel.keys.includes(keyOf(f))) {
+        return multiFileMenuItems(splitByKeys(sel.keys, staged, unstaged));
+      }
+      return fileMenuItems({
         path: f?.path,
         staged: f?.side === "staged",
-      }),
+      });
+    },
   );
 
   const moreMenu = useContextMenu<{ path: string; diff: FileDiff | null }>(
@@ -170,15 +182,64 @@ export function CommitPanelScreen() {
     [status],
   );
 
+  // Visible row order (staged block above changes block) — shift-click ranges
+  // extend over this order and may cross the staged/unstaged boundary.
+  const rowOrder = React.useMemo(
+    () => [...staged.map(keyOf), ...unstaged.map(keyOf)],
+    [staged, unstaged],
+  );
+  const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
+
+  // Selection is local state keyed by side:path — reset on repo switch and
+  // prune keys whose rows disappeared (refresh, stage/unstage moving files).
+  React.useEffect(() => {
+    setSel(emptySelection);
+  }, [repo?.id]);
+  React.useEffect(() => {
+    const valid = new Set(rowOrder);
+    setSel((s) => pruneSelection(s, valid));
+  }, [rowOrder]);
+
+  const onRowClick = (f: FileSlot) => (e: React.MouseEvent) => {
+    setSel((s) =>
+      clickSelection(rowOrder, s, keyOf(f), {
+        toggle: e.metaKey || e.ctrlKey,
+        range: e.shiftKey,
+      }),
+    );
+  };
+
+  // Right-click inside the multi-selection acts on it; outside collapses the
+  // selection to the clicked row first (standard desktop-list behavior).
+  const onRowContextMenu = (f: FileSlot) => (e: React.MouseEvent) => {
+    const key = keyOf(f);
+    if (!(sel.keys.length > 1 && sel.keys.includes(key))) {
+      setSel({ keys: [key], anchor: key });
+    }
+    onFileCtx(e, f);
+  };
+
+  // Checkbox on a row inside the multi-selection stages/unstages every
+  // selected row on that side; on an unselected row it stays single-file.
+  const togglePaths = (f: FileSlot): string[] => {
+    if (sel.keys.length > 1 && sel.keys.includes(keyOf(f))) {
+      const split = splitByKeys(sel.keys, staged, unstaged);
+      const paths = f.side === "staged" ? split.stagedPaths : split.unstagedPaths;
+      if (paths.length > 0) return paths;
+    }
+    return [f.path];
+  };
+
+  const primaryKey = primarySelectedKey(sel);
   const selected = React.useMemo(() => {
-    if (!selectedKey) return unstaged[0] ?? staged[0] ?? null;
+    if (!primaryKey) return unstaged[0] ?? staged[0] ?? null;
     return (
-      [...staged, ...unstaged].find((f) => keyOf(f) === selectedKey) ??
+      [...staged, ...unstaged].find((f) => keyOf(f) === primaryKey) ??
       unstaged[0] ??
       staged[0] ??
       null
     );
-  }, [selectedKey, staged, unstaged]);
+  }, [primaryKey, staged, unstaged]);
 
   React.useEffect(() => {
     if (!selected || !repo) {
@@ -279,10 +340,10 @@ export function CommitPanelScreen() {
               staged
               additions={countAdd(f.status)}
               deletions={countDel(f.status)}
-              selected={selectedKey === keyOf(f)}
-              onClick={() => setSelectedKey(keyOf(f))}
-              onContextMenu={(e) => onFileCtx(e, f)}
-              onToggle={() => unstage([f.path])}
+              selected={selectedKeys.has(keyOf(f))}
+              onClick={onRowClick(f)}
+              onContextMenu={onRowContextMenu(f)}
+              onToggle={() => unstage(togglePaths(f))}
             />
           ))}
         </div>
@@ -328,10 +389,10 @@ export function CommitPanelScreen() {
               staged={false}
               additions={countAdd(f.status)}
               deletions={countDel(f.status)}
-              selected={selectedKey === keyOf(f)}
-              onClick={() => setSelectedKey(keyOf(f))}
-              onContextMenu={(e) => onFileCtx(e, f)}
-              onToggle={() => stage([f.path])}
+              selected={selectedKeys.has(keyOf(f))}
+              onClick={onRowClick(f)}
+              onContextMenu={onRowContextMenu(f)}
+              onToggle={() => stage(togglePaths(f))}
             />
           ))}
         </div>
@@ -660,6 +721,19 @@ export function CommitPanelScreen() {
 
 function keyOf(f: FileSlot): string {
   return `${f.side}:${f.path}`;
+}
+
+/** Split the selected row keys into staged/unstaged path arrays for multi-file ops. */
+function splitByKeys(
+  keys: string[],
+  staged: FileSlot[],
+  unstaged: FileSlot[],
+): { stagedPaths: string[]; unstagedPaths: string[] } {
+  const set = new Set(keys);
+  return {
+    stagedPaths: staged.filter((f) => set.has(keyOf(f))).map((f) => f.path),
+    unstagedPaths: unstaged.filter((f) => set.has(keyOf(f))).map((f) => f.path),
+  };
 }
 
 function buildMessage(subject: string, body: string): string {

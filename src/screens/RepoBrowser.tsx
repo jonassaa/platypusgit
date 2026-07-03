@@ -16,6 +16,9 @@ import {
   PGStatusMark,
   PGToolbar,
   KV,
+  fileMenuItems,
+  flattenFileTree,
+  multiFileMenuItems,
   useContextMenu,
   usePaneWidth,
   type ContextMenuItem,
@@ -27,9 +30,18 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import {
   currentBranch,
+  isStaged,
+  isUnstaged,
   relativeTime,
   statusMark,
 } from "@/lib/derive";
+import {
+  clickSelection,
+  emptySelection,
+  primarySelectedKey,
+  pruneSelection,
+  type Selection,
+} from "@/lib/selection";
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
@@ -90,7 +102,7 @@ export function RepoBrowserScreen() {
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
 
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
-  const [selected, setSelected] = React.useState<string | null>(null);
+  const [sel, setSel] = React.useState<Selection>(emptySelection);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [fileContent, setFileContent] = React.useState<FileContent | null>(null);
@@ -126,7 +138,7 @@ export function RepoBrowserScreen() {
   // spurious InvalidRef. Working tree (null) is the default.
   React.useEffect(() => {
     setRev(null);
-    setSelected(null);
+    setSel(emptySelection);
   }, [repo?.id]);
 
   // Refresh the full file list each time the user picks "All" so the tree
@@ -187,6 +199,75 @@ export function RepoBrowserScreen() {
     const t = buildStatusTree(filteredStatus);
     return sortMode === "desc" ? reverseTree(t) : t;
   }, [filteredStatus, sortMode]);
+
+  // Visible row order (folders included) for shift-click ranges; selection
+  // keys are PGFileTree keys of the form "/a/b/c".
+  const rowOrder = React.useMemo(
+    () => flattenFileTree(tree, expanded).map((f) => f.key),
+    [tree, expanded],
+  );
+  const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
+  const selected = primarySelectedKey(sel);
+
+  // Prune selection when rows disappear (filter/rev/sort change, refresh).
+  // Validity is against the full tree, not just visible rows — collapsing a
+  // folder hides rows without deselecting them.
+  React.useEffect(() => {
+    setSel((s) => pruneSelection(s, new Set(flattenAllKeys(tree))));
+  }, [tree]);
+
+  const onTreeSelect = React.useCallback(
+    (key: string, _node: PGFileTreeNode, e?: React.MouseEvent) => {
+      setSel((s) =>
+        clickSelection(rowOrder, s, key, {
+          toggle: !!e && (e.metaKey || e.ctrlKey),
+          range: !!e?.shiftKey,
+        }),
+      );
+    },
+    [rowOrder],
+  );
+
+  // Map selected tree keys to worktree statuses for multi-file operations.
+  // Folder keys simply don't resolve to a status entry, so they're inert.
+  const splitSelection = React.useCallback(
+    (keys: string[]): { stagedPaths: string[]; unstagedPaths: string[] } => {
+      const stagedPaths: string[] = [];
+      const unstagedPaths: string[] = [];
+      for (const key of keys) {
+        const path = key.replace(/^\//, "");
+        const st = status.find((s) => s.path === path);
+        if (!st) continue;
+        if (isStaged(st)) stagedPaths.push(path);
+        if (isUnstaged(st)) unstagedPaths.push(path);
+      }
+      return { stagedPaths, unstagedPaths };
+    },
+    [status],
+  );
+
+  const fileCtx = useContextMenu<{ key: string; node: PGFileTreeNode }>(
+    ({ key, node }) => {
+      if (sel.keys.length > 1 && sel.keys.includes(key)) {
+        return multiFileMenuItems(splitSelection(sel.keys));
+      }
+      if (node.children?.length) return [];
+      const path = key.replace(/^\//, "");
+      const st = status.find((s) => s.path === path);
+      return fileMenuItems({ path, staged: !!st && isStaged(st) && !isUnstaged(st) });
+    },
+  );
+
+  const onTreeContextMenu = React.useCallback(
+    (e: React.MouseEvent, key: string, node: PGFileTreeNode) => {
+      if (browsingRev) return; // committed snapshot — no worktree to act on
+      if (!(sel.keys.length > 1 && sel.keys.includes(key))) {
+        setSel({ keys: [key], anchor: key });
+      }
+      fileCtx.onContextMenu(e, { key, node });
+    },
+    [browsingRev, sel, fileCtx],
+  );
 
   const conflictCount = React.useMemo(
     () =>
@@ -337,7 +418,7 @@ export function RepoBrowserScreen() {
               rev={rev}
               onChange={(r) => {
                 setRev(r);
-                setSelected(null);
+                setSel(emptySelection);
               }}
               branches={branches}
               tags={tags}
@@ -385,9 +466,12 @@ export function RepoBrowserScreen() {
                 setExpanded((e) => ({ ...e, [k]: !e[k] }))
               }
               selected={selected ?? undefined}
-              onSelect={(k) => setSelected(k)}
-              onActivate={(k) => setSelected(k)}
+              selectedKeys={selectedKeys}
+              onSelect={onTreeSelect}
+              onActivate={(k, n) => onTreeSelect(k, n)}
+              onRowContextMenu={onTreeContextMenu}
             />
+            {fileCtx.menu}
           </div>
         </div>
         <PGResizeHandle onDrag={treePane.resize} />
@@ -782,6 +866,20 @@ function isHidden(s: FileStatus, hidden: Set<HideKind>): boolean {
     if (sides.some((x) => x.kind === k)) return true;
   }
   return false;
+}
+
+/** Every key in the tree regardless of expansion — collapsed rows stay selected. */
+function flattenAllKeys(nodes: PGFileTreeNode[]): string[] {
+  const out: string[] = [];
+  const walk = (list: PGFileTreeNode[], parentKey: string) => {
+    for (const n of list) {
+      const key = parentKey + "/" + n.name;
+      out.push(key);
+      if (n.children) walk(n.children, key);
+    }
+  };
+  walk(nodes, "");
+  return out;
 }
 
 function reverseTree(nodes: PGFileTreeNode[]): PGFileTreeNode[] {
