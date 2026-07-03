@@ -214,6 +214,7 @@ export function PGButtonGroup({ options, value, onChange, size = "md" }: PGButto
         return (
           <button
             key={opt.value}
+            aria-pressed={active}
             onClick={() => onChange?.(opt.value)}
             className="focusable"
             style={{

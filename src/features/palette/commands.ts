@@ -1,6 +1,7 @@
 // src/features/palette/commands.ts
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { usePaletteStore } from "./usePaletteStore";
 import { currentBranch, relativeTime } from "@/lib/derive";
 import type { PaletteItem, PaletteStep } from "./types";
@@ -189,16 +190,27 @@ export function buildCommands(): PaletteItem[] {
             items: remoteItems("pull", (r) => void repo.pull(r, name)),
           })),
     });
+    const guardedForcePush = (remote: string) => {
+      if (
+        useSettingsStore.getState().confirmForcePush &&
+        !window.confirm(
+          `Force-push ${name} to ${remote} (with lease)? This overwrites the remote branch.`,
+        )
+      ) {
+        return;
+      }
+      void repo.push(remote, name, "WithLease");
+    };
     items.push({
       type: "command", id: "action:force-push-current",
       search: "Force push current branch with lease",
       label: `Force-push ${name} (with lease)`, danger: true,
       detail: head?.upstream ?? undefined, icon: "push",
       run: upstreamRemote
-        ? direct(() => void repo.push(upstreamRemote, name, "WithLease"))
+        ? direct(() => guardedForcePush(upstreamRemote))
         : step(() => ({
             kind: "pick", title: `Force-push ${name} to…`,
-            items: remoteItems("push", (r) => void repo.push(r, name, "WithLease")),
+            items: remoteItems("push", (r) => guardedForcePush(r)),
           })),
     });
   }

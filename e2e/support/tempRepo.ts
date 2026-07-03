@@ -116,3 +116,61 @@ export function rebaseConflictRepo(): TempRepo {
   // second pick's cherry-pick (base = dropped commit's tree, ours = first
   // pick's result) to actually diverge.
 }
+
+/** Work repo + local bare repo wired as `origin` with upstream set.
+ *  No network, no credentials: the backend shells to the system git CLI,
+ *  which handles filesystem-path remotes natively. */
+export interface RemotePair {
+  repo: TempRepo;
+  barePath: string;
+  bareGit: (...args: string[]) => string;
+  dispose: () => void;
+}
+
+export function remoteRepo(): RemotePair {
+  const repo = basicRepo();
+  const barePath = mkdtempSync(path.join(tmpdir(), "pg-e2e-bare-"));
+  execFileSync("git", ["init", "--bare", "-b", "main"], { cwd: barePath });
+  repo.git("remote", "add", "origin", barePath);
+  repo.git("push", "-u", "origin", "main");
+  const bareGit = (...args: string[]) =>
+    execFileSync("git", args, { cwd: barePath, encoding: "utf8" });
+  return {
+    repo,
+    barePath,
+    bareGit,
+    dispose: () => {
+      repo.dispose();
+      rmSync(barePath, { recursive: true, force: true });
+    },
+  };
+}
+
+/** Local is 1 ahead of origin/main. Remote-tracking ref stays accurate. */
+export function makeAhead(pair: RemotePair): void {
+  pair.repo.commitFile("local.txt", "local\n", "feat: local-only commit");
+}
+
+/** Remote is 1 ahead; the app does NOT know yet.
+ *  The remote-tracking ref is rewound too, so behind=0 until a real
+ *  fetch/pull discovers the remote commit — this is what makes fetch's
+ *  effect observable. Do NOT use this variant for force-push tests:
+ *  a rewound remote-tracking ref makes --force-with-lease fail with
+ *  "stale info" (the lease compares against refs/remotes/origin/main). */
+export function makeBehind(pair: RemotePair): void {
+  pair.repo.commitFile("remote.txt", "remote\n", "feat: remote-only commit");
+  pair.repo.git("push", "origin", "main");
+  pair.repo.git("reset", "--hard", "HEAD~1");
+  pair.repo.git("update-ref", "refs/remotes/origin/main", "HEAD");
+}
+
+/** Histories diverge: remote has one commit local lacks, local has one
+ *  commit remote lacks. Remote-tracking ref stays ACCURATE (no rewind):
+ *  ahead=1/behind=1 render immediately, plain push is rejected as
+ *  non-fast-forward, and --force-with-lease passes its lease check. */
+export function makeDiverged(pair: RemotePair): void {
+  pair.repo.commitFile("remote.txt", "remote\n", "feat: remote-only commit");
+  pair.repo.git("push", "origin", "main");
+  pair.repo.git("reset", "--hard", "HEAD~1");
+  pair.repo.commitFile("diverge.txt", "diverge\n", "feat: diverging local commit");
+}

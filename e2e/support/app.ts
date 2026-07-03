@@ -116,19 +116,52 @@ export async function openRepo(repoPath: string): Promise<void> {
   await waitRepoLoaded();
 }
 
+/** Reload the page WITHOUT clearing localStorage, then reopen the repo via
+ *  its recent-row. This is the persistence-test primitive: `openRepo` starts
+ *  with `localStorage.clear()`, which would wipe pg-settings-v2 and defeat
+ *  any "survives reload" assertion. Follows the re-arm rule: matched find →
+ *  re-arm (see armDriverBridge doc). */
+export async function reopenRepo(repoPath: string): Promise<void> {
+  await browser.refresh();
+  await armDriverBridge();
+  const row = $(`[data-testid="recent-repo"][data-path="${repoPath}"]`);
+  await row.waitForDisplayed({
+    timeout: 20_000,
+    timeoutMsg: "recent-repo row missing after reload — recents not persisted?",
+  });
+  await armDriverBridge();
+  await row.click();
+  await waitRepoLoaded();
+}
+
 /** WebDriver can't drive native prompt/confirm — stub them in-page BEFORE the
- *  action that triggers them. Reset by any refresh. */
+ *  action that triggers them. Reset by any refresh.
+ *  `promptQueue`: successive `window.prompt` calls consume queue entries in
+ *  order (Add remote fires TWO prompts: name, then URL — a single string
+ *  would set name === url). Falls back to `promptText` when drained.
+ *  Confirm calls are counted on `window.__pgConfirmCalls` — read it via
+ *  `confirmCallCount()` to prove a confirm gate fired (or didn't). */
 export async function stubNativeDialogs(
-  opts: { promptText?: string; confirm?: boolean } = {},
+  opts: { promptText?: string; confirm?: boolean; promptQueue?: string[] } = {},
 ): Promise<void> {
   await browser.execute(
-    (promptText: string | null, confirm: boolean) => {
-      (window as any).prompt = () => promptText;
-      (window as any).confirm = () => confirm;
+    (promptText: string | null, confirm: boolean, queue: string[]) => {
+      const q = [...queue];
+      (window as any).__pgConfirmCalls = 0;
+      (window as any).prompt = () => (q.length ? q.shift()! : promptText);
+      (window as any).confirm = () => {
+        (window as any).__pgConfirmCalls++;
+        return confirm;
+      };
     },
     opts.promptText ?? "e2e",
     opts.confirm ?? true,
+    opts.promptQueue ?? [],
   );
+}
+
+export function confirmCallCount(): Promise<number> {
+  return browser.execute(() => (window as any).__pgConfirmCalls ?? 0);
 }
 
 export async function switchScreen(id: string): Promise<void> {
@@ -204,4 +237,45 @@ export async function jsHoverMenuItem(label: string): Promise<void> {
     return true;
   }, label);
   if (!ok) throw new Error(`menu item not found for hover: ${label}`);
+}
+
+/** The command palette dialog and its query input. The dialog is portaled to
+ *  document.body — always scope palette selectors under paletteDialog so they
+ *  can't match screen content behind it. */
+export const paletteDialog = '[role="dialog"][aria-label="Command palette"]';
+export const paletteInput = `${paletteDialog} input`;
+
+/** Open the palette. AppShell listens for ⌘P on `window`
+ *  (src/AppShell.tsx), so an in-page KeyboardEvent dispatch is deterministic
+ *  — no reliance on the embedded driver synthesizing Meta-key chords. */
+export async function openPalette(): Promise<void> {
+  await browser.execute(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "p", metaKey: true, bubbles: true }),
+    );
+  });
+  await $(paletteDialog).waitForDisplayed({
+    timeout: 10_000,
+    timeoutMsg: "command palette did not open on synthesized ⌘P",
+  });
+}
+
+/** Dispatch a keydown (Enter / Escape / ArrowDown / …) on an element.
+ *  CommandPalette handles keys via React onKeyDown on the dialog; a bubbling
+ *  native KeyboardEvent reaches React's root-delegated listener. Use this for
+ *  control keys; use setValue() for typing text. */
+export async function jsKey(selector: string, key: string): Promise<void> {
+  const ok = await browser.execute(
+    (sel: string, k: string) => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el) return false;
+      el.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+      return true;
+    },
+    selector,
+    key,
+  );
+  if (!ok) throw new Error(`jsKey: element not found: ${selector}`);
 }

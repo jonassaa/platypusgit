@@ -34,6 +34,23 @@ describe("usePaletteStore", () => {
     expect(s.query).toBe("");
   });
 
+  it("pushStep reopens a closed palette (chained picks close before pushing)", () => {
+    // Chain flows (e.g. reset → pick commit → pick mode) go through item
+    // builders whose run() closes the palette before onPick pushes the next
+    // step; the pushed step must still render.
+    usePaletteStore.getState().openPalette();
+    usePaletteStore
+      .getState()
+      .pushStep({ kind: "pick", title: "Reset to commit", items: [] });
+    usePaletteStore.getState().closePalette();
+    usePaletteStore
+      .getState()
+      .pushStep({ kind: "pick", title: "Reset mode", items: [] });
+    const s = usePaletteStore.getState();
+    expect(s.open).toBe(true);
+    expect(s.stack).toHaveLength(3);
+  });
+
   it("popStep removes the top step", () => {
     usePaletteStore.getState().openPalette();
     usePaletteStore
