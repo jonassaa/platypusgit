@@ -42,6 +42,9 @@ cargo check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build                            # production bundle (.msi/.dmg/.deb/.AppImage)
 pnpm test                                   # vitest (unit logic + component tests)
+pnpm test:e2e                               # e2e: debug build + wdio (REQUIRED after src/ changes)
+pnpm test:e2e:run                           # e2e against existing binary (spec-only iterations)
+pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc excludes e2e/)
 ```
 
 ## Testing
@@ -69,41 +72,22 @@ Four layers, each run independently:
     `test:e2e:run` (wdio against that snapshot). Frontend or Rust change →
     run the full `pnpm test:e2e`; spec-only change → `pnpm test:e2e:run`
     reuses the existing binary.
-  - `src-tauri/tauri.e2e.conf.json` is a config overlay that turns on
-    `withGlobalTauri` for E2E builds only — release and regular dev builds
-    are untouched. `armDriverBridge()` (`e2e/support/app.ts`) then hands
-    `window.__TAURI__.core` to the embedded driver after every page load.
-    Skip either piece and every driver command pays a 5s window-focus-check
-    penalty (a ~13min suite instead of ~6s).
-  - The driver can't synthesize a right-click: context menus are opened via
-    the in-page `jsContextMenu` helper (see `e2e/support/app.ts`);
-    everything else uses real WebDriver clicks.
-  - Danger-op flows (merge/conflict, rebase, reset, cherry-pick/revert,
-    reflog) covered by phase 2 specs. Context menus (incl. the reset hover
-    submenu) driven via `jsContextMenu`/`jsHoverMenuItem`/`jsClickMenuItem`
-    and row lookups via `changeRow`/`stagedRow`, all promoted to
-    `e2e/support/app.ts`. Fixtures: `conflictRepo`, `cherryRepo`,
-    `rebaseConflictRepo`, plus `TempRepo.hasRef`.
-  - Selector conventions: `button*=Text` (PGButton span-wraps its label, so
-    bare button-text selectors don't match) and tag-scoped text selectors
-    (`div*=`, `span*=` — bare `*=` is partial-link-text and only matches
-    anchors). Native `window.prompt`/`window.confirm` are stubbed via
-    `stubNativeDialogs()`, since WebDriver can't drive native dialogs.
-  - Sparse `data-*` attributes added where selectors would be brittle:
-    `recent-repo` + `data-path`, `branch-chip`, `data-activity` (activity
-    bar), `staged-list`/`changes-list` + row `data-path`, `row-toggle`,
-    `commit-subject`, `commit-button`, `branch-create`, `commit-row` +
-    `data-sha`, `hunk-stage`, and `PGFileTreeRow`'s `data-path`.
-  - CI: `.github/workflows/e2e.yml` (ubuntu-latest + xvfb, on PRs to `main`
-    and on push to `main`) runs `pnpm test:e2e:build` then
-    `xvfb-run --auto-servernum pnpm test:e2e:run`.
-  - `pnpm.overrides["@wdio/native-utils"] = "2.5.0"` in `package.json` pins
-    around a broken dep pin shipped by `@wdio/tauri-service@1.2.0` — don't
-    remove it or you'll be re-bisecting this from scratch.
-  - Debug builds also serve WebDriver on port 4445. Close any running
-    `pnpm tauri dev` instance before `pnpm test:e2e:run` — otherwise the
-    service can attach to the dev instance instead of the E2E binary and
-    clear its `localStorage`.
+  - **Before writing or debugging any e2e spec, read the `e2e-testing`
+    project skill** (`.claude/skills/e2e-testing/SKILL.md`) — selector
+    conventions and traps, driver-bridge/5s-penalty rules, native-dialog
+    stubbing, fixture geometry gotchas, rebuild discipline, debugging flow.
+  - `pnpm test:e2e` = `test:e2e:build` (debug build with
+    `--features tauri/custom-protocol --config src-tauri/tauri.e2e.conf.json`,
+    snapshot → gitignored `e2e/.bin/`) + `test:e2e:run`. Any src/ or
+    src-tauri/ change requires the full `pnpm test:e2e` — `test:e2e:run`
+    silently tests the old snapshot.
+  - CI: `.github/workflows/e2e.yml` (ubuntu-latest + xvfb, PRs to `main` +
+    push to `main`).
+  - `pnpm.overrides["@wdio/native-utils"] = "2.5.0"` pins around a broken
+    dep pin in `@wdio/tauri-service@1.2.0` — don't remove.
+  - Debug builds serve WebDriver on port 4445: close any `pnpm tauri dev`
+    instance before e2e runs or the runner may attach to it and clear its
+    `localStorage`.
 
 ## Architecture
 
@@ -209,6 +193,7 @@ lib/
 
 ### State management
 - **Zustand per-feature**, not one big global store. `useRepoStore` lives in `features/repo/` because that's who owns the state.
+- **Danger-op error paths refresh first, set error last.** In `useRepoStore` catch arms (see `mergeBranch`), call `refreshAll()` BEFORE `set({ error })`: `refreshAll` starts with `set({ error: null })`, and React 18 batches same-tick sets, so the opposite order silently wipes the banner. `refreshAll` never rethrows, so the error always wins when set last. A failed git op must still refresh — the UI reflects disk truth even on error.
 - `useNavStore` handles cross-screen navigation intents — add new `NavIntent` kinds there, route in `AppShell`.
 - Cross-feature state is rare; compose in `src/store.ts` if needed — don't hoist prematurely.
 
@@ -224,6 +209,7 @@ lib/
 ### Design system
 - Import UI primitives from `@/design` (not per-file). `design/index.ts` barrel re-exports everything.
 - New shared primitive → add to appropriate file in `src/design/` and re-export via `index.ts`.
+- `PGButton`/`PGInput` spread `...rest` onto their DOM node (so `data-testid` etc. pass through); `PGIconButton` does NOT (forwards `title` only). Row components (`PGChangeRow`, `PGCommitRow`, `PGFileTreeRow`, …) need explicit prop threading for new attributes.
 - Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
 
 ### Permissions (Tauri 2)
@@ -265,3 +251,4 @@ Do not create empty / merge commits. Do not amend published commits without aski
 - **Always rebase onto the latest `main` right before merging** (`git fetch origin && git rebase origin/main`, then force-push). Never merge a PR whose branch is behind `main`.
 - Resolve conflicts during rebase; force-push the branch (`--force-with-lease`) after rebasing.
 - Branch and open a PR even for assistant-driven work — don't push straight to `main`.
+- `main` may be checked out by a worktree under `.claude/worktrees/` (other assistant sessions). Then `git checkout main` and `gh pr merge --delete-branch`'s local cleanup fail with "'main' is already used by worktree" — the remote merge still succeeds. Recover with `git checkout --detach origin/main`, delete the branch manually, and leave the other worktree alone.

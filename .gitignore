@@ -40,3 +40,6 @@ site/.astro
 # local planning notes
 features.md
 implemented-features.md
+
+# assistant session worktrees (not repo content)
+.claude/worktrees/
