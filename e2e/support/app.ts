@@ -134,6 +134,59 @@ export async function reopenRepo(repoPath: string): Promise<void> {
   await waitRepoLoaded();
 }
 
+/** Serial for executeOnce tokens — unique per logical call within a runner
+ *  process (sessions never share a runner, so no cross-session collision). */
+let execOnceSeq = 0;
+
+/** Run a side-effectful in-page script AT MOST ONCE per logical call, even
+ *  when the driver retries the execute.
+ *
+ *  Why (issue #35): the embedded driver reports "script execution timed out"
+ *  whenever an eval finishes later than the session script timeout — routine
+ *  under xvfb on CI, where evals stall for seconds. WebdriverIO then retries
+ *  the command, re-running a script whose side effects already happened:
+ *  context menu re-opened, Enter dispatched twice, settings toggle flipped
+ *  back, confirm-call counter zeroed. Each logical call here mints a fresh
+ *  token; the page records completed tokens (and their results) on
+ *  `window.__pgExecOnce`, so a retry becomes a lookup that returns the first
+ *  run's result instead of re-firing the effect.
+ *
+ *  The registry is a page global, so it dies with the document — the right
+ *  lifetime, since a driver retry always re-targets the same document.
+ *
+ *  Rules for `fn`: self-contained (it is serialized, same as with
+ *  browser.execute), and any throw must happen BEFORE the side effect —
+ *  throws are not recorded, so a retry after one runs the script again.
+ *  Use for every new side-effectful in-page script; read-only scripts
+ *  (DOM dumps, localStorage reads) don't need it. */
+export function executeOnce<R, A extends readonly unknown[]>(
+  fn: (...args: [...A]) => R,
+  ...args: A
+): Promise<R> {
+  return browser.execute(
+    buildExecuteOnceScript(fn),
+    `t${++execOnceSeq}`,
+    ...args,
+  ) as Promise<R>;
+}
+
+/** The token-guarded wrapper body behind executeOnce. Exported only so the
+ *  harness self-test (harness.e2e.ts) can replay the SAME script with the
+ *  SAME token — the exact shape of a driver retry. String script: the driver
+ *  executes it as a W3C function body with the call's `arguments`, so the
+ *  guard itself runs in-page on every attempt. */
+export function buildExecuteOnceScript(fn: (...args: never[]) => unknown): string {
+  return `
+    var reg = (window.__pgExecOnce = window.__pgExecOnce || {});
+    var token = arguments[0];
+    if (Object.prototype.hasOwnProperty.call(reg, token)) return reg[token];
+    var fn = (${fn.toString()});
+    var result = fn.apply(null, Array.prototype.slice.call(arguments, 1));
+    reg[token] = result === undefined ? null : result;
+    return reg[token];
+  `;
+}
+
 /** WebDriver can't drive native prompt/confirm — stub them in-page BEFORE the
  *  action that triggers them. Reset by any refresh.
  *  `promptQueue`: successive `window.prompt` calls consume queue entries in
@@ -144,7 +197,9 @@ export async function reopenRepo(repoPath: string): Promise<void> {
 export async function stubNativeDialogs(
   opts: { promptText?: string; confirm?: boolean; promptQueue?: string[] } = {},
 ): Promise<void> {
-  await browser.execute(
+  // executeOnce: a driver-retry re-run would zero __pgConfirmCalls after a
+  // confirm already fired and re-clone the prompt queue mid-consumption.
+  await executeOnce(
     (promptText: string | null, confirm: boolean, queue: string[]) => {
       const q = [...queue];
       (window as any).__pgConfirmCalls = 0;
@@ -181,7 +236,10 @@ export const changeRow = (p: string) =>
  * tauri-plugin-wdio-webdriver 1.2.0 executor source and empirically —
  * `click({ button: "right" })` completes without error but no menu opens). */
 export const jsContextMenu = (selector: string, opts?: { text?: string }) =>
-  browser.execute(
+  // executeOnce: a driver-retry re-run would re-open the menu, resetting any
+  // hover/submenu state a subsequent helper already depends on. The
+  // not-found throw happens before the dispatch, so it is safe to re-run.
+  executeOnce(
     (sel: string, text: string | undefined) => {
       const candidates = Array.from(document.querySelectorAll(sel));
       const el = (
@@ -213,7 +271,10 @@ export const jsContextMenu = (selector: string, opts?: { text?: string }) =>
  *  portals rendered to document.body, so a plain CSS selector on the label
  *  text is the reliable way to find them). */
 export async function jsClickMenuItem(label: string): Promise<void> {
-  const ok = await browser.execute((text: string) => {
+  // executeOnce: the click closes the menu, so a driver-retry re-run finds
+  // no item and reports false — failing the test even though the click
+  // already landed (the CI double-run flake, issue #35).
+  const ok = await executeOnce((text: string) => {
     const spans = Array.from(document.querySelectorAll("span"));
     const el = spans.find((s) => s.textContent === text);
     if (!el) return false;
@@ -227,7 +288,7 @@ export async function jsClickMenuItem(label: string): Promise<void> {
 /** Hover a context-menu item to open its submenu (menus are portals; the
  *  driver can't hover, so dispatch the events React listens for). */
 export async function jsHoverMenuItem(label: string): Promise<void> {
-  const ok = await browser.execute((text: string) => {
+  const ok = await executeOnce((text: string) => {
     const spans = Array.from(document.querySelectorAll("span"));
     const el = spans.find((s) => s.textContent === text);
     if (!el) return false;
@@ -249,7 +310,10 @@ export const paletteInput = `${paletteDialog} input`;
  *  (src/AppShell.tsx), so an in-page KeyboardEvent dispatch is deterministic
  *  — no reliance on the embedded driver synthesizing Meta-key chords. */
 export async function openPalette(): Promise<void> {
-  await browser.execute(() => {
+  // executeOnce is belt-and-braces here (⌘P maps to an open-only store
+  // action, not a toggle), but keeps every synthesized-input dispatch under
+  // the same no-double-run guarantee.
+  await executeOnce(() => {
     window.dispatchEvent(
       new KeyboardEvent("keydown", { key: "p", metaKey: true, bubbles: true }),
     );
@@ -265,7 +329,10 @@ export async function openPalette(): Promise<void> {
  *  native KeyboardEvent reaches React's root-delegated listener. Use this for
  *  control keys; use setValue() for typing text. */
 export async function jsKey(selector: string, key: string): Promise<void> {
-  const ok = await browser.execute(
+  // executeOnce: a driver-retry re-run would dispatch the key twice —
+  // double Enter runs a palette command twice, double Escape closes layers
+  // beyond the intended one.
+  const ok = await executeOnce(
     (sel: string, k: string) => {
       const el = document.querySelector(sel) as HTMLElement | null;
       if (!el) return false;

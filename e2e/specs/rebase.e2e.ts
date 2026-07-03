@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import { cherryRepo, rebaseConflictRepo, TempRepo } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
-  jsContextMenu, jsClickMenuItem,
+  jsContextMenu, jsClickMenuItem, executeOnce,
 } from "../support/app";
 
 describe("interactive rebase", () => {
@@ -68,7 +68,9 @@ describe("interactive rebase", () => {
     await $(`[data-testid="rebase-row"]*=${dropRowText}`).waitForDisplayed({
       timeout: 10_000, timeoutMsg: "plan row missing",
     });
-    await browser.execute((rowText: string) => {
+    // executeOnce: re-dispatching change with the same value is near-benign,
+    // but keep every side-effectful script under the no-double-run guard.
+    await executeOnce((rowText: string) => {
       const rows = Array.from(document.querySelectorAll('[data-testid="rebase-row"]'));
       const row = rows.find((r) => r.textContent?.includes(rowText));
       const select = row?.querySelector("select") as HTMLSelectElement | null;
