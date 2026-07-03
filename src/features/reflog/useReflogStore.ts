@@ -11,6 +11,7 @@ import {
   stashSave,
 } from "@/lib/tauri";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 
 export type ReflogActionChoice = "reset" | "checkout" | "branch";
 
@@ -77,7 +78,12 @@ export const useReflogStore = create<ReflogState>((set, get) => ({
     }
     set({ previewLoading: true });
     try {
-      const diff = await diffCommits(repoId, head, oid);
+      const diff = await diffCommits(
+        repoId,
+        head,
+        oid,
+        useSettingsStore.getState().diffContextLines,
+      );
       set({ previewDiff: diff, previewLoading: false });
     } catch (e) {
       set({ previewLoading: false, error: toAppError(e) });

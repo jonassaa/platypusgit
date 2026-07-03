@@ -24,6 +24,7 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import {
   currentBranch,
   relativeTime,
@@ -86,6 +87,7 @@ export function RepoBrowserScreen() {
   const refreshAllFiles = useRepoStore((s) => s.refreshAllFiles);
   const listFilesAtRev = useRepoStore((s) => s.listFilesAtRev);
   const readFileContentAtRev = useRepoStore((s) => s.readFileContentAtRev);
+  const diffContextLines = useSettingsStore((s) => s.diffContextLines);
 
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   const [selected, setSelected] = React.useState<string | null>(null);
@@ -247,7 +249,7 @@ export function RepoBrowserScreen() {
         });
     } else {
       setFileContent(null);
-      getDiff(repo.id, selectedFile.path, "WorktreeToHead")
+      getDiff(repo.id, selectedFile.path, "WorktreeToHead", diffContextLines)
         .then((d) => {
           if (!cancelled) setDiff(d);
         })
@@ -261,7 +263,7 @@ export function RepoBrowserScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selectedFile?.path, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev]);
+  }, [selectedFile?.path, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev, diffContextLines]);
 
   const breadcrumbItems = React.useMemo(() => {
     const root = repo?.path.split("/").filter(Boolean).pop() ?? "repository";

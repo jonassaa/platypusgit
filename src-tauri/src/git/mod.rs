@@ -44,7 +44,15 @@ pub trait GitBackend: Send + Sync {
     ) -> AppResult<Vec<CommitInfo>>;
     fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>>;
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
-    fn diff(&self, repo_id: &RepoId, path: &Path, kind: DiffKind) -> AppResult<FileDiff>;
+    /// Diff a single file. `context_lines` controls how many unchanged lines
+    /// surround each hunk (git default: 3).
+    fn diff(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        kind: DiffKind,
+        context_lines: u32,
+    ) -> AppResult<FileDiff>;
     /// Read the full content of a file from the worktree. Falls back to the
     /// HEAD blob when the worktree copy is missing (e.g. a deleted file).
     fn read_file_content(&self, repo_id: &RepoId, path: &Path) -> AppResult<FileContent>;
@@ -69,6 +77,7 @@ pub trait GitBackend: Send + Sync {
         repo_id: &RepoId,
         from_oid: &str,
         to_oid: &str,
+        context_lines: u32,
     ) -> AppResult<Vec<FileDiff>>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>>;
@@ -85,12 +94,34 @@ pub trait GitBackend: Send + Sync {
     fn discard(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
 
     // === hunk-level staging ===
+    // Hunk indices are positions in the diff produced with `context_lines`.
+    // Callers MUST pass the same `context_lines` they used for the `diff` that
+    // displayed the hunks — a different context width can merge/split hunks
+    // and shift indices, applying the wrong hunk.
     /// Stage a single hunk (by index into the WorktreeToIndex diff) for `path`.
-    fn stage_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()>;
+    fn stage_hunk(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        context_lines: u32,
+    ) -> AppResult<()>;
     /// Unstage a single hunk (by index into the IndexToHead diff) for `path`.
-    fn unstage_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()>;
+    fn unstage_hunk(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        context_lines: u32,
+    ) -> AppResult<()>;
     /// Discard a single hunk (by index into the WorktreeToIndex diff) for `path`.
-    fn discard_hunk(&self, repo_id: &RepoId, path: &Path, hunk_index: usize) -> AppResult<()>;
+    fn discard_hunk(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        context_lines: u32,
+    ) -> AppResult<()>;
 
     // === commit ===
     fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String>;

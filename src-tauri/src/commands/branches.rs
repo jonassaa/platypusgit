@@ -116,6 +116,11 @@ async fn get_repo_path(state: &AppState, repo_id: &RepoId) -> AppResult<std::pat
 }
 
 /// Run a git subprocess and map non-zero exit to `AppError::Network`.
+///
+/// Credential prompts are disabled (`GIT_TERMINAL_PROMPT=0` plus a no-op
+/// askpass): a subprocess has no terminal, so an auth-requiring remote would
+/// otherwise hang forever on an invisible prompt. With prompts off, git fails
+/// fast and the error surfaces through the normal `AppError::Network` path.
 async fn run_git(
     cwd: &std::path::Path,
     args: &[&str],
@@ -124,6 +129,9 @@ async fn run_git(
         .arg("-C")
         .arg(cwd)
         .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "true")
+        .env("SSH_ASKPASS", "true")
         .output()
         .await
         .map_err(|e| AppError::Io(e.to_string()))?;
@@ -135,23 +143,38 @@ async fn run_git(
     Ok(())
 }
 
+/// Build the argument list for `git fetch`. `remote = None` means all remotes.
+fn fetch_args(remote: Option<&str>, prune: bool) -> Vec<&str> {
+    let mut args = vec!["fetch"];
+    match remote {
+        Some(r) => args.push(r),
+        None => args.push("--all"),
+    }
+    if prune {
+        args.push("--prune");
+    }
+    args
+}
+
 #[tauri::command]
 pub async fn fetch(
     state: State<'_, AppState>,
     repo_id: String,
     remote: String,
+    prune: bool,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git(&path, &["fetch", remote.as_str(), "--prune"]).await
+    run_git(&path, &fetch_args(Some(remote.as_str()), prune)).await
 }
 
 #[tauri::command]
 pub async fn fetch_all(
     state: State<'_, AppState>,
     repo_id: String,
+    prune: bool,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git(&path, &["fetch", "--all", "--prune"]).await
+    run_git(&path, &fetch_args(None, prune)).await
 }
 
 #[tauri::command]
@@ -344,4 +367,21 @@ pub async fn push_delete_branch(
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
     run_git(&path, &["push", "--delete", remote.as_str(), name.as_str()]).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fetch_args;
+
+    #[test]
+    fn fetch_args_with_prune() {
+        assert_eq!(fetch_args(Some("origin"), true), ["fetch", "origin", "--prune"]);
+        assert_eq!(fetch_args(None, true), ["fetch", "--all", "--prune"]);
+    }
+
+    #[test]
+    fn fetch_args_without_prune() {
+        assert_eq!(fetch_args(Some("origin"), false), ["fetch", "origin"]);
+        assert_eq!(fetch_args(None, false), ["fetch", "--all"]);
+    }
 }

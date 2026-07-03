@@ -18,6 +18,7 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
 import type { FileDiff } from "@/lib/types";
@@ -25,6 +26,7 @@ import type { FileDiff } from "@/lib/types";
 export function DiffViewerScreen() {
   const repo = useRepoStore((s) => s.current);
   const status = useRepoStore((s) => s.status);
+  const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const [mode, setMode] = React.useState<"unified" | "split">("unified");
   const [wrap, setWrap] = React.useState(false);
   const [filter, setFilter] = React.useState("");
@@ -75,7 +77,7 @@ export function DiffViewerScreen() {
     }
     let cancelled = false;
     setDiffLoading(true);
-    getDiff(repo.id, current.path, "WorktreeToHead")
+    getDiff(repo.id, current.path, "WorktreeToHead", diffContextLines)
       .then((d) => {
         if (!cancelled) setDiff(d);
       })
@@ -88,7 +90,7 @@ export function DiffViewerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [current?.path, repo]);
+  }, [current?.path, repo, diffContextLines]);
 
   const findFiltered = React.useMemo<FileDiff | null>(() => {
     if (!diff || !findQuery.trim()) return diff;

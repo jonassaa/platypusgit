@@ -21,7 +21,7 @@ fn diff_commits_accepts_head_revspec() {
 
     // Should not error even though "HEAD" is not a 40-char hex OID.
     let diffs = backend
-        .diff_commits(&handle.id, &initial, "HEAD")
+        .diff_commits(&handle.id, &initial, "HEAD", 3)
         .unwrap();
     assert!(!diffs.is_empty());
 }

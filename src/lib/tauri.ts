@@ -137,8 +137,9 @@ export async function getDiff(
   repoId: string,
   path: string,
   kind: DiffKind = "WorktreeToIndex",
+  contextLines = 3,
 ): Promise<FileDiff> {
-  return invoke<FileDiff>("get_diff", { repoId, path, kind });
+  return invoke<FileDiff>("get_diff", { repoId, path, kind, contextLines });
 }
 
 export async function getReflog(repoId: string): Promise<ReflogEntry[]> {
@@ -156,8 +157,9 @@ export async function diffCommits(
   repoId: string,
   fromOid: string,
   toOid: string,
+  contextLines = 3,
 ): Promise<FileDiff[]> {
-  return invoke<FileDiff[]>("diff_commits", { repoId, fromOid, toOid });
+  return invoke<FileDiff[]>("diff_commits", { repoId, fromOid, toOid, contextLines });
 }
 
 export async function stagePaths(repoId: string, paths: string[]): Promise<void> {
@@ -181,28 +183,34 @@ export async function discardPaths(repoId: string, paths: string[]): Promise<voi
   return invoke<void>("discard_paths", { repoId, paths });
 }
 
+// Hunk indices refer to the diff computed with `contextLines` — always pass
+// the same value used for the getDiff() that displayed the hunks, or the
+// backend may apply the wrong hunk (context width changes hunk merging).
 export async function stageHunk(
   repoId: string,
   path: string,
   hunkIndex: number,
+  contextLines = 3,
 ): Promise<void> {
-  return invoke<void>("stage_hunk", { repoId, path, hunkIndex });
+  return invoke<void>("stage_hunk", { repoId, path, hunkIndex, contextLines });
 }
 
 export async function unstageHunk(
   repoId: string,
   path: string,
   hunkIndex: number,
+  contextLines = 3,
 ): Promise<void> {
-  return invoke<void>("unstage_hunk", { repoId, path, hunkIndex });
+  return invoke<void>("unstage_hunk", { repoId, path, hunkIndex, contextLines });
 }
 
 export async function discardHunk(
   repoId: string,
   path: string,
   hunkIndex: number,
+  contextLines = 3,
 ): Promise<void> {
-  return invoke<void>("discard_hunk", { repoId, path, hunkIndex });
+  return invoke<void>("discard_hunk", { repoId, path, hunkIndex, contextLines });
 }
 
 export type ResetMode = "Soft" | "Mixed" | "Hard";
@@ -338,13 +346,17 @@ export async function stashBranch(
 // ─── Network operations ──────────────────────────────────────────────────────
 
 /** Fetch a single remote, pruning deleted remote refs. */
-export async function fetch(repoId: string, remote: string): Promise<void> {
-  return invoke<void>("fetch", { repoId, remote });
+export async function fetch(
+  repoId: string,
+  remote: string,
+  prune = true,
+): Promise<void> {
+  return invoke<void>("fetch", { repoId, remote, prune });
 }
 
 /** Fetch all remotes, pruning deleted remote refs. */
-export async function fetchAll(repoId: string): Promise<void> {
-  return invoke<void>("fetch_all", { repoId });
+export async function fetchAll(repoId: string, prune = true): Promise<void> {
+  return invoke<void>("fetch_all", { repoId, prune });
 }
 
 /**

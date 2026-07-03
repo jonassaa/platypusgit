@@ -2,6 +2,7 @@ import React from "react";
 import { PGEmpty, PGSpinner } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { diffCommits } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
 import type { FileDiff } from "@/lib/types";
@@ -13,6 +14,7 @@ type Target =
 
 export function CommitDiffScreen() {
   const repo = useRepoStore((s) => s.current);
+  const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
 
@@ -44,12 +46,12 @@ export function CommitDiffScreen() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    diffCommits(repo.id, from, to)
+    diffCommits(repo.id, from, to, diffContextLines)
       .then((d) => { if (!cancelled) { setDiffs(d); setSelected(d[0]?.path ?? null); } })
       .catch((e) => { if (!cancelled) setError(appErrorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [repo?.id, target]);
+  }, [repo?.id, target, diffContextLines]);
 
   if (!target) {
     return <PGEmpty icon="diff" title="No diff target">Pick "Compare…" from a context menu.</PGEmpty>;

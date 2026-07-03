@@ -171,16 +171,6 @@ export function SettingsScreen() {
           subtitle="Defaults applied when creating a new commit."
         >
           <Row
-            label="Sign commits (GPG / SSH)"
-            hint="Adds the -S flag. Requires a signing key configured in git."
-            control={
-              <PGToggle
-                checked={s.signCommits}
-                onChange={(v) => s.set("signCommits", v)}
-              />
-            }
-          />
-          <Row
             label="Append Signed-off-by"
             hint="Appends a DCO-style trailer to every commit message."
             control={
@@ -193,16 +183,6 @@ export function SettingsScreen() {
         </Section>
 
         <Section title="Diff" subtitle="How diffs are rendered across the app.">
-          <Row
-            label="Show whitespace changes"
-            hint="Highlight whitespace-only differences in diffs."
-            control={
-              <PGToggle
-                checked={s.showWhitespaceInDiff}
-                onChange={(v) => s.set("showWhitespaceInDiff", v)}
-              />
-            }
-          />
           <Row
             label="Context lines"
             hint="Unchanged lines shown around each hunk."
