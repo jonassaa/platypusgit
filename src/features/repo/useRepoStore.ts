@@ -123,6 +123,14 @@ interface RepoStoreState {
   error: AppError | null;
   repoState: GitRepoState;
   rebaseStatus: RebaseStatus;
+  /**
+   * Final status of the most recently completed rebase, held frontend-side.
+   * The backend sweeps RebaseState on completion (#28), so the very next
+   * refreshAll's rebase_status poll reports total: 0 — this field preserves
+   * the "N steps completed" summary for the Rebase screen. Cleared when a
+   * new rebase starts, on abort, and on repo open/close.
+   */
+  lastRebaseSummary: RebaseStatus | null;
   /** Active long-running ops keyed by op kind. */
   activity: RepoActivity;
   openRepo: (path: string) => Promise<void>;
@@ -250,6 +258,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   error: null,
   repoState: "Clean",
   rebaseStatus: DEFAULT_REBASE_STATUS,
+  lastRebaseSummary: null,
   activity: {},
 
   async openRepo(path) {
@@ -268,6 +277,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         commits: [],
         searchResults: null,
         commitFilter: {},
+        lastRebaseSummary: null,
       });
       await get().refreshAll();
     } catch (e) {
@@ -348,6 +358,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       searchResults: null,
       commitFilter: {},
       searching: false,
+      lastRebaseSummary: null,
       error: null,
     });
   },
@@ -922,7 +933,12 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return null;
     try {
       const status = await rebaseStartFn(repo.id, plan);
-      set({ rebaseStatus: status });
+      // Capture the summary before refreshAll re-polls rebase_status — the
+      // backend sweeps RebaseState on completion, so the poll returns total: 0.
+      set({
+        rebaseStatus: status,
+        lastRebaseSummary: status.inProgress ? null : status,
+      });
       await get().refreshAll();
       return status;
     } catch (e) {
@@ -936,7 +952,10 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return null;
     try {
       const status = await rebaseContinueFn(repo.id);
-      set({ rebaseStatus: status });
+      set({
+        rebaseStatus: status,
+        ...(status.inProgress ? {} : { lastRebaseSummary: status }),
+      });
       await get().refreshAll();
       return status;
     } catch (e) {
@@ -950,7 +969,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await rebaseAbort(repo.id);
-      set({ rebaseStatus: DEFAULT_REBASE_STATUS });
+      set({ rebaseStatus: DEFAULT_REBASE_STATUS, lastRebaseSummary: null });
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });

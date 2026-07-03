@@ -113,8 +113,15 @@ function RebaseBanner({
 // ─── Plan builder ─────────────────────────────────────────────────────────────
 
 export function RebaseScreen() {
-  const { current, commits, rebaseStatus, rebaseStart, rebaseContinue, rebaseAbort } =
-    useRepoStore();
+  const {
+    current,
+    commits,
+    rebaseStatus,
+    lastRebaseSummary,
+    rebaseStart,
+    rebaseContinue,
+    rebaseAbort,
+  } = useRepoStore();
 
   const [plan, setPlan] = useState<PlanRow[]>([]);
   const [baseLabel, setBaseLabel] = useState<string | null>(null);
@@ -203,7 +210,14 @@ export function RebaseScreen() {
       action: r.action,
       message: r.action === "Reword" || r.action === "Squash" ? (r.message || null) : null,
     }));
-    await rebaseStart(steps);
+    const status = await rebaseStart(steps);
+    // The rebase consumed the plan — clear it so the completion summary (or
+    // the in-progress banner) isn't hidden behind a stale plan builder. On
+    // failure (null) keep the plan so the user can adjust and retry.
+    if (status) {
+      setPlan([]);
+      setBaseLabel(null);
+    }
   };
 
   const handleClear = () => {
@@ -388,9 +402,12 @@ export function RebaseScreen() {
         </div>
       )}
 
-      {/* Waiting / done state when rebase just finished */}
-      {rebaseStatus.inProgress === false && rebaseStatus.total > 0 && plan.length === 0 && (
+      {/* Done state when a rebase finished — rebase_status reports total: 0
+          after the backend sweeps its state, so the summary comes from the
+          store's frontend-held lastRebaseSummary instead. */}
+      {!rebaseStatus.inProgress && lastRebaseSummary && plan.length === 0 && (
         <div
+          data-testid="rebase-last-summary"
           style={{
             padding: "8px 16px",
             borderTop: "1px solid var(--border-0)",
@@ -399,7 +416,7 @@ export function RebaseScreen() {
             color: "var(--fg-2)",
           }}
         >
-          Last rebase: {rebaseStatus.total} steps completed.
+          Last rebase: {lastRebaseSummary.total} steps completed.
         </div>
       )}
 
