@@ -12,7 +12,7 @@ fn diff_commits_accepts_head_revspec() {
     tr.commit_all("add world");
 
     let initial = backend
-        .log(&handle.id, 10)
+        .log(&handle.id, None, 10)
         .unwrap()
         .last()
         .unwrap()

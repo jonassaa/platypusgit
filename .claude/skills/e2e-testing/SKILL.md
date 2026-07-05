@@ -73,7 +73,11 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
 - Branch-from-tip merges **fast-forward** — no merge commit exists to assert. Diverge both branches if the test needs one.
 - Interactive-rebase conflicts: `rebase_start` resets to the first surviving pick's parent, so a **leading** drop can never conflict — drop a **middle** commit.
 - The store reads status at `openRepo`; **dirty files must exist on disk BEFORE openRepo** or the UI won't know.
-- History shows HEAD-reachable commits only (issue #27) — unmerged-ref commits appear nowhere.
+- History defaults to HEAD-reachable commits. Unmerged-ref commits need the
+  toolbar ref selector (`[data-testid="history-ref-select"]`) to scope the log
+  first — drive it with `jsSelectValue`, NEVER `selectByAttribute`: WebKitGTK
+  under xvfb accepts the option click without firing a React-visible change
+  event, so the onChange never runs (bit PR #40 on CI).
 - Root commit's "Interactive rebase from here" silently no-ops.
 - `remoteRepo()` pairs a work repo with a local bare `origin`. `makeBehind`
   rewinds `refs/remotes/origin/main` so fetch has something to discover —

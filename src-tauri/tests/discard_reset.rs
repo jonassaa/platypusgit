@@ -47,11 +47,11 @@ fn reset_hard_moves_head_and_cleans_worktree() {
 
     // Re-open and reset back to the first commit.
     let (backend, handle) = tr.open_with_backend();
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     let first = log[1].oid.clone();
     backend.reset(&handle.id, &first, ResetMode::Hard).expect("reset --hard");
 
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     assert_eq!(log.len(), 1);
     assert_eq!(read_file(tr.path(), "README.md"), "hello\n");
 }
@@ -74,7 +74,7 @@ fn reset_soft_keeps_worktree() {
         )
         .unwrap();
 
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     let first = log[1].oid.clone();
     backend.reset(&handle.id, &first, ResetMode::Soft).expect("reset --soft");
 

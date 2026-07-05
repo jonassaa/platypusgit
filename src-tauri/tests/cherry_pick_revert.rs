@@ -33,7 +33,7 @@ fn cherry_pick_applies_commit_onto_head() {
     backend.cherry_pick(&handle.id, &feature_oid).unwrap();
 
     assert_eq!(read_file(tr.path(), "NOTES.md"), "hello notes\n");
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     assert_eq!(log[0].summary, "add notes");
 }
 
@@ -58,6 +58,6 @@ fn revert_undoes_commit() {
     backend.revert(&handle.id, &bad_oid).unwrap();
 
     assert_eq!(read_file(tr.path(), "README.md"), "hello\n");
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     assert!(log[0].summary.to_lowercase().contains("revert"));
 }

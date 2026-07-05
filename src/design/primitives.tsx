@@ -549,6 +549,9 @@ export interface PGSelectProps {
   options: PGSelectOption[];
   size?: "sm" | "md" | "lg";
   style?: CSSProperties;
+  title?: string;
+  /** Threaded onto the native <select> (e2e hooks target the real control). */
+  "data-testid"?: string;
 }
 
 export function PGSelect({
@@ -557,6 +560,8 @@ export function PGSelect({
   options,
   size = "md",
   style,
+  title,
+  "data-testid": testId,
 }: PGSelectProps) {
   const sizes = { sm: 24, md: 28, lg: 32 } as const;
   return (
@@ -577,6 +582,8 @@ export function PGSelect({
       <select
         value={value}
         onChange={(e) => onChange?.(e.target.value)}
+        title={title}
+        data-testid={testId}
         style={{
           appearance: "none",
           background: "transparent",

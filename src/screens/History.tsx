@@ -35,6 +35,8 @@ export function HistoryScreen() {
   const searching = useRepoStore((s) => s.searching);
   const searchCommits = useRepoStore((s) => s.searchCommits);
   const branches = useRepoStore((s) => s.branches);
+  const logRef = useRepoStore((s) => s.logRef);
+  const setLogRef = useRepoStore((s) => s.setLogRef);
   const loading = useRepoStore((s) => s.loading);
   const [selected, setSelected] = React.useState(0);
   // Free-text search box (supports key:value qualifiers — see logFilter.ts).
@@ -127,8 +129,24 @@ export function HistoryScreen() {
     pgFlash(`copied ${visible.length} commit${visible.length === 1 ? "" : "s"}`);
   }, [visible]);
 
+  // Log-source options: HEAD (the default walk) + every local branch. The
+  // selected ref scopes the backend log itself, so unmerged-branch commits
+  // become browsable (and cherry-pickable) — see setLogRef in useRepoStore.
+  const logRefOptions = React.useMemo(
+    () => [
+      { value: "", label: "HEAD" },
+      ...branches
+        .filter((b) => !b.isRemote)
+        .map((b) => ({ value: b.name, label: b.name })),
+    ],
+    [branches],
+  );
+
   const toolbarRight = (
     <HistoryToolbarRight
+      logRef={logRef}
+      logRefOptions={logRefOptions}
+      onLogRef={(v) => void setLogRef(v)}
       refFilter={refFilter}
       onRefFilter={setRefFilter}
       hideMerges={hideMerges}
@@ -620,12 +638,18 @@ function AdvancedSearchPanel(props: {
 }
 
 function HistoryToolbarRight({
+  logRef,
+  logRefOptions,
+  onLogRef,
   refFilter,
   onRefFilter,
   hideMerges,
   onHideMerges,
   onExport,
 }: {
+  logRef: string | null;
+  logRefOptions: { value: string; label: string }[];
+  onLogRef: (v: string | null) => void;
   refFilter: RefFilter;
   onRefFilter: (v: RefFilter) => void;
   hideMerges: boolean;
@@ -642,6 +666,14 @@ function HistoryToolbarRight({
   ]);
   return (
     <>
+      <PGSelect
+        value={logRef ?? ""}
+        onChange={(v) => onLogRef(v === "" ? null : v)}
+        options={logRefOptions}
+        size="sm"
+        title="Browse the log of another ref"
+        data-testid="history-ref-select"
+      />
       <PGSelect
         value={refFilter}
         onChange={(v) => onRefFilter(v as RefFilter)}

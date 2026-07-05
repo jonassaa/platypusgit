@@ -33,7 +33,7 @@ fn read_reflog_classifies_reset_op() {
 
     // Reset to HEAD~1 — produces a "reset:" reflog entry.
     let head_parent = {
-        let commits = backend.log(&handle.id, 10).unwrap();
+        let commits = backend.log(&handle.id, None, 10).unwrap();
         assert!(commits.len() >= 2, "expected at least 2 commits, got {}", commits.len());
         commits[1].oid.clone()
     };
@@ -107,7 +107,7 @@ fn diff_commits_returns_per_file_diffs_between_two_commits() {
     tr.add_commit("three.txt", "three\n", "add three");
     let (backend, handle) = tr.open_with_backend();
 
-    let commits = backend.log(&handle.id, 10).unwrap();
+    let commits = backend.log(&handle.id, None, 10).unwrap();
     let head_oid = commits[0].oid.clone();
     let grandparent_oid = commits[2].oid.clone();
 
@@ -128,7 +128,7 @@ fn checkout_detached_leaves_head_detached_at_target() {
     let (backend, handle) = tr.open_with_backend();
 
     let first = {
-        let commits = backend.log(&handle.id, 10).unwrap();
+        let commits = backend.log(&handle.id, None, 10).unwrap();
         commits.last().unwrap().oid.clone()
     };
 

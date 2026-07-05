@@ -12,7 +12,7 @@ fn blame_attributes_each_line_to_the_commit_that_last_changed_it() {
     // second commit modifies line 2 only
     write_file(tr.path(), "README.md", "line-a\nline-b-edited\n");
     let commit2 = tr.commit_all("edit line 2");
-    let initial = backend.log(&handle.id, 10).unwrap().last().unwrap().oid.clone();
+    let initial = backend.log(&handle.id, None, 10).unwrap().last().unwrap().oid.clone();
 
     let lines = backend
         .blame_file(&handle.id, std::path::Path::new("README.md"))

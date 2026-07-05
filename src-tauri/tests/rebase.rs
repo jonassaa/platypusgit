@@ -37,7 +37,7 @@ fn rebase_drop_commit_removes_it() {
     assert_eq!(status.total, 3);
 
     // The final log should have 3 commits: root + file0 + file2 (file1 dropped).
-    let log = backend.log(&handle.id, 20).unwrap();
+    let log = backend.log(&handle.id, None, 20).unwrap();
     // log is newest-first; index 0 is HEAD
     let messages: Vec<&str> = log.iter().map(|c| c.summary.as_str()).collect();
     assert!(messages.contains(&"commit 2"), "commit 2 should be present");
@@ -62,7 +62,7 @@ fn rebase_reword_changes_message() {
     let status = backend.rebase_start(&handle.id, plan).unwrap();
     assert!(!status.in_progress);
 
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     assert_eq!(log[0].summary, "reworded message");
 }
 
@@ -85,7 +85,7 @@ fn rebase_squash_combines_two_commits() {
     let status = backend.rebase_start(&handle.id, plan).unwrap();
     assert!(!status.in_progress);
 
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     // root + commit 0 + squashed (1+2) = 3 total
     assert_eq!(log.len(), 3, "expected 3 commits (root + c0 + squash)");
     assert_eq!(log[0].summary, "combined message", "squash commit uses supplied message");
@@ -109,7 +109,7 @@ fn rebase_fixup_discards_message() {
     let status = backend.rebase_start(&handle.id, plan).unwrap();
     assert!(!status.in_progress);
 
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     // root + fixup-squash = 2 total
     assert_eq!(log.len(), 2);
     assert_eq!(log[0].summary, "commit 0", "fixup keeps the first commit's message");
@@ -138,7 +138,7 @@ fn rebase_edit_pauses_and_continue_resumes() {
     let status2 = backend.rebase_continue(&handle.id).unwrap();
     assert!(!status2.in_progress, "rebase should finish after continue");
 
-    let log = backend.log(&handle.id, 10).unwrap();
+    let log = backend.log(&handle.id, None, 10).unwrap();
     // root + c0 + c1
     assert_eq!(log.len(), 3);
 }
@@ -228,7 +228,7 @@ fn rebase_abort_resets_to_pre_rebase_head() {
     let (backend, handle) = tr.open_with_backend();
 
     // Record HEAD before the rebase.
-    let head_before = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    let head_before = backend.log(&handle.id, None, 1).unwrap()[0].oid.clone();
 
     // Start a rebase but immediately abort.
     let plan = vec![step(&oids[0], RebaseAction::Edit)];
@@ -246,7 +246,7 @@ fn rebase_abort_resets_to_pre_rebase_head() {
     // HEAD" at abort time is mid-rebase progress, not the pre-rebase
     // position; `rebase_abort` must restore the recorded pre-rebase tip
     // (mirrors `git rebase --abort` restoring ORIG_HEAD).
-    let head_after = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    let head_after = backend.log(&handle.id, None, 1).unwrap()[0].oid.clone();
     assert_eq!(head_after, head_before, "abort should restore the pre-rebase HEAD");
 }
 
@@ -297,7 +297,7 @@ fn abort_operation_clears_rebase_state_and_restores_pre_rebase_head() {
     let (backend, handle) = tr.open_with_backend();
 
     // Pre-rebase tip — current HEAD (commit B) before `rebase_start` moves it.
-    let head_before = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    let head_before = backend.log(&handle.id, None, 1).unwrap()[0].oid.clone();
 
     let plan = vec![
         RebaseStep { oid: oid_b.clone(), action: RebaseAction::Pick, message: None },
@@ -315,7 +315,7 @@ fn abort_operation_clears_rebase_state_and_restores_pre_rebase_head() {
         "abort_operation must remove the RebaseState entry, not just reset the worktree"
     );
 
-    let head_after = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    let head_after = backend.log(&handle.id, None, 1).unwrap()[0].oid.clone();
     assert_eq!(
         head_after, head_before,
         "abort_operation should restore the pre-rebase HEAD (converging with rebase_abort), \
@@ -333,7 +333,7 @@ fn rebase_completion_clears_rebase_state() {
     let (backend, handle) = tr.open_with_backend();
 
     // Pre-rebase tip — recorded by `rebase_start` as `orig_head`.
-    let head_before = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    let head_before = backend.log(&handle.id, None, 1).unwrap()[0].oid.clone();
 
     // Drop the middle commit so the post-rebase tip is structurally
     // different from the pre-rebase tip (a plan that reproduces the exact
@@ -351,7 +351,7 @@ fn rebase_completion_clears_rebase_state() {
     let status_after = backend.rebase_status(&handle.id).unwrap();
     assert!(!status_after.in_progress, "no rebase in progress after completion");
 
-    let head_after_rebase = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    let head_after_rebase = backend.log(&handle.id, None, 1).unwrap()[0].oid.clone();
     assert_ne!(head_after_rebase, head_before, "sanity: dropping a commit must move the tip");
 
     // Prove the in-memory RebaseState entry itself is gone, not just that
@@ -360,7 +360,7 @@ fn rebase_completion_clears_rebase_state() {
     // alone, not a hard reset back to the pre-rebase tip using a stale
     // orig_head (which would silently discard the completed rebase).
     backend.abort_operation(&handle.id).unwrap();
-    let head_after_abort = backend.log(&handle.id, 1).unwrap()[0].oid.clone();
+    let head_after_abort = backend.log(&handle.id, None, 1).unwrap()[0].oid.clone();
     assert_eq!(
         head_after_abort, head_after_rebase,
         "abort_operation after a completed rebase must not discard it"

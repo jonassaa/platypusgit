@@ -53,7 +53,7 @@ fn empty_filter_returns_all_newest_first() {
     let tr = seeded();
     let (backend, handle) = tr.open_with_backend();
     let out = backend
-        .log_filtered(&handle.id, &LogFilter::default(), 100)
+        .log_filtered(&handle.id, &LogFilter::default(), None, 100)
         .unwrap();
     assert_eq!(
         summaries(&out),
@@ -74,7 +74,7 @@ fn filter_by_message_substring() {
         message: Some("alpha".into()),
         ..Default::default()
     };
-    let out = backend.log_filtered(&handle.id, &filter, 100).unwrap();
+    let out = backend.log_filtered(&handle.id, &filter, None, 100).unwrap();
     assert_eq!(
         summaries(&out),
         vec!["refactor alpha module", "add feature alpha"]
@@ -89,7 +89,7 @@ fn filter_by_message_is_case_insensitive() {
         message: Some("BUG".into()),
         ..Default::default()
     };
-    let out = backend.log_filtered(&handle.id, &filter, 100).unwrap();
+    let out = backend.log_filtered(&handle.id, &filter, None, 100).unwrap();
     assert_eq!(summaries(&out), vec!["fix bug in parser"]);
 }
 
@@ -105,6 +105,7 @@ fn filter_by_author_name_or_email() {
                 author: Some("alice".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -120,6 +121,7 @@ fn filter_by_author_name_or_email() {
                 author: Some("bob@example.com".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -132,7 +134,7 @@ fn filter_by_sha_prefix() {
     let (backend, handle) = tr.open_with_backend();
     // Grab a real oid from a plain walk.
     let all = backend
-        .log_filtered(&handle.id, &LogFilter::default(), 100)
+        .log_filtered(&handle.id, &LogFilter::default(), None, 100)
         .unwrap();
     let target = &all[1]; // "refactor alpha module"
     let prefix = &target.oid[..8];
@@ -143,6 +145,7 @@ fn filter_by_sha_prefix() {
                 sha_prefix: Some(prefix.to_string()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -163,6 +166,7 @@ fn filter_by_date_range() {
                 until: Some(3000),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -183,6 +187,7 @@ fn filter_by_path() {
                 path: Some("a.txt".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -205,6 +210,7 @@ fn filters_are_anded_together() {
                 message: Some("refactor".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -222,6 +228,7 @@ fn limit_caps_matching_commits() {
                 author: Some("alice".into()),
                 ..Default::default()
             },
+            None,
             1,
         )
         .unwrap();
@@ -248,6 +255,7 @@ fn path_filter_matches_root_commit() {
                 path: Some("root.txt".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -261,6 +269,7 @@ fn path_filter_matches_root_commit() {
                 path: Some("nope.txt".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -341,6 +350,7 @@ fn path_filter_matches_merge_commit() {
                 path: Some("merged.txt".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -355,6 +365,7 @@ fn path_filter_matches_merge_commit() {
                 path: Some("feature.txt".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -368,6 +379,7 @@ fn path_filter_matches_merge_commit() {
                 path: Some("ghost.txt".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();
@@ -385,6 +397,7 @@ fn unborn_head_returns_empty() {
                 message: Some("anything".into()),
                 ..Default::default()
             },
+            None,
             100,
         )
         .unwrap();

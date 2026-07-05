@@ -19,15 +19,26 @@ pub trait GitBackend: Send + Sync {
     /// Like `status`, but also includes tracked-but-unmodified files so UIs
     /// can browse the whole worktree (ignored files are still excluded).
     fn list_all_files(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
-    fn log(&self, repo_id: &RepoId, limit: usize) -> AppResult<Vec<CommitInfo>>;
+    /// Commit log, newest-first, up to `limit`. `refspec` picks the walk
+    /// start: `None` walks from HEAD (empty result on an unborn HEAD);
+    /// `Some(spec)` walks from any revspec (branch, tag, short/full oid) —
+    /// `InvalidRef` if the revspec can't be resolved to a commit.
+    fn log(
+        &self,
+        repo_id: &RepoId,
+        refspec: Option<&str>,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>>;
     /// Like `log`, but only returns commits matching `filter`. The `limit`
     /// caps the number of *matching* commits returned (newest-first), so the
     /// walk may visit more than `limit` commits to fill the result. An empty
-    /// filter behaves like `log`.
+    /// filter behaves like `log`. `refspec` scopes the walk exactly as in
+    /// `log`.
     fn log_filtered(
         &self,
         repo_id: &RepoId,
         filter: &LogFilter,
+        refspec: Option<&str>,
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>>;
     /// Commits reachable from HEAD but not from `base` (the `base..HEAD` range),
