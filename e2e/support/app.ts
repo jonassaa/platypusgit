@@ -267,10 +267,34 @@ export const jsContextMenu = (selector: string, opts?: { text?: string }) =>
     opts?.text,
   );
 
+/** Read-only poll: wait for a menu item's label span to be in the DOM.
+ *
+ *  The portal menu renders one or two React commits AFTER the script that
+ *  triggered it returns (contextmenu dispatch → state → portal render;
+ *  hover → effect → onOpenSubmenu → submenu portal), so the item is never
+ *  present synchronously. Locally the next driver round-trip is slower than
+ *  those commits; under xvfb CI load it occasionally isn't, and a single-shot
+ *  lookup throws "menu item not found" (seen with the History reset submenu).
+ *  Bare execute is fine — the poll has no side effects. */
+async function waitForMenuItem(label: string): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (text: string) =>
+          Array.from(document.querySelectorAll("span")).some(
+            (s) => s.textContent === text,
+          ),
+        label,
+      ),
+    { timeout: 10_000, timeoutMsg: `menu item never rendered: ${label}` },
+  );
+}
+
 /** Click an open context-menu item by its label-span text (menus are
  *  portals rendered to document.body, so a plain CSS selector on the label
  *  text is the reliable way to find them). */
 export async function jsClickMenuItem(label: string): Promise<void> {
+  await waitForMenuItem(label);
   // executeOnce: the click closes the menu, so a driver-retry re-run finds
   // no item and reports false — failing the test even though the click
   // already landed (the CI double-run flake, issue #35).
@@ -288,6 +312,7 @@ export async function jsClickMenuItem(label: string): Promise<void> {
 /** Hover a context-menu item to open its submenu (menus are portals; the
  *  driver can't hover, so dispatch the events React listens for). */
 export async function jsHoverMenuItem(label: string): Promise<void> {
+  await waitForMenuItem(label);
   const ok = await executeOnce((text: string) => {
     const spans = Array.from(document.querySelectorAll("span"));
     const el = spans.find((s) => s.textContent === text);

@@ -891,6 +891,78 @@ export function fileMenuItems(
   ];
 }
 
+export interface MultiFileMenuSelection {
+  /** Selected paths currently staged (index side). */
+  stagedPaths: string[];
+  /** Selected paths with unstaged (worktree) changes. */
+  unstagedPaths: string[];
+}
+
+/**
+ * Context menu for a multi-file selection. Stage/Unstage each act on their
+ * own subset so mixed selections work; discard goes through the standard
+ * confirm/danger flow before touching the worktree.
+ */
+export function multiFileMenuItems(
+  sel: MultiFileMenuSelection | null,
+): ContextMenuItem[] {
+  const stagedPaths = sel?.stagedPaths ?? [];
+  const unstagedPaths = sel?.unstagedPaths ?? [];
+  const all = [...stagedPaths, ...unstagedPaths];
+  const n = all.length;
+  const files = (c: number) => `${c} file${c === 1 ? "" : "s"}`;
+  const items: ContextMenuItem[] = [{ __menuTitle: `${files(n)} selected` }];
+  if (unstagedPaths.length) {
+    items.push({
+      icon: "plus",
+      label: `Stage ${files(unstagedPaths.length)}`,
+      onClick: () => {
+        useRepoStore.getState().stage(unstagedPaths);
+      },
+    });
+  }
+  if (stagedPaths.length) {
+    items.push({
+      icon: "minus",
+      label: `Unstage ${files(stagedPaths.length)}`,
+      onClick: () => {
+        useRepoStore.getState().unstage(stagedPaths);
+      },
+    });
+  }
+  items.push(
+    { divider: true },
+    {
+      icon: "copy",
+      label: "Copy paths",
+      onClick: () => {
+        navigator.clipboard?.writeText(all.join("\n"));
+        pgFlash("copied paths");
+      },
+    },
+  );
+  if (unstagedPaths.length) {
+    items.push(
+      { divider: true },
+      {
+        icon: "undo",
+        label: `Discard changes in ${files(unstagedPaths.length)}…`,
+        danger: true,
+        onClick: () => {
+          if (
+            window.confirm(
+              `Discard changes in ${files(unstagedPaths.length)}? The changes will be lost.`,
+            )
+          ) {
+            useRepoStore.getState().discard(unstagedPaths);
+          }
+        },
+      },
+    );
+  }
+  return items;
+}
+
 export function stashMenuItems(
   stash: { name?: string; index?: number } | null,
 ): ContextMenuItem[] {

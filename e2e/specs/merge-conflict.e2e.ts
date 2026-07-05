@@ -82,9 +82,17 @@ describe("merge & conflict", () => {
     });
     await $('[data-testid="accept-ours"]').click();
     // accept-ours may auto-mark the file resolved (row leaves the list) —
-    // only click mark-resolved if it's still present.
+    // only click mark-resolved if it's still present. TOCTOU guard (#35):
+    // the post-accept refresh can unmount the button between isExisting()
+    // and click() — the button vanishing IS the resolved state, so swallow
+    // the re-find failure; the finalize wait + repo-truth asserts below
+    // remain the real gates.
     const markResolvedBtn = $('[data-testid="mark-resolved"]');
-    if (await markResolvedBtn.isExisting()) await markResolvedBtn.click();
+    try {
+      if (await markResolvedBtn.isExisting()) await markResolvedBtn.click();
+    } catch {
+      // button unmounted mid-flight — file already resolved
+    }
     const finalize = $('[data-testid="conflict-finalize"]');
     await browser.waitUntil(async () => finalize.isEnabled(), {
       timeout: 10_000, timeoutMsg: "Finalize never enabled after resolving",
@@ -106,8 +114,13 @@ describe("merge & conflict", () => {
       timeout: 10_000, timeoutMsg: "detail action bar missing",
     });
     await $('[data-testid="accept-theirs"]').click();
+    // Same TOCTOU guard as the accept-ours test above (#35).
     const markResolvedBtn = $('[data-testid="mark-resolved"]');
-    if (await markResolvedBtn.isExisting()) await markResolvedBtn.click();
+    try {
+      if (await markResolvedBtn.isExisting()) await markResolvedBtn.click();
+    } catch {
+      // button unmounted mid-flight — file already resolved
+    }
     await browser.waitUntil(
       async () => $('[data-testid="conflict-finalize"]').isEnabled(),
       { timeout: 10_000, timeoutMsg: "Finalize never enabled" },

@@ -34,7 +34,8 @@ export interface PGFileTreeRowProps {
   hasChildren?: boolean;
   selected?: boolean;
   onToggle?: () => void;
-  onClick?: () => void;
+  onClick?: (e: MouseEvent) => void;
+  onContextMenu?: (e: MouseEvent) => void;
   extra?: ReactNode;
   hideStatus?: boolean;
 }
@@ -50,6 +51,7 @@ export function PGFileTreeRow({
   selected,
   onToggle,
   onClick,
+  onContextMenu,
   extra,
   hideStatus,
 }: PGFileTreeRowProps) {
@@ -57,7 +59,9 @@ export function PGFileTreeRow({
   return (
     <div
       data-path={path}
+      data-selected={selected ? "true" : undefined}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
@@ -136,13 +140,16 @@ export interface PGFileTreeProps {
   expanded?: Record<string, boolean>;
   onToggle?: (key: string) => void;
   selected?: string;
-  onSelect?: (key: string, node: PGFileTreeNode) => void;
+  /** Extra keys rendered as selected (multi-select). `selected` stays the primary row. */
+  selectedKeys?: ReadonlySet<string>;
+  onSelect?: (key: string, node: PGFileTreeNode, e?: MouseEvent) => void;
   /** Fired on Enter or double-click. For folders, toggles; for files, caller decides. */
   onActivate?: (key: string, node: PGFileTreeNode) => void;
+  onRowContextMenu?: (e: MouseEvent, key: string, node: PGFileTreeNode) => void;
   showStatus?: boolean;
 }
 
-interface FlatNode {
+export interface PGFileTreeFlatNode {
   key: string;
   node: PGFileTreeNode;
   indent: number;
@@ -150,11 +157,16 @@ interface FlatNode {
   isExpanded: boolean;
 }
 
-function flattenTree(
+/**
+ * Visible rows of the tree in render order — the same flattening PGFileTree
+ * renders from. Exported so callers can compute shift-click ranges over the
+ * visible row order.
+ */
+export function flattenFileTree(
   nodes: PGFileTreeNode[],
   expanded: Record<string, boolean>,
-): FlatNode[] {
-  const out: FlatNode[] = [];
+): PGFileTreeFlatNode[] {
+  const out: PGFileTreeFlatNode[] = [];
   const walk = (list: PGFileTreeNode[], indent: number, parentKey: string) => {
     for (const node of list) {
       const key = parentKey + "/" + node.name;
@@ -174,11 +186,13 @@ export function PGFileTree({
   expanded = {},
   onToggle,
   selected,
+  selectedKeys,
   onSelect,
   onActivate,
+  onRowContextMenu,
   showStatus = true,
 }: PGFileTreeProps) {
-  const flat = flattenTree(nodes, expanded);
+  const flat = flattenFileTree(nodes, expanded);
   const selectedIdx = selected
     ? flat.findIndex((f) => f.key === selected)
     : -1;
@@ -254,12 +268,18 @@ export function PGFileTree({
           hideStatus={!showStatus}
           expanded={f.isExpanded}
           hasChildren={f.hasChildren}
-          selected={selected === f.key}
-          onClick={() => {
-            onSelect?.(f.key, f.node);
-            if (f.hasChildren) onToggle?.(f.key);
+          selected={selected === f.key || !!selectedKeys?.has(f.key)}
+          onClick={(e) => {
+            onSelect?.(f.key, f.node, e);
+            if (f.hasChildren && !e.metaKey && !e.ctrlKey && !e.shiftKey)
+              onToggle?.(f.key);
           }}
           onToggle={() => onToggle?.(f.key)}
+          onContextMenu={
+            onRowContextMenu
+              ? (e) => onRowContextMenu(e, f.key, f.node)
+              : undefined
+          }
           extra={f.node.extra}
         />
       ))}
@@ -277,7 +297,7 @@ export interface PGChangeRowProps {
   staged?: boolean;
   onToggle?: (v: boolean) => void;
   selected?: boolean;
-  onClick?: () => void;
+  onClick?: (e: MouseEvent) => void;
   onContextMenu?: (e: MouseEvent) => void;
   additions?: number;
   deletions?: number;
@@ -303,6 +323,7 @@ export function PGChangeRow({
   return (
     <div
       data-path={path}
+      data-selected={selected ? "true" : undefined}
       onClick={onClick}
       onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}
