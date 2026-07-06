@@ -26,6 +26,7 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { PGPane, FocusableScroll, usePaneList, useAction } from "@/features/keymap";
 import { currentBranch, isStaged, isUnstaged, statusMark } from "@/lib/derive";
 import {
   clickSelection,
@@ -241,6 +242,13 @@ export function CommitPanelScreen() {
     );
   }, [primaryKey, staged, unstaged]);
 
+  // Row highlight: explicit selection when present, else the derived primary
+  // (first unstaged file) so the keyboard always has a visible anchor.
+  const effectiveKeys = React.useMemo(() => {
+    if (sel.keys.length > 0) return selectedKeys;
+    return new Set(selected ? [keyOf(selected)] : []);
+  }, [sel.keys.length, selectedKeys, selected]);
+
   React.useEffect(() => {
     if (!selected || !repo) {
       setDiff(null);
@@ -278,6 +286,79 @@ export function CommitPanelScreen() {
     [staged],
   );
 
+  // Keyboard: one selection across both sections (staged first, matching the
+  // rendered order). Space stages/unstages the selected file, Rider-style.
+  const combined = React.useMemo(() => [...staged, ...unstaged], [staged, unstaged]);
+  const combinedIndex = Math.max(
+    0,
+    combined.findIndex((f) => selected && keyOf(f) === keyOf(selected)),
+  );
+  usePaneList({
+    paneId: "commit.files",
+    count: combined.length,
+    selectedIndex: combinedIndex,
+    onSelect: (i) => {
+      const f = combined[i];
+      if (f) setSel({ keys: [keyOf(f)], anchor: keyOf(f) });
+    },
+    onToggle: (i) => {
+      const f = combined[i];
+      if (!f) return;
+      // Space acts on the whole multi-selection when the row is part of it.
+      if (f.side === "staged") unstage(togglePaths(f));
+      else stage(togglePaths(f));
+    },
+    searchText: (i) => combined[i]?.path ?? "",
+  });
+
+  // Commit chords (⌘↵ / ⌘⇧↵ / ⌘⇧M). Shared with the two buttons below so the
+  // chord and click paths cannot drift. Handlers decline exactly when the
+  // matching button is disabled, letting the chord fall through.
+  const canCommit = (amend || staged.length > 0) && !!message.trim();
+  const canCommitAndPush = canCommit && !!headBranch && !!defaultRemote;
+  const doCommit = async (): Promise<string | null> => {
+    const full = buildMessage(message, body);
+    const oid = await commitAction(full, amend, signoff);
+    if (oid) {
+      setMessage("");
+      setBody("");
+      setAmend(false);
+    }
+    return oid;
+  };
+  const doCommitAndPush = async (): Promise<void> => {
+    if (!headBranch || !defaultRemote) return;
+    const oid = await doCommit();
+    if (!oid) return;
+    await pushAction(defaultRemote.name, headBranch.name);
+  };
+  useAction(
+    "commit.commit",
+    () => {
+      if (!canCommit) return false;
+      void doCommit();
+      return true;
+    },
+    [canCommit, message, body, amend, signoff],
+  );
+  useAction(
+    "commit.commitAndPush",
+    () => {
+      if (!canCommitAndPush) return false;
+      void doCommitAndPush();
+      return true;
+    },
+    [canCommitAndPush, message, body, amend, signoff, headBranch, defaultRemote],
+  );
+  useAction(
+    "commit.toggleAmend",
+    () => {
+      setAmend((a) => !a);
+      return true;
+    },
+    [],
+  );
+
   if (!loading && staged.length === 0 && unstaged.length === 0) {
     return (
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
@@ -291,7 +372,8 @@ export function CommitPanelScreen() {
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
       {/* Column 1: change list */}
-      <div
+      <PGPane
+        id="commit.files"
         style={{
           width: changesPane.width,
           flexShrink: 0,
@@ -340,14 +422,18 @@ export function CommitPanelScreen() {
               staged
               additions={countAdd(f.status)}
               deletions={countDel(f.status)}
-              selected={selectedKeys.has(keyOf(f))}
+              selected={effectiveKeys.has(keyOf(f))}
               onClick={onRowClick(f)}
               onContextMenu={onRowContextMenu(f)}
               onToggle={() => unstage(togglePaths(f))}
             />
           ))}
         </div>
-        <div data-testid="changes-list" style={{ flex: 1, overflow: "auto" }}>
+        <FocusableScroll
+          testId="changes-list"
+          style={{ flex: 1 }}
+          ariaLabel="Changed files"
+        >
           <Header
             title="CHANGES"
             badge={<PGBadge tone="warn">{unstaged.length}</PGBadge>}
@@ -389,18 +475,19 @@ export function CommitPanelScreen() {
               staged={false}
               additions={countAdd(f.status)}
               deletions={countDel(f.status)}
-              selected={selectedKeys.has(keyOf(f))}
+              selected={effectiveKeys.has(keyOf(f))}
               onClick={onRowClick(f)}
               onContextMenu={onRowContextMenu(f)}
               onToggle={() => stage(togglePaths(f))}
             />
           ))}
-        </div>
-      </div>
+        </FocusableScroll>
+      </PGPane>
       <PGResizeHandle onDrag={changesPane.resize} />
 
       {/* Column 2: diff */}
-      <div
+      <PGPane
+        id="commit.diff"
         style={{
           flex: 1,
           minWidth: 0,
@@ -446,7 +533,7 @@ export function CommitPanelScreen() {
             }}
           />
         </div>
-        <div style={{ flex: 1, overflow: "auto" }}>
+        <FocusableScroll style={{ flex: 1 }} ariaLabel="Diff">
           {diffLoading && (
             <div
               style={{
@@ -510,14 +597,15 @@ export function CommitPanelScreen() {
             diffMode === "split" && (
               <PGSideBySideDiff {...diffToSplit(diff)} />
             )}
-        </div>
+        </FocusableScroll>
         {moreMenu.menu}
-      </div>
+      </PGPane>
 
       <PGResizeHandle onDrag={(d) => composerPane.resize(-d)} side="left" />
 
       {/* Column 3: message composer */}
-      <div
+      <PGPane
+        id="commit.message"
         style={{
           width: composerPane.width,
           flexShrink: 0,
@@ -605,6 +693,8 @@ export function CommitPanelScreen() {
               onChange={setBody}
               rows={8}
               mono
+              data-pg-focus-target=""
+              className="focusable"
               style={{ flex: 1 }}
             />
           </div>
@@ -666,16 +756,8 @@ export function CommitPanelScreen() {
             <PGButton
               variant="default"
               fullWidth
-              disabled={(!amend && staged.length === 0) || !message.trim()}
-              onClick={async () => {
-                const full = buildMessage(message, body);
-                const oid = await commitAction(full, amend, signoff);
-                if (oid) {
-                  setMessage("");
-                  setBody("");
-                  setAmend(false);
-                }
-              }}
+              disabled={!canCommit}
+              onClick={() => void doCommit()}
               data-testid="commit-button"
             >
               {amend ? "Amend" : "Commit"}
@@ -685,12 +767,7 @@ export function CommitPanelScreen() {
               icon="push"
               fullWidth
               loading={!!activity.push}
-              disabled={
-                !headBranch ||
-                !defaultRemote ||
-                (!amend && staged.length === 0) ||
-                !message.trim()
-              }
+              disabled={!canCommitAndPush}
               title={
                 !headBranch
                   ? "Detached HEAD — no branch to push"
@@ -698,22 +775,13 @@ export function CommitPanelScreen() {
                     ? "No remote configured"
                     : `Commit then push to ${defaultRemote.name}/${headBranch.name}`
               }
-              onClick={async () => {
-                if (!headBranch || !defaultRemote) return;
-                const full = buildMessage(message, body);
-                const oid = await commitAction(full, amend, signoff);
-                if (!oid) return;
-                setMessage("");
-                setBody("");
-                setAmend(false);
-                await pushAction(defaultRemote.name, headBranch.name);
-              }}
+              onClick={() => void doCommitAndPush()}
             >
               Commit & Push
             </PGButton>
           </div>
         </div>
-      </div>
+      </PGPane>
       {fileMenu}
     </div>
   );

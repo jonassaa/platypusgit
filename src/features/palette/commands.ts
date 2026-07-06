@@ -3,7 +3,9 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { usePaletteStore } from "./usePaletteStore";
+import { createBranchInputStep } from "./steps";
 import { currentBranch, relativeTime } from "@/lib/derive";
+import type { ActionId } from "@/features/keymap";
 import type { PaletteItem, PaletteStep } from "./types";
 
 const palette = () => usePaletteStore.getState();
@@ -116,17 +118,19 @@ function remoteItems(
 
 // ---- the catalog ----------------------------------------------------------
 
-const SCREENS: [string, string, string, string?][] = [
-  ["repo", "Files", "folder", "⌘1"],
-  ["commit", "Commit", "commit", "⌘2"],
-  ["history", "History", "history", "⌘3"],
-  ["branches", "Branches", "branch", "⌘4"],
-  ["conflict", "Conflicts", "conflict", "⌘5"],
-  ["rebase", "Rebase", "rebase", "⌘6"],
-  ["remote", "Remotes", "link", "⌘7"],
-  ["diff", "Diff viewer", "fileCode", "⌘8"],
-  ["reflog", "Reflog", "clock", "⌘9"],
-  ["settings", "Settings", "settings"],
+// Screen id → [label, icon, keymap action]. Shortcut chips come from the
+// live keymap via actionId — never hardcode chord strings here.
+const SCREENS: [string, string, string, ActionId][] = [
+  ["repo", "Files", "folder", "nav.files"],
+  ["commit", "Commit", "commit", "nav.commit"],
+  ["history", "History", "history", "nav.history"],
+  ["branches", "Branches", "branch", "nav.branches"],
+  ["conflict", "Conflicts", "conflict", "nav.conflict"],
+  ["rebase", "Rebase", "rebase", "nav.rebase"],
+  ["remote", "Remotes", "link", "nav.remote"],
+  ["diff", "Diff viewer", "fileCode", "nav.diff"],
+  ["reflog", "Reflog", "clock", "nav.reflog"],
+  ["settings", "Settings", "settings", "nav.settings"],
 ];
 
 export function buildCommands(): PaletteItem[] {
@@ -139,14 +143,14 @@ export function buildCommands(): PaletteItem[] {
   const items: PaletteItem[] = [];
 
   // -- navigation (launch existing screens) --
-  for (const [id, label, icon, shortcut] of SCREENS) {
+  for (const [id, label, icon, actionId] of SCREENS) {
     items.push({
       type: "command",
       id: `screen:${id}`,
       search: `${label} ${id} go to`,
       label: `Go to ${label}`,
-      detail: shortcut,
       icon,
+      actionId,
       run: direct(() => nav.setIntent({ kind: "switch-screen", screen: id })),
     });
   }
@@ -155,12 +159,12 @@ export function buildCommands(): PaletteItem[] {
   items.push(
     {
       type: "command", id: "action:fetch-all", search: "Fetch all remotes",
-      label: "Fetch all remotes", icon: "fetch",
+      label: "Fetch all remotes", icon: "fetch", actionId: "repo.fetch",
       run: direct(() => void repo.fetchAll()),
     },
     {
       type: "command", id: "action:refresh", search: "Refresh repository",
-      label: "Refresh repository", icon: "sync",
+      label: "Refresh repository", icon: "sync", actionId: "repo.refresh",
       run: direct(() => void repo.refreshAll()),
     },
   );
@@ -172,6 +176,7 @@ export function buildCommands(): PaletteItem[] {
       type: "command", id: "action:push-current",
       search: "Push current branch", label: `Push ${name}`,
       detail: head?.upstream ?? "set upstream", icon: "push",
+      actionId: "repo.push",
       run: upstreamRemote
         ? direct(() => void repo.push(upstreamRemote, name, "None"))
         : step(() => ({
@@ -183,6 +188,7 @@ export function buildCommands(): PaletteItem[] {
       type: "command", id: "action:pull-current",
       search: "Pull current branch", label: `Pull ${name}`,
       detail: head?.upstream ?? undefined, icon: "pull",
+      actionId: "repo.pull",
       run: upstreamRemote
         ? direct(() => void repo.pull(upstreamRemote, name))
         : step(() => ({
@@ -227,14 +233,8 @@ export function buildCommands(): PaletteItem[] {
   items.push({
     type: "command", id: "action:create-branch",
     search: "Create new branch", label: "Create branch…", icon: "plus",
-    run: step(() => ({
-      kind: "input", title: "Create branch", placeholder: "new-branch-name",
-      validate: (v) => (v.trim() ? null : "Branch name required"),
-      onSubmit: (v) => {
-        palette().closePalette();
-        void repo.createAndSwitchBranch(v.trim(), { autoStash: true });
-      },
-    })),
+    actionId: "branch.createNew",
+    run: step(() => createBranchInputStep()),
   });
   items.push({
     type: "command", id: "action:merge",

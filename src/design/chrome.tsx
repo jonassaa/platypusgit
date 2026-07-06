@@ -188,12 +188,15 @@ export function PGActivityBar({
   items,
   settingsActive,
   onSettingsClick,
+  highlightIndex,
 }: {
   value?: string;
   onChange?: (id: string) => void;
   items: ActivityBarItem[];
   settingsActive?: boolean;
   onSettingsClick?: () => void;
+  /** Keyboard cursor position when the bar has focus (distinct from active). */
+  highlightIndex?: number;
 }) {
   return (
     <div
@@ -207,8 +210,9 @@ export function PGActivityBar({
         flexShrink: 0,
       }}
     >
-      {items.map((it) => {
+      {items.map((it, idx) => {
         const active = value === it.id;
+        const highlighted = highlightIndex === idx;
         return (
           <PGTooltip
             key={it.id}
@@ -222,7 +226,7 @@ export function PGActivityBar({
               style={{
                 width: 44,
                 height: 40,
-                background: "transparent",
+                background: highlighted ? "var(--bg-3)" : "transparent",
                 border: "none",
                 color: active ? "var(--accent)" : "var(--fg-2)",
                 cursor: "pointer",

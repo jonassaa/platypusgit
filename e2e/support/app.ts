@@ -427,6 +427,102 @@ export async function jsKey(selector: string, key: string): Promise<void> {
   if (!ok) throw new Error(`jsKey: element not found: ${selector}`);
 }
 
+/** Dispatch a keymap chord as a window-level keydown, in canonical preset
+ *  notation ("Mod+Shift+K", "Alt+ArrowLeft", "?", " ", "Tab").
+ *
+ *  Why synthesized: the embedded driver cannot synthesize modifier chords
+ *  (same reason openPalette js-dispatches ⌘P). The keymap's window listener
+ *  (AppShell, capture phase) is the entry point under test; everything from
+ *  chord resolution onward is real app code.
+ *
+ *  `Mod` maps to metaKey on macOS and ctrlKey elsewhere — decided IN PAGE from
+ *  navigator.platform, the same signal src/features/keymap/chord.ts uses, so
+ *  specs stay platform-agnostic. Letters/digits get a proper `code` (KeyK,
+ *  Digit1) because chord.ts resolves those from e.code, not e.key.
+ *
+ *  `target`: CSS selector to dispatch on instead of window — the dispatcher's
+ *  text-input policy keys off e.target, so input-policy specs aim at the
+ *  input element itself. */
+export async function jsChord(
+  chord: string,
+  opts: { target?: string } = {},
+): Promise<void> {
+  // executeOnce: a driver-retry re-run would dispatch the chord twice —
+  // double toggle, double navigation, double git op.
+  const ok = await executeOnce(
+    (spec: string, targetSel: string | null) => {
+      const parts = spec.split("+");
+      // " " (Space) splits to [" "]; "Mod+," keeps "," as base.
+      const base = parts.length > 1 ? parts[parts.length - 1] : spec;
+      const mods = new Set(parts.slice(0, -1));
+      const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+      const wantMod = mods.has("Mod");
+      let key = base;
+      let code = "";
+      if (/^[A-Z]$/.test(base)) {
+        key = base.toLowerCase();
+        code = "Key" + base;
+      } else if (/^[0-9]$/.test(base)) {
+        code = "Digit" + base;
+      }
+      const target = targetSel ? document.querySelector(targetSel) : window;
+      if (!target) return false;
+      target.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          code,
+          metaKey: wantMod && isMac,
+          ctrlKey: (wantMod && !isMac) || mods.has("Ctrl"),
+          altKey: mods.has("Alt"),
+          shiftKey: mods.has("Shift"),
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      return true;
+    },
+    chord,
+    opts.target ?? null,
+  );
+  if (!ok) throw new Error(`jsChord: target not found: ${opts.target}`);
+}
+
+/** Two lone Shift taps inside the dispatcher's 350ms DoubleShift window —
+ *  one script, so the taps land microseconds apart. `target`: dispatch on an
+ *  element instead of window (input-policy specs aim at a text input). */
+export async function jsDoubleShift(opts: { target?: string } = {}): Promise<void> {
+  // executeOnce: a retry would tap Shift twice more — palette.open claims
+  // without reopening when already open, so harmless today, but keep the
+  // guard uniform.
+  const ok = await executeOnce((targetSel: string | null) => {
+    const target = targetSel ? document.querySelector(targetSel) : window;
+    if (!target) return false;
+    for (let i = 0; i < 2; i++) {
+      target.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Shift",
+          code: "ShiftLeft",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+    return true;
+  }, opts.target ?? null);
+  if (!ok) throw new Error(`jsDoubleShift: target not found: ${opts.target}`);
+}
+
+/** Read the id of the pane currently holding keymap focus (accent ring). */
+export function focusedPaneId(): Promise<string | null> {
+  return browser.execute(
+    () =>
+      document
+        .querySelector("[data-pg-pane][data-pg-focused]")
+        ?.getAttribute("data-pg-pane") ?? null,
+  );
+}
+
 /** Set a native `<select>`'s value and fire the `change` event React listens
  *  for. Never drive selects with WebDriver's `selectByAttribute`: it clicks
  *  the `<option>`, which WebKitGTK under xvfb accepts WITHOUT surfacing a

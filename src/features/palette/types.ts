@@ -19,6 +19,11 @@ export interface PaletteItem {
   /** When true the label renders danger-tinted (destructive op). */
   danger?: boolean;
   /**
+   * Keymap action this item corresponds to. The palette renders the action's
+   * live chord (from the active preset) as a shortcut chip on the row.
+   */
+  actionId?: import("@/features/keymap").ActionId;
+  /**
    * Executes the item. May act directly, push a param step, or fire a nav
    * intent. The component closes the palette *before* calling run() only for
    * non-step items — see CommandPalette.activate.

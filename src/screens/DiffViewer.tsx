@@ -21,6 +21,7 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { statusMark } from "@/lib/derive";
 import { getDiff } from "@/lib/tauri";
+import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
 export function DiffViewerScreen() {
@@ -105,6 +106,29 @@ export function DiffViewerScreen() {
   }, [diff, findQuery]);
 
   const split = React.useMemo(() => diffToSplit(findFiltered), [findFiltered]);
+
+  // Keyboard: arrows move the file selection while the list pane is focused.
+  const selectedIndex = Math.max(
+    0,
+    filtered.findIndex((f) => f.path === selectedPath),
+  );
+  usePaneList({
+    paneId: "diff.files",
+    count: filtered.length,
+    selectedIndex,
+    onSelect: (i) => {
+      const f = filtered[i];
+      if (f) setSelectedPath(f.path);
+    },
+    searchText: (i) => filtered[i]?.path ?? "",
+  });
+
+  // F7/⇧F7 walk the viewed file's hunks from either pane.
+  const hunkCursor = useHunkNav({
+    paneIds: ["diff.files", "diff.view"],
+    count: findFiltered?.hunks.length ?? 0,
+    resetKey: selectedPath,
+  });
 
   if (status.length === 0) {
     return (
@@ -219,20 +243,23 @@ export function DiffViewerScreen() {
           background: "var(--bg-0)",
         }}
       >
-        <div
+        <PGPane
+          id="diff.files"
           style={{
             width: listPane.width,
             flexShrink: 0,
             borderRight: "1px solid var(--border-0)",
             background: "var(--bg-1)",
-            overflow: "auto",
             minWidth: 0,
           }}
         >
+          <FocusableScroll style={{ height: "100%" }} ariaLabel="Changed files">
           {filtered.map((f) => (
             <div
               key={f.path}
               onClick={() => setSelectedPath(f.path)}
+              data-pg-row=""
+              data-selected={selectedPath === f.path ? "" : undefined}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -242,10 +269,6 @@ export function DiffViewerScreen() {
                 fontFamily: "var(--font-mono)",
                 fontSize: "var(--fs-12)",
                 cursor: "pointer",
-                background:
-                  selectedPath === f.path
-                    ? "var(--bg-selection)"
-                    : "transparent",
                 color: "var(--fg-0)",
                 borderLeft:
                   selectedPath === f.path
@@ -265,9 +288,11 @@ export function DiffViewerScreen() {
               </span>
             </div>
           ))}
-        </div>
+          </FocusableScroll>
+        </PGPane>
         <PGResizeHandle onDrag={listPane.resize} />
-        <div
+        <PGPane
+          id="diff.view"
           style={{
             flex: 1,
             minWidth: 0,
@@ -290,24 +315,29 @@ export function DiffViewerScreen() {
             <PGEmpty icon="file" title="Binary file" />
           )}
           {!diffLoading && findFiltered && !findFiltered.binary && mode === "unified" && (
-            <div style={{ flex: 1, overflow: "auto" }}>
+            <FocusableScroll style={{ flex: 1 }} ariaLabel="Diff">
               {findFiltered.hunks.length === 0 && findQuery.trim() && (
                 <PGEmpty icon="search" title="No matches" />
               )}
               {findFiltered.hunks.map((h, i) => (
-                <PGHunk
+                <div
                   key={i}
-                  header={h.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
-                  lines={h.lines.map(toUiLine)}
-                  expanded={true}
-                />
+                  data-hunk-index={i}
+                  data-hunk-active={hunkCursor === i ? "" : undefined}
+                >
+                  <PGHunk
+                    header={h.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
+                    lines={h.lines.map(toUiLine)}
+                    expanded={true}
+                  />
+                </div>
               ))}
-            </div>
+            </FocusableScroll>
           )}
           {!diffLoading && findFiltered && !findFiltered.binary && mode === "split" && (
             <PGSideBySideDiff left={split.left} right={split.right} />
           )}
-        </div>
+        </PGPane>
       </div>
     </>
   );

@@ -77,6 +77,51 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Quick actions")).toBeTruthy();
   });
 
+  it("renders live keymap chord chips on command rows", async () => {
+    const user = userEvent.setup();
+    const { useKeymapStore } = await import("@/features/keymap");
+    useKeymapStore.getState().setPreset("rider");
+    usePaletteStore.setState({ open: true, query: "" });
+    render(<CommandPalette />);
+    await screen.findByRole("dialog");
+
+    const input = screen.getByPlaceholderText(
+      /Search branches, files, commits, commands/i,
+    );
+    await user.click(input);
+    await user.keyboard("Go to Files");
+
+    await waitFor(() => expect(screen.getByText(rowText("Go to Files"))).toBeTruthy());
+    const row = screen.getByText(rowText("Go to Files"));
+    const chip = row.querySelector("[data-pal-chord]");
+    // jsdom isn't mac → non-mac formatting of Mod+1.
+    expect(chip?.textContent).toBe("Ctrl+1");
+  });
+
+  it("chord chips follow the active preset", async () => {
+    const user = userEvent.setup();
+    const { useKeymapStore } = await import("@/features/keymap");
+    useKeymapStore.getState().setPreset("rider");
+    usePaletteStore.setState({ open: true, query: "" });
+    render(<CommandPalette />);
+    await screen.findByRole("dialog");
+
+    const input = screen.getByPlaceholderText(
+      /Search branches, files, commits, commands/i,
+    );
+    await user.click(input);
+    await user.keyboard("Go to Commit");
+    await waitFor(() =>
+      expect(screen.getByText(rowText("Go to Commit"))).toBeTruthy(),
+    );
+    // Rider: ⌘K / Ctrl+K commits.
+    expect(
+      screen
+        .getByText(rowText("Go to Commit"))
+        .querySelector("[data-pal-chord]")?.textContent,
+    ).toBe("Ctrl+K");
+  });
+
   it("filters by query and fires switch-screen intent on Enter", async () => {
     const user = userEvent.setup();
     usePaletteStore.setState({ open: true, query: "" });
