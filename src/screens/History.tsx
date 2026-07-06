@@ -21,6 +21,8 @@ import {
 import { layoutGraph } from "@/features/commits/graphLayout";
 import { buildLogFilter, isFilterEmpty } from "@/features/commits/logFilter";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useNavStore } from "@/features/nav/useNavStore";
+import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import { currentBranch, mapCommitRefs, relativeTime, shortSha } from "@/lib/derive";
 import type { CommitInfo } from "@/lib/types";
 
@@ -119,6 +121,20 @@ export function HistoryScreen() {
   }, [baseCommits, filterKind, myEmail, hideMerges, aheadCount]);
 
   const rows = React.useMemo(() => layoutGraph(visible), [visible]);
+
+  // Keyboard: ↑/↓ move the commit selection, Enter opens the commit's diff.
+  const setNavIntent = useNavStore((s) => s.setIntent);
+  usePaneList({
+    paneId: "history.list",
+    count: visible.length,
+    selectedIndex: selected,
+    onSelect: setSelected,
+    onActivate: (i) => {
+      const c = visible[i];
+      if (c) setNavIntent({ kind: "commit-vs-wt", oid: c.oid });
+    },
+    searchText: (i) => visible[i]?.summary ?? "",
+  });
 
   const exportVisible = React.useCallback(() => {
     const lines = visible.map(
@@ -222,7 +238,8 @@ export function HistoryScreen() {
       <PGToolbar left={toolbarLeft} right={toolbarRight} />
       {advancedPanel}
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <div
+        <PGPane
+          id="history.list"
           style={{
             flex: 1,
             minWidth: 0,
@@ -252,7 +269,7 @@ export function HistoryScreen() {
             <span>AUTHOR</span>
             <span>DATE</span>
           </div>
-          <div style={{ flex: 1, overflow: "auto" }}>
+          <FocusableScroll style={{ flex: 1 }} ariaLabel="Commit list">
             {visible.length === 0 && (
               <div
                 style={{
@@ -292,11 +309,12 @@ export function HistoryScreen() {
                 />
               );
             })}
-          </div>
-        </div>
+          </FocusableScroll>
+        </PGPane>
 
         <PGResizeHandle onDrag={(d) => detailPane.resize(-d)} side="left" />
-        <div
+        <PGPane
+          id="history.detail"
           style={{
             width: detailPane.width,
             flexShrink: 0,
@@ -348,10 +366,10 @@ export function HistoryScreen() {
                   <span>PARENTS</span>
                   <PGBadge tone="muted">{current.parents.length}</PGBadge>
                 </div>
-                <div
+                <FocusableScroll
+                  ariaLabel="Commit parents"
                   style={{
                     flex: 1,
-                    overflow: "auto",
                     padding: "8px 12px",
                     fontFamily: "var(--font-mono)",
                     fontSize: "var(--fs-12)",
@@ -370,11 +388,11 @@ export function HistoryScreen() {
                       <span style={{ color: "var(--fg-3)" }}>{p}</span>
                     </span>
                   ))}
-                </div>
+                </FocusableScroll>
               </div>
             </>
           )}
-        </div>
+        </PGPane>
       </div>
       {commitMenu}
     </>

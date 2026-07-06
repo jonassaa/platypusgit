@@ -19,6 +19,7 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { BranchInfo, StashInfo, TagInfo } from "@/lib/types";
 
 type Selection =
@@ -142,6 +143,50 @@ export function BranchesScreen() {
     return [];
   }, [stashes, filter, view]);
 
+  // Keyboard: one selection across the rendered order (branches, tags,
+  // stashes). Enter checks out the selected local branch.
+  const flatRefs = React.useMemo<Selection[]>(
+    () => [
+      ...rows.map((b) => ({ kind: "branch" as const, name: b.name })),
+      ...visibleTags.map((t) => ({ kind: "tag" as const, name: t.name })),
+      ...visibleStashes.map((s) => ({ kind: "stash" as const, index: s.index })),
+    ],
+    [rows, visibleTags, visibleStashes],
+  );
+  const flatIndex = Math.max(
+    0,
+    flatRefs.findIndex(
+      (r) =>
+        selection &&
+        r.kind === selection.kind &&
+        (r.kind === "stash"
+          ? selection.kind === "stash" && r.index === selection.index
+          : selection.kind !== "stash" && r.name === selection.name),
+    ),
+  );
+  usePaneList({
+    paneId: "branches.list",
+    count: flatRefs.length,
+    selectedIndex: flatIndex,
+    onSelect: (i) => {
+      const r = flatRefs[i];
+      if (r) setSelection(r);
+    },
+    onActivate: (i) => {
+      const r = flatRefs[i];
+      if (r?.kind !== "branch") return;
+      const b = branches.find((x) => x.name === r.name);
+      if (b && !b.isHead && !b.isRemote) {
+        void useRepoStore.getState().checkoutBranch(b.name);
+      }
+    },
+    searchText: (i) => {
+      const r = flatRefs[i];
+      if (!r) return "";
+      return r.kind === "stash" ? `stash@{${r.index}}` : r.name;
+    },
+  });
+
   const selectedBranch =
     selection?.kind === "branch"
       ? branches.find((b) => b.name === selection.name) ?? null
@@ -197,7 +242,8 @@ export function BranchesScreen() {
         fetching={!!activity.fetch}
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+        <PGPane id="branches.list" style={{ flex: 1, minWidth: 0 }}>
+          <FocusableScroll ariaLabel="Refs list">
           <div style={{ minWidth: totalWidth }}>
             <div
               style={{
@@ -253,6 +299,12 @@ export function BranchesScreen() {
                 key={`${b.kind}:${b.name}`}
                 onClick={() => setSelection({ kind: "branch", name: b.name })}
                 onContextMenu={(e) => onBranchCtx(e, b)}
+                data-pg-row=""
+                data-selected={
+                  selection?.kind === "branch" && selection.name === b.name
+                    ? ""
+                    : undefined
+                }
                 style={{
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
@@ -260,7 +312,7 @@ export function BranchesScreen() {
                   height: 28,
                   background:
                     selection?.kind === "branch" && selection.name === b.name
-                      ? "var(--bg-selection)"
+                      ? undefined
                       : i % 2
                         ? "var(--bg-1)"
                         : "transparent",
@@ -386,6 +438,12 @@ export function BranchesScreen() {
                 key={t.name}
                 onClick={() => setSelection({ kind: "tag", name: t.name })}
                 onContextMenu={(e) => onTagCtx(e, t)}
+                data-pg-row=""
+                data-selected={
+                  selection?.kind === "tag" && selection.name === t.name
+                    ? ""
+                    : undefined
+                }
                 style={{
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
@@ -395,10 +453,6 @@ export function BranchesScreen() {
                   fontSize: "var(--fs-12)",
                   borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",
                   cursor: "pointer",
-                  background:
-                    selection?.kind === "tag" && selection.name === t.name
-                      ? "var(--bg-selection)"
-                      : "transparent",
                 }}
               >
                 <div
@@ -464,6 +518,12 @@ export function BranchesScreen() {
                 onContextMenu={(e) =>
                   onStashCtx(e, { index: s.index, name: `stash@{${s.index}}` })
                 }
+                data-pg-row=""
+                data-selected={
+                  selection?.kind === "stash" && selection.index === s.index
+                    ? ""
+                    : undefined
+                }
                 style={{
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
@@ -473,10 +533,6 @@ export function BranchesScreen() {
                   fontSize: "var(--fs-12)",
                   borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",
                   cursor: "pointer",
-                  background:
-                    selection?.kind === "stash" && selection.index === s.index
-                      ? "var(--bg-selection)"
-                      : "transparent",
                 }}
               >
                 <div
@@ -532,13 +588,15 @@ export function BranchesScreen() {
               </div>
             ))}
           </div>
-        </div>
+          </FocusableScroll>
+        </PGPane>
 
         <PGResizeHandle
           onDrag={(d) => inspectorPane.resize(-d)}
           side="left"
         />
-        <div
+        <PGPane
+          id="branches.detail"
           style={{
             width: inspectorPane.width,
             borderLeft: "1px solid var(--border-0)",
@@ -576,7 +634,7 @@ export function BranchesScreen() {
             {selectedTag && <TagActions tag={selectedTag} />}
             {selectedStash && <StashActions stash={selectedStash} />}
           </div>
-        </div>
+        </PGPane>
       </div>
       {branchMenu}
       {tagMenu}

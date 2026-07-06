@@ -5,6 +5,7 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { diffCommits } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
+import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
 type Target =
@@ -53,19 +54,40 @@ export function CommitDiffScreen() {
     return () => { cancelled = true; };
   }, [repo?.id, target, diffContextLines]);
 
+  // Keyboard: arrows move the file selection while the list pane is focused.
+  const selectedIndex = Math.max(0, diffs.findIndex((d) => d.path === selected));
+  usePaneList({
+    paneId: "commitDiff.files",
+    count: diffs.length,
+    selectedIndex,
+    onSelect: (i) => {
+      const d = diffs[i];
+      if (d) setSelected(d.path);
+    },
+    searchText: (i) => diffs[i]?.path ?? "",
+  });
+
+  const current = diffs.find((d) => d.path === selected) ?? null;
+
+  // F7/⇧F7 walk the viewed file's hunks from either pane.
+  const hunkCursor = useHunkNav({
+    paneIds: ["commitDiff.files", "commitDiff.view"],
+    count: current?.hunks.length ?? 0,
+    resetKey: selected,
+  });
+
   if (!target) {
     return <PGEmpty icon="diff" title="No diff target">Pick "Compare…" from a context menu.</PGEmpty>;
   }
 
-  const current = diffs.find((d) => d.path === selected) ?? null;
-
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-      <div style={{
-        width: 260, overflow: "auto",
+      <PGPane id="commitDiff.files" style={{
+        width: 260,
         borderRight: "1px solid var(--border-0)",
         fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)",
       }}>
+        <FocusableScroll style={{ height: "100%" }} ariaLabel="Changed files">
         <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-0)" }}>
           {target.kind === "commit-vs-wt"
             ? `${target.oid.slice(0, 7)} → HEAD`
@@ -79,19 +101,27 @@ export function CommitDiffScreen() {
           <div
             key={d.path}
             onClick={() => setSelected(d.path)}
+            data-pg-row=""
+            data-selected={d.path === selected ? "" : undefined}
             style={{
               padding: "4px 12px",
               cursor: "pointer",
-              background: d.path === selected ? "var(--bg-1)" : "transparent",
             }}
           >
             {d.path}
           </div>
         ))}
-      </div>
-      <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
+        </FocusableScroll>
+      </PGPane>
+      <PGPane id="commitDiff.view" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+      <FocusableScroll style={{ flex: 1, padding: 12 }} ariaLabel="Diff">
         {current && current.hunks.map((h, i) => (
-          <div key={i} style={{ marginBottom: 16 }}>
+          <div
+            key={i}
+            data-hunk-index={i}
+            data-hunk-active={hunkCursor === i ? "" : undefined}
+            style={{ marginBottom: 16 }}
+          >
             <div style={{ color: "var(--fg-3)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)" }}>
               {h.header}
             </div>
@@ -108,7 +138,8 @@ export function CommitDiffScreen() {
             ))}
           </div>
         ))}
-      </div>
+      </FocusableScroll>
+      </PGPane>
     </div>
   );
 }

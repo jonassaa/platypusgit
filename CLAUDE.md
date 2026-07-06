@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-07-06-keymap-power-shortcuts-*` — speed-search, commit chords, F7 hunk nav.
 - `2026-07-03-ref-scoped-log-*` — History ref selector; log walk from any revspec (#27).
 - `2026-07-03-e2e-phase3-*` — e2e phase 3: remote/palette/settings coverage, dead-settings audit.
 - `2026-04-24-centralized-branch-ui-*` — sidebar removed, titlebar branch chip + popover picker.
@@ -153,7 +154,17 @@ features/            Per-feature: components + Zustand store colocated
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
 ├── settings/        useSettingsStore (autoFetch, defaultPullMode, etc.)
 ├── palette/         usePaletteStore (step stack + chips), commands (catalog),
-│                    frecency, CommandPalette (⌘P runner: nav + search + actions)
+│                    frecency, CommandPalette (⌘P runner: nav + search + actions;
+│                    rows show live keymap chords via PaletteItem.actionId)
+├── keymap/          Keyboard system (specs/2026-07-02-keyboard-navigation-v2 +
+│                    specs/2026-07-06-keymap-power-shortcuts):
+│                    actions.ts (catalog + default runners), presets.ts (rider
+│                    default + classic), useKeymapStore (dispatcher: pane-scope
+│                    enforcement, DoubleShift, input policy, speed-search
+│                    fallback), useFocusStore (spatial Alt+Arrow + Tab cycling),
+│                    usePaneList (list nav + type-to-jump speed-search),
+│                    useHunkNav (F7/⇧F7 diff hunks), useSpeedSearchStore,
+│                    PGPane / FocusableScroll / CheatSheet
 └── diff/            diff-specific components
 
 lib/
@@ -169,7 +180,9 @@ lib/
 ### Navigation model
 
 - Activity bar = primary screen switcher, persisted to `localStorage["pg-screen"]`.
-- `⌘1…⌘9` switch activity items (ignored inside inputs/textareas).
+- Keyboard: everything routes through `features/keymap` (action catalog +
+  preset bindings; rider preset default). Modifier chords work while typing;
+  bare keys don't. `?` opens the cheat-sheet.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
 - Settings is a screen too, reached via titlebar gear or activity-bar settings slot.
 

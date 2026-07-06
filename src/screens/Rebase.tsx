@@ -9,6 +9,7 @@ import { appErrorMessage } from "@/lib/errors";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { RebaseBasePicker } from "@/features/rebase/RebaseBasePicker";
+import { PGPane, FocusableScroll } from "@/features/keymap";
 
 // ─── Plan row state ───────────────────────────────────────────────────────────
 
@@ -316,10 +317,19 @@ export function RebaseScreen() {
           </div>
 
           {/* Rows */}
-          <div
+          <PGPane
+            id="rebase.steps"
             style={{
               flex: 1,
-              overflowY: "auto",
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+          <FocusableScroll
+            ariaLabel="Rebase plan"
+            style={{
+              flex: 1,
               padding: "10px 12px",
             }}
           >
@@ -398,7 +408,8 @@ export function RebaseScreen() {
                 </div>
               ))
             )}
-          </div>
+          </FocusableScroll>
+          </PGPane>
         </div>
       )}
 
