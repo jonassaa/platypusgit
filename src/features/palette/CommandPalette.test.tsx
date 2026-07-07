@@ -53,7 +53,7 @@ function resetStores() {
     activity: {},
   });
   useNavStore.setState({ intent: null });
-  usePaletteStore.setState({ open: false, query: "" });
+  usePaletteStore.setState({ open: false, query: "", activeChip: "all" });
   localStorage.clear();
 }
 
@@ -167,6 +167,31 @@ describe("CommandPalette", () => {
     await user.click(row);
 
     await waitFor(() => expect(checkedOut).toBe("feature/x"));
+  });
+
+  it("activates the highlighted row (not an unshown command) when a type chip is active", async () => {
+    // Regression: keyboard nav must index the chip-filtered rows the DOM
+    // renders. With a non-"all" chip, Enter previously activated flat[0] — the
+    // first command — instead of the highlighted branch.
+    const user = userEvent.setup();
+    let checkedOut: string | null = null;
+    useRepoStore.setState({
+      branches: [mkBranch("feature/x")],
+      checkoutBranch: async (name: string) => {
+        checkedOut = name;
+      },
+    });
+    usePaletteStore.setState({ open: true, query: "" });
+    render(<CommandPalette />);
+    await screen.findByRole("dialog");
+
+    // Narrow to branches only; the branch row is now the highlighted row.
+    await user.click(screen.getByRole("button", { name: "Branches" }));
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(checkedOut).toBe("feature/x"));
+    // Enter must NOT have fired a command (which would set a nav intent).
+    expect(useNavStore.getState().intent).toBeNull();
   });
 
   it("fires a commit-vs-wt intent for a commit", async () => {
