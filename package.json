@@ -23,12 +23,16 @@
     "test:e2e:docker": "e2e/e2e-docker.sh"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-log": "^2.8.0",
     "@tauri-apps/plugin-os": "^2.3.2",
     "highlight.js": "^11.11.1",
     "lucide-react": "^1.8.0",
+    "node-diff3": "^3.2.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.12"

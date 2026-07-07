@@ -226,6 +226,9 @@ impl GitBackend for CliBackend {
     fn mark_resolved(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn save_resolution(&self, _repo_id: &RepoId, _path: &Path, _content: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn abort_operation(&self, _repo_id: &RepoId) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }

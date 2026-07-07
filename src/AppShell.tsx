@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import React from "react";
 import {
   PGActivityBar,
@@ -137,6 +138,16 @@ export function AppShell() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // The merge resolver window stages resolutions out-of-band; reflect them.
+  React.useEffect(() => {
+    const un = listen("merge://resolved", () => {
+      void useRepoStore.getState().refreshAll();
+    });
+    return () => {
+      un.then((f) => f());
+    };
   }, []);
 
   // On entering a screen, focus its first content pane so the keyboard is

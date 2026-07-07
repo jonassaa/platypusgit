@@ -1282,6 +1282,7 @@ export interface PGConflictRowProps {
   conflictCount?: number;
   hunkCount?: number;
   onClick?: () => void;
+  onDoubleClick?: () => void;
   onContextMenu?: (e: MouseEvent) => void;
 }
 
@@ -1299,6 +1300,7 @@ export function PGConflictRow({
   conflictCount = 2,
   hunkCount,
   onClick,
+  onDoubleClick,
   onContextMenu,
 }: PGConflictRowProps) {
   const parts = path.split("/");
@@ -1315,6 +1317,7 @@ export function PGConflictRow({
       data-pg-row=""
       data-selected={selected ? "true" : undefined}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       style={{
         padding: 0,

@@ -4,6 +4,7 @@ import { PGIcon, type IconName } from "./icons";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
+import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { chordFor } from "@/features/keymap";
 
 export interface ContextMenuItem {
@@ -1033,6 +1034,14 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
       label: "Accept theirs",
       onClick: () => {
         if (conflict?.path) useRepoStore.getState().acceptTheirs(conflict.path);
+      },
+    },
+    {
+      icon: "merge",
+      label: "Open merge editor",
+      onClick: () => {
+        const repoId = useRepoStore.getState().current?.id;
+        if (repoId && conflict?.path) void openMergeWindow(repoId, conflict.path);
       },
     },
     {

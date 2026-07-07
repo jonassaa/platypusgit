@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-07-07-merge-resolver-window-*` — Rider-style separate merge window (#25 pt 2); per-conflict keyboard side selection, editable CM6 result pane.
 - `2026-07-07-cli-launch-*` — `pgit` CLI launch, single-instance forwarding, shim install (#25).
 - `2026-07-06-keymap-power-shortcuts-*` — speed-search, commit chords, F7 hunk nav.
 - `2026-07-03-ref-scoped-log-*` — History ref selector; log walk from any revspec (#27).
@@ -107,7 +108,7 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (14 files, 50
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (16 files, 76
   tests, all passing) drive the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
@@ -132,7 +133,8 @@ Four layers, each run independently:
     conventions and traps, driver-bridge/5s-penalty rules, native-dialog
     stubbing, fixture geometry gotchas, rebuild discipline, debugging flow.
   - CI: `.github/workflows/e2e.yml` (ubuntu-latest + xvfb, PRs to `main` +
-    push to `main`).
+    push to `main`). Headless local runs use `pnpm test:e2e:docker` (same
+    WebKitGTK + xvfb stack) — see the "Headless e2e in Docker" section above.
   - `pnpm.overrides["@wdio/native-utils"] = "2.5.0"` pins around a broken
     dep pin in `@wdio/tauri-service@1.2.0` — don't remove.
   - Debug builds serve WebDriver on port 4445: close any `pnpm tauri dev`
@@ -142,6 +144,13 @@ Four layers, each run independently:
     launches — without it, `tauri-plugin-single-instance` would forward a
     test binary's launch into any already-running platypusgit instance
     instead of serving WebDriver.
+  - **Second-window e2e is HEADLESS-ONLY** (`merge-window.e2e.ts` drives the
+    `merge` resolver window). Reliable on Linux/WebKitGTK — CI and
+    `pnpm test:e2e:docker`. On a macOS-NATIVE run it's flaky: WKWebView's
+    foreground-focus self-heal can't hold a consistent active window across the
+    second window's open/transition/close (`switchWindow` → "No window could be
+    found"). So run any multi-window spec via Docker/CI, not `pnpm test:e2e` on
+    a Mac.
 
 ## Architecture
 
@@ -176,7 +185,8 @@ commands/        Thin Tauri handlers, one file per area:
 ├── history.rs     reset, cherry_pick, revert
 ├── stash.rs       stash_save/apply/pop/drop/branch
 ├── conflict.rs    repo_state, conflict_sides, accept_ours/theirs, mark_resolved,
-│                  abort/continue_operation, run_mergetool, restart_conflict
+│                  save_resolution, abort/continue_operation, run_mergetool,
+│                  restart_conflict
 ├── rebase.rs      rebase_start/continue/abort/status (interactive)
 └── reflog.rs      get_reflog, checkout_detached
 ```
@@ -225,6 +235,13 @@ features/            Per-feature: components + Zustand store colocated
 │                    usePaneList (list nav + type-to-jump speed-search),
 │                    useHunkNav (F7/⇧F7 diff hunks), useSpeedSearchStore,
 │                    PGPane / FocusableScroll / CheatSheet
+├── merge/           Merge resolver window — separate Tauri window (label
+│                    "merge"), routed via ?window=merge in main.tsx. mergeModel
+│                    (diff3 chunking, node-diff3), resultEditor (CM6 result pane
+│                    w/ tracked conflict regions), MergeWindow/MergeBody/SidePane
+│                    (Rider 3-pane: ours | editable result | theirs), chevron +
+│                    F7/⌘1-3/⌘↵ chords, openMergeWindow (opener). Applies via
+│                    save_resolution, emits merge://resolved → main refreshes.
 ├── diff/            diff-specific components
 └── cli/             useCliLaunch — takes the stashed first-launch intent +
                      listens for forwarded `cli-launch` events, drives
@@ -286,7 +303,7 @@ lib/
 - Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
 
 ### Permissions (Tauri 2)
-- All permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `dialog:default`, `dialog:allow-open`, `os:default`.
+- All permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
 - New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`, register with `.plugin(tauri_plugin_X::init())` in `lib.rs`, add plugin permissions to capability file.
 
 ### Path aliases

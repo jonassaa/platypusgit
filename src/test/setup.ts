@@ -40,9 +40,49 @@ vi.mock("@tauri-apps/api/window", () => {
     close: vi.fn(),
     isMaximized: vi.fn().mockResolvedValue(false),
     onResized: vi.fn().mockResolvedValue(() => {}),
+    setTitle: vi.fn().mockResolvedValue(undefined),
   };
   return { getCurrentWindow: () => win };
 });
+
+vi.mock("@tauri-apps/api/webviewWindow", () => {
+  class FakeWebviewWindow {
+    static getByLabel = vi.fn().mockResolvedValue(null);
+    label: string;
+    constructor(label: string) {
+      this.label = label;
+    }
+    once = vi.fn().mockResolvedValue(() => {});
+    setFocus = vi.fn().mockResolvedValue(undefined);
+    close = vi.fn().mockResolvedValue(undefined);
+  }
+  return { WebviewWindow: FakeWebviewWindow };
+});
+
+// CodeMirror 6 (merge resolver result editor) needs layout APIs jsdom lacks.
+// Rendering fidelity is irrelevant in tests — only document/transaction state
+// is asserted.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      bottom: 0,
+      right: 0,
+      width: 0,
+      height: 0,
+    }) as DOMRect;
+}
 
 afterEach(() => {
   cleanup();

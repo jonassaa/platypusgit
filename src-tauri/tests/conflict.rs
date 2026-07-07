@@ -104,6 +104,74 @@ fn continue_operation_refuses_when_conflicts_remain() {
 }
 
 #[test]
+fn save_resolution_writes_content_and_clears_conflict() {
+    let tr = with_conflicting_merge();
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .save_resolution(
+            &handle.id,
+            &PathBuf::from("README.md"),
+            "merged content\n",
+        )
+        .expect("save_resolution");
+    assert_eq!(read_file(tr.path(), "README.md"), "merged content\n");
+    // The conflict must be genuinely cleared, not merely absent from status:
+    // no remaining Conflicted stage on either side for the path.
+    let status = backend.status(&handle.id).unwrap();
+    let still_conflicted = status.iter().any(|f| {
+        f.path == "README.md"
+            && (matches!(f.worktree, platypusgit_lib::git::types::StatusFlag::Conflicted)
+                || matches!(f.index, platypusgit_lib::git::types::StatusFlag::Conflicted))
+    });
+    assert!(
+        !still_conflicted,
+        "README.md conflict not cleared after save_resolution"
+    );
+}
+
+#[test]
+fn save_resolution_rejects_absolute_and_parent_paths() {
+    let tr = with_conflicting_merge();
+    let (backend, handle) = tr.open_with_backend();
+
+    // Absolute path — rejected before any write. Point it inside the repo's
+    // own (unique) temp dir so we can assert the file was NOT created.
+    let abs = tr.path().join("guarded.txt");
+    assert!(abs.is_absolute());
+    let err = backend
+        .save_resolution(&handle.id, &abs, "pwned\n")
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        platypusgit_lib::error::AppError::InvalidPath(_)
+    ));
+    assert!(!abs.exists(), "absolute path must be rejected before writing");
+
+    // Parent-dir traversal (`..`) — rejected.
+    let err = backend
+        .save_resolution(&handle.id, &PathBuf::from("../escape.txt"), "pwned\n")
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        platypusgit_lib::error::AppError::InvalidPath(_)
+    ));
+}
+
+#[test]
+fn save_resolution_then_continue_creates_merge_commit() {
+    let tr = with_conflicting_merge();
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .save_resolution(&handle.id, &PathBuf::from("README.md"), "reconciled\n")
+        .unwrap();
+    // Conflict truly cleared in the index — continue_operation no longer refuses.
+    let oid = backend
+        .continue_operation(&handle.id)
+        .expect("continue after save_resolution");
+    assert_eq!(oid.len(), 40);
+}
+
+#[test]
 fn continue_operation_creates_two_parent_merge_commit() {
     let tr = with_conflicting_merge();
     let (backend, handle) = tr.open_with_backend();

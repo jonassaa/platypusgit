@@ -14,6 +14,7 @@ import {
   usePaneWidth,
 } from "@/design";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
+import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch } from "@/lib/derive";
 import { conflictSides } from "@/lib/tauri";
@@ -324,6 +325,17 @@ function ConflictDetail({ path }: { path: string }) {
             </span>
             <PGButton
               size="sm"
+              variant="primary"
+              icon="merge"
+              data-testid="open-merge-editor"
+              onClick={() => {
+                if (repoId) void openMergeWindow(repoId, path);
+              }}
+            >
+              Open merge editor
+            </PGButton>
+            <PGButton
+              size="sm"
               variant="outline"
               icon="chevronLeft"
               data-testid="accept-ours"
@@ -342,7 +354,7 @@ function ConflictDetail({ path }: { path: string }) {
             </PGButton>
             <PGButton
               size="sm"
-              variant="primary"
+              variant="outline"
               icon="check"
               data-testid="mark-resolved"
               onClick={() => markResolved([path])}
@@ -396,6 +408,11 @@ export function ConflictScreen() {
     count: conflicts.length,
     selectedIndex: selected,
     onSelect: setSelected,
+    onActivate: (i) => {
+      const c = conflicts[i];
+      const repoId = useRepoStore.getState().current?.id;
+      if (c && repoId) void openMergeWindow(repoId, c.path);
+    },
   });
 
   if (conflicts.length === 0) {
@@ -464,6 +481,10 @@ export function ConflictScreen() {
                 deletions={0}
                 selected={selected === i}
                 onClick={() => setSelected(i)}
+                onDoubleClick={() => {
+                  const repoId = useRepoStore.getState().current?.id;
+                  if (repoId) void openMergeWindow(repoId, c.path);
+                }}
                 onContextMenu={(e) => onConflictCtx(e, { path: c.path })}
                 onPickOurs={() => acceptOurs(c.path)}
                 onPickTheirs={() => acceptTheirs(c.path)}

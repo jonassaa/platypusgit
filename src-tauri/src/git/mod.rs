@@ -176,6 +176,8 @@ pub trait GitBackend: Send + Sync {
     fn accept_theirs(&self, repo_id: &RepoId, path: &Path) -> AppResult<()>;
     /// Stage paths as-is, clearing their conflict entries.
     fn mark_resolved(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
+    /// Write `content` to the worktree file and stage it, clearing the conflict.
+    fn save_resolution(&self, repo_id: &RepoId, path: &Path, content: &str) -> AppResult<()>;
     /// Hard-reset to HEAD and clear the in-progress operation state.
     fn abort_operation(&self, repo_id: &RepoId) -> AppResult<()>;
     /// Create the merge/cherry-pick/revert commit after all conflicts are resolved.
