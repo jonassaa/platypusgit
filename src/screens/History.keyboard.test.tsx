@@ -2,7 +2,7 @@
 // selection through the keymap dispatcher, Enter opens the commit's diff.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { HistoryScreen } from "./History";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
@@ -115,5 +115,37 @@ describe("History keyboard navigation", () => {
     expect(rowFor("third commit").hasAttribute("data-selected")).toBe(true);
     press("Home");
     expect(rowFor("first commit").hasAttribute("data-selected")).toBe(true);
+  });
+
+  it("resets the selection when a client-side filter shrinks the list", () => {
+    // Regression: toggling Hide-merges shrinks `visible` without changing
+    // baseCommits.length/filterKey. The reset effect must still fire, else the
+    // stale index leaves the detail pane + action row acting on visible[0].
+    useRepoStore.setState({
+      commits: [
+        mkCommit("a".repeat(40), "first commit"),
+        mkCommit("b".repeat(40), "second commit"),
+        // Merge commit (two parents) — dropped by Hide-merges.
+        { ...mkCommit("c".repeat(40), "third commit"), parents: ["a".repeat(40), "b".repeat(40)] },
+      ],
+    } as never);
+    render(<HistoryScreen />);
+    useFocusStore.setState({ focused: "history.list" });
+
+    // Select the merge commit (last row).
+    press("End");
+    expect(rowFor("third commit").hasAttribute("data-selected")).toBe(true);
+
+    // Hide merges → the selected merge row disappears from `visible`.
+    act(() => {
+      fireEvent.click(screen.getByTitle("Filter"));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText("Hide merge commits"));
+    });
+
+    // Selection reset to the top rather than pointing past the shrunk list.
+    expect(rowFor("first commit").hasAttribute("data-selected")).toBe(true);
+    expect(screen.queryByText("third commit")).toBeNull();
   });
 });

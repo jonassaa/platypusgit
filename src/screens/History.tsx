@@ -84,10 +84,13 @@ export function HistoryScreen() {
     storageKey: "pg-history-detail-w",
   });
 
-  // Reset selection when the commit list changes shape.
+  // Reset selection when the visible list changes shape. Includes the
+  // client-side refinements (filterKind/hideMerges) — without them a shrunk
+  // `visible` leaves a stale `selected`, so the detail pane and CommitActionRow
+  // silently act on visible[0] instead of the highlighted commit.
   React.useEffect(() => {
     setSelected(0);
-  }, [baseCommits.length, filterKey]);
+  }, [baseCommits.length, filterKey, filterKind, hideMerges]);
 
   const head = currentBranch(branches);
   const headName = head?.name ?? null;

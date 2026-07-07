@@ -160,6 +160,36 @@ describe("CommitPanel keyboard navigation", () => {
       expect(pushCalls).toEqual([]);
     });
 
+    it("Mod+Enter does not double-commit while the first commit is in flight", async () => {
+      // Regression: key auto-repeat / double-tap re-dispatches the chord while
+      // canCommit is still true (message not yet cleared). The in-flight guard
+      // must swallow the second commit.
+      let resolve: (() => void) | null = null;
+      let calls = 0;
+      useRepoStore.setState({
+        commit: () => {
+          calls++;
+          return new Promise<string>((r) => {
+            resolve = () => r("oid123");
+          });
+        },
+      } as never);
+      render(<CommitPanelScreen />);
+      typeSubject("feat: once");
+
+      press("Enter", { metaKey: true });
+      press("Enter", { metaKey: true }); // second fire before the first resolves
+      expect(calls).toBe(1);
+
+      // Once the in-flight commit resolves, a fresh chord commits again.
+      await act(async () => {
+        resolve?.();
+      });
+      typeSubject("feat: again");
+      press("Enter", { metaKey: true });
+      expect(calls).toBe(2);
+    });
+
     it("Mod+Enter declines with an empty message (button would be disabled)", () => {
       render(<CommitPanelScreen />);
       expect(press("Enter", { metaKey: true })).toBe(false);

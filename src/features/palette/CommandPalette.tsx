@@ -185,11 +185,17 @@ export function CommandPalette() {
     activeChip === "all" &&
     (quickRows.length > 0 || recentRows.length > 0);
 
+  // Keyboard nav must index the SAME rows the DOM renders. On the root step a
+  // non-"all" chip renders only that type's rows (see render below), so nav
+  // rows are filtered to match — otherwise activeIndex points into the full
+  // `flat` list and Enter fires an unshown row (e.g. a force-push command).
   const navRows: ScoredRow[] = showEmptyHome
     ? [...quickRows, ...recentRows].map((item) => ({ item, score: 0, labelIndices: [] }))
-    : flat;
+    : step.kind === "root" && activeChip !== "all"
+      ? flat.filter((r) => r.item.type === activeChip)
+      : flat;
 
-  React.useEffect(() => { setActiveIndex(0); }, [query]);
+  React.useEffect(() => { setActiveIndex(0); }, [query, activeChip]);
   React.useEffect(() => {
     if (activeIndex >= navRows.length) setActiveIndex(Math.max(0, navRows.length - 1));
   }, [navRows.length, activeIndex]);

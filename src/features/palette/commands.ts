@@ -5,6 +5,7 @@ import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep } from "./steps";
 import { currentBranch, relativeTime } from "@/lib/derive";
+import { headUpstream } from "@/features/repo/ops";
 import type { ActionId } from "@/features/keymap";
 import type { PaletteItem, PaletteStep } from "./types";
 
@@ -139,7 +140,10 @@ export function buildCommands(): PaletteItem[] {
   const head = currentBranch(repo.branches);
   const headName = head?.name ?? null;
   const headTip = head?.tip ?? repo.commits[0]?.oid ?? null;
-  const upstreamRemote = head?.upstream?.split("/")[0] ?? null;
+  // [remote, tracking-branch] parsed from HEAD's upstream ref, or null. Use the
+  // tracking branch (not the local name) and honour defaultPullMode so palette
+  // push/pull match the keymap runners (ops.ts) they advertise a chord for.
+  const upstream = headUpstream(head?.upstream, headName ?? undefined);
   const items: PaletteItem[] = [];
 
   // -- navigation (launch existing screens) --
@@ -177,8 +181,8 @@ export function buildCommands(): PaletteItem[] {
       search: "Push current branch", label: `Push ${name}`,
       detail: head?.upstream ?? "set upstream", icon: "push",
       actionId: "repo.push",
-      run: upstreamRemote
-        ? direct(() => void repo.push(upstreamRemote, name, "None"))
+      run: upstream
+        ? direct(() => void repo.push(upstream[0], upstream[1], "None"))
         : step(() => ({
             kind: "pick", title: `Push ${name} to…`,
             items: remoteItems("push", (r) => void repo.push(r, name, "None")),
@@ -189,34 +193,42 @@ export function buildCommands(): PaletteItem[] {
       search: "Pull current branch", label: `Pull ${name}`,
       detail: head?.upstream ?? undefined, icon: "pull",
       actionId: "repo.pull",
-      run: upstreamRemote
-        ? direct(() => void repo.pull(upstreamRemote, name))
+      run: upstream
+        ? direct(() =>
+            void repo.pull(
+              upstream[0],
+              upstream[1],
+              useSettingsStore.getState().defaultPullMode,
+            ),
+          )
         : step(() => ({
             kind: "pick", title: `Pull ${name} from…`,
-            items: remoteItems("pull", (r) => void repo.pull(r, name)),
+            items: remoteItems("pull", (r) =>
+              void repo.pull(r, name, useSettingsStore.getState().defaultPullMode),
+            ),
           })),
     });
-    const guardedForcePush = (remote: string) => {
+    const guardedForcePush = (remote: string, branch: string) => {
       if (
         useSettingsStore.getState().confirmForcePush &&
         !window.confirm(
-          `Force-push ${name} to ${remote} (with lease)? This overwrites the remote branch.`,
+          `Force-push ${branch} to ${remote} (with lease)? This overwrites the remote branch.`,
         )
       ) {
         return;
       }
-      void repo.push(remote, name, "WithLease");
+      void repo.push(remote, branch, "WithLease");
     };
     items.push({
       type: "command", id: "action:force-push-current",
       search: "Force push current branch with lease",
       label: `Force-push ${name} (with lease)`, danger: true,
       detail: head?.upstream ?? undefined, icon: "push",
-      run: upstreamRemote
-        ? direct(() => guardedForcePush(upstreamRemote))
+      run: upstream
+        ? direct(() => guardedForcePush(upstream[0], upstream[1]))
         : step(() => ({
             kind: "pick", title: `Force-push ${name} to…`,
-            items: remoteItems("push", (r) => guardedForcePush(r)),
+            items: remoteItems("push", (r) => guardedForcePush(r, name)),
           })),
     });
   }

@@ -316,15 +316,25 @@ export function CommitPanelScreen() {
   // matching button is disabled, letting the chord fall through.
   const canCommit = (amend || staged.length > 0) && !!message.trim();
   const canCommitAndPush = canCommit && !!headBranch && !!defaultRemote;
+  // Guards against a second commit firing before the first resolves and clears
+  // the message/staged state — key auto-repeat (holding ⌘↵) and double-taps
+  // both re-dispatch the chord while canCommit is still true.
+  const committingRef = React.useRef(false);
   const doCommit = async (): Promise<string | null> => {
-    const full = buildMessage(message, body);
-    const oid = await commitAction(full, amend, signoff);
-    if (oid) {
-      setMessage("");
-      setBody("");
-      setAmend(false);
+    if (committingRef.current) return null;
+    committingRef.current = true;
+    try {
+      const full = buildMessage(message, body);
+      const oid = await commitAction(full, amend, signoff);
+      if (oid) {
+        setMessage("");
+        setBody("");
+        setAmend(false);
+      }
+      return oid;
+    } finally {
+      committingRef.current = false;
     }
-    return oid;
   };
   const doCommitAndPush = async (): Promise<void> => {
     if (!headBranch || !defaultRemote) return;
