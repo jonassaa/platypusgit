@@ -20,6 +20,11 @@ export async function listen(
   };
 }
 
+// The merge resolver window emits cross-window events (merge://resolved,
+// merge://open-file). Component tests don't mount both windows, so a resolved
+// no-op is enough — tests assert IPC/DOM effects, not the emit itself.
+export async function emit(_event: string, _payload?: unknown): Promise<void> {}
+
 export function emitMockEvent(event: string, payload: unknown): void {
   listeners.get(event)?.forEach((h) => h({ payload }));
 }

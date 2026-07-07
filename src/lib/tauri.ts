@@ -470,6 +470,14 @@ export async function markResolved(
   return invoke<void>("mark_resolved", { repoId, paths });
 }
 
+export async function saveResolution(
+  repoId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  return invoke<void>("save_resolution", { repoId, path, content });
+}
+
 export async function abortOperation(repoId: string): Promise<void> {
   return invoke<void>("abort_operation", { repoId });
 }

@@ -108,6 +108,19 @@ export function conflictRepo(): TempRepo {
   return r; // merging clash into main conflicts on conflict.txt
 }
 
+export function conflictRepoTwoFiles(): TempRepo {
+  const r = new TempRepo();
+  r.commitFile("alpha.txt", "base a\n", "feat: base alpha");
+  r.commitFile("beta.txt", "base b\n", "feat: base beta");
+  r.git("checkout", "-b", "clash");
+  r.commitFile("alpha.txt", "theirs a\n", "feat: clash alpha");
+  r.commitFile("beta.txt", "theirs b\n", "feat: clash beta");
+  r.git("checkout", "main");
+  r.commitFile("alpha.txt", "ours a\n", "feat: main alpha");
+  r.commitFile("beta.txt", "ours b\n", "feat: main beta");
+  return r; // merging clash into main conflicts on both files
+}
+
 export function cherryRepo(): TempRepo {
   const r = basicRepo();
   r.git("checkout", "-b", "feature");

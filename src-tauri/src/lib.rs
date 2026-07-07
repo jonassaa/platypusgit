@@ -153,6 +153,7 @@ pub fn run() {
             commands::conflict::accept_ours,
             commands::conflict::accept_theirs,
             commands::conflict::mark_resolved,
+            commands::conflict::save_resolution,
             commands::conflict::abort_operation,
             commands::conflict::continue_operation,
             commands::conflict::run_mergetool,

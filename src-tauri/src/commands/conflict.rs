@@ -76,6 +76,22 @@ pub async fn mark_resolved(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Write an in-app merge resolution to the worktree and stage it.
+#[tauri::command]
+pub async fn save_resolution(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    content: String,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.save_resolution(&repo_id, &path, &content))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 #[tauri::command]
 pub async fn abort_operation(
     state: State<'_, AppState>,

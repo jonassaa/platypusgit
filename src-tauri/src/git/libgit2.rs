@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Mutex,
 };
 
@@ -2256,6 +2256,42 @@ impl GitBackend for Libgit2Backend {
                 let _ = index.remove_path(p);
                 index.add_path(p)?;
             }
+            index.write()?;
+            Ok(())
+        })
+    }
+
+    fn save_resolution(&self, repo_id: &RepoId, path: &Path, content: &str) -> AppResult<()> {
+        // Defense-in-depth: this op writes ARBITRARY content, so refuse any
+        // path that could escape the workdir before touching the filesystem.
+        // Paths are git-derived today, but a write sink should validate anyway.
+        // Reject absolute paths and any Prefix/RootDir/ParentDir component: a
+        // Windows driveless-rooted path like `\evil` is NOT `is_absolute()`,
+        // yet `workdir.join(it)` would replace everything after the drive
+        // prefix (PathBuf::push semantics) and escape the tree — the RootDir
+        // component catches it.
+        if path.is_absolute()
+            || path.components().any(|c| {
+                matches!(
+                    c,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            return Err(AppError::InvalidPath(path.display().to_string()));
+        }
+        self.with_repo(repo_id, |repo| {
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::InvalidPath("bare repository".into()))?;
+            std::fs::write(workdir.join(path), content)
+                .map_err(|e| AppError::Io(e.to_string()))?;
+            let mut index = repo.index()?;
+            // remove_path drops all three conflict stages; add_path re-inserts
+            // the just-written worktree version as stage 0 (same dance as
+            // mark_resolved).
+            let _ = index.remove_path(path);
+            index.add_path(path)?;
             index.write()?;
             Ok(())
         })
