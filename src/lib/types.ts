@@ -200,3 +200,21 @@ export interface BlameLine {
   summary: string;
   content: string;
 }
+
+/** CLI launch request (pgit [subcommand] [path]) — mirrors Rust cli::LaunchIntent. */
+export interface LaunchIntent {
+  path: string | null;
+  screen: string | null;
+}
+
+export interface CliShimStatus {
+  installed: boolean;
+  shimPath: string;
+  target: string;
+}
+
+export interface CliInstallOutcome {
+  installed: boolean;
+  path: string;
+  manualCommand: string | null;
+}

@@ -1,4 +1,5 @@
 pub mod branches;
+pub mod cli;
 pub mod commits;
 pub mod conflict;
 pub mod diff;

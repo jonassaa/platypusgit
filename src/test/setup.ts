@@ -4,10 +4,15 @@ import { cleanup } from "@testing-library/react";
 
 import { resetInvokeMock } from "./invokeMock";
 import { resetDialogMock } from "./dialogMock";
+import { resetEventMock } from "./eventMock";
 
 vi.mock("@tauri-apps/api/core", async () => {
   const { invoke } = await import("./invokeMock");
   return { invoke };
+});
+
+vi.mock("@tauri-apps/api/event", async () => {
+  return await import("./eventMock");
 });
 
 vi.mock("@tauri-apps/plugin-dialog", async () => {
@@ -43,5 +48,6 @@ afterEach(() => {
   cleanup();
   resetInvokeMock();
   resetDialogMock();
+  resetEventMock();
   vi.clearAllMocks();
 });

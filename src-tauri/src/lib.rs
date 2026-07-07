@@ -1,17 +1,54 @@
+pub mod cli;
 pub mod commands;
 pub mod error;
 pub mod git;
 pub mod state;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::{git::libgit2::Libgit2Backend, state::AppState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+    let initial_intent = match cli::parse_args(&args, &cwd) {
+        cli::Parsed::Help => {
+            print!("{}", cli::USAGE);
+            return;
+        }
+        cli::Parsed::Launch(intent) => intent.map(cli::resolve_repo_root),
+    };
+
     let backend = Arc::new(Libgit2Backend::new());
 
-    let builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Single-instance must be the first registered plugin. A later `pgit …`
+    // invocation lands here in the ALREADY-RUNNING process: forward the
+    // parsed intent to the webview and surface the window. Opt-out env var
+    // for e2e runs and parallel dev instances, which must not
+    // forward-and-exit into each other.
+    if std::env::var("PLATYPUSGIT_NO_SINGLE_INSTANCE").is_err() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            use tauri::{Emitter, Manager};
+            let args: Vec<String> = argv.into_iter().skip(1).collect();
+            if let cli::Parsed::Launch(Some(intent)) =
+                cli::parse_args(&args, std::path::Path::new(&cwd))
+            {
+                let intent = cli::resolve_repo_root(intent);
+                if let Err(e) = app.emit("cli-launch", &intent) {
+                    log::error!("failed to emit cli-launch: {e}");
+                }
+            }
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }));
+    }
+
+    let builder = builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -55,6 +92,7 @@ pub fn run() {
             Ok(())
         })
         .manage(AppState::new(backend))
+        .manage(commands::cli::CliLaunchState(Mutex::new(initial_intent)))
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
             commands::repo::get_status,
@@ -125,6 +163,9 @@ pub fn run() {
             commands::rebase::rebase_status,
             commands::reflog::get_reflog,
             commands::reflog::checkout_detached,
+            commands::cli::take_launch_intent,
+            commands::cli::cli_shim_status,
+            commands::cli::install_cli_shim,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

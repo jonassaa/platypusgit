@@ -22,6 +22,39 @@ A dev-first alternative to TortoiseGit with "extreme usability" as the north sta
 - **Conflict resolution** — 3-way sides, accept ours/theirs, external mergetool, continue/abort
 - **Interactive rebase** — pick/reword/edit/squash/fixup/drop, continue/abort, base picker
 - **Remotes & network** — add/remove/rename/prune remotes, fetch/pull/push (with-lease/force), merge
+- **CLI launch** — `pgit` shim opens the app on a repo/screen from the terminal, single-instance forwarding to a running window
+
+## CLI
+
+Install the `pgit` shim once (Settings → Command line → Install), or link it
+manually:
+
+```bash
+sudo ln -sf <app-binary> /usr/local/bin/pgit   # macOS
+ln -sf <app-binary> ~/.local/bin/pgit          # Linux
+```
+
+(Windows: shim install isn't supported yet.)
+
+```bash
+pgit                    # plain launch — last persisted repo/screen
+pgit .                  # open repo containing cwd
+pgit ~/dev/foo          # open repo containing that path
+pgit commit             # open cwd repo, land on Commit panel
+pgit log src/           # open repo containing src/, land on History
+pgit --help             # print usage, no window
+```
+
+| subcommand | screen |
+|---|---|
+| `commit`, `status` | Commit panel |
+| `log`, `history` | History |
+| `branches` | Branches |
+
+A bare path (no recognized subcommand) just opens that repo, keeping the
+current screen. If the app is already running, a second `pgit …` invocation
+doesn't spawn another instance — it forwards the request to the running
+window, focuses it, and navigates there.
 
 ## Install
 
