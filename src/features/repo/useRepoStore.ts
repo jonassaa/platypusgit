@@ -958,6 +958,13 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async abortOperation() {
     const repo = get().current;
     if (!repo) return;
+    // A paused interactive rebase must abort via rebaseAbort, which clears the
+    // RebaseState entry and restores the pre-rebase tip. The generic abort
+    // would leave that entry behind (see rebaseAbort / abort_operation).
+    if (get().rebaseStatus.inProgress) {
+      await get().rebaseAbort();
+      return;
+    }
     try {
       await abortOperation(repo.id);
       await get().refreshAll();
@@ -969,6 +976,14 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async continueOperation() {
     const repo = get().current;
     if (!repo) return null;
+    // Resolving a conflict during an interactive rebase must continue the
+    // rebase (commit the resolved tree + advance the plan), not create a
+    // standalone commit that leaves the rebase half-done — a later abort would
+    // then reset to orig_head and silently discard the finalized commit.
+    if (get().rebaseStatus.inProgress) {
+      await get().rebaseContinue();
+      return null;
+    }
     try {
       const oid = await continueOperation(repo.id);
       await get().refreshAll();
