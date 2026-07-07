@@ -7,6 +7,12 @@ const STORAGE_KEY = "pg-settings-v2";
 // THEME MODEL
 // ═════════════════════════════════════════════════════════════════════════════
 
+// Brand logo colors (src-tauri/icons/logo.svg). Used as the default for every
+// theme's logo slots and as the fallback for themes saved before the slots
+// existed.
+export const LOGO_PRIMARY = "#3e9b91"; // teal head
+export const LOGO_SECONDARY = "#e6a95a"; // orange bill
+
 export interface ThemeColors {
   bg0: string;
   bg1: string;
@@ -24,6 +30,8 @@ export interface ThemeColors {
   border2: string;
   accent: string;
   accentInk: string;
+  logo: string;
+  logo2: string;
 }
 
 export interface ThemeDef {
@@ -37,7 +45,7 @@ export interface ThemeDef {
 export const THEME_COLOR_FIELDS: {
   key: keyof ThemeColors;
   label: string;
-  group: "background" | "foreground" | "border" | "accent";
+  group: "background" | "foreground" | "border" | "accent" | "logo";
   hint?: string;
 }[] = [
   { key: "bg0", label: "Background · base", group: "background", hint: "App canvas / main content area." },
@@ -56,6 +64,8 @@ export const THEME_COLOR_FIELDS: {
   { key: "border2", label: "Border · emphasis", group: "border", hint: "Hovered / focused borders." },
   { key: "accent", label: "Accent", group: "accent", hint: "Primary actions, active tabs, focus rings." },
   { key: "accentInk", label: "Accent · on-ink", group: "accent", hint: "Text drawn *on* accent (buttons)." },
+  { key: "logo", label: "Logo · head", group: "logo", hint: "PlatypusGit mark, head fill — Welcome + titlebar." },
+  { key: "logo2", label: "Logo · bill", group: "logo", hint: "PlatypusGit mark, bill fill." },
 ];
 
 // ─── Built-in themes ─────────────────────────────────────────────────────────
@@ -83,6 +93,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#515764",
       accent: "#5aa8e8",
       accentInk: "#0e1a26",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
   {
@@ -107,6 +119,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#57504a",
       accent: "#e6a050",
       accentInk: "#241607",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
   {
@@ -131,6 +145,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#4c4c4c",
       accent: "#7aa7d9",
       accentInk: "#101820",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
   {
@@ -155,6 +171,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#b3bac3",
       accent: "#2563c7",
       accentInk: "#ffffff",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
   {
@@ -179,6 +197,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#4c566a",
       accent: "#88c0d0",
       accentInk: "#2e3440",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
   {
@@ -203,6 +223,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#4b4f65",
       accent: "#bd93f9",
       accentInk: "#282a36",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
   {
@@ -227,6 +249,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#1a6379",
       accent: "#268bd2",
       accentInk: "#002b36",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
   {
@@ -251,6 +275,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#665c54",
       accent: "#d79921",
       accentInk: "#1d2021",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
   {
@@ -275,6 +301,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       border2: "#8c959f",
       accent: "#0969da",
       accentInk: "#ffffff",
+      logo: "#3e9b91",
+      logo2: "#e6a95a",
     },
   },
 ];
@@ -303,6 +331,10 @@ export function applyTheme(theme: ThemeDef) {
   root.style.setProperty("--border-2", c.border2);
   root.style.setProperty("--accent", c.accent);
   root.style.setProperty("--accent-ink", c.accentInk);
+  // logo colors fall back to the brand palette for themes persisted before the
+  // logo slots existed.
+  root.style.setProperty("--logo", c.logo ?? LOGO_PRIMARY);
+  root.style.setProperty("--logo-2", c.logo2 ?? LOGO_SECONDARY);
   root.style.setProperty("--ring", `0 0 0 2px ${c.accent}80`);
   root.dataset.theme = theme.id;
   root.dataset.themeMode = theme.mode;
@@ -381,6 +413,23 @@ function load(): PersistedState {
         (out as Record<string, unknown>)[key] = parsed[key];
       }
     }
+    // Backfill logo colors for custom themes saved before the slots existed,
+    // so the theme editor and CSS vars always have a value.
+    out.customThemes = out.customThemes.map((t) => {
+      if (!t.colors) return t;
+      const needs =
+        t.colors.logo === undefined || t.colors.logo2 === undefined;
+      return needs
+        ? {
+            ...t,
+            colors: {
+              ...t.colors,
+              logo: t.colors.logo ?? LOGO_PRIMARY,
+              logo2: t.colors.logo2 ?? LOGO_SECONDARY,
+            },
+          }
+        : t;
+    });
     return out;
   } catch {
     return { ...DEFAULTS };
@@ -453,9 +502,16 @@ function validateTheme(obj: unknown): ThemeDef {
   const out: Partial<ThemeColors> = {};
   for (const f of THEME_COLOR_FIELDS) {
     const raw = colors[f.key];
-    if (typeof raw !== "string") throw new Error(`Missing color: ${f.key}`);
+    if (typeof raw !== "string") {
+      // logo slots were added after the first theme format; older exports omit
+      // them. Fall back to the brand palette rather than rejecting the theme.
+      if (f.key === "logo" || f.key === "logo2") continue;
+      throw new Error(`Missing color: ${f.key}`);
+    }
     out[f.key] = sanitizeHex(raw);
   }
+  if (out.logo === undefined) out.logo = LOGO_PRIMARY;
+  if (out.logo2 === undefined) out.logo2 = LOGO_SECONDARY;
   return {
     id: `custom-imported-${Date.now().toString(36)}`,
     name,

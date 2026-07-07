@@ -801,11 +801,15 @@ function ColorEditor({
   colors: ThemeColors;
   onPatch: (p: Partial<ThemeColors>) => void;
 }) {
-  const groups: Array<{ title: string; group: "background" | "foreground" | "border" | "accent" }> = [
+  const groups: Array<{
+    title: string;
+    group: "background" | "foreground" | "border" | "accent" | "logo";
+  }> = [
     { title: "Backgrounds", group: "background" },
     { title: "Text", group: "foreground" },
     { title: "Borders", group: "border" },
     { title: "Accent", group: "accent" },
+    { title: "Logo", group: "logo" },
   ];
 
   return (

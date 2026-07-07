@@ -1,4 +1,5 @@
 export * from "./icons";
+export * from "./logo";
 export * from "./primitives";
 export * from "./git-components";
 export * from "./chrome";

@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { PGButton, PGIcon, PGIconButton, PGSpinner } from "@/design";
+import { PGButton, PGIcon, PGIconButton, PGLogo, PGSpinner } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useRecentsStore } from "@/features/repo/useRecentsStore";
 
@@ -53,15 +53,14 @@ export function WelcomeScreen() {
             width: 56,
             height: 56,
             borderRadius: "var(--r-4)",
-            background: "oklch(0.72 0.15 235 / 0.12)",
-            border: "1px solid oklch(0.72 0.15 235 / 0.35)",
+            background: "color-mix(in oklab, var(--logo) 14%, transparent)",
+            border: "1px solid color-mix(in oklab, var(--logo) 38%, transparent)",
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "var(--accent)",
           }}
         >
-          <PGIcon name="repo" size={28} />
+          <PGLogo size={34} data-testid="pg-welcome-logo" title="PlatypusGit" />
         </div>
         <div>
           <div

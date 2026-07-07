@@ -85,6 +85,10 @@
   --accent-5: oklch(0.72 0.15 25);
   --accent-ink: oklch(0.18 0.02 235);
 
+  /* Logo mark fills — themeable brand colors, overridden by applyTheme(). */
+  --logo: #3e9b91;   /* head */
+  --logo-2: #e6a95a; /* bill */
+
   /* ===== SEMANTIC (git states) ===== */
   --git-added: oklch(0.72 0.15 155);
   --git-added-bg: oklch(0.35 0.08 155 / 0.25);
