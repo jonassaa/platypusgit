@@ -46,8 +46,9 @@ cargo check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build                            # production bundle (.msi/.dmg/.deb/.AppImage)
 pnpm test                                   # vitest (unit logic + component tests)
-pnpm test:e2e                               # e2e: debug build + wdio (REQUIRED after src/ changes)
-pnpm test:e2e:run                           # e2e against existing binary (spec-only iterations)
+pnpm test:e2e                               # full e2e: debug build + all specs (CI does this; local only rarely)
+pnpm test:e2e:build                         # rebuild debug binary snapshot only (after src/ or src-tauri/ change)
+pnpm test:e2e:run --spec e2e/specs/X.e2e.ts # run ONLY relevant spec(s) against current snapshot
 pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc excludes e2e/)
 ```
 
@@ -73,9 +74,17 @@ Four layers, each run independently:
   - `pnpm test:e2e` = `test:e2e:build` (a tauri debug build with
     `--features tauri/custom-protocol --config src-tauri/tauri.e2e.conf.json`,
     snapshotting the binary to gitignored `e2e/.bin/`) followed by
-    `test:e2e:run` (wdio against that snapshot). Any src/ or src-tauri/
-    change requires the full `pnpm test:e2e` — `test:e2e:run` silently
-    tests the old snapshot; spec-only change → `pnpm test:e2e:run`.
+    `test:e2e:run` (wdio against that snapshot).
+  - **When to run e2e locally:** only once you're DONE developing a change
+    — not on every edit during active development. And run ONLY the spec
+    file(s) relevant to what you touched, not the whole suite. CI runs the
+    full suite on the PR.
+  - **How to run the relevant spec(s):** after a src/ or src-tauri/ change,
+    rebuild the snapshot once with `pnpm test:e2e:build`, then run just the
+    affected spec(s): `pnpm test:e2e:run --spec e2e/specs/<file>.e2e.ts`
+    (repeat `--spec` for more). A spec-only change skips the rebuild — run
+    `pnpm test:e2e:run --spec …` directly. Never rely on a stale snapshot:
+    `test:e2e:run` silently tests the old binary if you skipped the rebuild.
   - **Before writing or debugging any e2e spec, read the `e2e-testing`
     project skill** (`.claude/skills/e2e-testing/SKILL.md`) — selector
     conventions and traps, driver-bridge/5s-penalty rules, native-dialog
