@@ -1,6 +1,6 @@
 import { browser, $, expect } from "@wdio/globals";
-import { basicRepo, TempRepo } from "../support/tempRepo";
-import { openRepo, resetApp } from "../support/app";
+import { basicRepo, manyRefsRepo, TempRepo } from "../support/tempRepo";
+import { openRepo, resetApp, switchScreen } from "../support/app";
 
 describe("branches", () => {
   let repo: TempRepo;
@@ -54,5 +54,71 @@ describe("branches", () => {
       { timeout: 20_000, timeoutMsg: "chip did not update back to main" },
     );
     expect(repo.git("branch", "--show-current").trim()).toBe("main");
+  });
+});
+
+describe("branches — many refs layout", () => {
+  let repo: TempRepo;
+
+  beforeEach(async () => {
+    repo = manyRefsRepo();
+    await openRepo(repo.path);
+  });
+
+  afterEach(async () => {
+    await resetApp();
+    repo.dispose();
+  });
+
+  it("scrolls the refs list internally instead of overflowing the viewport", async () => {
+    await switchScreen("branches");
+
+    const list = $('[aria-label="Refs list"]');
+    await list.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "refs list scroll region never appeared",
+    });
+
+    // Gate: wait until the store's branch/tag fetch has populated enough rows
+    // to overflow the content area (fetch resolves after the screen mounts).
+    // scrollHeight is the total row height in both broken and fixed layouts,
+    // so this only proves the rows rendered — not that scrolling works.
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => {
+          const el = document.querySelector('[aria-label="Refs list"]');
+          return !!el && el.scrollHeight > 1500;
+        }),
+      {
+        timeout: 20_000,
+        timeoutMsg: "refs list never grew tall enough to overflow",
+      },
+    );
+
+    const geom = await browser.execute(() => {
+      const el = document.querySelector(
+        '[aria-label="Refs list"]',
+      ) as HTMLElement;
+      const r = el.getBoundingClientRect();
+      return {
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+        bottom: r.bottom,
+        innerHeight: window.innerHeight,
+      };
+    });
+
+    // The content overflows the scroll region internally — a real scrollbar,
+    // not the list stretching to full content height. Broken layout has
+    // clientHeight === scrollHeight (nothing to scroll).
+    expect(geom.scrollHeight).toBeGreaterThan(geom.clientHeight);
+
+    // The scroll region is bounded to the window: its bottom edge stays within
+    // the viewport rather than spilling past it (what pushed the toolbar and
+    // status bar off-screen before the fix).
+    expect(geom.bottom).toBeLessThanOrEqual(geom.innerHeight + 2);
+
+    // Toolbar survives — filter input still visible at the top.
+    await expect($('input[placeholder="Filter by name…"]')).toBeDisplayed();
   });
 });
