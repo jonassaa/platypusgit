@@ -63,6 +63,103 @@ describe("useSettingsStore persistence", () => {
   });
 });
 
+describe("logo theme slots", () => {
+  const BRAND_PRIMARY = "#3e9b91";
+  const BRAND_SECONDARY = "#e6a95a";
+
+  it("every builtin theme defaults the logo slots to the brand palette", async () => {
+    const { BUILTIN_THEMES } = await freshStore();
+    for (const t of BUILTIN_THEMES) {
+      expect(t.colors.logo).toBe(BRAND_PRIMARY);
+      expect(t.colors.logo2).toBe(BRAND_SECONDARY);
+    }
+  });
+
+  it("applyTheme writes both logo colors to --logo and --logo-2", async () => {
+    const { applyTheme, BUILTIN_THEMES } = await freshStore();
+    const theme = BUILTIN_THEMES[0];
+    applyTheme(theme);
+    const root = document.documentElement.style;
+    expect(root.getPropertyValue("--logo")).toBe(theme.colors.logo);
+    expect(root.getPropertyValue("--logo-2")).toBe(theme.colors.logo2);
+  });
+
+  it("applyTheme falls back to the brand palette when a theme has no logo colors", async () => {
+    const { applyTheme, BUILTIN_THEMES } = await freshStore();
+    const base = BUILTIN_THEMES[0];
+    const legacy = { ...base, colors: { ...base.colors } };
+    // Simulate a theme persisted before the logo slots existed.
+    delete (legacy.colors as Record<string, unknown>).logo;
+    delete (legacy.colors as Record<string, unknown>).logo2;
+    applyTheme(legacy);
+    const root = document.documentElement.style;
+    expect(root.getPropertyValue("--logo")).toBe(BRAND_PRIMARY);
+    expect(root.getPropertyValue("--logo-2")).toBe(BRAND_SECONDARY);
+  });
+
+  it("backfills the brand palette for persisted custom themes without logo slots", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        activeThemeId: "legacy-custom",
+        customThemes: [
+          {
+            id: "legacy-custom",
+            name: "Legacy",
+            mode: "dark",
+            colors: {
+              bg0: "#111111", bg1: "#161616", bg2: "#1c1c1c", bg3: "#222222",
+              bg4: "#2a2a2a", titlebar: "#141414", fg0: "#eeeeee", fg1: "#cccccc",
+              fg2: "#999999", fg3: "#777777", fg4: "#555555", border0: "#2a2a2a",
+              border1: "#333333", border2: "#444444", accent: "#ff6600",
+              accentInk: "#111111",
+              // no logo / logo2 — pre-existing custom theme
+            },
+          },
+        ],
+      }),
+    );
+    const { useSettingsStore } = await freshStore();
+    const active = useSettingsStore.getState().getActiveTheme();
+    expect(active.colors.logo).toBe(BRAND_PRIMARY);
+    expect(active.colors.logo2).toBe(BRAND_SECONDARY);
+    const root = document.documentElement.style;
+    expect(root.getPropertyValue("--logo")).toBe(BRAND_PRIMARY);
+    expect(root.getPropertyValue("--logo-2")).toBe(BRAND_SECONDARY);
+  });
+
+  it("importThemeJson falls back to the brand palette when the JSON omits logo slots", async () => {
+    const { useSettingsStore } = await freshStore();
+    const json = JSON.stringify({
+      name: "No-logo import",
+      mode: "dark",
+      colors: {
+        bg0: "#111111", bg1: "#161616", bg2: "#1c1c1c", bg3: "#222222",
+        bg4: "#2a2a2a", titlebar: "#141414", fg0: "#eeeeee", fg1: "#cccccc",
+        fg2: "#999999", fg3: "#777777", fg4: "#555555", border0: "#2a2a2a",
+        border1: "#333333", border2: "#444444", accent: "#00cc88",
+        accentInk: "#111111",
+      },
+    });
+    const imported = useSettingsStore.getState().importThemeJson(json);
+    expect(imported.colors.logo).toBe(BRAND_PRIMARY);
+    expect(imported.colors.logo2).toBe(BRAND_SECONDARY);
+  });
+
+  it("editing a logo color on a builtin duplicates and applies the CSS var", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().setActiveThemeId("dark-cool");
+    useSettingsStore.getState().updateActiveColors({ logo: "#abcdef", logo2: "#123456" });
+    const active = useSettingsStore.getState().getActiveTheme();
+    expect(active.builtin).toBeFalsy();
+    expect(active.colors.logo).toBe("#abcdef");
+    expect(active.colors.logo2).toBe("#123456");
+    const root = document.documentElement.style;
+    expect(root.getPropertyValue("--logo")).toBe("#abcdef");
+    expect(root.getPropertyValue("--logo-2")).toBe("#123456");
+  });
+});
+
 describe("uiDensity CSS hook", () => {
   it("applies --row-h from the persisted density at load", async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "comfortable" }));

@@ -86,6 +86,11 @@ describe("WelcomeScreen", () => {
     expect(useRecentsStore.getState().recents[0]?.path).toBe(chosenPath);
   });
 
+  it("shows the PlatypusGit logo in the hero", () => {
+    render(<WelcomeScreen />);
+    expect(screen.getByTestId("pg-welcome-logo")).toBeInTheDocument();
+  });
+
   it("does nothing when the dialog is cancelled", async () => {
     mockDialogOpen(null);
 

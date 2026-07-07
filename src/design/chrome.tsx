@@ -1,5 +1,6 @@
 import React, { type CSSProperties, type ReactNode } from "react";
 import { PGIcon, type IconName } from "./icons";
+import { PGLogo } from "./logo";
 import { PGTooltip } from "./primitives";
 import { usePlatform } from "@/lib/platform";
 import { PGWindowControls } from "./window-controls";
@@ -59,7 +60,7 @@ export function PGTitlebar({
           color: "var(--fg-2)",
         }}
       >
-        <PGIcon name="repo" size={13} />
+        <PGLogo size={17} data-testid="pg-app-logo" title="PlatypusGit" />
         <span style={{ color: "var(--fg-0)", fontWeight: 600 }}>{repoName}</span>
         <span style={{ color: "var(--fg-3)" }}>/</span>
         {typeof branch === "string" ? (
