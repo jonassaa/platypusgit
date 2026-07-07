@@ -1,0 +1,54 @@
+# Headless e2e via Docker — replicates the CI WebKitGTK+xvfb stack locally so
+# the suite runs without a display (macOS has no headless webview). See
+# Dockerfile.e2e. Drive it via `e2e/e2e-docker.sh` (pnpm test:e2e:docker),
+# which sets a per-worktree COMPOSE_PROJECT_NAME so multiple agents can run in
+# parallel from different worktrees without colliding.
+#
+# Volume isolation strategy for parallel runs:
+#   - node_modules / target / .bin are PROJECT-scoped (default naming) — the
+#     cargo target dir is not safe for concurrent builds, so each worktree
+#     compiles into its own volume.
+#   - pnpm store + cargo registry/git have FIXED names → shared across all
+#     worktrees. Both are concurrency-safe (content-addressed store; cargo
+#     package-cache file locks), so downloads are cached once, not per-worktree.
+services:
+  e2e:
+    build:
+      context: .
+      dockerfile: Dockerfile.e2e
+    # The Docker VM (default ~8GB) OOM-kills rustc when cargo fans out one job
+    # per CPU (14 here) — aggregate peak memory blows the limit (SIGKILL/sig 9).
+    # Cap parallelism and drop debuginfo (irrelevant for an e2e binary, and the
+    # biggest per-crate memory sink) to keep peak bounded. Override JOBS higher
+    # if your VM has more RAM (Docker Desktop → Settings → Resources).
+    environment:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    volumes:
+      # Source is bind-mounted so host edits are picked up without a rebuild.
+      - .:/app
+      # Platform-specific dirs kept in named volumes: the Linux node_modules,
+      # cargo target, and debug-binary snapshot must NOT overwrite the host's
+      # macOS equivalents (all three are gitignored).
+      - e2e-node-modules:/app/node_modules
+      - e2e-target:/app/src-tauri/target
+      - e2e-bin:/app/e2e/.bin
+      # Persist caches across runs so only changed crates/packages rebuild.
+      - e2e-pnpm-store:/pnpm-store
+      - e2e-cargo-registry:/root/.cargo/registry
+      - e2e-cargo-git:/root/.cargo/git
+    # Default: full build + run. Override on the CLI for build/run phases.
+    command: ["full"]
+
+volumes:
+  # Project-scoped (unique per worktree via COMPOSE_PROJECT_NAME).
+  e2e-node-modules:
+  e2e-target:
+  e2e-bin:
+  # Fixed names → shared across every worktree/agent (concurrency-safe caches).
+  e2e-pnpm-store:
+    name: pgit-e2e-pnpm-store
+  e2e-cargo-registry:
+    name: pgit-e2e-cargo-registry
+  e2e-cargo-git:
+    name: pgit-e2e-cargo-git

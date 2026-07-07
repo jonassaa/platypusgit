@@ -49,8 +49,50 @@ pnpm test                                   # vitest (unit logic + component tes
 pnpm test:e2e                               # full e2e: debug build + all specs (CI does this; local only rarely)
 pnpm test:e2e:build                         # rebuild debug binary snapshot only (after src/ or src-tauri/ change)
 pnpm test:e2e:run --spec e2e/specs/X.e2e.ts # run ONLY relevant spec(s) against current snapshot
+pnpm test:e2e:docker                        # headless e2e in Docker (macOS: only way to run WITHOUT a window)
 pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc excludes e2e/)
 ```
+
+### Headless e2e in Docker (`pnpm test:e2e:docker`)
+
+macOS has no headless webview — a native `pnpm test:e2e` run pops a real
+WKWebView window and needs foreground focus (`ensureMacAppFocus`). To run
+headless, drive the CI stack (WebKitGTK + xvfb) in a container. Same webview
+target CI uses, so a green Docker run matches the PR gate; it does NOT prove
+the macOS WKWebView path (run native for that).
+
+Files: `Dockerfile.e2e` (mirrors `.github/workflows/e2e.yml` deps),
+`docker-compose.e2e.yml`, `e2e/docker-entrypoint.sh` (phase dispatch),
+`e2e/e2e-docker.sh` (wrapper — sets a per-worktree compose project name).
+
+```bash
+pnpm test:e2e:docker                                  # full: build binary + whole suite, headless
+pnpm test:e2e:docker full --spec e2e/specs/X.e2e.ts   # full build + one spec
+pnpm test:e2e:docker run  --spec e2e/specs/X.e2e.ts   # reuse THIS worktree's snapshot, one spec
+pnpm test:e2e:docker build                            # rebuild this worktree's snapshot only
+```
+
+First run is slow (image build + cargo compile from scratch). Reruns reuse
+cached layers + shared package caches; only changed code recompiles.
+
+**Memory:** the compose service caps `CARGO_BUILD_JOBS=2` +
+`CARGO_PROFILE_DEV_DEBUG=0` because the default ~8GB Docker VM OOM-kills rustc
+(SIGKILL) when cargo fans out one job per CPU — the GTK/WebKit crates each cost
+2–4GB to compile, so even a few overlapping blow the limit. Bump
+`CARGO_BUILD_JOBS` in `docker-compose.e2e.yml` if you give the VM more RAM
+(Docker Desktop → Settings → Resources); 2 is safe at 8GB but leaves most of
+the 14 CPUs idle during the compile.
+
+**Parallel agents / worktrees:** safe by construction. `e2e/e2e-docker.sh`
+derives `COMPOSE_PROJECT_NAME=pgit-e2e-<worktree-dir-slug>`, so each worktree
+gets its own `node_modules` / `target` / `.bin` volumes (the cargo target dir
+is NOT safe for concurrent builds → must be per-worktree). Package caches
+(pnpm store, cargo registry/git) have fixed volume names shared across all
+worktrees — concurrency-safe, so crates download once, not per-worktree. The
+WebDriver port (4445) is internal to each container, never published, so no
+host-port collisions. Different worktrees → run concurrently, no coordination.
+Same worktree → run one at a time (they'd share the target volume). Each agent
+just runs `pnpm test:e2e:docker …` from its own worktree.
 
 ## Testing
 

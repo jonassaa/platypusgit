@@ -1,0 +1,40 @@
+# Headless e2e runner — mirrors .github/workflows/e2e.yml (ubuntu-latest +
+# WebKitGTK + xvfb). Lets macOS devs run the WebdriverIO suite headless in the
+# same webview target CI uses. NOT a production image.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Tauri/WebKitGTK build+run deps + xvfb — same apt set as the CI workflow,
+# plus curl/git/build-essential to bootstrap node & rust.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+      librsvg2-dev patchelf xvfb \
+      curl ca-certificates git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 22 (matches CI setup-node)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# pnpm 9 (matches CI pnpm/action-setup version)
+RUN npm install -g pnpm@9 \
+    && pnpm config set store-dir /pnpm-store --global
+
+# Rust stable via rustup
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Fixture git identity (mirror CI "Configure git for fixtures"); the app repo
+# itself is never git-operated inside the container — temp-repo fixtures build
+# their own repos in tmp dirs.
+RUN git config --global user.name "CI" \
+    && git config --global user.email "ci@platypusgit.test" \
+    && git config --global init.defaultBranch main \
+    && git config --global --add safe.directory '*'
+
+WORKDIR /app
+
+ENTRYPOINT ["/app/e2e/docker-entrypoint.sh"]
+CMD ["full"]
