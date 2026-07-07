@@ -20,9 +20,11 @@ export const featureGroups = [
   ]},
   { title: 'Diff & viewing', blurb: 'See exactly what changed, anywhere.', items: [
     'Worktree / index / HEAD diffs',
+    'Unified and side-by-side (split) diff views',
+    'Configurable diff context lines',
     'Commit-to-commit diffs',
     'Line-by-line blame',
-    'Repo file browser at HEAD',
+    'Repo file browser at HEAD, or any revision',
   ]},
   { title: 'Branches & tags', blurb: 'Full ref management.', items: [
     'List / create / checkout / rename / delete branches',
@@ -31,6 +33,8 @@ export const featureGroups = [
   ]},
   { title: 'History', blurb: 'Navigate the past.', items: [
     'Commit graph layout',
+    'Ref-scoped log — browse the log of any branch, tag, or revspec',
+    'Commit / log search (message, author, SHA, date, path)',
     'Per-file history',
     'Reflog viewer',
     'Detached-HEAD checkout',
@@ -61,19 +65,42 @@ export const featureGroups = [
     'Push with-lease and force',
     'Merge branches',
   ]},
+  { title: 'Navigation & keyboard', blurb: 'Keyboard-first, fast everywhere.', items: [
+    'Command palette (⌘P) — branches, files, commits, and actions',
+    'Rider-style default keymap, with a Classic preset',
+    'Type-to-jump speed-search in lists',
+    'Commit chords and F7 / ⇧F7 hunk navigation',
+    'Spatial Alt+Arrow pane focus and a ? cheat sheet',
+    '`pgit` command-line launcher — open a repo from the terminal',
+  ]},
 ];
 
 // Roadmap teaser (from features.md P0/P1 — clearly "planned")
 export const roadmap = [
-  'Side-by-side diff view + intra-line highlighting',
+  'Intra-line (word-level) diff highlighting',
   'Branch compare — branch↔branch and branch↔working tree',
   'GPG/SSH commit + tag signing with verified badge',
   'Multi-repo tabs / fast recent-repo switcher',
   'Quick merge/rebase from the branch picker',
   'Partial/hunk-level stash + rename + compare to working tree',
+  'Signed & notarized macOS / Windows builds',
 ];
 
 export const changelog = [
+  {
+    version: '0.0.6',
+    date: '2026-07-07',
+    status: 'feature',
+    notes: [
+      'Keyboard navigation — a full keymap system with a Rider-style default (Classic preset available), type-to-jump speed-search, commit chords, `F7` / `⇧F7` hunk navigation, spatial `Alt+Arrow` pane focus, and a `?` cheat sheet.',
+      '`pgit` command-line launcher — open a repo from the terminal with `pgit [subcommand] [path]`; forwards into a running instance; installable shim.',
+      'Ref-scoped history — browse the commit log of any branch, tag, or revspec and cherry-pick from unmerged refs via the History ref selector.',
+      'Command palette upgrades — an actions catalog, frecency ranking, drill-in steps, and type-filter chips (⌘P / Ctrl+P).',
+      'Multi-file selection — select several files in the commit panel or repo browser and stage / unstage / discard them from the context menu.',
+      'Settings — configurable diff context lines and UI density; non-functional toggles removed.',
+      'Fixes — interactive-rebase conflict resume now completes, and aborting no longer discards a resolved commit; the palette type chips run the highlighted row; palette Pull honours your pull-mode setting and tracking branch; the commit shortcut no longer double-commits on key-repeat; History selection resets when a filter shrinks the list.',
+    ],
+  },
   {
     version: '0.0.5',
     date: '2026-07-01',
