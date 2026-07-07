@@ -51,6 +51,29 @@ describe("buildCommands", () => {
     expect(byId.get("action:pull-current")?.actionId).toBe("repo.pull");
   });
 
+  it("pull/push use the tracking branch and honour defaultPullMode", async () => {
+    // Regression: the palette Pull row must pass the upstream tracking branch
+    // (not the local head name) and the user's pull mode, matching the keymap
+    // runner it advertises — not silently pull `local` in Merge mode.
+    const { useSettingsStore } = await import("@/features/settings/useSettingsStore");
+    useSettingsStore.setState({ defaultPullMode: "Rebase" });
+    const pull = vi.fn();
+    const push = vi.fn();
+    // Local branch "feature" tracks a differently-named remote branch.
+    setRepo({
+      branches: [mkBranch("feature", true, "origin/main")],
+      pull,
+      push,
+    });
+    const byId = new Map(buildCommands().map((i) => [i.id, i]));
+
+    byId.get("action:pull-current")?.run();
+    expect(pull).toHaveBeenCalledWith("origin", "main", "Rebase");
+
+    byId.get("action:push-current")?.run();
+    expect(push).toHaveBeenCalledWith("origin", "main", "None");
+  });
+
   it("omits stash-pop when there are no stashes", () => {
     expect(ids()).not.toContain("action:stash-pop-latest");
   });
