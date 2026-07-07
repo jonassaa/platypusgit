@@ -242,8 +242,17 @@ export function BranchesScreen() {
         fetching={!!activity.fetch}
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <PGPane id="branches.list" style={{ flex: 1, minWidth: 0 }}>
-          <FocusableScroll ariaLabel="Refs list">
+        <PGPane
+          id="branches.list"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
+          <FocusableScroll ariaLabel="Refs list" style={{ flex: 1 }}>
           <div style={{ minWidth: totalWidth }}>
             <div
               style={{

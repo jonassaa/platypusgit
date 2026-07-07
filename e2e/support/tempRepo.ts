@@ -82,6 +82,22 @@ export function branchyRepo(): TempRepo {
   return r; // 5 commits reachable from main, two lanes in graph
 }
 
+/** Many branches and tags — enough refs to overflow the Branches screen
+ *  viewport (~700px content area, 28px rows). Regression fixture for the
+ *  list-not-scrolling bug: the refs list must scroll internally rather than
+ *  grow past the window and shove the toolbar/chrome off-screen.
+ *  `git branch`/`git tag` (no checkout) keep setup fast. */
+export function manyRefsRepo(): TempRepo {
+  const r = basicRepo();
+  for (let i = 0; i < 60; i++) {
+    r.git("branch", `feature/branch-${String(i).padStart(2, "0")}`);
+  }
+  for (let i = 0; i < 30; i++) {
+    r.git("tag", `v0.${String(i).padStart(2, "0")}.0`);
+  }
+  return r;
+}
+
 export function conflictRepo(): TempRepo {
   const r = new TempRepo();
   r.commitFile("conflict.txt", "base\n", "feat: base");
