@@ -231,20 +231,28 @@ export function RepoBrowserScreen() {
 
   // Map selected tree keys to worktree statuses for multi-file operations.
   // Folder keys simply don't resolve to a status entry, so they're inert.
+  // In all-files mode unmodified files only exist in allFiles, not status —
+  // they carry no stage/unstage actions but still count and copy.
   const splitSelection = React.useCallback(
-    (keys: string[]): { stagedPaths: string[]; unstagedPaths: string[] } => {
+    (
+      keys: string[],
+    ): { stagedPaths: string[]; unstagedPaths: string[]; paths: string[] } => {
       const stagedPaths: string[] = [];
       const unstagedPaths: string[] = [];
+      const paths: string[] = [];
       for (const key of keys) {
         const path = key.replace(/^\//, "");
-        const st = status.find((s) => s.path === path);
+        const st =
+          status.find((s) => s.path === path) ??
+          allFiles.find((s) => s.path === path);
         if (!st) continue;
+        paths.push(path);
         if (isStaged(st)) stagedPaths.push(path);
         if (isUnstaged(st)) unstagedPaths.push(path);
       }
-      return { stagedPaths, unstagedPaths };
+      return { stagedPaths, unstagedPaths, paths };
     },
-    [status],
+    [status, allFiles],
   );
 
   const fileCtx = useContextMenu<{ key: string; node: PGFileTreeNode }>(

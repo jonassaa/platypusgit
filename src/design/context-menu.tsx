@@ -900,6 +900,11 @@ export interface MultiFileMenuSelection {
   stagedPaths: string[];
   /** Selected paths with unstaged (worktree) changes. */
   unstagedPaths: string[];
+  /**
+   * Every selected file path, including unmodified files (all-files browsing).
+   * Drives the count and Copy paths. Defaults to staged ∪ unstaged.
+   */
+  paths?: string[];
 }
 
 /**
@@ -912,7 +917,7 @@ export function multiFileMenuItems(
 ): ContextMenuItem[] {
   const stagedPaths = sel?.stagedPaths ?? [];
   const unstagedPaths = sel?.unstagedPaths ?? [];
-  const all = [...stagedPaths, ...unstagedPaths];
+  const all = sel?.paths ?? [...stagedPaths, ...unstagedPaths];
   const n = all.length;
   const files = (c: number) => `${c} file${c === 1 ? "" : "s"}`;
   const items: ContextMenuItem[] = [{ __menuTitle: `${files(n)} selected` }];
