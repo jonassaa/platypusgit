@@ -28,6 +28,11 @@ pub struct RebaseState {
     pub total: usize,
     pub completed: usize,
     pub pause_reason: Option<String>,
+    /// The step whose cherry-pick conflicted and is awaiting resolution. Held
+    /// out of `plan` so `rebase_continue` commits the user-resolved tree
+    /// instead of re-running the cherry-pick from scratch (which would
+    /// re-conflict). Cleared once the resolved step is committed.
+    pub conflict_step: Option<RebaseStep>,
     /// Branch tip before `rebase_start` moved it — `rebase_abort` restores
     /// this rather than just resetting to wherever the in-progress rebase
     /// happened to stop (see `rebase_abort` doc comment).
@@ -95,21 +100,32 @@ impl Libgit2Backend {
     /// (we build our own commit so we can control the message, tree, etc.).
     /// Returns Ok(true) on a clean apply; Ok(false) when the pick produced
     /// conflicts (the worktree is left dirty so the user can resolve them).
-    fn pick_onto_head(&self, repo_id: &RepoId, oid: &str) -> AppResult<bool> {
+    /// Apply `oid`'s diff into the index + worktree (a cherry-pick), WITHOUT
+    /// committing. Returns `Ok(false)` when the merge left conflicts (caller
+    /// pauses for the user), `Ok(true)` when it applied cleanly and the tree is
+    /// staged ready for `finish_pick`.
+    fn start_pick(&self, repo_id: &RepoId, oid: &str) -> AppResult<bool> {
         self.with_repo(repo_id, |repo| {
             let target = repo
                 .revparse_single(oid)
                 .map_err(|_| AppError::InvalidRef(oid.to_string()))?
                 .peel_to_commit()?;
-            // Apply the diff into the index + worktree.
             repo.cherrypick(&target, None)?;
-
             let statuses = repo.statuses(None)?;
-            if statuses.iter().any(|s| s.status().is_conflicted()) {
-                return Ok(false);
-            }
+            Ok(!statuses.iter().any(|s| s.status().is_conflicted()))
+        })
+    }
 
-            // Build the commit, preserving the original author.
+    /// Commit the currently-staged tree as `oid`'s rebased commit onto HEAD,
+    /// preserving the original author + message, then clear the cherry-pick
+    /// state. Used both after a clean `start_pick` and when resuming a
+    /// conflict the user has resolved (the staged tree is then their merge).
+    fn finish_pick(&self, repo_id: &RepoId, oid: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let target = repo
+                .revparse_single(oid)
+                .map_err(|_| AppError::InvalidRef(oid.to_string()))?
+                .peel_to_commit()?;
             let sig = crate::git::signature::default_signature(repo)?;
             let mut index = repo.index()?;
             let tree_oid = index.write_tree()?;
@@ -125,7 +141,7 @@ impl Libgit2Backend {
                 &[&head_commit],
             )?;
             repo.cleanup_state()?;
-            Ok(true)
+            Ok(())
         })
     }
 
@@ -136,17 +152,6 @@ impl Libgit2Backend {
             .map_err(|e| AppError::Internal(e.to_string()))?;
         if let Some(state) = rebases.get_mut(repo_id) {
             state.completed += 1;
-        }
-        Ok(())
-    }
-
-    fn push_front(&self, repo_id: &RepoId, step: RebaseStep) -> AppResult<()> {
-        let mut rebases = self
-            .rebases
-            .lock()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        if let Some(state) = rebases.get_mut(repo_id) {
-            state.plan.push_front(step);
         }
         Ok(())
     }
@@ -168,8 +173,11 @@ impl Libgit2Backend {
     /// pauses execution (conflict / edit).
     fn advance_rebase(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
         loop {
-            // Take the next step.
-            let step_opt = {
+            // Resume a conflict step first (its cherry-pick already ran and the
+            // user has resolved + staged the tree), else take the next planned
+            // step. A resumed step skips the cherry-pick — its tree is already
+            // the user's merge — so `finish_pick` commits that directly.
+            let (step, resuming) = {
                 let mut rebases = self
                     .rebases
                     .lock()
@@ -181,10 +189,13 @@ impl Libgit2Backend {
                     }
                 };
                 state.pause_reason = None;
-                state.plan.pop_front()
+                match state.conflict_step.take() {
+                    Some(s) => (Some(s), true),
+                    None => (state.plan.pop_front(), false),
+                }
             };
 
-            let Some(step) = step_opt else {
+            let Some(step) = step else {
                 // Plan exhausted — rebase complete. Capture the final status
                 // before dropping the in-memory state so this call's caller
                 // still sees the completed count, but remove the entry so a
@@ -200,25 +211,44 @@ impl Libgit2Backend {
                 return Ok(status);
             };
 
+            // Drop is never cherry-picked, so it is never a resume step.
+            if !resuming && step.action == RebaseAction::Drop {
+                self.bump_completed(repo_id)?;
+                continue;
+            }
+
+            // Stage the step's changes. On resume the resolved tree is already
+            // staged, so skip the (re-)cherry-pick that would re-conflict.
+            if !resuming && !self.start_pick(repo_id, &step.oid)? {
+                // Conflict: stash the step out of the plan (so continue commits
+                // the resolution rather than re-picking) and pause.
+                let mut rebases = self
+                    .rebases
+                    .lock()
+                    .map_err(|e| AppError::Internal(e.to_string()))?;
+                if let Some(state) = rebases.get_mut(repo_id) {
+                    state.conflict_step = Some(step);
+                }
+                drop(rebases);
+                return self.mark_paused(repo_id, "conflict");
+            }
+
+            // Commit the staged tree as this step's rebased commit, then apply
+            // the action's post-commit semantics.
+            self.finish_pick(repo_id, &step.oid)?;
+
             match step.action {
                 RebaseAction::Drop => {
+                    // Only reachable when resuming — a Drop never conflicts and
+                    // is handled above on the fresh path. Nothing extra to do.
                     self.bump_completed(repo_id)?;
-                    continue;
                 }
 
                 RebaseAction::Pick => {
-                    if !self.pick_onto_head(repo_id, &step.oid)? {
-                        self.push_front(repo_id, step)?;
-                        return self.mark_paused(repo_id, "conflict");
-                    }
                     self.bump_completed(repo_id)?;
                 }
 
                 RebaseAction::Reword => {
-                    if !self.pick_onto_head(repo_id, &step.oid)? {
-                        self.push_front(repo_id, step)?;
-                        return self.mark_paused(repo_id, "conflict");
-                    }
                     let new_msg = step.message.clone().unwrap_or_default();
                     self.with_repo(repo_id, |repo| {
                         let sig = crate::git::signature::default_signature(repo)?;
@@ -237,21 +267,12 @@ impl Libgit2Backend {
                 }
 
                 RebaseAction::Edit => {
-                    if !self.pick_onto_head(repo_id, &step.oid)? {
-                        self.push_front(repo_id, step)?;
-                        return self.mark_paused(repo_id, "conflict");
-                    }
                     self.bump_completed(repo_id)?;
                     return self.mark_paused(repo_id, "edit");
                 }
 
                 RebaseAction::Squash | RebaseAction::Fixup => {
                     let is_fixup = matches!(step.action, RebaseAction::Fixup);
-
-                    if !self.pick_onto_head(repo_id, &step.oid)? {
-                        self.push_front(repo_id, step)?;
-                        return self.mark_paused(repo_id, "conflict");
-                    }
 
                     self.with_repo(repo_id, |repo| {
                         let sig = crate::git::signature::default_signature(repo)?;
@@ -2046,6 +2067,7 @@ impl GitBackend for Libgit2Backend {
                 total,
                 completed: 0,
                 pause_reason: None,
+                conflict_step: None,
                 orig_head,
             },
         );

@@ -1,7 +1,8 @@
 mod support;
 
 use platypusgit_lib::git::{
-    types::{RebaseAction, RebaseStep},
+    libgit2::Libgit2Backend,
+    types::{RebaseAction, RebaseStep, RepoHandle},
     GitBackend,
 };
 
@@ -321,6 +322,83 @@ fn abort_operation_clears_rebase_state_and_restores_pre_rebase_head() {
         "abort_operation should restore the pre-rebase HEAD (converging with rebase_abort), \
          not wherever the in-progress rebase happened to stop"
     );
+}
+
+// Build a repo where rebasing [pick B, pick A] conflicts on the second pick.
+// Both A and B add conflict.txt with different content from the same base, so
+// picking A on top of B collides. Returns (repo, backend, handle, oid_a, oid_b).
+fn conflicting_rebase_repo() -> (TempRepo, Libgit2Backend, RepoHandle, String, String) {
+    use support::fs::write_file;
+    let tr = TempRepo::with_initial_commit("line1\n");
+
+    write_file(tr.path(), "conflict.txt", "version A\n");
+    {
+        let mut index = tr.repo.index().unwrap();
+        index.add_path(std::path::Path::new("conflict.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = tr.repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("T", "t@t").unwrap();
+        let parent = tr.repo.head().unwrap().peel_to_commit().unwrap();
+        tr.repo.commit(Some("HEAD"), &sig, &sig, "commit A", &tree, &[&parent]).unwrap();
+    }
+    let oid_a = tr.repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+
+    write_file(tr.path(), "conflict.txt", "version B\n");
+    {
+        let mut index = tr.repo.index().unwrap();
+        index.add_path(std::path::Path::new("conflict.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = tr.repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("T", "t@t").unwrap();
+        let parent = tr.repo.head().unwrap().peel_to_commit().unwrap();
+        tr.repo.commit(Some("HEAD"), &sig, &sig, "commit B", &tree, &[&parent]).unwrap();
+    }
+    let oid_b = tr.repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+
+    let (backend, handle) = tr.open_with_backend();
+    (tr, backend, handle, oid_a, oid_b)
+}
+
+// ─── conflict resolve + continue actually finishes the rebase ────────────────
+//
+// After a conflicted pick, the user resolves the file and continues. The
+// rebase must COMMIT the resolved tree and advance — not re-run the cherry-pick
+// from scratch (which re-conflicts forever).
+#[test]
+fn rebase_conflict_resolve_and_continue_completes() {
+    use std::path::PathBuf;
+    use support::fs::write_file;
+
+    let (tr, backend, handle, oid_a, oid_b) = conflicting_rebase_repo();
+
+    let plan = vec![
+        step(&oid_b, RebaseAction::Pick),
+        step(&oid_a, RebaseAction::Pick),
+    ];
+    let status = backend.rebase_start(&handle.id, plan).unwrap();
+    assert!(status.in_progress, "should pause on the conflicting second pick");
+    assert_eq!(status.pause_reason.as_deref(), Some("conflict"));
+
+    // Resolve the conflict and mark it resolved (what the Conflict screen does).
+    write_file(tr.path(), "conflict.txt", "resolved\n");
+    backend
+        .mark_resolved(&handle.id, &[PathBuf::from("conflict.txt")])
+        .unwrap();
+
+    // Continue: the rebase must finish, committing the resolved tree.
+    let status2 = backend.rebase_continue(&handle.id).unwrap();
+    assert!(
+        !status2.in_progress,
+        "rebase should complete after resolving the conflict and continuing"
+    );
+
+    // The resolved content is committed at the new tip.
+    let content = std::fs::read_to_string(tr.path().join("conflict.txt")).unwrap();
+    assert_eq!(content, "resolved\n");
+    let status_after = backend.rebase_status(&handle.id).unwrap();
+    assert!(!status_after.in_progress, "no rebase in progress after completion");
 }
 
 // ─── 9. sweeping RebaseState on successful completion ────────────────────────
