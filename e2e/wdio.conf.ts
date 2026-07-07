@@ -3,6 +3,12 @@ import type { TauriCapabilities } from "@wdio/tauri-service";
 import { $, browser } from "@wdio/globals";
 import { armDriverBridge, ensureMacAppFocus } from "./support/app";
 
+// The app registers tauri-plugin-single-instance; a test binary starting
+// while any platypusgit instance runs would forward-and-exit instead of
+// serving WebDriver. The env var (checked in lib.rs run()) disables the
+// plugin for children of this process.
+process.env.PLATYPUSGIT_NO_SINGLE_INSTANCE = "1";
+
 // Snapshot copied by `pnpm test:e2e` after building with
 // `--features tauri/custom-protocol` (which embeds the frontend assets).
 // We don't point at src-tauri/target/debug/ directly: any plain

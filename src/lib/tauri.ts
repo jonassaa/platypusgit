@@ -3,12 +3,15 @@ import { debug as logDebug, warn as logWarn, error as logError } from "@tauri-ap
 import type {
   BlameLine,
   BranchInfo,
+  CliInstallOutcome,
+  CliShimStatus,
   CommitInfo,
   ConflictSides,
   DiffKind,
   FileContent,
   FileDiff,
   FileStatus,
+  LaunchIntent,
   LogFilter,
   PullMode,
   PushForce,
@@ -537,4 +540,16 @@ export async function blameFile(
   path: string,
 ): Promise<BlameLine[]> {
   return invoke<BlameLine[]>("blame_file", { repoId, path });
+}
+
+export async function takeLaunchIntent(): Promise<LaunchIntent | null> {
+  return invoke<LaunchIntent | null>("take_launch_intent");
+}
+
+export async function cliShimStatus(): Promise<CliShimStatus> {
+  return invoke<CliShimStatus>("cli_shim_status");
+}
+
+export async function installCliShim(): Promise<CliInstallOutcome> {
+  return invoke<CliInstallOutcome>("install_cli_shim");
 }

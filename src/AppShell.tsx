@@ -30,6 +30,7 @@ import { SettingsScreen } from "@/screens/Settings";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { headUpstream } from "@/features/repo/ops";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useCliLaunch } from "@/features/cli/useCliLaunch";
 import {
   useKeymapStore,
   useFocusStore,
@@ -95,6 +96,7 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
 
 export function AppShell() {
   usePreventBrowserContextMenu();
+  useCliLaunch();
   const repo = useRepoStore((s) => s.current);
   const error = useRepoStore((s) => s.error);
   const clearError = useRepoStore((s) => s.clearError);

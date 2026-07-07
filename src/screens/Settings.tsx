@@ -1,4 +1,5 @@
 import React from "react";
+import { platform } from "@tauri-apps/plugin-os";
 import {
   PGButton,
   PGButtonGroup,
@@ -16,7 +17,8 @@ import {
   type ThemeColors,
   type ThemeDef,
 } from "@/features/settings/useSettingsStore";
-import type { PullMode } from "@/lib/tauri";
+import { cliShimStatus, installCliShim, type PullMode } from "@/lib/tauri";
+import type { CliShimStatus } from "@/lib/types";
 import { BUILTIN_PRESETS, useKeymapStore } from "@/features/keymap";
 
 export function SettingsScreen() {
@@ -202,6 +204,7 @@ export function SettingsScreen() {
         </Section>
 
         <KeyboardSection />
+        <CliSection />
       </div>
     </div>
   );
@@ -233,6 +236,100 @@ function KeyboardSection() {
           />
         }
       />
+    </Section>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CLI SECTION — install/status for the `pgit` shim
+// ═════════════════════════════════════════════════════════════════════════════
+
+function CliSection() {
+  const isWindows = platform() === "windows";
+  const [status, setStatus] = React.useState<CliShimStatus | null>(null);
+  const [manual, setManual] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const refresh = React.useCallback(() => {
+    cliShimStatus()
+      .then(setStatus)
+      .catch(() => setStatus(null));
+  }, []);
+
+  React.useEffect(() => {
+    if (!isWindows) refresh();
+  }, [isWindows, refresh]);
+
+  const install = async () => {
+    setBusy(true);
+    try {
+      const out = await installCliShim();
+      if (out.installed) {
+        setManual(null);
+        // Deliberately doesn't repeat the shim path here — the status row
+        // below shows it, and a toast echoing the same substring would
+        // outlive the row's re-render (toast lives ~1.7s) and collide with
+        // it in text queries.
+        pgFlash("pgit installed");
+        refresh();
+      } else if (out.manualCommand) {
+        setManual(out.manualCommand);
+      }
+    } catch {
+      setManual(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section
+      title="Command line"
+      subtitle="Launch platypusgit from a terminal: pgit [commit|status|log|history|branches] [path]."
+    >
+      {isWindows ? (
+        <Row
+          label="pgit command"
+          hint="Not yet supported on Windows. Add the install directory to PATH manually to use platypusgit.exe from a terminal."
+          control={<span />}
+        />
+      ) : (
+        <Row
+          label="pgit command"
+          hint={
+            status?.installed ? (
+              <>
+                Installed at{" "}
+                <code style={{ fontFamily: "var(--font-mono)" }}>
+                  {status.shimPath}
+                </code>
+              </>
+            ) : (
+              <>
+                Not installed.{" "}
+                {manual && (
+                  <>
+                    Automatic install failed (permissions) — run:{" "}
+                    <code
+                      style={{
+                        fontFamily: "var(--font-mono)",
+                        userSelect: "all",
+                      }}
+                    >
+                      {manual}
+                    </code>
+                  </>
+                )}
+              </>
+            )
+          }
+          control={
+            <PGButton size="sm" onClick={install} disabled={busy}>
+              {status?.installed ? "Reinstall pgit" : "Install pgit"}
+            </PGButton>
+          }
+        />
+      )}
     </Section>
   );
 }

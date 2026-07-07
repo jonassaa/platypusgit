@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-07-07-cli-launch-*` — `pgit` CLI launch, single-instance forwarding, shim install (#25).
 - `2026-07-06-keymap-power-shortcuts-*` — speed-search, commit chords, F7 hunk nav.
 - `2026-07-03-ref-scoped-log-*` — History ref selector; log walk from any revspec (#27).
 - `2026-07-03-e2e-phase3-*` — e2e phase 3: remote/palette/settings coverage, dead-settings audit.
@@ -86,6 +87,10 @@ Four layers, each run independently:
   - Debug builds serve WebDriver on port 4445: close any `pnpm tauri dev`
     instance before e2e runs or the runner may attach to it and clear its
     `localStorage`.
+  - `e2e/wdio.conf.ts` sets `PLATYPUSGIT_NO_SINGLE_INSTANCE=1` before the app
+    launches — without it, `tauri-plugin-single-instance` would forward a
+    test binary's launch into any already-running platypusgit instance
+    instead of serving WebDriver.
 
 ## Architecture
 
@@ -95,6 +100,9 @@ Four layers, each run independently:
 error.rs         AppError enum (thiserror + serde-tagged) — ONLY error type crossing IPC
 state.rs         AppState { backend: Arc<dyn GitBackend> }
 lib.rs           Tauri builder + invoke_handler! registry (all commands listed there)
+cli.rs           CLI arg parsing (LaunchIntent, parse_args, resolve_repo_root),
+                 shim install/status helpers (install_shim, shim_status) —
+                 not to be confused with git/cli.rs (CliBackend) below
 git/
 ├── mod.rs       GitBackend trait — every git op, returns AppResult<T>
 ├── types.rs     RepoHandle, FileStatus, CommitInfo, BranchInfo, TagInfo, StashInfo,
@@ -106,6 +114,7 @@ git/
 commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs        open_repo, get_status, list_all_files, read_file_content,
 │                  append_gitignore, open_in_editor
+├── cli.rs         take_launch_intent, cli_shim_status, install_cli_shim
 ├── commits.rs     get_log, commit, file_history
 ├── diff.rs        get_diff, stage/unstage/discard_paths, stage/unstage/discard_hunk,
 │                  diff_commits, blame_file
@@ -165,7 +174,10 @@ features/            Per-feature: components + Zustand store colocated
 │                    usePaneList (list nav + type-to-jump speed-search),
 │                    useHunkNav (F7/⇧F7 diff hunks), useSpeedSearchStore,
 │                    PGPane / FocusableScroll / CheatSheet
-└── diff/            diff-specific components
+├── diff/            diff-specific components
+└── cli/             useCliLaunch — takes the stashed first-launch intent +
+                     listens for forwarded `cli-launch` events, drives
+                     openRepo + nav screen-switch intent
 
 lib/
 ├── tauri.ts         Typed invoke() wrappers — frontend NEVER calls invoke() directly
