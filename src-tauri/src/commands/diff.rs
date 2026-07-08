@@ -138,6 +138,20 @@ pub async fn diff_commits(
 }
 
 #[tauri::command]
+pub async fn diff_commit(
+    state: State<'_, AppState>,
+    repo_id: String,
+    oid: String,
+    context_lines: u32,
+) -> AppResult<Vec<FileDiff>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.diff_commit(&repo_id, &oid, context_lines))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
 pub async fn blame_file(
     state: State<'_, AppState>,
     repo_id: String,

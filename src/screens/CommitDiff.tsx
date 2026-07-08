@@ -1,17 +1,31 @@
 import React from "react";
-import { PGEmpty, PGSpinner } from "@/design";
+import { PGEmpty } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { diffCommits } from "@/lib/tauri";
+import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
+import { diffCommit, diffCommits } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
-import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
 type Target =
+  | { kind: "commit-self"; oid: string }
   | { kind: "commit-vs-wt"; oid: string }
   | { kind: "commit-vs-commit"; from: string; to: string }
   | { kind: "stash-diff"; oid: string };
+
+function targetHeader(target: Target): string {
+  switch (target.kind) {
+    case "commit-self":
+      return `${target.oid.slice(0, 7)} (this commit)`;
+    case "commit-vs-wt":
+      return `${target.oid.slice(0, 7)} → HEAD`;
+    case "stash-diff":
+      return `stash ${target.oid.slice(0, 7)} → HEAD`;
+    case "commit-vs-commit":
+      return `${target.from.slice(0, 7)} → ${target.to.slice(0, 7)}`;
+  }
+}
 
 export function CommitDiffScreen() {
   const repo = useRepoStore((s) => s.current);
@@ -21,12 +35,14 @@ export function CommitDiffScreen() {
 
   const [target, setTarget] = React.useState<Target | null>(null);
   const [diffs, setDiffs] = React.useState<FileDiff[]>([]);
-  const [selected, setSelected] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (intent?.kind === "commit-vs-wt") {
+    if (intent?.kind === "commit-self") {
+      setTarget({ kind: "commit-self", oid: intent.oid });
+      clearIntent();
+    } else if (intent?.kind === "commit-vs-wt") {
       setTarget({ kind: "commit-vs-wt", oid: intent.oid });
       clearIntent();
     } else if (intent?.kind === "commit-vs-commit") {
@@ -40,106 +56,43 @@ export function CommitDiffScreen() {
 
   React.useEffect(() => {
     if (!repo || !target) return;
-    const [from, to] =
-      target.kind === "commit-vs-wt" || target.kind === "stash-diff"
-        ? [target.oid, "HEAD"]
-        : [target.from, target.to];
     let cancelled = false;
     setLoading(true);
     setError(null);
-    diffCommits(repo.id, from, to, diffContextLines)
-      .then((d) => { if (!cancelled) { setDiffs(d); setSelected(d[0]?.path ?? null); } })
-      .catch((e) => { if (!cancelled) setError(appErrorMessage(e)); })
+    const fetch =
+      target.kind === "commit-self"
+        ? diffCommit(repo.id, target.oid, diffContextLines)
+        : diffCommits(
+            repo.id,
+            target.kind === "commit-vs-commit" ? target.from : target.oid,
+            target.kind === "commit-vs-commit" ? target.to : "HEAD",
+            diffContextLines,
+          );
+    fetch
+      .then((d) => { if (!cancelled) setDiffs(d); })
+      .catch((e) => { if (!cancelled) { setDiffs([]); setError(appErrorMessage(e)); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [repo?.id, target, diffContextLines]);
 
-  // Keyboard: arrows move the file selection while the list pane is focused.
-  const selectedIndex = Math.max(0, diffs.findIndex((d) => d.path === selected));
-  usePaneList({
-    paneId: "commitDiff.files",
-    count: diffs.length,
-    selectedIndex,
-    onSelect: (i) => {
-      const d = diffs[i];
-      if (d) setSelected(d.path);
-    },
-    searchText: (i) => diffs[i]?.path ?? "",
-  });
-
-  const current = diffs.find((d) => d.path === selected) ?? null;
-
-  // F7/⇧F7 walk the viewed file's hunks from either pane.
-  const hunkCursor = useHunkNav({
-    paneIds: ["commitDiff.files", "commitDiff.view"],
-    count: current?.hunks.length ?? 0,
-    resetKey: selected,
-  });
-
   if (!target) {
-    return <PGEmpty icon="diff" title="No diff target">Pick "Compare…" from a context menu.</PGEmpty>;
+    return (
+      <PGEmpty icon="diff" title="No diff target">
+        Pick &quot;Compare…&quot; from a context menu.
+      </PGEmpty>
+    );
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-      <PGPane id="commitDiff.files" style={{
-        width: 260,
-        borderRight: "1px solid var(--border-0)",
-        fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)",
-      }}>
-        <FocusableScroll style={{ height: "100%" }} ariaLabel="Changed files">
-        <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-0)" }}>
-          {target.kind === "commit-vs-wt"
-            ? `${target.oid.slice(0, 7)} → HEAD`
-            : target.kind === "stash-diff"
-            ? `stash ${target.oid.slice(0, 7)} → HEAD`
-            : `${target.from.slice(0, 7)} → ${target.to.slice(0, 7)}`}
-        </div>
-        {loading && <div style={{ padding: 12 }}><PGSpinner /></div>}
-        {error && <div style={{ padding: 12, color: "var(--git-removed)" }}>{error}</div>}
-        {diffs.map((d) => (
-          <div
-            key={d.path}
-            onClick={() => setSelected(d.path)}
-            data-pg-row=""
-            data-selected={d.path === selected ? "" : undefined}
-            style={{
-              padding: "4px 12px",
-              cursor: "pointer",
-            }}
-          >
-            {d.path}
-          </div>
-        ))}
-        </FocusableScroll>
-      </PGPane>
-      <PGPane id="commitDiff.view" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-      <FocusableScroll style={{ flex: 1, padding: 12 }} ariaLabel="Diff">
-        {current && current.hunks.map((h, i) => (
-          <div
-            key={i}
-            data-hunk-index={i}
-            data-hunk-active={hunkCursor === i ? "" : undefined}
-            style={{ marginBottom: 16 }}
-          >
-            <div style={{ color: "var(--fg-3)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)" }}>
-              {h.header}
-            </div>
-            {h.lines.map((ln, j) => (
-              <div key={j} style={{
-                fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)",
-                whiteSpace: "pre",
-                color: ln.kind.kind === "Addition" ? "var(--git-added)" :
-                       ln.kind.kind === "Deletion" ? "var(--git-removed)" : "var(--fg-0)",
-              }}>
-                {ln.kind.kind === "Addition" ? "+" : ln.kind.kind === "Deletion" ? "-" : " "}
-                {ln.content}
-              </div>
-            ))}
-          </div>
-        ))}
-      </FocusableScroll>
-      </PGPane>
-    </div>
+    <CommitDiffPanel
+      diffs={diffs}
+      loading={loading}
+      error={error}
+      header={targetHeader(target)}
+      paneIdPrefix="commitDiff"
+      emptyLabel={
+        target.kind === "commit-self" ? "No changes in this commit." : "No changes."
+      }
+    />
   );
 }

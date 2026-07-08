@@ -442,6 +442,103 @@ fn patch_text_for_hunk(diff: &git2::Diff, delta_index: usize, hunk_index: usize)
     Ok(out)
 }
 
+/// Convert a computed `git2::Diff` into per-file `FileDiff`s (path, rename
+/// origin, binary flag, add/del counts, hunks). Renames must already be
+/// resolved by the caller (`find_similar`). Shared by every tree-to-tree diff
+/// op so hunk grouping stays identical.
+fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
+    let num_deltas = diff.deltas().len();
+    let mut out: Vec<FileDiff> = Vec::with_capacity(num_deltas);
+
+    for delta_idx in 0..num_deltas {
+        let delta = diff.get_delta(delta_idx).expect("valid delta index");
+        let new_path = delta
+            .new_file()
+            .path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let old_path_opt = delta
+            .old_file()
+            .path()
+            .map(|p| p.display().to_string())
+            .filter(|p| p != &new_path);
+        let binary = delta.new_file().is_binary() || delta.old_file().is_binary();
+
+        let mut hunks: Vec<DiffHunk> = Vec::new();
+        let mut current: Option<DiffHunk> = None;
+        let mut additions: u32 = 0;
+        let mut deletions: u32 = 0;
+
+        diff.print(DiffFormat::Patch, |d, hunk, line| {
+            if d.new_file()
+                .path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+                != new_path
+            {
+                return true;
+            }
+            if let Some(h) = hunk {
+                if current
+                    .as_ref()
+                    .map(|c| c.old_start != h.old_start() || c.new_start != h.new_start())
+                    .unwrap_or(true)
+                {
+                    if let Some(done) = current.take() {
+                        hunks.push(done);
+                    }
+                    current = Some(DiffHunk {
+                        header: std::str::from_utf8(h.header()).unwrap_or("").to_string(),
+                        old_start: h.old_start(),
+                        old_lines: h.old_lines(),
+                        new_start: h.new_start(),
+                        new_lines: h.new_lines(),
+                        lines: Vec::new(),
+                    });
+                }
+            }
+            let kind = match line.origin() {
+                '+' => {
+                    additions += 1;
+                    DiffLineKind::Addition
+                }
+                '-' => {
+                    deletions += 1;
+                    DiffLineKind::Deletion
+                }
+                'H' | 'F' => DiffLineKind::HunkHeader,
+                _ => DiffLineKind::Context,
+            };
+            if let Some(h) = current.as_mut() {
+                h.lines.push(DiffLine {
+                    kind,
+                    old_lineno: line.old_lineno(),
+                    new_lineno: line.new_lineno(),
+                    content: std::str::from_utf8(line.content())
+                        .unwrap_or("")
+                        .to_string(),
+                });
+            }
+            true
+        })?;
+
+        if let Some(done) = current.take() {
+            hunks.push(done);
+        }
+
+        out.push(FileDiff {
+            path: new_path,
+            old_path: old_path_opt,
+            binary,
+            additions,
+            deletions,
+            hunks,
+        });
+    }
+
+    Ok(out)
+}
+
 /// Run `git apply [extra_args...] -` with `patch_text` piped to stdin.
 fn git_apply(repo_path: &Path, extra_args: &[&str], patch_text: &str) -> AppResult<()> {
     use std::io::Write as _;
@@ -1248,96 +1345,38 @@ impl GitBackend for Libgit2Backend {
             find_opts.renames(true).copies(false);
             diff.find_similar(Some(&mut find_opts)).ok();
 
-            let num_deltas = diff.deltas().len();
-            let mut out: Vec<FileDiff> = Vec::with_capacity(num_deltas);
+            diff_to_file_diffs(&diff)
+        })
+    }
 
-            for delta_idx in 0..num_deltas {
-                let delta = diff.get_delta(delta_idx).expect("valid delta index");
-                let new_path = delta
-                    .new_file()
-                    .path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default();
-                let old_path_opt = delta
-                    .old_file()
-                    .path()
-                    .map(|p| p.display().to_string())
-                    .filter(|p| p != &new_path);
-                let binary = delta.new_file().is_binary() || delta.old_file().is_binary();
+    fn diff_commit(
+        &self,
+        repo_id: &RepoId,
+        oid: &str,
+        context_lines: u32,
+    ) -> AppResult<Vec<FileDiff>> {
+        self.with_repo(repo_id, |repo| {
+            let commit = repo.revparse_single(oid)?.peel_to_commit()?;
+            let to_tree = commit.tree()?;
+            // First parent for merges; None (empty tree) for the root commit.
+            let from_tree = match commit.parent(0) {
+                Ok(parent) => Some(parent.tree()?),
+                Err(_) => None,
+            };
 
-                let mut hunks: Vec<DiffHunk> = Vec::new();
-                let mut current: Option<DiffHunk> = None;
-                let mut additions: u32 = 0;
-                let mut deletions: u32 = 0;
+            let mut opts = DiffOptions::new();
+            opts.context_lines(context_lines);
+            let mut diff = repo.diff_tree_to_tree(
+                from_tree.as_ref(),
+                Some(&to_tree),
+                Some(&mut opts),
+            )?;
 
-                diff.print(DiffFormat::Patch, |d, hunk, line| {
-                    if d.new_file()
-                        .path()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default()
-                        != new_path
-                    {
-                        return true;
-                    }
-                    if let Some(h) = hunk {
-                        if current
-                            .as_ref()
-                            .map(|c| c.old_start != h.old_start() || c.new_start != h.new_start())
-                            .unwrap_or(true)
-                        {
-                            if let Some(done) = current.take() {
-                                hunks.push(done);
-                            }
-                            current = Some(DiffHunk {
-                                header: std::str::from_utf8(h.header()).unwrap_or("").to_string(),
-                                old_start: h.old_start(),
-                                old_lines: h.old_lines(),
-                                new_start: h.new_start(),
-                                new_lines: h.new_lines(),
-                                lines: Vec::new(),
-                            });
-                        }
-                    }
-                    let kind = match line.origin() {
-                        '+' => {
-                            additions += 1;
-                            DiffLineKind::Addition
-                        }
-                        '-' => {
-                            deletions += 1;
-                            DiffLineKind::Deletion
-                        }
-                        'H' | 'F' => DiffLineKind::HunkHeader,
-                        _ => DiffLineKind::Context,
-                    };
-                    if let Some(h) = current.as_mut() {
-                        h.lines.push(DiffLine {
-                            kind,
-                            old_lineno: line.old_lineno(),
-                            new_lineno: line.new_lineno(),
-                            content: std::str::from_utf8(line.content())
-                                .unwrap_or("")
-                                .to_string(),
-                        });
-                    }
-                    true
-                })?;
+            let mut find_opts = DiffFindOptions::new();
+            find_opts.renames(true).copies(false);
+            diff.find_similar(Some(&mut find_opts)).ok();
 
-                if let Some(done) = current.take() {
-                    hunks.push(done);
-                }
-
-                out.push(FileDiff {
-                    path: new_path,
-                    old_path: old_path_opt,
-                    binary,
-                    additions,
-                    deletions,
-                    hunks,
-                });
-            }
-
-            Ok(out)
+            diff_to_file_diffs(&diff)
         })
     }
 

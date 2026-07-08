@@ -1,6 +1,5 @@
 import React from "react";
 import {
-  PGBadge,
   PGButton,
   PGButtonGroup,
   PGCommitDetail,
@@ -25,7 +24,11 @@ import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
+import { diffCommit } from "@/lib/tauri";
+import { appErrorMessage } from "@/lib/errors";
 import { currentBranch, mapCommitRefs, relativeTime, shortSha } from "@/lib/derive";
 import {
   clickSelection,
@@ -34,12 +37,16 @@ import {
   pruneSelection,
   type Selection,
 } from "@/lib/selection";
-import type { CommitInfo } from "@/lib/types";
+import type { CommitInfo, FileDiff } from "@/lib/types";
 
 type HistoryFilterKind = "all" | "mine" | "branch";
 type RefFilter = "all" | "local";
+type DiffLayout = "below" | "beside";
 
 const SEARCH_DEBOUNCE_MS = 250;
+const DIFF_LAYOUT_KEY = "pg-history-diff-layout";
+/** Small debounce so arrow-scrolling the log doesn't fire a fetch per row. */
+const INLINE_DIFF_DEBOUNCE_MS = 100;
 
 export function HistoryScreen() {
   const commits = useRepoStore((s) => s.commits);
@@ -97,6 +104,34 @@ export function HistoryScreen() {
     max: 720,
     storageKey: "pg-history-detail-w",
   });
+  const repo = useRepoStore((s) => s.current);
+  const diffContextLines = useSettingsStore((s) => s.diffContextLines);
+  // Below-layout panel height reuses the clamped/persisted pane-size hook.
+  const detailHeight = usePaneWidth(320, {
+    min: 140,
+    max: 800,
+    storageKey: "pg-history-diff-h",
+  });
+  const [diffLayout, setDiffLayout] = React.useState<DiffLayout>(() => {
+    try {
+      return localStorage.getItem(DIFF_LAYOUT_KEY) === "beside" ? "beside" : "below";
+    } catch {
+      return "below";
+    }
+  });
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(DIFF_LAYOUT_KEY, diffLayout);
+    } catch {
+      // quota errors are non-fatal
+    }
+  }, [diffLayout]);
+
+  // Inline diff of the selected commit (its own change: parent..commit). Only
+  // for a single selection — a multi-selection uses "View combined diff" (#54).
+  const [inlineDiffs, setInlineDiffs] = React.useState<FileDiff[]>([]);
+  const [inlineLoading, setInlineLoading] = React.useState(false);
+  const [inlineError, setInlineError] = React.useState<string | null>(null);
 
   const head = currentBranch(branches);
   const headName = head?.name ?? null;
@@ -163,7 +198,8 @@ export function HistoryScreen() {
     setLeadOid(oid);
   };
 
-  // Enter / "View combined diff": one commit → commit-vs-wt (unchanged); 2+ →
+  // Enter / "View combined diff": one commit → its own diff full-screen
+  // (commit-self, matching the inline panel — not commit-vs-HEAD); 2+ →
   // combined diff of the whole selection (parent-of-oldest → newest).
   const setNavIntent = useNavStore((s) => s.setIntent);
   const activateSelection = React.useCallback(() => {
@@ -178,7 +214,7 @@ export function HistoryScreen() {
       return;
     }
     const oid = primarySelectedKey(sel) ?? order[cursorIdx];
-    if (oid) setNavIntent({ kind: "commit-vs-wt", oid });
+    if (oid) setNavIntent({ kind: "commit-self", oid });
   }, [sel, commits, order, cursorIdx, setNavIntent]);
 
   // Keyboard: ↑/↓ move a single cursor, Shift+↑/↓ extend the range, Enter opens
@@ -193,6 +229,32 @@ export function HistoryScreen() {
     onActivate: activateSelection,
     searchText: (i) => visible[i]?.summary ?? "",
   });
+
+  // Single-selection commit whose own diff (parent..commit) feeds the inline
+  // panel; null while multi-selecting (that path uses the combined diff).
+  const inlineOid =
+    sel.keys.length > 1 ? null : (primarySelectedKey(sel) ?? order[cursorIdx] ?? null);
+  // Cancellable + debounced so rapid ↑/↓ through the log doesn't flood libgit2.
+  React.useEffect(() => {
+    if (!repo || !inlineOid) {
+      setInlineDiffs([]);
+      setInlineError(null);
+      setInlineLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setInlineLoading(true);
+    setInlineError(null);
+    const handle = window.setTimeout(() => {
+      diffCommit(repo.id, inlineOid, diffContextLines)
+        .then((d) => { if (!cancelled) setInlineDiffs(d); })
+        .catch((e) => {
+          if (!cancelled) { setInlineDiffs([]); setInlineError(appErrorMessage(e)); }
+        })
+        .finally(() => { if (!cancelled) setInlineLoading(false); });
+    }, INLINE_DIFF_DEBOUNCE_MS);
+    return () => { cancelled = true; window.clearTimeout(handle); };
+  }, [repo?.id, inlineOid, diffContextLines]);
 
   const exportVisible = React.useCallback(() => {
     const lines = visible.map(
@@ -225,6 +287,10 @@ export function HistoryScreen() {
       onRefFilter={setRefFilter}
       hideMerges={hideMerges}
       onHideMerges={setHideMerges}
+      diffLayout={diffLayout}
+      onToggleDiffLayout={() =>
+        setDiffLayout((l) => (l === "below" ? "beside" : "below"))
+      }
       onExport={exportVisible}
     />
   );
@@ -316,166 +382,182 @@ export function HistoryScreen() {
     onCommitContext(e, { sha: c.oid, subject: c.summary });
   };
 
+  const listPane = (
+    <PGPane
+      id="history.list"
+      style={{
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "140px 70px 1fr 150px 90px",
+          height: 24,
+          background: "var(--bg-2)",
+          borderBottom: "1px solid var(--border-0)",
+          fontFamily: "var(--font-mono)",
+          fontSize: "var(--fs-10)",
+          color: "var(--fg-2)",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          alignItems: "center",
+        }}
+      >
+        <span style={{ paddingLeft: 12 }}>GRAPH</span>
+        <span>SHA</span>
+        <span>SUBJECT</span>
+        <span>AUTHOR</span>
+        <span>DATE</span>
+      </div>
+      <FocusableScroll style={{ flex: 1 }} ariaLabel="Commit list">
+        {visible.length === 0 && (
+          <div
+            style={{
+              padding: 20,
+              textAlign: "center",
+              color: "var(--fg-3)",
+              fontSize: "var(--fs-12)",
+            }}
+          >
+            {searching
+              ? "Searching…"
+              : searchActive
+                ? "No commits match the search."
+                : "No commits match the current filters."}
+          </div>
+        )}
+        {visible.map((c, i) => {
+          const g = rows[i];
+          const refs = mapCommitRefs(c.refs, headName);
+          const visibleRefs =
+            refFilter === "local" ? refs.filter((r) => !r.remote) : refs;
+          return (
+            <PGCommitRow
+              key={c.oid}
+              lanes={g?.lanes}
+              node={g?.node}
+              sha={c.shortOid}
+              message={c.summary}
+              author={c.author || "unknown"}
+              date={relativeTime(c.timestamp)}
+              refs={visibleRefs}
+              selected={selectedSet.has(c.oid)}
+              onClick={(e) => onRowClick(c.oid, e)}
+              onContextMenu={(e) => onRowContext(c, e)}
+            />
+          );
+        })}
+      </FocusableScroll>
+    </PGPane>
+  );
+
+  // "parent → commit" label above the single-commit inline file list.
+  const diffHeader = current
+    ? current.parents.length > 0
+      ? `${shortSha(current.parents[0])} → ${current.shortOid}`
+      : `(root) → ${current.shortOid}`
+    : "";
+
+  const detailContent = multiSelected ? (
+    <MultiCommitDetail oids={sel.keys} onCombinedDiff={activateSelection} />
+  ) : current ? (
+    <>
+      <PGCommitDetail
+        sha={current.shortOid}
+        fullSha={current.oid}
+        subject={current.summary}
+        body={current.body ?? undefined}
+        author={current.author || "unknown"}
+        email={current.email}
+        date={relativeTime(current.timestamp)}
+        parents={current.parents.map(shortSha)}
+      />
+      <CommitActionRow commit={current} />
+      <div
+        style={{
+          borderTop: "1px solid var(--border-0)",
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <CommitDiffPanel
+          diffs={inlineDiffs}
+          loading={inlineLoading}
+          error={inlineError}
+          header={diffHeader}
+          paneIdPrefix="history.diff"
+        />
+      </div>
+    </>
+  ) : null;
+
+  const showDetail = multiSelected || !!current;
+
   return (
     <>
       <PGToolbar left={toolbarLeft} right={toolbarRight} />
       {advancedPanel}
-      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <PGPane
-          id="history.list"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "140px 70px 1fr 150px 90px",
-              height: 24,
-              background: "var(--bg-2)",
-              borderBottom: "1px solid var(--border-0)",
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--fs-10)",
-              color: "var(--fg-2)",
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-              alignItems: "center",
-            }}
-          >
-            <span style={{ paddingLeft: 12 }}>GRAPH</span>
-            <span>SHA</span>
-            <span>SUBJECT</span>
-            <span>AUTHOR</span>
-            <span>DATE</span>
-          </div>
-          <FocusableScroll style={{ flex: 1 }} ariaLabel="Commit list">
-            {visible.length === 0 && (
-              <div
-                style={{
-                  padding: 20,
-                  textAlign: "center",
-                  color: "var(--fg-3)",
-                  fontSize: "var(--fs-12)",
-                }}
-              >
-                {searching
-                  ? "Searching…"
-                  : searchActive
-                    ? "No commits match the search."
-                    : "No commits match the current filters."}
-              </div>
-            )}
-            {visible.map((c, i) => {
-              const g = rows[i];
-              const refs = mapCommitRefs(c.refs, headName);
-              const visibleRefs =
-                refFilter === "local" ? refs.filter((r) => !r.remote) : refs;
-              return (
-                <PGCommitRow
-                  key={c.oid}
-                  lanes={g?.lanes}
-                  node={g?.node}
-                  sha={c.shortOid}
-                  message={c.summary}
-                  author={c.author || "unknown"}
-                  date={relativeTime(c.timestamp)}
-                  refs={visibleRefs}
-                  selected={selectedSet.has(c.oid)}
-                  onClick={(e) => onRowClick(c.oid, e)}
-                  onContextMenu={(e) => onRowContext(c, e)}
-                />
-              );
-            })}
-          </FocusableScroll>
-        </PGPane>
-
-        <PGResizeHandle onDrag={(d) => detailPane.resize(-d)} side="left" />
-        <PGPane
-          id="history.detail"
-          style={{
-            width: detailPane.width,
-            flexShrink: 0,
-            borderLeft: "1px solid var(--border-0)",
-            background: "var(--bg-1)",
-            display: "flex",
-            flexDirection: "column",
-            minWidth: 0,
-          }}
-        >
-          {multiSelected ? (
-            <MultiCommitDetail oids={sel.keys} onCombinedDiff={activateSelection} />
-          ) : current && (
-            <>
-              <PGCommitDetail
-                sha={current.shortOid}
-                fullSha={current.oid}
-                subject={current.summary}
-                body={current.body ?? undefined}
-                author={current.author || "unknown"}
-                email={current.email}
-                date={relativeTime(current.timestamp)}
-                parents={current.parents.map(shortSha)}
-              />
-              <CommitActionRow commit={current} />
-              <div
-                style={{
-                  borderTop: "1px solid var(--border-0)",
-                  flex: 1,
-                  minHeight: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
-              >
-                <div
-                  style={{
-                    height: 26,
-                    padding: "0 12px",
-                    display: "flex",
-                    alignItems: "center",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: "var(--fs-11)",
-                    color: "var(--fg-1)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    background: "var(--bg-2)",
-                    borderBottom: "1px solid var(--border-0)",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <span>PARENTS</span>
-                  <PGBadge tone="muted">{current.parents.length}</PGBadge>
-                </div>
-                <FocusableScroll
-                  ariaLabel="Commit parents"
-                  style={{
-                    flex: 1,
-                    padding: "8px 12px",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: "var(--fs-12)",
-                    color: "var(--fg-2)",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                  }}
-                >
-                  {current.parents.length === 0 && (
-                    <span style={{ color: "var(--fg-3)" }}>(initial commit)</span>
-                  )}
-                  {current.parents.map((p) => (
-                    <span key={p}>
-                      <span style={{ color: "var(--accent)" }}>{shortSha(p)}</span>{" "}
-                      <span style={{ color: "var(--fg-3)" }}>{p}</span>
-                    </span>
-                  ))}
-                </FocusableScroll>
-              </div>
-            </>
-          )}
-        </PGPane>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: diffLayout === "below" ? "column" : "row",
+        }}
+      >
+        {listPane}
+        {showDetail && diffLayout === "beside" && (
+          <>
+            <PGResizeHandle onDrag={(d) => detailPane.resize(-d)} side="left" />
+            <div
+              data-testid="history-detail"
+              style={{
+                width: detailPane.width,
+                flexShrink: 0,
+                borderLeft: "1px solid var(--border-0)",
+                background: "var(--bg-1)",
+                display: "flex",
+                flexDirection: "column",
+                minWidth: 0,
+                minHeight: 0,
+              }}
+            >
+              {detailContent}
+            </div>
+          </>
+        )}
+        {showDetail && diffLayout === "below" && (
+          <>
+            <PGResizeHandle
+              orientation="vertical"
+              side="top"
+              onDrag={(d) => detailHeight.resize(-d)}
+            />
+            <div
+              data-testid="history-detail"
+              style={{
+                height: detailHeight.width,
+                flexShrink: 0,
+                borderTop: "1px solid var(--border-0)",
+                background: "var(--bg-1)",
+                display: "flex",
+                flexDirection: "column",
+                minWidth: 0,
+                minHeight: 0,
+              }}
+            >
+              {detailContent}
+            </div>
+          </>
+        )}
       </div>
       {commitMenu}
       {commitMultiMenu}
@@ -896,6 +978,8 @@ function HistoryToolbarRight({
   onRefFilter,
   hideMerges,
   onHideMerges,
+  diffLayout,
+  onToggleDiffLayout,
   onExport,
 }: {
   logRef: string | null;
@@ -905,6 +989,8 @@ function HistoryToolbarRight({
   onRefFilter: (v: RefFilter) => void;
   hideMerges: boolean;
   onHideMerges: (v: boolean) => void;
+  diffLayout: DiffLayout;
+  onToggleDiffLayout: () => void;
   onExport: () => void;
 }) {
   const { openAt, menu } = useContextMenu<null>(() => [
@@ -939,6 +1025,18 @@ function HistoryToolbarRight({
         size="md"
         title="Filter"
         onClick={(e) => openAt(e.clientX, e.clientY + 4, null)}
+      />
+      <PGIconButton
+        icon="diff"
+        size="md"
+        title={
+          diffLayout === "below"
+            ? "Diff panel below — switch to beside"
+            : "Diff panel beside — switch to below"
+        }
+        aria-pressed={diffLayout === "beside"}
+        data-testid="history-diff-layout"
+        onClick={onToggleDiffLayout}
       />
       <PGIconButton
         icon="download"

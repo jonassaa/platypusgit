@@ -7,6 +7,7 @@ import { HistoryScreen } from "./History";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
+import { mockInvoke } from "@/test/invokeMock";
 import type { CommitInfo } from "@/lib/types";
 
 const mkCommit = (oid: string, summary: string): CommitInfo => ({
@@ -54,6 +55,8 @@ const rowFor = (text: string) => {
 
 describe("History keyboard navigation", () => {
   beforeEach(() => {
+    // The inline diff panel fetches the selected commit's diff on selection.
+    mockInvoke("diff_commit", () => []);
     useRepoStore.setState({
       current: { id: "r1", path: "/repo", head: "main" },
       commits: [
@@ -97,13 +100,13 @@ describe("History keyboard navigation", () => {
     expect(press("ArrowDown")).toBe(false);
   });
 
-  it("Enter opens the selected commit's diff via a nav intent", () => {
+  it("Enter opens the selected commit's own diff via a nav intent", () => {
     render(<HistoryScreen />);
     useFocusStore.setState({ focused: "history.list" });
     press("ArrowDown");
     press("Enter");
     expect(useNavStore.getState().intent).toEqual({
-      kind: "commit-vs-wt",
+      kind: "commit-self",
       oid: "b".repeat(40),
     });
   });

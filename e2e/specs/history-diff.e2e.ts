@@ -31,6 +31,40 @@ describe("history & diff", () => {
     await expect($("span*=merge feature")).toBeDisplayed();
   });
 
+  it("reveals the selected commit's own diff inline (no screen switch)", async () => {
+    repo = branchyRepo();
+    await openRepo(repo.path);
+    await switchScreen("history");
+
+    await browser.waitUntil(
+      async () => (await $$('[data-testid="commit-row"]').length) >= 5,
+      { timeout: 20_000, timeoutMsg: "commit rows never appeared" },
+    );
+
+    // Default selection is the top row (the "merge feature" commit). Its
+    // inline diff is against its first parent → the file the merge brought in.
+    const detail = $('[data-testid="history-detail"]');
+    await detail.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "inline diff detail region never appeared",
+    });
+    await $('[data-testid="history-detail"] [data-path="feature.txt"]').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "merge commit's inline changed file (feature.txt) never appeared",
+    });
+
+    // Selecting a different commit swaps the inline diff to that commit's own
+    // change — the "fix: update a.txt" commit touched a.txt.
+    await $('[data-testid="commit-row"]*=update a.txt').click();
+    await $('[data-testid="history-detail"] [data-path="a.txt"]').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "selected commit's inline changed file (a.txt) never appeared",
+    });
+
+    // Still on History (column headers present) — no jump to the diff screen.
+    await expect($("span*=SUBJECT")).toBeDisplayed();
+  });
+
   it("shows a hunk for a modified file and stages it", async () => {
     repo = dirtyRepo();
     await openRepo(repo.path);

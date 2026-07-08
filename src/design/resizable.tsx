@@ -9,15 +9,22 @@ export function PGResizeHandle({
   onDrag,
   onActiveChange,
   side = "right",
+  orientation = "horizontal",
 }: {
   onDrag: (deltaPx: number) => void;
   /** Called when the drag starts/stops. Useful to suspend CSS transitions. */
   onActiveChange?: (active: boolean) => void;
   /** Which side of the owning pane the handle sits on. Affects cursor only. */
-  side?: "left" | "right";
+  side?: "left" | "right" | "top" | "bottom";
+  /**
+   * Drag axis. `horizontal` (default) reports the X delta for width resizing;
+   * `vertical` reports the Y delta for height resizing (e.g. a panel below).
+   */
+  orientation?: "horizontal" | "vertical";
 }) {
+  const vertical = orientation === "vertical";
   const [active, setActive] = React.useState(false);
-  const startX = React.useRef<number | null>(null);
+  const start = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     onActiveChange?.(active);
@@ -26,14 +33,15 @@ export function PGResizeHandle({
   React.useEffect(() => {
     if (!active) return;
     const onMove = (e: MouseEvent) => {
-      if (startX.current === null) return;
-      const delta = e.clientX - startX.current;
-      startX.current = e.clientX;
+      if (start.current === null) return;
+      const pos = vertical ? e.clientY : e.clientX;
+      const delta = pos - start.current;
+      start.current = pos;
       onDrag(delta);
     };
     const onUp = () => {
       setActive(false);
-      startX.current = null;
+      start.current = null;
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
@@ -41,21 +49,24 @@ export function PGResizeHandle({
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
-  }, [active, onDrag]);
+  }, [active, onDrag, vertical]);
 
   return (
     <div
       onMouseDown={(e) => {
         e.preventDefault();
-        startX.current = e.clientX;
+        start.current = vertical ? e.clientY : e.clientX;
         setActive(true);
       }}
       style={{
         flexShrink: 0,
-        width: 4,
+        width: vertical ? "auto" : 4,
+        height: vertical ? 4 : "auto",
         marginLeft: side === "right" ? -2 : 0,
         marginRight: side === "left" ? -2 : 0,
-        cursor: "col-resize",
+        marginTop: side === "bottom" ? -2 : 0,
+        marginBottom: side === "top" ? -2 : 0,
+        cursor: vertical ? "row-resize" : "col-resize",
         background: active ? "var(--accent)" : "transparent",
         transition: active ? "none" : "background var(--t-fast)",
         zIndex: 1,
