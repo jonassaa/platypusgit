@@ -230,9 +230,12 @@ export function RepoBrowserScreen() {
   );
 
   // Map selected tree keys to worktree statuses for multi-file operations.
-  // Folder keys simply don't resolve to a status entry, so they're inert.
-  // In all-files mode unmodified files only exist in allFiles, not status —
-  // they carry no stage/unstage actions but still count and copy.
+  // A selected FOLDER key resolves to no file entry, so expand it to every
+  // visible descendant file (against the tree's source set, `filteredStatus`)
+  // — otherwise a selected folder is silently dropped from the count and from
+  // Stage/Discard, under-counting a destructive op. In all-files mode
+  // unmodified files only exist in allFiles, not status — they carry no
+  // stage/unstage actions but still count and copy.
   const splitSelection = React.useCallback(
     (
       keys: string[],
@@ -240,19 +243,32 @@ export function RepoBrowserScreen() {
       const stagedPaths: string[] = [];
       const unstagedPaths: string[] = [];
       const paths: string[] = [];
+      const seen = new Set<string>();
+      const add = (st: FileStatus) => {
+        if (seen.has(st.path)) return;
+        seen.add(st.path);
+        paths.push(st.path);
+        if (isStaged(st)) stagedPaths.push(st.path);
+        if (isUnstaged(st)) unstagedPaths.push(st.path);
+      };
       for (const key of keys) {
         const path = key.replace(/^\//, "");
         const st =
           status.find((s) => s.path === path) ??
           allFiles.find((s) => s.path === path);
-        if (!st) continue;
-        paths.push(path);
-        if (isStaged(st)) stagedPaths.push(path);
-        if (isUnstaged(st)) unstagedPaths.push(path);
+        if (st) {
+          add(st);
+          continue;
+        }
+        // Folder key: pull in every visible file beneath it.
+        const prefix = path + "/";
+        for (const child of filteredStatus) {
+          if (child.path.startsWith(prefix)) add(child);
+        }
       }
       return { stagedPaths, unstagedPaths, paths };
     },
-    [status, allFiles],
+    [status, allFiles, filteredStatus],
   );
 
   const fileCtx = useContextMenu<{ key: string; node: PGFileTreeNode }>(
