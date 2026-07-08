@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import React from "react";
 import {
@@ -29,7 +28,7 @@ import { BlameScreen } from "@/screens/Blame";
 import { SettingsScreen } from "@/screens/Settings";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
-import { headUpstream } from "@/features/repo/ops";
+import { headUpstream, openRepoDialog } from "@/features/repo/ops";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useCliLaunch } from "@/features/cli/useCliLaunch";
 import {
@@ -377,7 +376,6 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const activity = useRepoStore((s) => s.activity);
   const refresh = useRepoStore((s) => s.refreshAll);
   const close = useRepoStore((s) => s.closeRepo);
-  const openStore = useRepoStore((s) => s.openRepo);
   const store = useRepoStore();
   const defaultPullMode = useSettingsStore((s) => s.defaultPullMode);
 
@@ -394,13 +392,8 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     null,
   );
 
-  const onOpen = async () => {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Open repository",
-    });
-    if (typeof selected === "string") await openStore(selected);
+  const onOpen = () => {
+    void openRepoDialog();
   };
 
   // Same ops the keymap default runners and palette use (features/repo/ops.ts).

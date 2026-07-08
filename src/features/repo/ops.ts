@@ -3,6 +3,7 @@
 // ran and `false` when it declined (no repo / no upstream), so keymap runners
 // can fall through cleanly.
 
+import { open } from "@tauri-apps/plugin-dialog";
 import { pgFlash } from "@/design";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { currentBranch, isStaged, isUnstaged } from "@/lib/derive";
@@ -17,6 +18,25 @@ export function headUpstream(
   const idx = upstream.indexOf("/");
   if (idx < 0) return [upstream, headName ?? upstream];
   return [upstream.slice(0, idx), upstream.slice(idx + 1)];
+}
+
+/** Show the native folder picker and open the chosen repository. Shared by the
+ *  titlebar/Welcome buttons and the ⌘O keymap action so all three agree. */
+export async function openRepoDialog(): Promise<void> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Open repository",
+  });
+  if (typeof selected === "string") {
+    await useRepoStore.getState().openRepo(selected);
+  }
+}
+
+/** Keymap runner form of {@link openRepoDialog}. Always claims the chord. */
+export function openRepoOp(): boolean {
+  void openRepoDialog();
+  return true;
 }
 
 export function fetchAllOp(): boolean {

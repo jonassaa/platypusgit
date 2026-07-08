@@ -13,6 +13,7 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import {
   fetchAllOp,
+  openRepoOp,
   pullCurrentOp,
   pushCurrentOp,
   refreshOp,
@@ -76,7 +77,8 @@ export type ActionId =
   | "commit.commitAndPush"
   | "commit.toggleAmend"
   | "branch.createNew"
-  | "tree.find";
+  | "tree.find"
+  | "repo.open";
 
 export interface ActionDef {
   id: ActionId;
@@ -203,6 +205,7 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "diff.nextChange": { id: "diff.nextChange", title: "Next change (hunk)", category: "Diff", scope: "pane" },
   "diff.prevChange": { id: "diff.prevChange", title: "Previous change (hunk)", category: "Diff", scope: "pane" },
 
+  "repo.open": { id: "repo.open", title: "Open repository…", category: "Repository", scope: "global", run: openRepoOp },
   "repo.fetch": { id: "repo.fetch", title: "Fetch all remotes", category: "Repository", scope: "global", run: fetchAllOp },
   "repo.pull": { id: "repo.pull", title: "Pull (update project)", category: "Repository", scope: "global", run: pullCurrentOp },
   "repo.push": { id: "repo.push", title: "Push", category: "Repository", scope: "global", run: pushCurrentOp },

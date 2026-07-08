@@ -35,6 +35,8 @@ const POWER_SHORTCUTS = {
 
 /** Bindings shared by every preset — panes, lists, overlay. */
 const COMMON = {
+  // Open repository (the status bar advertises ⌘O). Same chord both presets.
+  "repo.open": ["Mod+O"],
   "app.closeOverlay": ["Escape"],
   "pane.focusLeft": ["Alt+ArrowLeft"],
   "pane.focusRight": ["Alt+ArrowRight"],
