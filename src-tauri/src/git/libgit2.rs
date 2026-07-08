@@ -575,6 +575,22 @@ fn git_apply(repo_path: &Path, extra_args: &[&str], patch_text: &str) -> AppResu
     Ok(())
 }
 
+/// Resolve a revspec (branch, tag, short/full oid, `HEAD~2`, `tag^{}`, …) to
+/// its tree, mapping any resolution failure to `InvalidRef` so the UI gets a
+/// clean "unknown revision" error rather than a stringified internal one.
+fn resolve_tree<'a>(repo: &'a Repository, revspec: &str) -> AppResult<git2::Tree<'a>> {
+    repo.revparse_single(revspec)
+        .and_then(|obj| obj.peel_to_tree())
+        .map_err(|_| AppError::InvalidRef(revspec.to_string()))
+}
+
+/// Resolve a revspec to its commit, mapping failure to `InvalidRef`.
+fn resolve_commit<'a>(repo: &'a Repository, revspec: &str) -> AppResult<git2::Commit<'a>> {
+    repo.revparse_single(revspec)
+        .and_then(|obj| obj.peel_to_commit())
+        .map_err(|_| AppError::InvalidRef(revspec.to_string()))
+}
+
 /// Push the log walk's start commit onto `walk`. `None` starts at HEAD and
 /// returns `Ok(false)` ONLY when HEAD is unborn (a fresh repo with no commits;
 /// caller returns an empty log). A missing/corrupt HEAD surfaces as an error
@@ -602,10 +618,7 @@ fn push_log_start(
             Err(e) => Err(e.into()),
         },
         Some(spec) => {
-            let commit = repo
-                .revparse_single(spec)
-                .and_then(|obj| obj.peel_to_commit())
-                .map_err(|_| AppError::InvalidRef(spec.to_string()))?;
+            let commit = resolve_commit(repo, spec)?;
             walk.push(commit.id())?;
             Ok(true)
         }
@@ -1241,10 +1254,7 @@ impl GitBackend for Libgit2Backend {
 
     fn list_files_at_rev(&self, repo_id: &RepoId, revspec: &str) -> AppResult<Vec<FileStatus>> {
         self.with_repo(repo_id, |repo| {
-            let tree = repo
-                .revparse_single(revspec)
-                .map_err(|_| AppError::InvalidRef(revspec.to_string()))?
-                .peel_to_tree()?;
+            let tree = resolve_tree(repo, revspec)?;
 
             let mut out = Vec::new();
             // Walk the tree pre-order, accumulating full paths for blobs only.
@@ -1279,10 +1289,7 @@ impl GitBackend for Libgit2Backend {
         let rel = path.to_path_buf();
         let path_str = rel.to_string_lossy().into_owned();
         self.with_repo(repo_id, |repo| {
-            let tree = repo
-                .revparse_single(revspec)
-                .map_err(|_| AppError::InvalidRef(revspec.to_string()))?
-                .peel_to_tree()?;
+            let tree = resolve_tree(repo, revspec)?;
 
             let entry = tree
                 .get_path(&rel)
