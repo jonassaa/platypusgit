@@ -75,7 +75,8 @@ export type ActionId =
   | "commit.commit"
   | "commit.commitAndPush"
   | "commit.toggleAmend"
-  | "branch.createNew";
+  | "branch.createNew"
+  | "tree.find";
 
 export interface ActionDef {
   id: ActionId;
@@ -226,6 +227,15 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
       usePaletteStore.getState().pushStep(createBranchInputStep());
       return true;
     },
+  },
+
+  // Component-handled: the Files tree registers a handler that focuses its
+  // filter box while mounted (like commit.*). Elsewhere the chord falls through.
+  "tree.find": {
+    id: "tree.find",
+    title: "Find in file tree",
+    category: "Lists & trees",
+    scope: "global",
   },
 };
 

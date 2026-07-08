@@ -114,11 +114,12 @@ describe("platypusgit preset", () => {
 
   it("shares the rider repo-op chords (review F2/F7: the old set collided)", () => {
     // Old classic bindings sat on entrenched chords: ⌘⇧P is the VS Code
-    // command palette (a mutating push there is dangerous), ⌘⇧F is
-    // find-in-files everywhere, ⌘⇧R is browser hard-reload.
+    // command palette (a mutating push there is dangerous), ⌘⇧R is browser
+    // hard-reload — neither is bound. ⌘⇧F IS bound, but to find-in-tree, which
+    // is semantically the find-in-files chord users expect, not a mutating op.
     expect(rev.get("Mod+Shift+P")).toBeUndefined();
-    expect(rev.get("Mod+Shift+F")).toBeUndefined();
     expect(rev.get("Mod+Shift+R")).toBeUndefined();
+    expect(rev.get("Mod+Shift+F")).toEqual(["tree.find"]);
     expect(PLATYPUSGIT_PRESET.bindings["repo.push"]).toEqual(["Mod+Shift+K"]);
     expect(PLATYPUSGIT_PRESET.bindings["repo.pull"]).toEqual(["Mod+T"]);
     expect(PLATYPUSGIT_PRESET.bindings["repo.fetch"]).toEqual(["Mod+Shift+T"]);

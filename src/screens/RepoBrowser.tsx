@@ -45,7 +45,8 @@ import {
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import { buildStatusTree } from "@/lib/tree";
-import { PGPane, FocusableScroll } from "@/features/keymap";
+import { fuzzyMatch } from "@/features/palette/fuzzyMatch";
+import { PGPane, FocusableScroll, useAction } from "@/features/keymap";
 import type {
   BranchInfo,
   FileContent,
@@ -103,6 +104,8 @@ export function RepoBrowserScreen() {
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
 
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  const [treeFilter, setTreeFilter] = React.useState("");
+  const filterInputRef = React.useRef<HTMLInputElement>(null);
   const [sel, setSel] = React.useState<Selection>(emptySelection);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
@@ -171,44 +174,43 @@ export function RepoBrowserScreen() {
   }, [repo, rev, listFilesAtRev]);
 
   const filteredStatus = React.useMemo<FileStatus[]>(() => {
-    // Browsing a committed revision: show its whole tree, no status filtering.
-    if (browsingRev) return revFiles;
     let base: FileStatus[];
-    switch (filterMode) {
-      case "conflicts":
-        base = status.filter(
-          (s) =>
-            s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted",
-        );
-        break;
-      case "changes":
-        base = status.filter(
-          (s) =>
-            s.worktree.kind !== "Unmodified" ||
-            s.index.kind !== "Unmodified",
-        );
-        break;
-      case "all":
-      default:
-        base = allFiles;
+    // Browsing a committed revision: show its whole tree, no status filtering.
+    if (browsingRev) {
+      base = revFiles;
+    } else {
+      switch (filterMode) {
+        case "conflicts":
+          base = status.filter(
+            (s) =>
+              s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted",
+          );
+          break;
+        case "changes":
+          base = status.filter(
+            (s) =>
+              s.worktree.kind !== "Unmodified" ||
+              s.index.kind !== "Unmodified",
+          );
+          break;
+        case "all":
+        default:
+          base = allFiles;
+      }
+      if (hiddenKinds.size > 0) {
+        base = base.filter((s) => !isHidden(s, hiddenKinds));
+      }
     }
-    if (hiddenKinds.size === 0) return base;
-    return base.filter((s) => !isHidden(s, hiddenKinds));
-  }, [status, allFiles, filterMode, hiddenKinds, browsingRev, revFiles]);
+    // Live fuzzy filter from the "Find in tree" box — matches the full path.
+    const q = treeFilter.trim();
+    if (q) base = base.filter((s) => fuzzyMatch(q, s.path).matched);
+    return base;
+  }, [status, allFiles, filterMode, hiddenKinds, browsingRev, revFiles, treeFilter]);
 
   const tree = React.useMemo<PGFileTreeNode[]>(() => {
     const t = buildStatusTree(filteredStatus);
     return sortMode === "desc" ? reverseTree(t) : t;
   }, [filteredStatus, sortMode]);
-
-  // Visible row order (folders included) for shift-click ranges; selection
-  // keys are PGFileTree keys of the form "/a/b/c".
-  const rowOrder = React.useMemo(
-    () => flattenFileTree(tree, expanded).map((f) => f.key),
-    [tree, expanded],
-  );
-  const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
-  const selected = primarySelectedKey(sel);
 
   // Expand-all / collapse-all: set every folder key true / false. Collapse must
   // write explicit `false` (not clear the map) to override defaultExpanded.
@@ -220,6 +222,37 @@ export function RepoBrowserScreen() {
   const collapseAll = React.useCallback(
     () => setExpanded(Object.fromEntries(folderKeys.map((k) => [k, false]))),
     [folderKeys],
+  );
+
+  // While the filter box is active, expand every folder so matches show
+  // regardless of the persisted expand state.
+  const filtering = treeFilter.trim().length > 0;
+  const expandedForRender = React.useMemo(
+    () =>
+      filtering
+        ? Object.fromEntries(folderKeys.map((k) => [k, true]))
+        : expanded,
+    [filtering, folderKeys, expanded],
+  );
+
+  // Visible row order (folders included) for shift-click ranges; selection
+  // keys are PGFileTree keys of the form "/a/b/c".
+  const rowOrder = React.useMemo(
+    () => flattenFileTree(tree, expandedForRender).map((f) => f.key),
+    [tree, expandedForRender],
+  );
+  const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
+  const selected = primarySelectedKey(sel);
+
+  // ⌘⇧F focuses the filter box (chord advertised by the search chip).
+  useAction(
+    "tree.find",
+    () => {
+      filterInputRef.current?.focus();
+      filterInputRef.current?.select();
+      return true;
+    },
+    [],
   );
 
   // Prune selection when rows disappear (filter/rev/sort change, refresh).
@@ -463,6 +496,9 @@ export function RepoBrowserScreen() {
             />
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
               <PGSearchInput
+                inputRef={filterInputRef}
+                value={treeFilter}
+                onChange={setTreeFilter}
                 placeholder="Find in tree…"
                 shortcut="⌘⇧F"
                 style={{ flex: 1, minWidth: 0 }}
@@ -491,13 +527,15 @@ export function RepoBrowserScreen() {
                   fontFamily: "var(--font-mono)",
                 }}
               >
-                {browsingRev
-                  ? "No files at this revision."
-                  : filterMode === "all"
-                    ? "No files."
-                    : filterMode === "conflicts"
-                      ? "No conflicts."
-                      : "Working tree clean."}
+                {filtering
+                  ? `No files match "${treeFilter.trim()}".`
+                  : browsingRev
+                    ? "No files at this revision."
+                    : filterMode === "all"
+                      ? "No files."
+                      : filterMode === "conflicts"
+                        ? "No conflicts."
+                        : "Working tree clean."}
               </div>
             )}
             {(loading || revLoading) && tree.length === 0 && (
@@ -513,7 +551,7 @@ export function RepoBrowserScreen() {
             )}
             <PGFileTree
               nodes={tree}
-              expanded={expanded}
+              expanded={expandedForRender}
               onToggle={(k) =>
                 setExpanded((e) => ({ ...e, [k]: !e[k] }))
               }

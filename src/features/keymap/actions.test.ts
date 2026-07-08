@@ -30,6 +30,9 @@ describe("action catalog", () => {
       "commit.commit",
       "commit.commitAndPush",
       "commit.toggleAmend",
+      // RepoBrowser focuses its tree filter box while mounted; falls through
+      // on every other screen.
+      "tree.find",
     ]);
     for (const id of ALL_ACTION_IDS) {
       const d = ACTIONS[id];
