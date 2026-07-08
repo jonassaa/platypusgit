@@ -138,8 +138,14 @@ export function CommandPalette() {
 
   // Filter + score + (root only) group + cap, then flatten for keyboard nav.
   const { flat, groups } = React.useMemo(() => {
+    // On the root step a non-"all" chip renders only its own type. Skip the
+    // other types BEFORE fuzzy-matching so a selected chip doesn't pay to score
+    // the entire candidate set (up to ~500 rows) each keystroke.
+    const chipFilter =
+      step.kind === "root" && activeChip !== "all" ? activeChip : null;
     const byType: Record<ResultType, ScoredRow[]> = { command: [], branch: [], file: [], commit: [] };
     for (const item of source) {
+      if (chipFilter && item.type !== chipFilter) continue;
       const mSearch = fuzzyMatch(query, item.search);
       const mLabel = item.search !== item.label ? fuzzyMatch(query, item.label) : mSearch;
       const best = mSearch.score >= mLabel.score ? mSearch : mLabel;
@@ -157,7 +163,7 @@ export function CommandPalette() {
       flatOut.push(...sorted);
     }
     return { flat: flatOut, groups: groupsOut };
-  }, [source, query]);
+  }, [source, query, step.kind, activeChip]);
 
   React.useEffect(() => {
     if (!open) return;
