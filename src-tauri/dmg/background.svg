@@ -1,61 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 460" width="640" height="460">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 400" width="660" height="400">
   <!--
-    PlatypusGit DMG installer background.
-    Solid #1f2a2a matches the app-icon square so the icon's edges vanish; only
-    the face shows. This art draws the platypus BODY directly under where Finder
-    places the .app icon (center 176,150 @128px) so face+body read as one animal.
-    Deliberately omits the face (the real .app icon supplies it) and the
-    Applications folder (the real alias supplies it). Keep the icon-footprint
-    region — roughly x 112..240, y 86..214 — free of anything that must be seen,
-    since the icon is painted on top of it.
-    Regenerate PNG:  inkscape background.svg -o background.png -w 1280 -h 920
+    PlatypusGit DMG installer background — classic "drag to Applications" layout,
+    styled to match the marketing site's dark mode (site/src/styles/tokens.css).
+    Palette (oklch tokens → sRGB): bg-0 #0d1013, bg-1 #131519, border-1 #33353a,
+    fg-1 #c2c4c7, fg-2 #8c8f94, accent teal #4daa9f.
+
+    Finder paints the real .app icon at appPosition (178,190) and the Applications
+    alias at applicationFolderPosition (482,190), both 128px, on top of this image.
+    Keep those two spots clear. The arrow bridges them.
+    Regenerate PNG:  inkscape background.svg -o background.png -w 1320 -h 800
+                     sips -s dpiWidth 144 -s dpiHeight 144 background.png
   -->
   <defs>
-    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#46a99e"/>
-      <stop offset="1" stop-color="#33867c"/>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#12151a"/>
+      <stop offset="0.55" stop-color="#0d1013"/>
+      <stop offset="1" stop-color="#0b0e11"/>
     </linearGradient>
-    <linearGradient id="web" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#eab469"/>
-      <stop offset="1" stop-color="#dd9d4a"/>
+    <radialGradient id="glow" cx="0.5" cy="0.48" r="0.42">
+      <stop offset="0" stop-color="#4daa9f" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#4daa9f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="arrow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4daa9f" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#4daa9f"/>
     </linearGradient>
   </defs>
 
-  <!-- solid background: must exactly match the icon square (#1f2a2a) -->
-  <rect x="0" y="0" width="640" height="460" fill="#1f2a2a"/>
+  <!-- site-dark ground with a whisper of depth -->
+  <rect x="0" y="0" width="660" height="400" fill="url(#ground)"/>
+  <ellipse cx="330" cy="192" rx="300" ry="150" fill="url(#glow)"/>
+  <!-- hairline top separator, like the site's chrome -->
+  <rect x="0" y="0" width="660" height="1" fill="#33353a" opacity="0.5"/>
 
-  <!-- ===== platypus body, centered under the icon at x=176 ===== -->
+  <!-- ===== drag arrow: app icon (left) → Applications (right) ===== -->
   <g>
-    <!-- flat beaver-like tail, behind the body -->
-    <ellipse cx="176" cy="374" rx="58" ry="25" fill="#2b7269"/>
-    <path d="M 128 372 q 48 -16 96 0" fill="none" stroke="#20564f" stroke-width="2" opacity="0.5"/>
-
-    <!-- webbed feet, drawn before the body so the body overlaps their tops -->
-    <g fill="url(#web)" stroke="#c98f3f" stroke-width="1.5" stroke-linejoin="round">
-      <g transform="translate(133 352) rotate(-16)">
-        <path d="M 0 -18 C 21 -18 27 0 27 17 C 27 25 15 29 0 29 C -15 29 -27 25 -27 17 C -27 0 -21 -18 0 -18 Z"/>
-        <path d="M -9 25 V 8 M 0 28 V 9 M 9 25 V 8" fill="none" stroke="#c98f3f" stroke-width="1.4" opacity="0.55"/>
-      </g>
-      <g transform="translate(219 352) rotate(16)">
-        <path d="M 0 -18 C 21 -18 27 0 27 17 C 27 25 15 29 0 29 C -15 29 -27 25 -27 17 C -27 0 -21 -18 0 -18 Z"/>
-        <path d="M -9 25 V 8 M 0 28 V 9 M 9 25 V 8" fill="none" stroke="#c98f3f" stroke-width="1.4" opacity="0.55"/>
-      </g>
-    </g>
-
-    <!-- body: broad, high, rounded shoulders (squircle) frame the head so the
-         short dark neck reads as intentional rather than a floating head -->
-    <path d="M 146 200 H 206 Q 280 200 280 274 V 290 Q 280 364 206 364 H 146 Q 72 364 72 290 V 274 Q 72 200 146 200 Z" fill="url(#body)"/>
-    <!-- whisper-soft belly sheen (low opacity — not a bullseye) -->
-    <ellipse cx="176" cy="316" rx="62" ry="40" fill="#57bbaf" opacity="0.12"/>
-  </g>
-
-  <!-- ===== drag arrow: from the platypus toward the Applications alias ===== -->
-  <g stroke="#eab469" fill="none" stroke-width="5" stroke-linecap="round">
-    <path d="M 282 292 C 336 292, 374 202, 404 170" stroke-dasharray="2 13"/>
-    <path d="M 386 162 L 408 168 L 396 189" stroke-linejoin="round"/>
+    <!-- soft glow under the arrow -->
+    <path d="M 262 190 H 392" fill="none" stroke="#4daa9f" stroke-width="18" stroke-linecap="round" opacity="0.12"/>
+    <!-- shaft -->
+    <path d="M 262 190 H 388" fill="none" stroke="url(#arrow)" stroke-width="8" stroke-linecap="round"/>
+    <!-- head -->
+    <path d="M 380 174 L 408 190 L 380 206 Z" fill="#4daa9f"/>
   </g>
 
   <!-- instruction -->
-  <text x="320" y="440" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif"
-        font-size="15" font-weight="500" fill="#8fa9a5" letter-spacing="0.3">Drag PlatypusGit onto Applications to install</text>
+  <text x="330" y="332" text-anchor="middle"
+        font-family="'JetBrains Mono','SF Mono',Menlo,ui-monospace,monospace"
+        font-size="13" letter-spacing="0.5" fill="#8c8f94">drag PlatypusGit onto Applications</text>
 </svg>

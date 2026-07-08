@@ -47,9 +47,9 @@
       "signingIdentity": "-",
       "dmg": {
         "background": "dmg/background.png",
-        "windowSize": { "width": 640, "height": 460 },
-        "appPosition": { "x": 176, "y": 150 },
-        "applicationFolderPosition": { "x": 464, "y": 150 }
+        "windowSize": { "width": 660, "height": 400 },
+        "appPosition": { "x": 178, "y": 190 },
+        "applicationFolderPosition": { "x": 482, "y": 190 }
       }
     },
     "windows": {
