@@ -137,9 +137,10 @@ Four layers, each run independently:
     WebKitGTK + xvfb stack) — see the "Headless e2e in Docker" section above.
   - `pnpm.overrides["@wdio/native-utils"] = "2.5.0"` pins around a broken
     dep pin in `@wdio/tauri-service@1.2.0` — don't remove.
-  - Debug builds serve WebDriver on port 4445: close any `pnpm tauri dev`
-    instance before e2e runs or the runner may attach to it and clear its
-    `localStorage`.
+  - Only `e2e`-feature builds serve WebDriver on port 4445 (the plugin is now
+    gated behind the `e2e` cargo feature, so a plain `pnpm tauri dev` no longer
+    opens it). Still: don't leave a prior e2e binary running when starting a new
+    e2e run, or the runner may attach to it and clear its `localStorage`.
   - `e2e/wdio.conf.ts` sets `PLATYPUSGIT_NO_SINGLE_INSTANCE=1` before the app
     launches — without it, `tauri-plugin-single-instance` would forward a
     test binary's launch into any already-running platypusgit instance
@@ -303,7 +304,8 @@ lib/
 - Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
 
 ### Permissions (Tauri 2)
-- All permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
+- All permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
+- **E2E-only permissions** live in the inline `e2e-focus` capability in `src-tauri/tauri.e2e.conf.json`, NOT in `default.json`: `core:window:allow-set-focus` + `wdio-webdriver:default`. That capability is loaded only via `--config src-tauri/tauri.e2e.conf.json`, and the `tauri-plugin-wdio-webdriver` crate is an optional dep behind the `e2e` cargo feature (`--features …,e2e` in `test:e2e:build`), so the WebDriver bridge is never compiled into or permitted in dev/production builds.
 - New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`, register with `.plugin(tauri_plugin_X::init())` in `lib.rs`, add plugin permissions to capability file.
 
 ### Path aliases
