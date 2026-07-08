@@ -12,7 +12,7 @@ export type IconName =
   | "download" | "upload" | "link" | "lock"
   | "play" | "pause" | "star" | "copy" | "external"
   | "edit" | "trash" | "conflict" | "squash" | "drag" | "bell"
-  | "diff" | "undo" | "fix";
+  | "diff" | "undo" | "fix" | "expandAll" | "collapseAll";
 
 const ICONS: Record<IconName, ReactNode> = {
   repo: <>
@@ -185,6 +185,10 @@ const ICONS: Record<IconName, ReactNode> = {
   </>,
   undo: <path d="M6 5L3 8l3 3M3 8h7a3 3 0 0 1 0 6H8" />,
   fix: <path d="M10 2l4 4-2 2-4-4 2-2zM8 4L2 10v4h4l6-6" />,
+  // Chevrons pointing away from center = unfold (expand all).
+  expandAll: <path d="M4.5 6L8 2.5 11.5 6M4.5 10L8 13.5 11.5 10" />,
+  // Chevrons pointing toward center = fold (collapse all).
+  collapseAll: <path d="M4.5 3L8 6.5 11.5 3M4.5 13L8 9.5 11.5 13" />,
 };
 
 export interface PGIconProps {

@@ -210,6 +210,18 @@ export function RepoBrowserScreen() {
   const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
   const selected = primarySelectedKey(sel);
 
+  // Expand-all / collapse-all: set every folder key true / false. Collapse must
+  // write explicit `false` (not clear the map) to override defaultExpanded.
+  const folderKeys = React.useMemo(() => collectFolderKeys(tree), [tree]);
+  const expandAll = React.useCallback(
+    () => setExpanded(Object.fromEntries(folderKeys.map((k) => [k, true]))),
+    [folderKeys],
+  );
+  const collapseAll = React.useCallback(
+    () => setExpanded(Object.fromEntries(folderKeys.map((k) => [k, false]))),
+    [folderKeys],
+  );
+
   // Prune selection when rows disappear (filter/rev/sort change, refresh).
   // Validity is against the full tree, not just visible rows — collapsing a
   // folder hides rows without deselecting them.
@@ -449,11 +461,25 @@ export function RepoBrowserScreen() {
               branches={branches}
               tags={tags}
             />
-            <PGSearchInput
-              placeholder="Find in tree…"
-              shortcut="⌘⇧F"
-              style={{ flex: 1, minWidth: 0 }}
-            />
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <PGSearchInput
+                placeholder="Find in tree…"
+                shortcut="⌘⇧F"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <PGIconButton
+                icon="expandAll"
+                size="sm"
+                title="Expand all"
+                onClick={expandAll}
+              />
+              <PGIconButton
+                icon="collapseAll"
+                size="sm"
+                title="Collapse all"
+                onClick={collapseAll}
+              />
+            </div>
           </div>
           <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
             {tree.length === 0 && !loading && !revLoading && (
@@ -904,6 +930,22 @@ function flattenAllKeys(nodes: PGFileTreeNode[]): string[] {
       const key = parentKey + "/" + n.name;
       out.push(key);
       if (n.children) walk(n.children, key);
+    }
+  };
+  walk(nodes, "");
+  return out;
+}
+
+/** Keys of every folder (node with children) — the set expand/collapse-all toggles. */
+function collectFolderKeys(nodes: PGFileTreeNode[]): string[] {
+  const out: string[] = [];
+  const walk = (list: PGFileTreeNode[], parentKey: string) => {
+    for (const n of list) {
+      const key = parentKey + "/" + n.name;
+      if (n.children && n.children.length) {
+        out.push(key);
+        walk(n.children, key);
+      }
     }
   };
   walk(nodes, "");
