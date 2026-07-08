@@ -176,6 +176,19 @@ export async function diffCommits(
   return invoke<FileDiff[]>("diff_commits", { repoId, fromOid, toOid, contextLines });
 }
 
+/**
+ * A single commit's own diff — against its first parent. Root commit (no
+ * parent) diffs against the empty tree (all-added); a merge commit diffs
+ * against its first parent. This is "what this commit changed."
+ */
+export async function diffCommit(
+  repoId: string,
+  oid: string,
+  contextLines = 3,
+): Promise<FileDiff[]> {
+  return invoke<FileDiff[]>("diff_commit", { repoId, oid, contextLines });
+}
+
 export async function stagePaths(repoId: string, paths: string[]): Promise<void> {
   return invoke<void>("stage_paths", { repoId, paths });
 }

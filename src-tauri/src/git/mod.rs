@@ -90,6 +90,17 @@ pub trait GitBackend: Send + Sync {
         to_oid: &str,
         context_lines: u32,
     ) -> AppResult<Vec<FileDiff>>;
+    /// Diff a single commit against its first parent — i.e. "what this commit
+    /// changed." A root commit (no parent) diffs against the empty tree
+    /// (all-added); a merge commit diffs against its first parent (git-show
+    /// default). Distinct from `diff_commits`, which cannot express the
+    /// empty-tree case for a root commit.
+    fn diff_commit(
+        &self,
+        repo_id: &RepoId,
+        oid: &str,
+        context_lines: u32,
+    ) -> AppResult<Vec<FileDiff>>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>>;
     fn stashes(&self, repo_id: &RepoId) -> AppResult<Vec<StashInfo>>;

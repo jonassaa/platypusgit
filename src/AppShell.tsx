@@ -164,6 +164,7 @@ export function AppShell() {
       case "diff-file":
         setScreen("diff");
         break;
+      case "commit-self":
       case "commit-vs-wt":
       case "commit-vs-commit":
         setScreen("commitDiff");

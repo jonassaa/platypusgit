@@ -9,6 +9,8 @@ import type { RebaseStep } from "@/lib/types";
 export type NavIntent =
   | { kind: "diff-file"; path: string }
   | { kind: "commit-vs-wt"; oid: string }
+  // A commit's own diff (vs its first parent) — "what this commit changed."
+  | { kind: "commit-self"; oid: string }
   | { kind: "commit-vs-commit"; from: string; to: string }
   | { kind: "file-history"; path: string }
   | { kind: "blame"; path: string }
