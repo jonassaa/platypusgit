@@ -3,6 +3,7 @@ pub mod commands;
 pub mod error;
 pub mod git;
 pub mod state;
+pub mod update;
 
 use std::sync::{Arc, Mutex};
 
