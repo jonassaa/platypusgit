@@ -334,6 +334,7 @@ Do not create empty / merge commits. Do not amend published commits without aski
 ## Branching & merge workflow
 
 - **Never commit directly to `main`.** Branch first: `feat/...`, `fix/...`, `chore/...`, `docs/...`.
+- **Always work in a dedicated git worktree, never the primary checkout.** Multiple assistant sessions run against this repo at once; sharing one working directory collides (competing index/HEAD, a rebase-in-progress from another session, `localStorage`-clearing e2e runs). Create the branch and its worktree together off latest `main`: `git fetch origin && git worktree add -b <type>/<slug> .claude/worktrees/<slug> origin/main`. Do all edits, builds, and tests there; remove it with `git worktree remove` when the PR is merged. Read-only analysis still gets its own worktree (`--detach origin/main`) so it never touches another session's state.
 - Work as a series of small, focused commits on the feature branch (Conventional Commits throughout).
 - Keep the branch current by **rebasing onto `main`**, not merging `main` in — history stays linear, no merge commits on the branch.
 - Integrate via **squash and merge** — a `main` ruleset enforces squash-only (`allowed_merge_methods: ["squash"]`); merge-commit and rebase-merge are blocked. `main` gets one commit per PR, linear history.
