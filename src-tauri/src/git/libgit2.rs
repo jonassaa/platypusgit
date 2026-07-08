@@ -576,31 +576,29 @@ fn git_apply(repo_path: &Path, extra_args: &[&str], patch_text: &str) -> AppResu
 }
 
 /// Push the log walk's start commit onto `walk`. `None` starts at HEAD and
-/// returns `Ok(false)` when HEAD is unborn (caller returns an empty log).
-/// `Some(spec)` starts at any revspec (branch, tag, short/full oid) peeled to
-/// a commit — `InvalidRef` when it can't be resolved. Returns `Ok(true)` when
-/// a start point was pushed.
+/// returns `Ok(false)` ONLY when HEAD is unborn (a fresh repo with no commits;
+/// caller returns an empty log). A missing/corrupt HEAD surfaces as an error
+/// instead — masking it as an empty log hides a broken repo. `Some(spec)`
+/// starts at any revspec (branch, tag, short/full oid) peeled to a commit —
+/// `InvalidRef` when it can't be resolved. Returns `Ok(true)` when a start
+/// point was pushed.
 fn push_log_start(
     repo: &Repository,
     walk: &mut git2::Revwalk,
     refspec: Option<&str>,
 ) -> AppResult<bool> {
     match refspec {
-        // Unborn HEAD (no commits yet) → nothing to walk. Detect via head()
-        // up front: push_head() surfaces it as a generic "ref not found".
         None => match repo.head() {
             Ok(_) => {
                 walk.push_head()?;
                 Ok(true)
             }
-            Err(e)
-                if matches!(
-                    e.code(),
-                    git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound
-                ) =>
-            {
-                Ok(false)
-            }
+            // Fresh repo, HEAD points at a branch with no commits yet → nothing
+            // to walk. This is the only "empty log, not an error" case.
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(false),
+            // NotFound (or anything else) means HEAD itself is missing/corrupt,
+            // not an unborn branch — surface it rather than reporting an empty
+            // history for a broken repo.
             Err(e) => Err(e.into()),
         },
         Some(spec) => {
