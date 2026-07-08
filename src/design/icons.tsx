@@ -199,6 +199,8 @@ export interface PGIconProps {
   className?: string;
 }
 
+const warnedIcons = new Set<string>();
+
 export function PGIcon({
   name,
   size = 14,
@@ -208,10 +210,28 @@ export function PGIcon({
 }: PGIconProps) {
   const content = ICONS[name as IconName];
   if (!content) {
+    // Visible placeholder (dashed square) instead of a silent blank gap, so a
+    // typo'd or missing icon name is obvious. Warn once per name in dev.
+    if (import.meta.env?.DEV && !warnedIcons.has(name)) {
+      warnedIcons.add(name);
+      console.warn(`[PGIcon] unknown icon name: "${name}" — showing fallback glyph`);
+    }
     return (
-      <span
-        style={{ width: size, height: size, display: "inline-block", ...style }}
-      />
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+        style={{ flexShrink: 0, opacity: 0.6, ...style }}
+        aria-label={`unknown icon: ${name}`}
+      >
+        <rect x="2.5" y="2.5" width="11" height="11" rx="2" strokeDasharray="2 2" />
+      </svg>
     );
   }
   return (
