@@ -44,6 +44,9 @@ import {
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { BranchChip } from "@/features/branches/BranchChip";
+import { UpdateChip } from "@/features/update/UpdateChip";
+import { UpdatePanel } from "@/features/update/UpdatePanel";
+import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { BranchPicker } from "@/features/branches/BranchPicker";
 import { appErrorMessage } from "@/lib/errors";
 import {
@@ -140,6 +143,15 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
+  // Check for a newer release shortly after launch — non-blocking, and silent
+  // on failure (offline, rate-limited). Manual re-check lives in Settings.
+  React.useEffect(() => {
+    const t = setTimeout(() => {
+      void useUpdateStore.getState().check(false);
+    }, 2000);
+    return () => clearTimeout(t);
+  }, []);
+
   // The merge resolver window stages resolutions out-of-band; reflect them.
   React.useEffect(() => {
     const un = listen("merge://resolved", () => {
@@ -212,9 +224,11 @@ export function AppShell() {
         background: "var(--bg-0)",
         color: "var(--fg-0)",
         overflow: "hidden",
+        position: "relative",
       }}
     >
       <AppTitlebar onOpenSettings={() => setScreen("settings")} />
+      <UpdatePanel />
       <CheatSheet />
       {error && (
         <div
@@ -409,6 +423,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         dirty={dirty}
         rightSlot={
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <UpdateChip />
             {repo && (
               <>
                 <PGButton

@@ -23,6 +23,8 @@ import type {
   RepoState,
   StashInfo,
   TagInfo,
+  UpdateCapability,
+  UpdateInfo,
 } from "./types";
 
 const SLOW_INVOKE_MS = 250;
@@ -560,4 +562,16 @@ export async function cliShimStatus(): Promise<CliShimStatus> {
 
 export async function installCliShim(): Promise<CliInstallOutcome> {
   return invoke<CliInstallOutcome>("install_cli_shim");
+}
+
+export function checkForUpdate(): Promise<UpdateInfo> {
+  return invoke<UpdateInfo>("check_for_update");
+}
+
+export function getUpdateCapability(): Promise<UpdateCapability> {
+  return invoke<UpdateCapability>("get_update_capability");
+}
+
+export function openUrl(url: string): Promise<void> {
+  return invoke("open_url", { url });
 }

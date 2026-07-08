@@ -28,8 +28,17 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/jonassaa/platypusgit/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxNEVFRjJCMDIzRDNCNTQKUldSVU96MENLKzlPVWVnNGU1ZzVPbUhxa2Nac1lwaXFqbDVJYmpKQ1VpeTVaWnE0VzQrZzJyQ3QK"
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["msi", "dmg", "deb", "appimage"],
     "category": "DeveloperTool",
     "shortDescription": "A developer-focused git client",

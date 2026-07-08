@@ -218,3 +218,14 @@ export interface CliInstallOutcome {
   path: string;
   manualCommand: string | null;
 }
+
+export interface UpdateInfo {
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  notes: string;
+  releaseUrl: string;
+  publishedAt: string;
+}
+
+export type UpdateCapability = "self-update" | "notify";
