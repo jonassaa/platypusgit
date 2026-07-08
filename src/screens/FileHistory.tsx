@@ -4,6 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { fileHistory } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
+import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { CommitInfo } from "@/lib/types";
 
@@ -53,22 +54,18 @@ export function FileHistoryScreen() {
 
   if (!path) {
     return (
-      <PGEmpty icon="history" title="No file selected">
-        Right-click a file and choose "File history".
-      </PGEmpty>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <DeepViewHeader crumbs={["File history"]} />
+        <PGEmpty icon="history" title="No file selected">
+          Right-click a file and choose "File history".
+        </PGEmpty>
+      </div>
     );
   }
 
   return (
     <PGPane id="fileHistory.list" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div style={{
-        padding: "8px 12px",
-        borderBottom: "1px solid var(--border-0)",
-        fontFamily: "var(--font-mono)",
-        fontSize: "var(--fs-12)",
-      }}>
-        History — {path}
-      </div>
+      <DeepViewHeader crumbs={[`History — ${path}`]} />
       {loading && <div style={{ padding: 12 }}><PGSpinner /></div>}
       {error && <div style={{ padding: 12, color: "var(--git-removed)" }}>{error}</div>}
       {!loading && !error && commits.length === 0 && (

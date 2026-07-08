@@ -4,6 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
+import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { diffCommit, diffCommits } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
 import type { FileDiff } from "@/lib/types";
@@ -77,22 +78,28 @@ export function CommitDiffScreen() {
 
   if (!target) {
     return (
-      <PGEmpty icon="diff" title="No diff target">
-        Pick &quot;Compare…&quot; from a context menu.
-      </PGEmpty>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <DeepViewHeader crumbs={["Commit diff"]} />
+        <PGEmpty icon="diff" title="No diff target">
+          Pick &quot;Compare…&quot; from a context menu.
+        </PGEmpty>
+      </div>
     );
   }
 
   return (
-    <CommitDiffPanel
-      diffs={diffs}
-      loading={loading}
-      error={error}
-      header={targetHeader(target)}
-      paneIdPrefix="commitDiff"
-      emptyLabel={
-        target.kind === "commit-self" ? "No changes in this commit." : "No changes."
-      }
-    />
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <DeepViewHeader crumbs={[`Diff ${targetHeader(target)}`]} />
+      <CommitDiffPanel
+        diffs={diffs}
+        loading={loading}
+        error={error}
+        header={targetHeader(target)}
+        paneIdPrefix="commitDiff"
+        emptyLabel={
+          target.kind === "commit-self" ? "No changes in this commit." : "No changes."
+        }
+      />
+    </div>
   );
 }
