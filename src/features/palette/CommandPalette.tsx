@@ -228,6 +228,15 @@ export function CommandPalette() {
     // Keys already routed by the global dispatcher (e.g. Escape closing the
     // cheat-sheet stacked above the palette) must not double-fire here.
     if (e.defaultPrevented) return;
+    // An Enter that confirms an IME composition (CJK etc.) must not submit the
+    // step or activate a row — the composition is being committed, not the
+    // palette. keyCode 229 is the legacy signal for "still composing".
+    if (
+      e.key === "Enter" &&
+      (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)
+    ) {
+      return;
+    }
     if (e.key === "Tab" && e.ctrlKey && step.kind === "root") {
       e.preventDefault();
       const i = CHIPS.findIndex((c) => c.kind === activeChip);
