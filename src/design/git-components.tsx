@@ -1025,7 +1025,7 @@ export interface PGCommitRowProps {
   date: string;
   refs?: CommitRef[];
   selected?: boolean;
-  onClick?: () => void;
+  onClick?: (e: MouseEvent) => void;
   onContextMenu?: (e: MouseEvent) => void;
   tagged?: string;
 }

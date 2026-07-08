@@ -202,6 +202,7 @@ interface RepoStoreState {
   pushTag: (remote: string, name: string) => Promise<void>;
   pushDeleteBranch: (remote: string, name: string) => Promise<void>;
   cherryPick: (oid: string) => Promise<void>;
+  cherryPickMany: (oids: string[]) => Promise<void>;
   revert: (oid: string) => Promise<void>;
   stashSave: (opts: StashSaveOptions) => Promise<string | null>;
   stashApply: (index: number) => Promise<void>;
@@ -708,6 +709,27 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await cherryPick(repo.id, oid);
+      await get().refreshAll();
+    } catch (e) {
+      // See mergeBranch's catch: refresh first, error last, so it isn't
+      // batched away by refreshAll's own `error: null` reset.
+      await get().refreshAll();
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async cherryPickMany(oids) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      // Apply oldest→newest (the caller orders them). Each clean pick
+      // auto-commits and moves HEAD; the next applies on top. A conflicting
+      // pick throws (ConflictsDetected), stopping the sequence and leaving the
+      // repo in a conflicted CherryPick state for the Conflict screen. Refresh
+      // once at the end rather than per pick.
+      for (const oid of oids) {
+        await cherryPick(repo.id, oid);
+      }
       await get().refreshAll();
     } catch (e) {
       // See mergeBranch's catch: refresh first, error last, so it isn't

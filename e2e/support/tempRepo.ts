@@ -129,6 +129,17 @@ export function cherryRepo(): TempRepo {
   return r; // feature is one unmerged commit ahead of shared history
 }
 
+export function multiCherryRepo(): TempRepo {
+  const r = basicRepo();
+  r.git("checkout", "-b", "feature");
+  // Two unmerged commits adding distinct new files — cleanly cherry-pickable
+  // onto main as a set (no overlap with main's tree, so no conflicts).
+  r.commitFile("c.txt", "charlie\n", "feat: add c.txt");
+  r.commitFile("d.txt", "delta\n", "feat: add d.txt");
+  r.git("checkout", "main");
+  return r; // feature is two unmerged commits ahead of shared history
+}
+
 export function rebaseConflictRepo(): TempRepo {
   const r = new TempRepo();
   r.commitFile("conflict.txt", "l1\n", "feat: base line");
