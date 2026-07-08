@@ -88,6 +88,17 @@ export const roadmap = [
 
 export const changelog = [
   {
+    version: '0.0.7',
+    date: '2026-07-08',
+    status: 'feature',
+    notes: [
+      'Rider-style merge conflict resolver — a dedicated resolver window with a three-pane diff3 layout (ours · editable result · theirs). Accept ours / theirs / both per conflict from the gutter or the keyboard (`F7` / `⇧F7` to navigate, `⌘1/2/3` to pick, `⌘↵` to apply and auto-advance through conflicted files); manual edits and CRLF are preserved, with a chooser for binary / deleted-side conflicts. Open it from the Conflict screen.',
+      'App logo on the Welcome screen and titlebar, with themeable logo colors — every built-in theme carries its own logo palette, and the theme editor exposes the head/bill fills.',
+      'Branded macOS installer — the `.dmg` now opens to a classic drag-to-Applications layout with artwork styled to match the site.',
+      'Fixes — the branch/ref picker scrolls within the popover instead of overflowing the viewport.',
+    ],
+  },
+  {
     version: '0.0.6',
     date: '2026-07-07',
     status: 'feature',
