@@ -38,6 +38,7 @@ log = "0.4.29"
 # capability in tauri.e2e.conf.json, not the shared capabilities/default.json.
 tauri-plugin-wdio-webdriver = { version = "1.2.0", optional = true }
 tauri-plugin-single-instance = "2.4.2"
+ureq = "2"
 
 [features]
 # Compile + wire the WebDriver plugin. Set only by the e2e debug build.
