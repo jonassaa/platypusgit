@@ -97,3 +97,18 @@ pub fn parse_release(json: &str) -> AppResult<ReleaseMeta> {
 pub fn is_safe_url(url: &str) -> bool {
     url.starts_with("https://")
 }
+
+/// Blocking GET of the latest published release from GitHub. Call inside
+/// `spawn_blocking`. Unauthenticated (60 req/hr/IP is ample for our cadence).
+pub fn fetch_latest_release() -> AppResult<ReleaseMeta> {
+    let url = format!("https://api.github.com/repos/{REPO_SLUG}/releases/latest");
+    let resp = ureq::get(&url)
+        .set("User-Agent", "platypusgit-updater")
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    let body = resp
+        .into_string()
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    parse_release(&body)
+}

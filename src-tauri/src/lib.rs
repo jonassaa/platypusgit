@@ -168,6 +168,9 @@ pub fn run() {
             commands::cli::take_launch_intent,
             commands::cli::cli_shim_status,
             commands::cli::install_cli_shim,
+            commands::update::check_for_update,
+            commands::update::get_update_capability,
+            commands::update::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
