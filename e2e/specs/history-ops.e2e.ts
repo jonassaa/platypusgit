@@ -1,8 +1,8 @@
 import { browser, $, expect } from "@wdio/globals";
-import { cherryRepo, TempRepo } from "../support/tempRepo";
+import { cherryRepo, multiCherryRepo, TempRepo } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
-  jsContextMenu, jsHoverMenuItem, jsClickMenuItem, jsSelectValue,
+  jsContextMenu, jsHoverMenuItem, jsClickMenuItem, jsSelectValue, jsChord,
 } from "../support/app";
 
 describe("history danger ops", () => {
@@ -78,6 +78,25 @@ describe("history danger ops", () => {
     expect(repo.git("branch", "--show-current").trim()).toBe("main");
   });
 
+  // #54: multi-select two commits → the detail pane offers a combined diff of
+  // the whole selection (parent-of-oldest → newest), routed through the
+  // existing commit-vs-commit → CommitDiff path.
+  it("shows a combined diff of a multi-commit selection", async () => {
+    // Click HEAD row (focuses the list pane + selects it), then Shift+ArrowDown
+    // extends the range by one. jsChord: the driver can't synthesize modifiers.
+    await $('[data-testid="commit-row"]*=fix: update a.txt').click();
+    await jsChord("Shift+ArrowDown"); // extend to "feat: add b.txt"
+    await $("div*=2 commits selected").waitForDisplayed({
+      timeout: 10_000, timeoutMsg: "multi-select detail never appeared",
+    });
+    await $("button*=View combined diff").click();
+    // Oldest selected = "feat: add b.txt" (parent "feat: add a.txt"); newest =
+    // "fix: update a.txt". The combined diff therefore introduces b.txt.
+    await $('[data-pg-row]*=b.txt').waitForDisplayed({
+      timeout: 15_000, timeoutMsg: "combined diff did not list b.txt",
+    });
+  });
+
   it("reverts HEAD", async () => {
     const row = $('[data-testid="commit-row"]*=fix: update a.txt');
     await row.waitForDisplayed({ timeout: 15_000, timeoutMsg: "HEAD row missing" });
@@ -91,5 +110,56 @@ describe("history danger ops", () => {
       { timeout: 20_000, timeoutMsg: "revert commit never landed" },
     );
     expect(repo.read("a.txt")).toBe("alpha v1\n");
+  });
+});
+
+// #54: cherry-pick a *set* of commits onto the current branch, oldest→newest,
+// via the multi-selection action row (cherryPickMany loops the single op).
+describe("history multi cherry-pick", () => {
+  let repo: TempRepo;
+
+  beforeEach(async () => {
+    repo = multiCherryRepo();
+    await openRepo(repo.path);
+    await stubNativeDialogs({ confirm: true });
+    await switchScreen("history");
+    await $("span*=SUBJECT").waitForDisplayed({
+      timeout: 15_000, timeoutMsg: "history screen not ready",
+    });
+    // Scope the log to `feature` so its two unmerged commits are browsable
+    // while `main` stays checked out (jsSelectValue — see history-ref-select).
+    await $('[data-testid="history-ref-select"]').waitForDisplayed({
+      timeout: 10_000, timeoutMsg: "history ref selector missing",
+    });
+    await jsSelectValue('[data-testid="history-ref-select"]', "feature");
+    await $('[data-testid="commit-row"]*=feat: add d.txt').waitForDisplayed({
+      timeout: 15_000, timeoutMsg: "feature commits not visible after scoping",
+    });
+  });
+
+  afterEach(async () => {
+    await resetApp();
+    repo.dispose();
+  });
+
+  it("cherry-picks two selected commits onto main oldest→newest", async () => {
+    // Select the top two feature commits (d.txt then, extending up, c.txt).
+    await $('[data-testid="commit-row"]*=feat: add d.txt').click();
+    await jsChord("Shift+ArrowDown"); // extend to "feat: add c.txt"
+    await $("div*=2 commits selected").waitForDisplayed({
+      timeout: 10_000, timeoutMsg: "multi-select detail never appeared",
+    });
+    await $('[data-testid="multi-cherry-pick"]').click(); // confirm stubbed
+    // Both picks land on main, oldest (c) before newest (d).
+    await browser.waitUntil(
+      async () => {
+        const log = repo.git("log", "main", "--pretty=%s");
+        return log.includes("feat: add c.txt") && log.includes("feat: add d.txt");
+      },
+      { timeout: 25_000, timeoutMsg: "both cherry-picks never landed on main" },
+    );
+    expect(repo.read("c.txt")).toBe("charlie\n");
+    expect(repo.read("d.txt")).toBe("delta\n");
+    expect(repo.git("branch", "--show-current").trim()).toBe("main");
   });
 });

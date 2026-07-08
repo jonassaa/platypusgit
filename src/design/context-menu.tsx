@@ -4,6 +4,7 @@ import { PGIcon, type IconName } from "./icons";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
+import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { chordFor } from "@/features/keymap";
 
@@ -492,6 +493,83 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       onClick: () => {
         navigator.clipboard?.writeText(commit?.subject || "");
         pgFlash("copied subject");
+      },
+    },
+  ];
+}
+
+/**
+ * Context menu for a multi-commit selection in History. `oids` are the selected
+ * commit oids (any order); ancestry facts come from the full log via
+ * `planCommitSelection`, so contiguity/base reflect real history rather than
+ * the filtered view.
+ */
+export function commitMultiMenuItems(oids: string[]): ContextMenuItem[] {
+  const commits = useRepoStore.getState().commits;
+  const plan = planCommitSelection(commits, oids);
+  if (!plan) return [{ __menuTitle: "no commits" }];
+  const n = plan.oids.length;
+
+  // Squash needs a contiguous, merge-free run with a loaded parent to rebase
+  // onto. Surface the blocking reason in the (disabled) label.
+  const squashBlock = !plan.contiguous
+    ? "non-contiguous"
+    : plan.hasMerge
+      ? "contains a merge"
+      : !plan.baseOid
+        ? "oldest is root"
+        : null;
+
+  return [
+    { __menuTitle: `${n} commits` },
+    {
+      icon: "diff",
+      label: "View combined diff",
+      onClick: () => {
+        useNavStore.getState().setIntent({
+          kind: "commit-vs-commit",
+          from: plan.baseOid ?? plan.oldestOid,
+          to: plan.newestOid,
+        });
+      },
+    },
+    { divider: true },
+    {
+      icon: "rebase",
+      label: `Cherry-pick ${n} onto current`,
+      onClick: () => {
+        if (
+          window.confirm(
+            `Cherry-pick ${n} commits onto the current branch (oldest first)?`,
+          )
+        )
+          useRepoStore.getState().cherryPickMany(plan.oids);
+      },
+    },
+    {
+      icon: "squash",
+      label: squashBlock ? `Squash ${n} — ${squashBlock}` : `Squash ${n} into one…`,
+      disabled: !!squashBlock,
+      onClick: () => {
+        if (squashBlock || !plan.baseOid) return;
+        const msg = window.prompt("New commit message for the squashed commit");
+        if (!msg) return;
+        const rebasePlan = buildRebasePlan(commits, plan.baseOid, {
+          kind: "squash-range",
+          oids: plan.oids,
+          message: msg,
+        });
+        if (!rebasePlan) return;
+        useNavStore.getState().setIntent({ kind: "rebase-plan", plan: rebasePlan });
+      },
+    },
+    { divider: true },
+    {
+      icon: "copy",
+      label: `Copy ${n} SHAs`,
+      onClick: () => {
+        navigator.clipboard?.writeText(plan.oids.join("\n"));
+        pgFlash(`copied ${n} SHAs`);
       },
     },
   ];

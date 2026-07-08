@@ -22,6 +22,10 @@ export function usePaneList(opts: {
   onExpand?: (i: number) => void;
   onCollapse?: (i: number) => void;
   onToggle?: (i: number) => void;
+  /** Shift+↑/↓ — extend a multi-selection range from the anchor. Panes that
+   *  don't support multi-select omit these and the chord falls through. */
+  onExtendUp?: () => void;
+  onExtendDown?: () => void;
   /** Opt into speed-search: row i's searchable text. Typing (unbound
    *  printable keys) jumps the selection to the first matching row. */
   searchText?: (i: number) => string;
@@ -42,6 +46,18 @@ export function usePaneList(opts: {
   useAction("list.down", guard(() => opts.onSelect(clamp(selectedIndex + 1))), deps, reg);
   useAction("list.top", guard(() => opts.onSelect(0)), deps, reg);
   useAction("list.bottom", guard(() => opts.onSelect(count - 1)), deps, reg);
+  useAction(
+    "list.extendUp",
+    opts.onExtendUp ? guard(() => opts.onExtendUp?.()) : () => false,
+    deps,
+    reg,
+  );
+  useAction(
+    "list.extendDown",
+    opts.onExtendDown ? guard(() => opts.onExtendDown?.()) : () => false,
+    deps,
+    reg,
+  );
   useAction(
     "list.activate",
     opts.onActivate ? guard(() => opts.onActivate?.(selectedIndex)) : () => false,

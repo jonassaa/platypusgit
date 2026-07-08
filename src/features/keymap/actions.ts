@@ -62,6 +62,8 @@ export type ActionId =
   | "list.toggle"
   | "list.top"
   | "list.bottom"
+  | "list.extendUp"
+  | "list.extendDown"
   | "repo.fetch"
   | "repo.pull"
   | "repo.push"
@@ -194,6 +196,8 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "list.toggle": { id: "list.toggle", title: "Toggle selection (stage/unstage)", category: "Lists & trees", scope: "pane" },
   "list.top": { id: "list.top", title: "Select first item", category: "Lists & trees", scope: "pane" },
   "list.bottom": { id: "list.bottom", title: "Select last item", category: "Lists & trees", scope: "pane" },
+  "list.extendUp": { id: "list.extendUp", title: "Extend selection up", category: "Lists & trees", scope: "pane", suppressInInput: true },
+  "list.extendDown": { id: "list.extendDown", title: "Extend selection down", category: "Lists & trees", scope: "pane", suppressInInput: true },
 
   "diff.nextChange": { id: "diff.nextChange", title: "Next change (hunk)", category: "Diff", scope: "pane" },
   "diff.prevChange": { id: "diff.prevChange", title: "Previous change (hunk)", category: "Diff", scope: "pane" },

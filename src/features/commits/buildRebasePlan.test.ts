@@ -29,4 +29,34 @@ describe("buildRebasePlan", () => {
   it("returns null when the base isn't in commits", () => {
     expect(buildRebasePlan(commits, "zzz", { kind: "edit-from" })).toBeNull();
   });
+
+  it("squash-range: oldest selected stays Pick, rest Squash with message", () => {
+    // Select b and c (contiguous). Base is a (parent of oldest, b). Plan
+    // covers everything newer than a: b, c, d oldest→newest.
+    expect(
+      buildRebasePlan(commits, "a", {
+        kind: "squash-range",
+        oids: ["c", "b"],
+        message: "combined",
+      }),
+    ).toEqual([
+      { oid: "b", action: "Pick", message: null }, // oldest selected = anchor
+      { oid: "c", action: "Squash", message: "combined" },
+      { oid: "d", action: "Pick", message: null }, // newer than the selection
+    ]);
+  });
+
+  it("squash-range: folds three commits, only the oldest stays Pick", () => {
+    expect(
+      buildRebasePlan(commits, "a", {
+        kind: "squash-range",
+        oids: ["b", "c", "d"],
+        message: "all",
+      }),
+    ).toEqual([
+      { oid: "b", action: "Pick", message: null },
+      { oid: "c", action: "Squash", message: "all" },
+      { oid: "d", action: "Squash", message: "all" },
+    ]);
+  });
 });

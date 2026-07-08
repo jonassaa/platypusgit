@@ -50,6 +50,10 @@ const COMMON = {
   "list.toggle": [" "],
   "list.top": ["Home"],
   "list.bottom": ["End"],
+  // Extend a multi-selection range (History commit list). suppressInInput keeps
+  // Shift+Arrow doing normal text selection inside inputs.
+  "list.extendUp": ["Shift+ArrowUp"],
+  "list.extendDown": ["Shift+ArrowDown"],
   // Rider NextDiff/PreviousDiff — real JetBrains bindings.
   "diff.nextChange": ["F7"],
   "diff.prevChange": ["Shift+F7"],

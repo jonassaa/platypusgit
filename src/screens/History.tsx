@@ -14,16 +14,26 @@ import {
   PGSpinner,
   PGToolbar,
   commitMenuItems,
+  commitMultiMenuItems,
   pgFlash,
   useContextMenu,
   usePaneWidth,
 } from "@/design";
 import { layoutGraph } from "@/features/commits/graphLayout";
 import { buildLogFilter, isFilterEmpty } from "@/features/commits/logFilter";
+import { planCommitSelection } from "@/features/commits/planCommitSelection";
+import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import { currentBranch, mapCommitRefs, relativeTime, shortSha } from "@/lib/derive";
+import {
+  clickSelection,
+  emptySelection,
+  primarySelectedKey,
+  pruneSelection,
+  type Selection,
+} from "@/lib/selection";
 import type { CommitInfo } from "@/lib/types";
 
 type HistoryFilterKind = "all" | "mine" | "branch";
@@ -40,7 +50,11 @@ export function HistoryScreen() {
   const logRef = useRepoStore((s) => s.logRef);
   const setLogRef = useRepoStore((s) => s.setLogRef);
   const loading = useRepoStore((s) => s.loading);
-  const [selected, setSelected] = React.useState(0);
+  // Multi-select over commit oids (classic list semantics, shared helper).
+  // `lead` is the active end of the range — where plain ↑/↓ move from and where
+  // Shift+↑/↓ extend — distinct from the anchor that clickSelection tracks.
+  const [sel, setSel] = React.useState<Selection>(emptySelection);
+  const [leadOid, setLeadOid] = React.useState<string | null>(null);
   // Free-text search box (supports key:value qualifiers — see logFilter.ts).
   const [filter, setFilter] = React.useState("");
   // Dedicated structured search fields.
@@ -84,19 +98,13 @@ export function HistoryScreen() {
     storageKey: "pg-history-detail-w",
   });
 
-  // Reset selection when the visible list changes shape. Includes the
-  // client-side refinements (filterKind/hideMerges) — without them a shrunk
-  // `visible` leaves a stale `selected`, so the detail pane and CommitActionRow
-  // silently act on visible[0] instead of the highlighted commit.
-  React.useEffect(() => {
-    setSelected(0);
-  }, [baseCommits.length, filterKey, filterKind, hideMerges]);
-
   const head = currentBranch(branches);
   const headName = head?.name ?? null;
   const aheadCount = head?.ahead ?? 0;
   const { onContextMenu: onCommitContext, menu: commitMenu } =
     useContextMenu<{ sha: string; subject: string }>(commitMenuItems);
+  const { onContextMenu: onCommitMulti, menu: commitMultiMenu } =
+    useContextMenu<string[]>((oids) => commitMultiMenuItems(oids));
 
   // Most-frequent author email in the loaded history — used as a "mine" heuristic
   // until we expose git config (user.email) to the frontend.
@@ -125,17 +133,64 @@ export function HistoryScreen() {
 
   const rows = React.useMemo(() => layoutGraph(visible), [visible]);
 
-  // Keyboard: ↑/↓ move the commit selection, Enter opens the commit's diff.
+  // Visible row order (oids) — the axis shift-ranges and pruning work over.
+  const order = React.useMemo(() => visible.map((c) => c.oid), [visible]);
+
+  // Drop selected oids that left the visible list (search/filter/refresh/repo
+  // switch); re-home the lead to the top and keep at least one row selected so
+  // the detail pane always has a subject. Replaces the old setSelected(0) reset.
+  React.useEffect(() => {
+    const valid = new Set(order);
+    setSel((prev) => {
+      const pruned = pruneSelection(prev, valid);
+      if (pruned.keys.length === 0 && order.length > 0) {
+        return { keys: [order[0]], anchor: order[0] };
+      }
+      return pruned;
+    });
+    setLeadOid((prev) => (prev && valid.has(prev) ? prev : (order[0] ?? null)));
+  }, [order]);
+
+  const cursorIdx = Math.max(
+    0,
+    order.indexOf(leadOid ?? primarySelectedKey(sel) ?? order[0]),
+  );
+  const clampIdx = (i: number) => Math.max(0, Math.min(order.length - 1, i));
+  const moveTo = (i: number, range: boolean) => {
+    const oid = order[clampIdx(i)];
+    if (!oid) return;
+    setSel((prev) => clickSelection(order, prev, oid, { range }));
+    setLeadOid(oid);
+  };
+
+  // Enter / "View combined diff": one commit → commit-vs-wt (unchanged); 2+ →
+  // combined diff of the whole selection (parent-of-oldest → newest).
   const setNavIntent = useNavStore((s) => s.setIntent);
+  const activateSelection = React.useCallback(() => {
+    if (sel.keys.length > 1) {
+      const plan = planCommitSelection(commits, sel.keys);
+      if (plan)
+        setNavIntent({
+          kind: "commit-vs-commit",
+          from: plan.baseOid ?? plan.oldestOid,
+          to: plan.newestOid,
+        });
+      return;
+    }
+    const oid = primarySelectedKey(sel) ?? order[cursorIdx];
+    if (oid) setNavIntent({ kind: "commit-vs-wt", oid });
+  }, [sel, commits, order, cursorIdx, setNavIntent]);
+
+  // Keyboard: ↑/↓ move a single cursor, Shift+↑/↓ extend the range, Enter opens
+  // the commit's diff (combined diff for a multi-selection).
   usePaneList({
     paneId: "history.list",
     count: visible.length,
-    selectedIndex: selected,
-    onSelect: setSelected,
-    onActivate: (i) => {
-      const c = visible[i];
-      if (c) setNavIntent({ kind: "commit-vs-wt", oid: c.oid });
-    },
+    selectedIndex: cursorIdx,
+    onSelect: (i) => moveTo(i, false),
+    onExtendUp: () => moveTo(cursorIdx - 1, true),
+    onExtendDown: () => moveTo(cursorIdx + 1, true),
+    onActivate: activateSelection,
     searchText: (i) => visible[i]?.summary ?? "",
   });
 
@@ -234,7 +289,32 @@ export function HistoryScreen() {
     );
   }
 
-  const current = visible[selected] ?? visible[0];
+  const primaryOid = primarySelectedKey(sel);
+  const current =
+    visible.find((c) => c.oid === primaryOid) ?? visible[cursorIdx] ?? visible[0];
+  const selectedSet = new Set(sel.keys);
+  const multiSelected = sel.keys.length > 1;
+
+  const onRowClick = (oid: string, e: React.MouseEvent) => {
+    setSel((prev) =>
+      clickSelection(order, prev, oid, {
+        toggle: e.metaKey || e.ctrlKey,
+        range: e.shiftKey,
+      }),
+    );
+    setLeadOid(oid);
+  };
+
+  const onRowContext = (c: CommitInfo, e: React.MouseEvent) => {
+    if (multiSelected && selectedSet.has(c.oid)) {
+      onCommitMulti(e, sel.keys);
+      return;
+    }
+    // Right-clicking outside the selection collapses to that row first.
+    setSel(clickSelection(order, sel, c.oid, {}));
+    setLeadOid(c.oid);
+    onCommitContext(e, { sha: c.oid, subject: c.summary });
+  };
 
   return (
     <>
@@ -304,11 +384,9 @@ export function HistoryScreen() {
                   author={c.author || "unknown"}
                   date={relativeTime(c.timestamp)}
                   refs={visibleRefs}
-                  selected={selected === i}
-                  onClick={() => setSelected(i)}
-                  onContextMenu={(e) =>
-                    onCommitContext(e, { sha: c.oid, subject: c.summary })
-                  }
+                  selected={selectedSet.has(c.oid)}
+                  onClick={(e) => onRowClick(c.oid, e)}
+                  onContextMenu={(e) => onRowContext(c, e)}
                 />
               );
             })}
@@ -328,7 +406,9 @@ export function HistoryScreen() {
             minWidth: 0,
           }}
         >
-          {current && (
+          {multiSelected ? (
+            <MultiCommitDetail oids={sel.keys} onCombinedDiff={activateSelection} />
+          ) : current && (
             <>
               <PGCommitDetail
                 sha={current.shortOid}
@@ -398,7 +478,157 @@ export function HistoryScreen() {
         </PGPane>
       </div>
       {commitMenu}
+      {commitMultiMenu}
     </>
+  );
+}
+
+/**
+ * Detail pane for a multi-commit selection: a summary, the selected commits,
+ * and the multi-commit actions (combined diff, cherry-pick set, squash range,
+ * copy SHAs). Ancestry gating comes from the full log via planCommitSelection.
+ */
+function MultiCommitDetail({
+  oids,
+  onCombinedDiff,
+}: {
+  oids: string[];
+  onCombinedDiff: () => void;
+}) {
+  const commits = useRepoStore((s) => s.commits);
+  const plan = React.useMemo(
+    () => planCommitSelection(commits, oids),
+    [commits, oids],
+  );
+  const byOid = React.useMemo(
+    () => new Map(commits.map((c) => [c.oid, c])),
+    [commits],
+  );
+  if (!plan) return null;
+  const n = plan.oids.length;
+
+  const squashBlock = !plan.contiguous
+    ? "non-contiguous selection"
+    : plan.hasMerge
+      ? "selection contains a merge"
+      : !plan.baseOid
+        ? "oldest commit is the root"
+        : null;
+
+  const cherryPickSet = () => {
+    if (
+      window.confirm(`Cherry-pick ${n} commits onto the current branch (oldest first)?`)
+    )
+      useRepoStore.getState().cherryPickMany(plan.oids);
+  };
+  const squashSet = () => {
+    if (squashBlock || !plan.baseOid) return;
+    const msg = window.prompt("New commit message for the squashed commit");
+    if (!msg) return;
+    const rebasePlan = buildRebasePlan(commits, plan.baseOid, {
+      kind: "squash-range",
+      oids: plan.oids,
+      message: msg,
+    });
+    if (rebasePlan)
+      useNavStore.getState().setIntent({ kind: "rebase-plan", plan: rebasePlan });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+      <div
+        style={{
+          padding: "12px 12px 4px",
+          fontFamily: "var(--font-mono)",
+          fontSize: "var(--fs-13)",
+          color: "var(--fg-0)",
+        }}
+      >
+        {n} commits selected
+      </div>
+      <div
+        style={{
+          padding: "0 12px 10px",
+          display: "flex",
+          gap: 4,
+          flexWrap: "wrap",
+        }}
+      >
+        <PGButton size="sm" variant="outline" icon="diff" onClick={onCombinedDiff}>
+          View combined diff
+        </PGButton>
+        <PGButton
+          size="sm"
+          variant="outline"
+          icon="rebase"
+          data-testid="multi-cherry-pick"
+          onClick={cherryPickSet}
+        >
+          Cherry-pick {n}
+        </PGButton>
+        <PGButton
+          size="sm"
+          variant="outline"
+          icon="squash"
+          data-testid="multi-squash"
+          disabled={!!squashBlock}
+          title={squashBlock ? `Can't squash: ${squashBlock}` : undefined}
+          onClick={squashSet}
+        >
+          Squash {n}
+        </PGButton>
+        <PGButton
+          size="sm"
+          variant="ghost"
+          icon="copy"
+          onClick={() => {
+            navigator.clipboard?.writeText(plan.oids.join("\n"));
+            pgFlash(`copied ${n} SHAs`);
+          }}
+        >
+          Copy SHAs
+        </PGButton>
+      </div>
+      <FocusableScroll
+        ariaLabel="Selected commits"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          borderTop: "1px solid var(--border-0)",
+          padding: "8px 12px",
+          fontFamily: "var(--font-mono)",
+          fontSize: "var(--fs-12)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+        }}
+      >
+        {/* Newest→oldest, matching the list above. */}
+        {plan.oids
+          .slice()
+          .reverse()
+          .map((oid) => {
+            const c = byOid.get(oid);
+            return (
+              <div key={oid} style={{ display: "flex", gap: 8 }}>
+                <span style={{ color: "var(--accent)" }}>
+                  {c?.shortOid ?? oid.slice(0, 7)}
+                </span>
+                <span
+                  style={{
+                    color: "var(--fg-2)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {c?.summary ?? ""}
+                </span>
+              </div>
+            );
+          })}
+      </FocusableScroll>
+    </div>
   );
 }
 
