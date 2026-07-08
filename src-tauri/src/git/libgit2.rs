@@ -575,39 +575,50 @@ fn git_apply(repo_path: &Path, extra_args: &[&str], patch_text: &str) -> AppResu
     Ok(())
 }
 
+/// Resolve a revspec (branch, tag, short/full oid, `HEAD~2`, `tag^{}`, …) to
+/// its tree, mapping any resolution failure to `InvalidRef` so the UI gets a
+/// clean "unknown revision" error rather than a stringified internal one.
+fn resolve_tree<'a>(repo: &'a Repository, revspec: &str) -> AppResult<git2::Tree<'a>> {
+    repo.revparse_single(revspec)
+        .and_then(|obj| obj.peel_to_tree())
+        .map_err(|_| AppError::InvalidRef(revspec.to_string()))
+}
+
+/// Resolve a revspec to its commit, mapping failure to `InvalidRef`.
+fn resolve_commit<'a>(repo: &'a Repository, revspec: &str) -> AppResult<git2::Commit<'a>> {
+    repo.revparse_single(revspec)
+        .and_then(|obj| obj.peel_to_commit())
+        .map_err(|_| AppError::InvalidRef(revspec.to_string()))
+}
+
 /// Push the log walk's start commit onto `walk`. `None` starts at HEAD and
-/// returns `Ok(false)` when HEAD is unborn (caller returns an empty log).
-/// `Some(spec)` starts at any revspec (branch, tag, short/full oid) peeled to
-/// a commit — `InvalidRef` when it can't be resolved. Returns `Ok(true)` when
-/// a start point was pushed.
+/// returns `Ok(false)` ONLY when HEAD is unborn (a fresh repo with no commits;
+/// caller returns an empty log). A missing/corrupt HEAD surfaces as an error
+/// instead — masking it as an empty log hides a broken repo. `Some(spec)`
+/// starts at any revspec (branch, tag, short/full oid) peeled to a commit —
+/// `InvalidRef` when it can't be resolved. Returns `Ok(true)` when a start
+/// point was pushed.
 fn push_log_start(
     repo: &Repository,
     walk: &mut git2::Revwalk,
     refspec: Option<&str>,
 ) -> AppResult<bool> {
     match refspec {
-        // Unborn HEAD (no commits yet) → nothing to walk. Detect via head()
-        // up front: push_head() surfaces it as a generic "ref not found".
         None => match repo.head() {
             Ok(_) => {
                 walk.push_head()?;
                 Ok(true)
             }
-            Err(e)
-                if matches!(
-                    e.code(),
-                    git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound
-                ) =>
-            {
-                Ok(false)
-            }
+            // Fresh repo, HEAD points at a branch with no commits yet → nothing
+            // to walk. This is the only "empty log, not an error" case.
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(false),
+            // NotFound (or anything else) means HEAD itself is missing/corrupt,
+            // not an unborn branch — surface it rather than reporting an empty
+            // history for a broken repo.
             Err(e) => Err(e.into()),
         },
         Some(spec) => {
-            let commit = repo
-                .revparse_single(spec)
-                .and_then(|obj| obj.peel_to_commit())
-                .map_err(|_| AppError::InvalidRef(spec.to_string()))?;
+            let commit = resolve_commit(repo, spec)?;
             walk.push(commit.id())?;
             Ok(true)
         }
@@ -1243,10 +1254,7 @@ impl GitBackend for Libgit2Backend {
 
     fn list_files_at_rev(&self, repo_id: &RepoId, revspec: &str) -> AppResult<Vec<FileStatus>> {
         self.with_repo(repo_id, |repo| {
-            let tree = repo
-                .revparse_single(revspec)
-                .map_err(|_| AppError::InvalidRef(revspec.to_string()))?
-                .peel_to_tree()?;
+            let tree = resolve_tree(repo, revspec)?;
 
             let mut out = Vec::new();
             // Walk the tree pre-order, accumulating full paths for blobs only.
@@ -1281,10 +1289,7 @@ impl GitBackend for Libgit2Backend {
         let rel = path.to_path_buf();
         let path_str = rel.to_string_lossy().into_owned();
         self.with_repo(repo_id, |repo| {
-            let tree = repo
-                .revparse_single(revspec)
-                .map_err(|_| AppError::InvalidRef(revspec.to_string()))?
-                .peel_to_tree()?;
+            let tree = resolve_tree(repo, revspec)?;
 
             let entry = tree
                 .get_path(&rel)

@@ -6,9 +6,9 @@
         "default",
         {
           "identifier": "e2e-focus",
-          "description": "E2E-only: let the wdio harness force window focus (ensureMacAppFocus in e2e/support/app.ts). The unbundled debug binary doesn't reliably win foreground focus at launch; without focus WKWebView reports the page hidden and isDisplayed() lies.",
+          "description": "E2E-only: enable the WebDriver bridge (tauri-plugin-wdio-webdriver, gated behind the `e2e` cargo feature) and let the wdio harness force window focus (ensureMacAppFocus in e2e/support/app.ts). The unbundled debug binary doesn't reliably win foreground focus at launch; without focus WKWebView reports the page hidden and isDisplayed() lies. This capability is ONLY loaded via tauri.e2e.conf.json, so wdio-webdriver:default never reaches dev/production builds.",
           "windows": ["main", "merge"],
-          "permissions": ["core:window:allow-set-focus"]
+          "permissions": ["core:window:allow-set-focus", "wdio-webdriver:default"]
         }
       ]
     }

@@ -18,7 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "pnpm test:e2e:build && pnpm test:e2e:run",
-    "test:e2e:build": "pnpm tauri build --debug --no-bundle --features tauri/custom-protocol --config src-tauri/tauri.e2e.conf.json && mkdir -p e2e/.bin && cp src-tauri/target/debug/platypusgit e2e/.bin/platypusgit",
+    "test:e2e:build": "pnpm tauri build --debug --no-bundle --features tauri/custom-protocol,e2e --config src-tauri/tauri.e2e.conf.json && mkdir -p e2e/.bin && cp src-tauri/target/debug/platypusgit e2e/.bin/platypusgit",
     "test:e2e:run": "wdio run e2e/wdio.conf.ts",
     "test:e2e:docker": "e2e/e2e-docker.sh"
   },

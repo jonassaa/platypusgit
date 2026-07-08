@@ -153,6 +153,13 @@ interface RepoStoreState {
    */
   setLogRef: (refspec: string | null) => Promise<void>;
   refreshAll: () => Promise<void>;
+  /**
+   * Lightweight refresh for index-only mutations (stage/unstage/discard and
+   * the hunk ops): re-fetches just `status` + `repoState`, skipping the full
+   * branch/tag/stash/remote enumeration and the ≤500-commit log walk that
+   * `refreshAll` does but that these ops can't change.
+   */
+  refreshStatus: () => Promise<void>;
   refreshAllFiles: () => Promise<void>;
   /**
    * List every file in the tree at `revspec` (commit/branch/tag/revspec).
@@ -389,6 +396,21 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
+  async refreshStatus() {
+    const repo = get().current;
+    if (!repo) return;
+    set({ error: null });
+    try {
+      const [status, repoState] = await Promise.all([
+        getStatus(repo.id),
+        repoStateFn(repo.id),
+      ]);
+      set({ status, repoState });
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
   clearError() {
     set({ error: null });
   },
@@ -450,7 +472,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await stagePaths(repo.id, paths);
-      await get().refreshAll();
+      await get().refreshStatus();
     } catch (e) {
       set({ error: toAppError(e) });
     }
@@ -461,7 +483,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await unstagePaths(repo.id, paths);
-      await get().refreshAll();
+      await get().refreshStatus();
     } catch (e) {
       set({ error: toAppError(e) });
     }
@@ -472,7 +494,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await discardPaths(repo.id, paths);
-      await get().refreshAll();
+      await get().refreshStatus();
     } catch (e) {
       set({ error: toAppError(e) });
     }
@@ -485,7 +507,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await stageHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
-      await get().refreshAll();
+      await get().refreshStatus();
     } catch (e) {
       set({ error: toAppError(e) });
     }
@@ -496,7 +518,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await unstageHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
-      await get().refreshAll();
+      await get().refreshStatus();
     } catch (e) {
       set({ error: toAppError(e) });
     }
@@ -507,7 +529,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await discardHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
-      await get().refreshAll();
+      await get().refreshStatus();
     } catch (e) {
       set({ error: toAppError(e) });
     }

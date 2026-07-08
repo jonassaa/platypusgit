@@ -345,7 +345,6 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "check",
       label: "Check out this commit",
-      shortcut: "⌘⇧C",
       onClick: () => {
         if (!commit?.sha) return;
         if (window.confirm(`Check out ${sha.slice(0, 7)} in detached HEAD?`))
@@ -379,7 +378,6 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "rebase",
       label: "Cherry-pick onto current",
-      shortcut: "⌘Y",
       onClick: () => {
         if (commit?.sha) useRepoStore.getState().cherryPick(commit.sha);
       },
@@ -481,7 +479,6 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "copy",
       label: "Copy SHA",
-      shortcut: "⌘C",
       onClick: () => {
         navigator.clipboard?.writeText(sha);
         pgFlash(`copied ${sha.slice(0, 7)}`);
@@ -588,7 +585,6 @@ export function branchMenuItems(
     {
       icon: "check",
       label: "Check out",
-      shortcut: "⌘⇧O",
       disabled: isCurrent,
       onClick: () => useRepoStore.getState().checkoutBranch(name),
     },
@@ -645,7 +641,6 @@ export function branchMenuItems(
     {
       icon: "edit",
       label: "Rename…",
-      shortcut: "F2",
       onClick: () => {
         const to = window.prompt("New name", name);
         if (to && to !== name) useRepoStore.getState().renameBranch(name, to);
@@ -663,7 +658,6 @@ export function branchMenuItems(
     {
       icon: "trash",
       label: "Delete",
-      shortcut: "⌫",
       danger: true,
       disabled: isCurrent,
       onClick: () => {
@@ -890,7 +884,6 @@ export function fileMenuItems(
       ? {
           icon: "minus",
           label: "Unstage",
-          shortcut: "⌘⇧U",
           onClick: () => {
             if (path) useRepoStore.getState().unstage([path]);
           },
@@ -898,7 +891,6 @@ export function fileMenuItems(
       : {
           icon: "plus",
           label: "Stage",
-          shortcut: "⌘⇧S",
           onClick: () => {
             if (path) useRepoStore.getState().stage([path]);
           },
@@ -916,7 +908,6 @@ export function fileMenuItems(
     {
       icon: "diff",
       label: "View diff",
-      shortcut: "⏎",
       onClick: () => {
         if (!path) return;
         useNavStore.getState().setIntent({ kind: "diff-file", path });
@@ -941,7 +932,6 @@ export function fileMenuItems(
     {
       icon: "edit",
       label: "Open in editor",
-      shortcut: "⌘O",
       onClick: () => {
         if (!path) return;
         useRepoStore.getState().openInEditor(path);

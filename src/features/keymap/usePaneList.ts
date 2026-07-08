@@ -10,8 +10,10 @@
 import React from "react";
 import { useFocusStore } from "./useFocusStore";
 import { useKeymapStore } from "./useKeymapStore";
+import { useOverlayStore } from "./useOverlayStore";
 import { useSpeedSearchStore } from "./useSpeedSearchStore";
 import { useAction } from "./useAction";
+import { usePaletteStore } from "@/features/palette/usePaletteStore";
 
 export function usePaneList(opts: {
   paneId: string;
@@ -103,22 +105,50 @@ export function usePaneList(opts: {
     if (!hasSearch) return;
     return useKeymapStore.getState().registerSpeedSearch(paneId);
   }, [paneId, hasSearch]);
+
+  // Read searchText through a ref so the memo below can rebuild only when the
+  // list changes — not on the parent re-render every keystroke triggers (which
+  // recreates the inline `searchText` closure).
+  const searchTextRef = React.useRef(opts.searchText);
+  searchTextRef.current = opts.searchText;
+  // Precompute the lowercased searchable text once per list, so a speed-search
+  // session narrowing the query doesn't re-lowercase the whole list on every
+  // keystroke. Keyed on `count`: a same-length content swap mid-search is rare
+  // (you're typing, not mutating the repo) and self-heals on the next change.
+  const lowered = React.useMemo(() => {
+    const fn = searchTextRef.current;
+    if (!fn) return [];
+    const arr = new Array<string>(count);
+    for (let i = 0; i < count; i++) arr[i] = fn(i).toLowerCase();
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSearch, count]);
   React.useEffect(() => {
     if (!hasSearch || !query) return;
     const q = query.toLowerCase();
-    for (let i = 0; i < count; i++) {
-      if (opts.searchText!(i).toLowerCase().includes(q)) {
+    for (let i = 0; i < lowered.length; i++) {
+      if (lowered[i].includes(q)) {
         opts.onSelect(i);
         return;
       }
     }
     // No match: leave the selection where it is (JetBrains behavior).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, lowered]);
   useAction(
     "app.closeOverlay",
     () => {
       if (!isFocused || !query) return false;
+      // An overlay stacked above the pane (command palette / cheat sheet) owns
+      // Escape first — closing it takes priority over clearing a lingering
+      // speed-search query. Declining here lets the overlay's own closeOverlay
+      // handler run, so Escape doesn't need a second press.
+      if (
+        usePaletteStore.getState().open ||
+        useOverlayStore.getState().cheatSheetOpen
+      ) {
+        return false;
+      }
       useSpeedSearchStore.getState().clear(paneId);
       return true;
     },

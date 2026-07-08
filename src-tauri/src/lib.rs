@@ -67,8 +67,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init());
 
-    // WebDriver server for E2E tests. Debug builds only.
-    #[cfg(debug_assertions)]
+    // WebDriver server for E2E tests. Compiled + wired ONLY under the `e2e`
+    // cargo feature (test:e2e:build) — never linked into dev/production
+    // binaries, since it opens a WebDriver server (port 4445) with full IPC.
+    #[cfg(feature = "e2e")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
