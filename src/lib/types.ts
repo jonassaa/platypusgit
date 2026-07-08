@@ -21,6 +21,11 @@ export interface FileStatus {
   path: string;
   worktree: StatusFlag;
   index: StatusFlag;
+  /** Lines added vs HEAD (worktree + index). 0 when unmodified/binary or in
+   *  listings that don't compute stats (all-files / at-revision). */
+  additions: number;
+  /** Lines removed vs HEAD (worktree + index). */
+  deletions: number;
 }
 
 export interface CommitInfo {

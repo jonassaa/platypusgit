@@ -13,11 +13,15 @@ const staged = (path: string): FileStatus => ({
   path,
   worktree: { kind: "Unmodified" },
   index: { kind: "Modified" },
+  additions: 0,
+  deletions: 0,
 });
 const unstaged = (path: string): FileStatus => ({
   path,
   worktree: { kind: "Modified" },
   index: { kind: "Unmodified" },
+  additions: 0,
+  deletions: 0,
 });
 
 const key = (k: string, over: Partial<KeyboardEvent> = {}) =>

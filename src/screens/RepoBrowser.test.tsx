@@ -13,7 +13,13 @@ const repo: RepoHandle = {
 };
 
 function modified(path: string): FileStatus {
-  return { path, worktree: { kind: "Modified" }, index: { kind: "Unmodified" } };
+  return {
+    path,
+    worktree: { kind: "Modified" },
+    index: { kind: "Unmodified" },
+    additions: 0,
+    deletions: 0,
+  };
 }
 
 function unmodified(path: string): FileStatus {
@@ -21,6 +27,8 @@ function unmodified(path: string): FileStatus {
     path,
     worktree: { kind: "Unmodified" },
     index: { kind: "Unmodified" },
+    additions: 0,
+    deletions: 0,
   };
 }
 

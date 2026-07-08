@@ -278,11 +278,11 @@ export function CommitPanelScreen() {
   const defaultRemote = remotes[0] ?? null;
 
   const stagedAdd = React.useMemo(
-    () => staged.reduce((s, f) => s + countAdd(f.status), 0),
+    () => staged.reduce((s, f) => s + f.status.additions, 0),
     [staged],
   );
   const stagedDel = React.useMemo(
-    () => staged.reduce((s, f) => s + countDel(f.status), 0),
+    () => staged.reduce((s, f) => s + f.status.deletions, 0),
     [staged],
   );
 
@@ -430,8 +430,8 @@ export function CommitPanelScreen() {
               path={f.path}
               status={statusMark(f.status)}
               staged
-              additions={countAdd(f.status)}
-              deletions={countDel(f.status)}
+              additions={f.status.additions}
+              deletions={f.status.deletions}
               selected={effectiveKeys.has(keyOf(f))}
               onClick={onRowClick(f)}
               onContextMenu={onRowContextMenu(f)}
@@ -483,8 +483,8 @@ export function CommitPanelScreen() {
               path={f.path}
               status={statusMark(f.status)}
               staged={false}
-              additions={countAdd(f.status)}
-              deletions={countDel(f.status)}
+              additions={f.status.additions}
+              deletions={f.status.deletions}
               selected={effectiveKeys.has(keyOf(f))}
               onClick={onRowClick(f)}
               onContextMenu={onRowContextMenu(f)}
@@ -895,16 +895,6 @@ function diffToSplit(d: FileDiff): { left: SideLine[]; right: SideLine[] } {
     }
   }
   return { left, right };
-}
-
-function countAdd(s: FileStatus): number {
-  // We don't have per-file adds/dels from the status list — surface 0
-  // unless the diff viewer exposes it. Keeping the slot keeps the UI tidy.
-  return s.worktree.kind === "Added" || s.index.kind === "Added" ? 0 : 0;
-}
-
-function countDel(s: FileStatus): number {
-  return s.worktree.kind === "Deleted" || s.index.kind === "Deleted" ? 0 : 0;
 }
 
 function toUiLine(l: {

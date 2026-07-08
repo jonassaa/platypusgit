@@ -13,11 +13,23 @@ const repo: RepoHandle = {
 };
 
 function modified(path: string): FileStatus {
-  return { path, worktree: { kind: "Modified" }, index: { kind: "Unmodified" } };
+  return {
+    path,
+    worktree: { kind: "Modified" },
+    index: { kind: "Unmodified" },
+    additions: 0,
+    deletions: 0,
+  };
 }
 
 function stagedFile(path: string): FileStatus {
-  return { path, worktree: { kind: "Unmodified" }, index: { kind: "Modified" } };
+  return {
+    path,
+    worktree: { kind: "Unmodified" },
+    index: { kind: "Modified" },
+    additions: 0,
+    deletions: 0,
+  };
 }
 
 const initialStatus = [

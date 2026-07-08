@@ -33,6 +33,11 @@ pub struct FileStatus {
     pub path: String,
     pub worktree: StatusFlag,
     pub index: StatusFlag,
+    /// Lines added in this file vs HEAD (working tree + index combined).
+    /// 0 for unmodified/binary files and in listings that don't compute stats.
+    pub additions: u32,
+    /// Lines removed in this file vs HEAD (working tree + index combined).
+    pub deletions: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
