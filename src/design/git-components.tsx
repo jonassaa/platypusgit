@@ -467,7 +467,7 @@ export function PGDiffLine({ kind = "ctx", lnL, lnR, text }: DiffLineData) {
     ctx: "transparent",
     add: "var(--git-added-bg)",
     rem: "var(--git-removed-bg)",
-    hunk: "oklch(0.72 0.15 235 / 0.1)",
+    hunk: "oklch(from var(--accent) l c h / 0.1)",
     info: "var(--bg-2)",
     empty: "var(--bg-2)",
   };
@@ -603,7 +603,7 @@ function PGDiffChunk({ chunk }: { chunk: DiffChunk }) {
   const bg: Partial<Record<DiffLineKind, string>> = {
     add: "var(--git-added-bg)",
     rem: "var(--git-removed-bg)",
-    hunk: "oklch(0.72 0.15 235 / 0.1)",
+    hunk: "oklch(from var(--accent) l c h / 0.1)",
     info: "var(--bg-2)",
   };
   const borderColor: Partial<Record<DiffLineKind, string>> = {

@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import React from "react";
 import {
@@ -29,7 +28,7 @@ import { BlameScreen } from "@/screens/Blame";
 import { SettingsScreen } from "@/screens/Settings";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
-import { headUpstream } from "@/features/repo/ops";
+import { headUpstream, openRepoDialog } from "@/features/repo/ops";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useCliLaunch } from "@/features/cli/useCliLaunch";
 import {
@@ -68,6 +67,11 @@ type ScreenId =
   | "blame"
   | "settings";
 
+// Deep views are reachable ONLY via a nav intent (no activity-bar entry). They
+// carry no valid payload after a reload and have no "you are here" anchor, so
+// they must not be restored from localStorage — see the reload-guard below.
+const DEEP_VIEWS = new Set<ScreenId>(["commitDiff", "fileHistory", "blame"]);
+
 // Maps each activity-bar item id to the navigation action whose chord it shows.
 const ACTIVITY_ACTION: Record<string, ActionId> = {
   repo: "nav.files",
@@ -103,13 +107,21 @@ export function AppShell() {
   const clearError = useRepoStore((s) => s.clearError);
 
   const [screen, setScreen] = React.useState<ScreenId>(() => {
-    const saved = localStorage.getItem("pg-screen");
-    return (saved as ScreenId) || "repo";
+    const saved = localStorage.getItem("pg-screen") as ScreenId | null;
+    // Reload-guard: a persisted deep view has no intent/payload on load, so it
+    // would render a dead empty state. Fall back to Files.
+    if (!saved || DEEP_VIEWS.has(saved)) return "repo";
+    return saved;
   });
 
   React.useEffect(() => {
     localStorage.setItem("pg-screen", screen);
   }, [screen]);
+
+  // Latest screen, readable synchronously from the intent effect below without
+  // making it a dependency (so origin capture sees the pre-switch screen).
+  const screenRef = React.useRef(screen);
+  screenRef.current = screen;
 
   const autoFetchEnabled = useSettingsStore((s) => s.autoFetchEnabled);
   const autoFetchMinutes = useSettingsStore((s) => s.autoFetchMinutes);
@@ -160,6 +172,15 @@ export function AppShell() {
   const clearIntent = useNavStore((s) => s.clearIntent);
   React.useEffect(() => {
     if (!intent) return;
+    // Enter a deep view, recording the originating screen for its Back button.
+    // Don't overwrite when coming from another deep view — Back then returns
+    // to the last "real" screen instead of chaining deep views.
+    const enterDeep = (target: ScreenId) => {
+      if (!DEEP_VIEWS.has(screenRef.current)) {
+        useNavStore.getState().setDeepOrigin(screenRef.current);
+      }
+      setScreen(target);
+    };
     switch (intent.kind) {
       case "diff-file":
         setScreen("diff");
@@ -167,19 +188,19 @@ export function AppShell() {
       case "commit-self":
       case "commit-vs-wt":
       case "commit-vs-commit":
-        setScreen("commitDiff");
+        enterDeep("commitDiff");
         break;
       case "file-history":
-        setScreen("fileHistory");
+        enterDeep("fileHistory");
         break;
       case "blame":
-        setScreen("blame");
+        enterDeep("blame");
         break;
       case "rebase-plan":
         setScreen("rebase");
         break;
       case "stash-diff":
-        setScreen("commitDiff");
+        enterDeep("commitDiff");
         break;
       case "switch-screen":
         setScreen(intent.screen as ScreenId);
@@ -355,7 +376,6 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const activity = useRepoStore((s) => s.activity);
   const refresh = useRepoStore((s) => s.refreshAll);
   const close = useRepoStore((s) => s.closeRepo);
-  const openStore = useRepoStore((s) => s.openRepo);
   const store = useRepoStore();
   const defaultPullMode = useSettingsStore((s) => s.defaultPullMode);
 
@@ -372,13 +392,8 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     null,
   );
 
-  const onOpen = async () => {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Open repository",
-    });
-    if (typeof selected === "string") await openStore(selected);
+  const onOpen = () => {
+    void openRepoDialog();
   };
 
   // Same ops the keymap default runners and palette use (features/repo/ops.ts).

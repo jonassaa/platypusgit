@@ -100,7 +100,7 @@ function ContextMenuItemView({
         cursor: disabled ? "default" : "pointer",
         background:
           hover && !disabled
-            ? "oklch(0.72 0.15 235 / 0.18)"
+            ? "oklch(from var(--accent) l c h / 0.18)"
             : "transparent",
         color,
       }}

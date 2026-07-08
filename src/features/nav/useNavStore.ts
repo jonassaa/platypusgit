@@ -20,12 +20,21 @@ export type NavIntent =
 
 interface NavState {
   intent: NavIntent | null;
+  /**
+   * Screen to return to from a deep view (CommitDiff / FileHistory / Blame).
+   * Set by AppShell when it routes an intent into a deep view; read by the
+   * deep view's back affordance so "Back" lands where the user came from.
+   */
+  deepOrigin: string | null;
   setIntent: (i: NavIntent) => void;
   clearIntent: () => void;
+  setDeepOrigin: (screen: string | null) => void;
 }
 
 export const useNavStore = create<NavState>((set) => ({
   intent: null,
+  deepOrigin: null,
   setIntent: (intent) => set({ intent }),
   clearIntent: () => set({ intent: null }),
+  setDeepOrigin: (deepOrigin) => set({ deepOrigin }),
 }));

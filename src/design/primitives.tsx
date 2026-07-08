@@ -292,7 +292,7 @@ export function PGInput({
         padding: "0 8px",
         gap: 6,
         transition: "border-color var(--t-fast)",
-        boxShadow: focus ? "0 0 0 3px oklch(0.72 0.15 235 / 0.15)" : "none",
+        boxShadow: focus ? "0 0 0 3px oklch(from var(--accent) l c h / 0.15)" : "none",
         ...style,
       }}
     >
@@ -411,7 +411,7 @@ export function PGTextarea({
         lineHeight: "var(--lh-body)",
         outline: "none",
         transition: "border-color var(--t-fast)",
-        boxShadow: focus ? "0 0 0 3px oklch(0.72 0.15 235 / 0.15)" : "none",
+        boxShadow: focus ? "0 0 0 3px oklch(from var(--accent) l c h / 0.15)" : "none",
         ...style,
       }}
       {...rest}
@@ -643,9 +643,9 @@ export function PGBadge({
   const tones: Record<string, { bg: string; fg: string; border: string }> = {
     default: { bg: "var(--bg-3)", fg: "var(--fg-1)", border: "var(--border-1)" },
     accent: {
-      bg: "oklch(0.72 0.15 235 / 0.18)",
+      bg: "oklch(from var(--accent) l c h / 0.18)",
       fg: "var(--accent)",
-      border: "oklch(0.72 0.15 235 / 0.35)",
+      border: "oklch(from var(--accent) l c h / 0.35)",
     },
     success: {
       bg: "oklch(0.72 0.15 155 / 0.18)",

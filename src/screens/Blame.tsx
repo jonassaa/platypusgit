@@ -4,6 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { blameFile } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
+import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { PGPane, FocusableScroll } from "@/features/keymap";
 import type { BlameLine } from "@/lib/types";
 
@@ -38,22 +39,18 @@ export function BlameScreen() {
 
   if (!path) {
     return (
-      <PGEmpty icon="search" title="No file selected">
-        Right-click a file and choose "Blame".
-      </PGEmpty>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <DeepViewHeader crumbs={["Blame"]} />
+        <PGEmpty icon="search" title="No file selected">
+          Right-click a file and choose "Blame".
+        </PGEmpty>
+      </div>
     );
   }
 
   return (
     <PGPane id="blame.content" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div style={{
-        padding: "8px 12px",
-        borderBottom: "1px solid var(--border-0)",
-        fontFamily: "var(--font-mono)",
-        fontSize: "var(--fs-12)",
-      }}>
-        Blame — {path}
-      </div>
+      <DeepViewHeader crumbs={[`Blame — ${path}`]} />
       {loading && <div style={{ padding: 12 }}><PGSpinner /></div>}
       {error && <div style={{ padding: 12, color: "var(--git-removed)" }}>{error}</div>}
       <FocusableScroll style={{

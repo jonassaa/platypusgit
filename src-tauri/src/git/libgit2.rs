@@ -442,6 +442,41 @@ fn patch_text_for_hunk(diff: &git2::Diff, delta_index: usize, hunk_index: usize)
     Ok(out)
 }
 
+/// Per-file added/removed line counts for the working tree vs HEAD, index
+/// included, keyed by path. One diff pass + cheap `line_stats()` per delta (no
+/// full patch print). Untracked files count their whole content as additions.
+/// Keyed by both new and old paths so renames/deletions resolve either way.
+fn worktree_line_stats(repo: &Repository) -> AppResult<HashMap<String, (u32, u32)>> {
+    let mut opts = DiffOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true)
+        .include_typechange(true);
+    let head_tree = match repo.head() {
+        Ok(h) => Some(h.peel_to_tree()?),
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(e) => return Err(e.into()),
+    };
+    let diff = repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?;
+    let mut map: HashMap<String, (u32, u32)> = HashMap::new();
+    for idx in 0..diff.deltas().len() {
+        let Some(patch) = git2::Patch::from_diff(&diff, idx)? else {
+            continue;
+        };
+        let (_ctx, add, del) = patch.line_stats()?;
+        let counts = (add as u32, del as u32);
+        if let Some(delta) = diff.get_delta(idx) {
+            if let Some(p) = delta.new_file().path() {
+                map.insert(p.to_string_lossy().to_string(), counts);
+            }
+            if let Some(p) = delta.old_file().path() {
+                map.entry(p.to_string_lossy().to_string()).or_insert(counts);
+            }
+        }
+    }
+    Ok(map)
+}
+
 /// Convert a computed `git2::Diff` into per-file `FileDiff`s (path, rename
 /// origin, binary flag, add/del counts, hunks). Renames must already be
 /// resolved by the caller (`find_similar`). Shared by every tree-to-tree diff
@@ -792,6 +827,9 @@ impl GitBackend for Libgit2Backend {
 
     fn status(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
         self.with_repo(repo_id, |repo| {
+            // Per-file line stats (HEAD → working tree, index-aware) in one diff
+            // pass. Degrades to empty (→ 0/0 counts) rather than failing status.
+            let stats = worktree_line_stats(repo).unwrap_or_default();
             let mut opts = StatusOptions::new();
             opts.include_untracked(true)
                 .recurse_untracked_dirs(true)
@@ -801,10 +839,13 @@ impl GitBackend for Libgit2Backend {
             for entry in statuses.iter() {
                 let path = entry.path().unwrap_or("").to_string();
                 let s = entry.status();
+                let (additions, deletions) = stats.get(&path).copied().unwrap_or((0, 0));
                 out.push(FileStatus {
                     path,
                     worktree: map_status_flag(s, StatusSide::Worktree),
                     index: map_status_flag(s, StatusSide::Index),
+                    additions,
+                    deletions,
                 });
             }
             Ok(out)
@@ -830,6 +871,10 @@ impl GitBackend for Libgit2Backend {
                     path,
                     worktree: map_status_flag(s, StatusSide::Worktree),
                     index: map_status_flag(s, StatusSide::Index),
+                    // Full-file listing (incl. unmodified) doesn't compute per-file
+                    // line stats — the tree shows status marks, not counts.
+                    additions: 0,
+                    deletions: 0,
                 });
             }
             Ok(out)
@@ -1271,6 +1316,8 @@ impl GitBackend for Libgit2Backend {
                             path,
                             worktree: StatusFlag::Unmodified,
                             index: StatusFlag::Unmodified,
+                            additions: 0,
+                            deletions: 0,
                         });
                     }
                 }

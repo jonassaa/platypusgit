@@ -35,6 +35,8 @@ const POWER_SHORTCUTS = {
 
 /** Bindings shared by every preset — panes, lists, overlay. */
 const COMMON = {
+  // Open repository (the status bar advertises ⌘O). Same chord both presets.
+  "repo.open": ["Mod+O"],
   "app.closeOverlay": ["Escape"],
   "pane.focusLeft": ["Alt+ArrowLeft"],
   "pane.focusRight": ["Alt+ArrowRight"],
@@ -57,6 +59,9 @@ const COMMON = {
   // Rider NextDiff/PreviousDiff — real JetBrains bindings.
   "diff.nextChange": ["F7"],
   "diff.prevChange": ["Shift+F7"],
+  // Find-in-tree (matches the ⌘⇧F chip on the Files tree). Component-handled
+  // by RepoBrowser; a find, not a mutating op, so ⌘⇧F muscle-memory is safe.
+  "tree.find": ["Mod+Shift+F"],
 } satisfies Partial<Record<ActionId, string[]>>;
 
 export const RIDER_PRESET: KeymapPreset = {

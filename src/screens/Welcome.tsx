@@ -1,7 +1,7 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { PGButton, PGIcon, PGIconButton, PGLogo, PGSpinner } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useRecentsStore } from "@/features/repo/useRecentsStore";
+import { openRepoDialog } from "@/features/repo/ops";
 
 export function WelcomeScreen() {
   const openRepo = useRepoStore((s) => s.openRepo);
@@ -9,15 +9,8 @@ export function WelcomeScreen() {
   const recents = useRecentsStore((s) => s.recents);
   const removeRecent = useRecentsStore((s) => s.removeRecent);
 
-  async function handleOpen() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Open repository",
-    });
-    if (typeof selected === "string") {
-      await openRepo(selected);
-    }
+  function handleOpen() {
+    void openRepoDialog();
   }
 
   return (
