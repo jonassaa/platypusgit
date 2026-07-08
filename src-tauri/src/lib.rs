@@ -66,7 +66,9 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_os::init());
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
 
     // WebDriver server for E2E tests. Compiled + wired ONLY under the `e2e`
     // cargo feature (test:e2e:build) — never linked into dev/production
