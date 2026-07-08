@@ -143,6 +143,8 @@ jobs:
   windows:
     needs: version
     runs-on: windows-latest
+    outputs:
+      sig: ${{ steps.sig.outputs.sig }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -181,6 +183,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Rename bundle to stable name
@@ -189,6 +194,15 @@ jobs:
           set -euo pipefail
           msi_dir="src-tauri/target/release/bundle/msi"
           cp "$(ls "$msi_dir"/*.msi | head -n1)" "$msi_dir/PlatypusGit_x64.msi"
+
+      - name: Read updater signature
+        id: sig
+        shell: bash
+        run: |
+          set -euo pipefail
+          msi_dir="src-tauri/target/release/bundle/msi"
+          sig="$(cat "$(ls "$msi_dir"/*.msi.sig | head -n1)")"
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
 
       - name: Attach installer to release
         uses: softprops/action-gh-release@v2
@@ -200,6 +214,8 @@ jobs:
   linux:
     needs: version
     runs-on: ubuntu-22.04
+    outputs:
+      sig: ${{ steps.sig.outputs.sig }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -248,6 +264,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Rename bundles to stable names
@@ -257,6 +276,14 @@ jobs:
           appimage_dir="src-tauri/target/release/bundle/appimage"
           cp "$(ls "$deb_dir"/*.deb | head -n1)" "$deb_dir/PlatypusGit_amd64.deb"
           cp "$(ls "$appimage_dir"/*.AppImage | head -n1)" "$appimage_dir/PlatypusGit_amd64.AppImage"
+
+      - name: Read updater signature
+        id: sig
+        run: |
+          set -euo pipefail
+          appimage_dir="src-tauri/target/release/bundle/appimage"
+          sig="$(cat "$(ls "$appimage_dir"/*.AppImage.sig | head -n1)")"
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
 
       - name: Attach bundles to release
         uses: softprops/action-gh-release@v2
@@ -331,3 +358,42 @@ jobs:
           git add Casks/platypusgit.rb
           git commit -m "chore: bump platypusgit to ${{ needs.version.outputs.version }}"
           git push
+
+  # Publish the updater manifest so tauri-plugin-updater can verify + install.
+  # Points at the stable-named release assets. macOS is intentionally omitted
+  # (notify-only). Skipped for plain prereleases, same gate as bump-cask.
+  updater-manifest:
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Build latest.json
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          tag="${{ needs.version.outputs.tag }}"
+          base="https://github.com/jonassaa/platypusgit/releases/download/${tag}"
+          jq -n \
+            --arg version "$v" \
+            --arg notes "See https://github.com/jonassaa/platypusgit/releases/tag/${tag}" \
+            --arg win_sig "${{ needs.windows.outputs.sig }}" \
+            --arg win_url "${base}/PlatypusGit_x64.msi" \
+            --arg lin_sig "${{ needs.linux.outputs.sig }}" \
+            --arg lin_url "${base}/PlatypusGit_amd64.AppImage" \
+            '{
+              version: $version,
+              notes: $notes,
+              platforms: {
+                "windows-x86_64": { signature: $win_sig, url: $win_url },
+                "linux-x86_64": { signature: $lin_sig, url: $lin_url }
+              }
+            }' > latest.json
+          echo "--- latest.json ---"
+          cat latest.json
+
+      - name: Attach latest.json to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          files: latest.json
+          fail_on_unmatched_files: true
