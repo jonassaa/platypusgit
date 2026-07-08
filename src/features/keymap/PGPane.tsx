@@ -44,9 +44,23 @@ export function PGPane({
   React.useEffect(() => {
     const el = ref.current;
     if (!focused || !el) return;
-    if (el.contains(document.activeElement)) return;
-    const target = el.querySelector<HTMLElement>("[data-pg-focus-target]") ?? el;
-    target.focus({ preventScroll: false });
+    if (!el.contains(document.activeElement)) {
+      const target = el.querySelector<HTMLElement>("[data-pg-focus-target]") ?? el;
+      target.focus({ preventScroll: false });
+    }
+    // A `[data-pg-focus-target]` may mount AFTER the pane is already focused
+    // (e.g. History's detail once a commit is selected). With no target at
+    // focus time the wrapper took focus; delegate to the target once it
+    // appears — but only while focus still sits on the wrapper, so we never
+    // yank it off a control the user tabbed to.
+    const obs = new MutationObserver(() => {
+      const node = ref.current;
+      if (!node || document.activeElement !== node) return;
+      const target = node.querySelector<HTMLElement>("[data-pg-focus-target]");
+      if (target) target.focus({ preventScroll: false });
+    });
+    obs.observe(el, { childList: true, subtree: true });
+    return () => obs.disconnect();
   }, [focused]);
 
   return (
