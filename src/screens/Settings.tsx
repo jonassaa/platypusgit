@@ -1,5 +1,6 @@
 import React from "react";
 import { platform } from "@tauri-apps/plugin-os";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   PGButton,
   PGButtonGroup,
@@ -18,6 +19,7 @@ import {
   type ThemeDef,
 } from "@/features/settings/useSettingsStore";
 import { cliShimStatus, installCliShim, type PullMode } from "@/lib/tauri";
+import { useUpdateStore } from "@/features/update/useUpdateStore";
 import type { CliShimStatus } from "@/lib/types";
 import { BUILTIN_PRESETS, useKeymapStore } from "@/features/keymap";
 
@@ -205,6 +207,7 @@ export function SettingsScreen() {
 
         <KeyboardSection />
         <CliSection />
+        <UpdatesSection />
       </div>
     </div>
   );
@@ -331,6 +334,78 @@ function CliSection() {
         />
       )}
     </Section>
+  );
+}
+
+function UpdatesSection() {
+  const [appVersion, setAppVersion] = React.useState<string>("");
+  const status = useUpdateStore((s) => s.status);
+  const info = useUpdateStore((s) => s.info);
+  const error = useUpdateStore((s) => s.error);
+  const openPanel = useUpdateStore((s) => s.openPanel);
+  const check = useUpdateStore((s) => s.check);
+
+  React.useEffect(() => {
+    void getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(""));
+  }, []);
+
+  let statusNode: React.ReactNode = null;
+  if (status === "up-to-date") {
+    statusNode = <>You're on the latest version.</>;
+  } else if (status === "available" && info) {
+    statusNode = (
+      <>
+        Update available:{" "}
+        <button
+          type="button"
+          onClick={openPanel}
+          style={{
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            color: "var(--accent)",
+            cursor: "pointer",
+            font: "inherit",
+          }}
+        >
+          {info.latestVersion}
+        </button>
+      </>
+    );
+  } else if (status === "error" && error) {
+    statusNode = <span style={{ color: "var(--git-removed)" }}>{error}</span>;
+  }
+
+  return (
+    <div data-testid="settings-updates">
+      <Section
+        title="Updates"
+        subtitle="Check whether a newer PlatypusGit release is available."
+      >
+        <Row
+          label="Current version"
+          hint={
+            <>
+              <code style={{ fontFamily: "var(--font-mono)" }}>
+                {appVersion || "…"}
+              </code>
+              {statusNode && <> — {statusNode}</>}
+            </>
+          }
+          control={
+            <PGButton
+              size="sm"
+              onClick={() => check(true)}
+              loading={status === "checking"}
+            >
+              Check for updates
+            </PGButton>
+          }
+        />
+      </Section>
+    </div>
   );
 }
 
