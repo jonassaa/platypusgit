@@ -1,3 +1,5 @@
+import React from "react";
+
 import { PGButton, PGIconButton } from "@/design";
 import { usePlatform } from "@/lib/platform";
 import { useUpdateStore } from "./useUpdateStore";
@@ -7,21 +9,41 @@ export function UpdatePanel() {
   const panelOpen = useUpdateStore((s) => s.panelOpen);
   const info = useUpdateStore((s) => s.info);
   const capability = useUpdateStore((s) => s.capability);
-  const status = useUpdateStore((s) => s.status);
+  const installing = useUpdateStore((s) => s.installing);
   const progress = useUpdateStore((s) => s.progress);
+  const error = useUpdateStore((s) => s.error);
+  const message = useUpdateStore((s) => s.message);
   const install = useUpdateStore((s) => s.install);
   const openReleasePage = useUpdateStore((s) => s.openReleasePage);
   const closePanel = useUpdateStore((s) => s.closePanel);
   const dismiss = useUpdateStore((s) => s.dismiss);
   const platform = usePlatform();
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
 
-  if (!panelOpen || !info) return null;
+  // Click-outside to close, matching BranchPicker's popover pattern. Escape is
+  // handled by the keymap's `app.closeOverlay` action (features/keymap), not a
+  // local listener, so it stays in the cheat-sheet and honours rebinding.
+  React.useEffect(() => {
+    if (!panelOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      const panel = panelRef.current;
+      if (panel && t && panel.contains(t)) return;
+      closePanel();
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [panelOpen, closePanel]);
+
+  // `!info.available` matters on a RE-check: a deleted/yanked release would
+  // otherwise leave an "Update available" panel open while the chip vanishes.
+  if (!panelOpen || !info || !info.available) return null;
 
   const selfUpdate = capability === "self-update";
-  const installing = status === "installing";
 
   return (
     <div
+      ref={panelRef}
       data-testid="pg-update-panel"
       role="dialog"
       aria-label="Update available"
@@ -34,7 +56,7 @@ export function UpdatePanel() {
         background: "var(--bg-1)",
         border: "1px solid var(--border-1)",
         borderRadius: "var(--r-3)",
-        boxShadow: "0 8px 30px rgba(0,0,0,0.35)",
+        boxShadow: "var(--shadow-3)",
         padding: 14,
         display: "flex",
         flexDirection: "column",
@@ -51,7 +73,11 @@ export function UpdatePanel() {
         <span style={{ fontWeight: 600, color: "var(--fg-0)" }}>
           Update available — {info.latestVersion}
         </span>
-        <PGIconButton icon="x" title="Close" onClick={closePanel} />
+        <PGIconButton
+          icon="x"
+          title="Close (ask again later)"
+          onClick={closePanel}
+        />
       </div>
 
       <div style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>
@@ -97,14 +123,38 @@ export function UpdatePanel() {
         </div>
       )}
 
+      {message && (
+        <div
+          data-testid="pg-update-message"
+          style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}
+        >
+          {message}
+        </div>
+      )}
+
+      {/* Without this a failed download just stopped the spinner — a silent
+          dead button with no way to tell what went wrong. */}
+      {error && (
+        <div
+          data-testid="pg-update-error"
+          role="alert"
+          style={{ fontSize: "var(--fs-11)", color: "var(--git-removed)" }}
+        >
+          {error}
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        {/* "Skip this version" persists suppression for this version forever;
+            the x above only closes. They used to be presented identically. */}
         <PGButton
           size="sm"
           variant="default"
           data-testid="pg-update-dismiss"
+          title={`Never prompt again for ${info.latestVersion}`}
           onClick={dismiss}
         >
-          Later
+          Skip this version
         </PGButton>
         <PGButton
           size="sm"

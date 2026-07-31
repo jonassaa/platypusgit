@@ -21,6 +21,7 @@ import {
   unstageAllOp,
 } from "@/features/repo/ops";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { createBranchInputStep } from "@/features/palette/steps";
 import { useFocusStore } from "./useFocusStore";
 import { useOverlayStore } from "./useOverlayStore";
@@ -176,6 +177,10 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
     run: () => {
       if (useOverlayStore.getState().cheatSheetOpen) {
         useOverlayStore.getState().closeCheatSheet();
+        return true;
+      }
+      if (useUpdateStore.getState().panelOpen) {
+        useUpdateStore.getState().closePanel();
         return true;
       }
       return false; // nothing to close — let the key fall through

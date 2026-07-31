@@ -1,6 +1,5 @@
 import React from "react";
 import { platform } from "@tauri-apps/plugin-os";
-import { getVersion } from "@tauri-apps/api/app";
 import {
   PGButton,
   PGButtonGroup,
@@ -338,18 +337,19 @@ function CliSection() {
 }
 
 function UpdatesSection() {
-  const [appVersion, setAppVersion] = React.useState<string>("");
   const status = useUpdateStore((s) => s.status);
   const info = useUpdateStore((s) => s.info);
   const error = useUpdateStore((s) => s.error);
   const openPanel = useUpdateStore((s) => s.openPanel);
   const check = useUpdateStore((s) => s.check);
+  // Single source: the store owns the running version (seeded from getVersion,
+  // and confirmed by check() from the backend's env!("CARGO_PKG_VERSION")).
+  const currentVersion = useUpdateStore((s) => s.currentVersion);
+  const loadCurrentVersion = useUpdateStore((s) => s.loadCurrentVersion);
 
   React.useEffect(() => {
-    void getVersion()
-      .then(setAppVersion)
-      .catch(() => setAppVersion(""));
-  }, []);
+    void loadCurrentVersion();
+  }, [loadCurrentVersion]);
 
   let statusNode: React.ReactNode = null;
   if (status === "up-to-date") {
@@ -389,7 +389,7 @@ function UpdatesSection() {
           hint={
             <>
               <code style={{ fontFamily: "var(--font-mono)" }}>
-                {appVersion || "…"}
+                {currentVersion || "…"}
               </code>
               {statusNode && <> — {statusNode}</>}
             </>
