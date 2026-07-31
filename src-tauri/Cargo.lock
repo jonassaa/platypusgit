@@ -3223,6 +3223,7 @@ version = "0.0.0"
 dependencies = [
  "git2",
  "log",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

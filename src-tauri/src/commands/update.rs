@@ -8,21 +8,15 @@ use crate::{
 
 /// Query GitHub for the latest release and compare to the running version.
 /// Drives the update prompt only — never installs anything.
+///
+/// `update::discover` short-circuits dev/e2e builds (`0.0.0`) BEFORE the fetch,
+/// so no network request leaves a `pnpm tauri dev` or e2e process.
 #[tauri::command]
 pub async fn check_for_update() -> AppResult<UpdateInfo> {
     let current = env!("CARGO_PKG_VERSION").to_string();
-    let rel = tokio::task::spawn_blocking(update::fetch_latest_release)
+    tokio::task::spawn_blocking(move || update::discover(&current, update::fetch_latest_release))
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))??;
-    let available = update::compute_available(&current, &rel.version);
-    Ok(UpdateInfo {
-        available,
-        current_version: current,
-        latest_version: rel.version,
-        notes: rel.notes,
-        release_url: rel.url,
-        published_at: rel.published_at,
-    })
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 /// Whether this install can self-update or should notify + defer to a package
