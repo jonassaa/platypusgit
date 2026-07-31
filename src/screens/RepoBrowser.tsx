@@ -42,9 +42,14 @@ import {
   pruneSelection,
   type Selection,
 } from "@/lib/selection";
+import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
-import { buildStatusTree } from "@/lib/tree";
+import {
+  buildStatusTree,
+  findStatusByTreeKey,
+  treeKeyToPath,
+} from "@/lib/tree";
 import { fuzzyMatch } from "@/features/palette/fuzzyMatch";
 import { PGPane, FocusableScroll, useAction } from "@/features/keymap";
 import type {
@@ -109,6 +114,7 @@ export function RepoBrowserScreen() {
   const [sel, setSel] = React.useState<Selection>(emptySelection);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [fileContent, setFileContent] = React.useState<FileContent | null>(null);
   const [filterMode, setFilterMode] = React.useState<
     "all" | "changes" | "conflicts"
@@ -284,34 +290,44 @@ export function RepoBrowserScreen() {
   const splitSelection = React.useCallback(
     (
       keys: string[],
-    ): { stagedPaths: string[]; unstagedPaths: string[]; paths: string[] } => {
+    ): {
+      stagedPaths: string[];
+      unstagedPaths: string[];
+      paths: string[];
+      embeddedPaths: string[];
+    } => {
       const stagedPaths: string[] = [];
       const unstagedPaths: string[] = [];
+      const embeddedPaths: string[] = [];
       const paths: string[] = [];
       const seen = new Set<string>();
       const add = (st: FileStatus) => {
         if (seen.has(st.path)) return;
         seen.add(st.path);
         paths.push(st.path);
+        // An embedded repo counts and copies like any row, but it is not a
+        // file — keep it out of the stage/unstage/discard subsets so a batch
+        // built from this selection never carries it to the backend.
+        if (st.embedded) {
+          embeddedPaths.push(st.path);
+          return;
+        }
         if (isStaged(st)) stagedPaths.push(st.path);
         if (isUnstaged(st)) unstagedPaths.push(st.path);
       };
       for (const key of keys) {
-        const path = key.replace(/^\//, "");
-        const st =
-          status.find((s) => s.path === path) ??
-          allFiles.find((s) => s.path === path);
+        const st = findStatusByTreeKey(key, status, allFiles);
         if (st) {
           add(st);
           continue;
         }
         // Folder key: pull in every visible file beneath it.
-        const prefix = path + "/";
+        const prefix = treeKeyToPath(key) + "/";
         for (const child of filteredStatus) {
           if (child.path.startsWith(prefix)) add(child);
         }
       }
-      return { stagedPaths, unstagedPaths, paths };
+      return { stagedPaths, unstagedPaths, paths, embeddedPaths };
     },
     [status, allFiles, filteredStatus],
   );
@@ -322,9 +338,16 @@ export function RepoBrowserScreen() {
         return multiFileMenuItems(splitSelection(sel.keys));
       }
       if (node.children?.length) return [];
-      const path = key.replace(/^\//, "");
-      const st = status.find((s) => s.path === path);
-      return fileMenuItems({ path, staged: !!st && isStaged(st) && !isUnstaged(st) });
+      const st = findStatusByTreeKey(key, status);
+      // Act on the status entry's own path, not the key: an embedded repo's
+      // path carries a trailing slash the key has already lost, and that slash
+      // is what makes "Add to .gitignore" write valid directory syntax.
+      const path = st?.path ?? treeKeyToPath(key);
+      return fileMenuItems({
+        path,
+        staged: !!st && isStaged(st) && !isUnstaged(st),
+        embedded: !!st?.embedded,
+      });
     },
   );
 
@@ -352,26 +375,30 @@ export function RepoBrowserScreen() {
   // PGFileTree keys are path-prefixed by PG_FILETREE in the form "/a/b/c".
   const selectedFile = React.useMemo<FileStatus | null>(() => {
     if (!selected) return null;
-    const path = selected.replace(/^\//, "");
-    if (browsingRev) {
-      return revFiles.find((s) => s.path === path) ?? null;
-    }
-    return (
-      status.find((s) => s.path === path) ??
-      allFiles.find((s) => s.path === path) ??
-      null
-    );
+    if (browsingRev) return findStatusByTreeKey(selected, revFiles) ?? null;
+    return findStatusByTreeKey(selected, status, allFiles) ?? null;
   }, [selected, status, allFiles, browsingRev, revFiles]);
 
   const selectedIsUnmodified =
     !!selectedFile &&
     selectedFile.worktree.kind === "Unmodified" &&
     selectedFile.index.kind === "Unmodified";
+  const selectedIsEmbedded = !!selectedFile?.embedded;
 
   React.useEffect(() => {
     if (!selectedFile || !repo) {
       setDiff(null);
       setFileContent(null);
+      setPreviewError(null);
+      return;
+    }
+    setPreviewError(null);
+    // An embedded repo has no diff and no content — EmbeddedRepoPanel takes
+    // over the pane, so don't ask the backend for either.
+    if (selectedFile.embedded) {
+      setDiff(null);
+      setFileContent(null);
+      setDiffLoading(false);
       return;
     }
     let cancelled = false;
@@ -404,8 +431,13 @@ export function RepoBrowserScreen() {
         .then((d) => {
           if (!cancelled) setDiff(d);
         })
-        .catch(() => {
-          if (!cancelled) setDiff(null);
+        .catch((e) => {
+          // Never swallow: a failed diff used to leave an unexplained empty
+          // pane, which was the original embedded-repo symptom.
+          if (!cancelled) {
+            setDiff(null);
+            setPreviewError(appErrorMessage(e));
+          }
         })
         .finally(() => {
           if (!cancelled) setDiffLoading(false);
@@ -414,7 +446,7 @@ export function RepoBrowserScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selectedFile?.path, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev, diffContextLines]);
+  }, [selectedFile?.path, selectedFile?.embedded, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev, diffContextLines]);
 
   const breadcrumbItems = React.useMemo(() => {
     const root = repo?.path.split("/").filter(Boolean).pop() ?? "repository";
@@ -651,8 +683,12 @@ export function RepoBrowserScreen() {
               size="xs"
               variant="ghost"
               icon="history"
-              disabled={!selectedFile}
-              title="Show blame"
+              disabled={!selectedFile || selectedIsEmbedded}
+              title={
+                selectedIsEmbedded
+                  ? "Embedded git repositories have no blame"
+                  : "Show blame"
+              }
               onClick={() => {
                 if (selectedFile)
                   setNavIntent({ kind: "blame", path: selectedFile.path });
@@ -684,6 +720,14 @@ export function RepoBrowserScreen() {
               >
                 <PGSpinner size={14} />
               </div>
+            )}
+            {selectedFile && selectedIsEmbedded && (
+              <EmbeddedRepoPanel path={selectedFile.path} />
+            )}
+            {selectedFile && !diffLoading && !selectedIsEmbedded && previewError && (
+              <PGEmpty icon="warn" title="Couldn't load this file">
+                {previewError}
+              </PGEmpty>
             )}
             {selectedFile && !diffLoading && diff && !diff.binary &&
               diff.hunks.map((h, i) => (
@@ -722,7 +766,8 @@ export function RepoBrowserScreen() {
                   text={fileContent.text}
                 />
               )}
-            {selectedFile && !diffLoading && !fileContent &&
+            {selectedFile && !diffLoading && !selectedIsEmbedded && !previewError &&
+              !fileContent &&
               (!diff || diff.hunks.length === 0) && !diff?.binary && (
                 <PGEmpty icon="file" title="No diff available">
                   Couldn&apos;t produce a diff for this file.
@@ -876,6 +921,36 @@ export function RepoBrowserScreen() {
         </PGPane>
       </div>
     </>
+  );
+}
+
+/**
+ * Preview pane for an embedded git repository. There is nothing to diff, so
+ * explain what the row is and offer the way out instead of leaving the pane
+ * blank (the original bug) or dumping a raw error into the global banner.
+ */
+function EmbeddedRepoPanel({ path }: { path: string }) {
+  const appendGitignore = useRepoStore((s) => s.appendGitignore);
+  return (
+    <PGEmpty icon="warn" title="Embedded git repository">
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        data-testid="embedded-repo-panel"
+      >
+        <span>
+          <span className="mono">{path}</span> {EMBEDDED_REPO_HELP}
+        </span>
+        <div>
+          <PGButton
+            size="sm"
+            icon="trash"
+            onClick={() => void appendGitignore(path)}
+          >
+            Add to .gitignore
+          </PGButton>
+        </div>
+      </div>
+    </PGEmpty>
   );
 }
 

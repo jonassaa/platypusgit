@@ -223,6 +223,7 @@ export function PGContextMenu({
     <>
       <div
         ref={ref}
+        data-pg-menu=""
         style={menuStyle}
         onContextMenu={(e) => e.preventDefault()}
       >
@@ -873,11 +874,48 @@ export function tagMenuItems(
   ];
 }
 
+/**
+ * Menu for a row that is an embedded git repository (see FileStatus.embedded).
+ *
+ * git itself allows `git add vendor/lib` and prints an actionable warning, so a
+ * hard block with no way forward would be worse UX than the CLI. Lead with the
+ * remedy — "Add to .gitignore" is a one-liner because `appendGitignore` takes
+ * the path verbatim and libgit2 reports it with the trailing slash, which is
+ * exactly gitignore's directory syntax.
+ */
+function embeddedRepoMenuItems(path: string): ContextMenuItem[] {
+  return [
+    { __menuTitle: path || "folder" },
+    { icon: "info", label: "Embedded git repository", disabled: true },
+    {
+      icon: "trash",
+      label: "Add to .gitignore",
+      onClick: () => {
+        if (path) useRepoStore.getState().appendGitignore(path);
+      },
+    },
+    { divider: true },
+    {
+      icon: "edit",
+      label: "Open in editor",
+      onClick: () => {
+        if (path) useRepoStore.getState().openInEditor(path);
+      },
+    },
+    {
+      icon: "copy",
+      label: "Copy path",
+      onClick: () => navigator.clipboard?.writeText(path),
+    },
+  ];
+}
+
 export function fileMenuItems(
-  file: { path?: string; staged?: boolean } | null,
+  file: { path?: string; staged?: boolean; embedded?: boolean } | null,
 ): ContextMenuItem[] {
   const staged = !!file?.staged;
   const path = file?.path || "";
+  if (file?.embedded) return embeddedRepoMenuItems(path);
   return [
     { __menuTitle: path || "file" },
     staged
@@ -974,6 +1012,12 @@ export interface MultiFileMenuSelection {
    * Drives the count and Copy paths. Defaults to staged ∪ unstaged.
    */
   paths?: string[];
+  /**
+   * Selected paths that are embedded git repositories. Kept out of
+   * staged/unstaged so Stage and Discard act only on real files, and offered
+   * their own remedy instead.
+   */
+  embeddedPaths?: string[];
 }
 
 /**
@@ -986,10 +1030,23 @@ export function multiFileMenuItems(
 ): ContextMenuItem[] {
   const stagedPaths = sel?.stagedPaths ?? [];
   const unstagedPaths = sel?.unstagedPaths ?? [];
+  const embeddedPaths = sel?.embeddedPaths ?? [];
   const all = sel?.paths ?? [...stagedPaths, ...unstagedPaths];
   const n = all.length;
   const files = (c: number) => `${c} file${c === 1 ? "" : "s"}`;
   const items: ContextMenuItem[] = [{ __menuTitle: `${files(n)} selected` }];
+  if (embeddedPaths.length) {
+    items.push({
+      icon: "trash",
+      label: `Add ${embeddedPaths.length} embedded repo${
+        embeddedPaths.length === 1 ? "" : "s"
+      } to .gitignore`,
+      onClick: () => {
+        const store = useRepoStore.getState();
+        for (const p of embeddedPaths) void store.appendGitignore(p);
+      },
+    });
+  }
   if (unstagedPaths.length) {
     items.push({
       icon: "plus",

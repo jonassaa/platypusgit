@@ -47,7 +47,7 @@ import { UpdateChip } from "@/features/update/UpdateChip";
 import { UpdatePanel } from "@/features/update/UpdatePanel";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { BranchPicker } from "@/features/branches/BranchPicker";
-import { appErrorMessage } from "@/lib/errors";
+import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import {
   currentBranch,
   isStaged,
@@ -267,8 +267,16 @@ export function AppShell() {
             gap: 8,
           }}
         >
-          <strong>{error.kind}:</strong>
-          <span style={{ flex: 1 }}>{appErrorMessage(error)}</span>
+          {/* The backend keeps EmbeddedRepo terse like the rest of the enum;
+              the actionable half of the story lives in the UI. */}
+          <strong>
+            {error.kind === "EmbeddedRepo" ? "Embedded repository" : error.kind}:
+          </strong>
+          <span style={{ flex: 1 }}>
+            {error.kind === "EmbeddedRepo"
+              ? `${appErrorMessage(error).replace(/^embedded repository: /, "")} — ${EMBEDDED_REPO_HELP}`
+              : appErrorMessage(error)}
+          </span>
           <button
             onClick={clearError}
             style={{

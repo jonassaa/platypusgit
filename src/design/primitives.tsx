@@ -778,19 +778,25 @@ export function PGStatusMark({
   kind: string;
   size?: number;
 }) {
-  const map: Record<string, { c: string; label: string }> = {
-    M: { c: "var(--git-modified)", label: "M" },
-    A: { c: "var(--git-added)", label: "A" },
-    D: { c: "var(--git-removed)", label: "D" },
-    R: { c: "var(--git-renamed)", label: "R" },
-    "?": { c: "var(--git-untracked)", label: "?" },
-    U: { c: "var(--git-conflict)", label: "U" },
-    C: { c: "var(--git-conflict)", label: "C" },
-    I: { c: "var(--git-ignored)", label: "I" },
+  const map: Record<string, { c: string; label: string; title: string }> = {
+    M: { c: "var(--git-modified)", label: "M", title: "Modified" },
+    A: { c: "var(--git-added)", label: "A", title: "Added" },
+    D: { c: "var(--git-removed)", label: "D", title: "Deleted" },
+    R: { c: "var(--git-renamed)", label: "R", title: "Renamed" },
+    "?": { c: "var(--git-untracked)", label: "?", title: "Untracked" },
+    U: { c: "var(--git-conflict)", label: "U", title: "Conflicted" },
+    C: { c: "var(--git-conflict)", label: "C", title: "Conflicted" },
+    I: { c: "var(--git-ignored)", label: "I", title: "Ignored" },
+    S: {
+      c: "var(--git-renamed)",
+      label: "S",
+      title: "Embedded git repository — can't be staged as a file",
+    },
   };
   const v = map[kind] || map.M;
   return (
     <span
+      title={v.title}
       style={{
         width: size,
         height: size,

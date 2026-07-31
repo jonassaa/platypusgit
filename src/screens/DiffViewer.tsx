@@ -20,6 +20,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { statusMark } from "@/lib/derive";
+import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
@@ -40,6 +41,7 @@ export function DiffViewerScreen() {
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
+  const [diffError, setDiffError] = React.useState<string | null>(null);
   const listPane = usePaneWidth(280, {
     min: 180,
     max: 600,
@@ -74,6 +76,14 @@ export function DiffViewerScreen() {
   React.useEffect(() => {
     if (!current || !repo) {
       setDiff(null);
+      setDiffError(null);
+      return;
+    }
+    setDiffError(null);
+    // An embedded repo has no diff to fetch — the panel below explains the row.
+    if (current.embedded) {
+      setDiff(null);
+      setDiffLoading(false);
       return;
     }
     let cancelled = false;
@@ -82,8 +92,12 @@ export function DiffViewerScreen() {
       .then((d) => {
         if (!cancelled) setDiff(d);
       })
-      .catch(() => {
-        if (!cancelled) setDiff(null);
+      .catch((e) => {
+        // Swallowing this is what left a blank panel with no explanation.
+        if (!cancelled) {
+          setDiff(null);
+          setDiffError(appErrorMessage(e));
+        }
       })
       .finally(() => {
         if (!cancelled) setDiffLoading(false);
@@ -91,7 +105,7 @@ export function DiffViewerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [current?.path, repo, diffContextLines]);
+  }, [current?.path, current?.embedded, repo, diffContextLines]);
 
   const findFiltered = React.useMemo<FileDiff | null>(() => {
     if (!diff || !findQuery.trim()) return diff;
@@ -310,6 +324,19 @@ export function DiffViewerScreen() {
             >
               <PGSpinner size={14} />
             </div>
+          )}
+          {!diffLoading && current?.embedded && (
+            <PGEmpty icon="warn" title="Embedded git repository">
+              <span data-testid="diff-embedded-note">
+                <span className="mono">{current.path}</span>{" "}
+                {EMBEDDED_REPO_HELP}
+              </span>
+            </PGEmpty>
+          )}
+          {!diffLoading && !current?.embedded && diffError && (
+            <PGEmpty icon="warn" title="Couldn't load this diff">
+              <span data-testid="diff-error">{diffError}</span>
+            </PGEmpty>
           )}
           {!diffLoading && diff?.binary && (
             <PGEmpty icon="file" title="Binary file" />

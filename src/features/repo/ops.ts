@@ -7,6 +7,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pgFlash } from "@/design";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { currentBranch, isStaged, isUnstaged } from "@/lib/derive";
+import type { FileStatus } from "@/lib/types";
 import { useRepoStore } from "./useRepoStore";
 
 /** Derive the [remote, branch] pair from the HEAD branch's upstream tracking ref. */
@@ -46,10 +47,30 @@ export function fetchAllOp(): boolean {
   return true;
 }
 
+/**
+ * Paths to stage from a change list: every unstaged entry except embedded git
+ * repositories, which cannot be staged as files (see FileStatus.embedded).
+ * Flashes once when something was left out, so the count silently shrinking
+ * doesn't look like a bug. The backend skips them too — this is so the user
+ * hears about it.
+ */
+export function stageablePaths(files: FileStatus[]): string[] {
+  const unstaged = files.filter(isUnstaged);
+  const embedded = unstaged.filter((f) => f.embedded);
+  if (embedded.length > 0) {
+    pgFlash(
+      `Skipped ${embedded.length} embedded git ${
+        embedded.length === 1 ? "repository" : "repositories"
+      } — add to .gitignore or register as a submodule`,
+    );
+  }
+  return unstaged.filter((f) => !f.embedded).map((f) => f.path);
+}
+
 export function stageAllOp(): boolean {
   const repo = useRepoStore.getState();
   if (!repo.current) return false;
-  const paths = repo.status.filter(isUnstaged).map((f) => f.path);
+  const paths = stageablePaths(repo.status);
   if (paths.length === 0) return false;
   void repo.stage(paths);
   return true;

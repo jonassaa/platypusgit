@@ -23,6 +23,15 @@ const unstaged = (path: string): FileStatus => ({
   deletions: 0,
   embedded: false,
 });
+/** An untracked dir that is its own git repo — reported with a trailing slash. */
+const embedded = (path: string): FileStatus => ({
+  path,
+  worktree: { kind: "Untracked" },
+  index: { kind: "Unmodified" },
+  additions: 0,
+  deletions: 0,
+  embedded: true,
+});
 
 describe("stageAllOp / unstageAllOp", () => {
   const stageCalls: string[][] = [];
@@ -59,6 +68,22 @@ describe("stageAllOp / unstageAllOp", () => {
     expect(unstageAllOp()).toBe(false);
     expect(stageCalls).toEqual([]);
     expect(unstageCalls).toEqual([]);
+  });
+
+  it("stageAllOp skips embedded git repos but still stages the rest", () => {
+    // Stage-all used to pass status() paths verbatim, so one vendored repo made
+    // the whole batch fail — the user could stage nothing until they ignored it.
+    useRepoStore.setState({
+      status: [unstaged("b.ts"), embedded("vendor/lib/")],
+    } as never);
+    expect(stageAllOp()).toBe(true);
+    expect(stageCalls).toEqual([["b.ts"]]);
+  });
+
+  it("stageAllOp declines when every unstaged entry is an embedded repo", () => {
+    useRepoStore.setState({ status: [embedded("vendor/lib/")] } as never);
+    expect(stageAllOp()).toBe(false);
+    expect(stageCalls).toEqual([]);
   });
 
   it("declines when there is nothing to move", () => {

@@ -38,9 +38,16 @@ export function isUnstaged(s: FileStatus): boolean {
 
 /**
  * One-character status mark for UI (matches the PGStatusMark kinds).
- * Priority: conflicted > index side > worktree side.
+ * Priority: embedded repo > conflicted > index side > worktree side.
+ *
+ * An embedded repository outranks its change flags because it is not a file at
+ * all: "?" would invite the user to stage it, and staging is exactly what must
+ * not happen (see FileStatus.embedded).
  */
-export function statusMark(s: FileStatus): "M" | "A" | "D" | "R" | "?" | "U" | "I" {
+export function statusMark(
+  s: FileStatus,
+): "M" | "A" | "D" | "R" | "?" | "U" | "I" | "S" {
+  if (s.embedded) return "S";
   if (s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted") return "U";
   const primary: StatusFlag =
     s.index.kind !== "Unmodified" ? s.index : s.worktree;

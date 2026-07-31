@@ -27,7 +27,9 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { PGPane, FocusableScroll, usePaneList, useAction } from "@/features/keymap";
+import { stageablePaths } from "@/features/repo/ops";
 import { currentBranch, isStaged, isUnstaged, statusMark } from "@/lib/derive";
+import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import {
   clickSelection,
   emptySelection,
@@ -89,6 +91,7 @@ export function CommitPanelScreen() {
       return fileMenuItems({
         path: f?.path,
         staged: f?.side === "staged",
+        embedded: f?.status.embedded,
       });
     },
   );
@@ -231,6 +234,15 @@ export function CommitPanelScreen() {
     return [f.path];
   };
 
+  /** Stage the row's toggle target, unless it is an embedded repo. */
+  const stageToggled = (f: FileSlot) => {
+    if (f.status.embedded) {
+      pgFlash(EMBEDDED_REPO_HELP);
+      return;
+    }
+    stage(togglePaths(f));
+  };
+
   const primaryKey = primarySelectedKey(sel);
   const selected = React.useMemo(() => {
     if (!primaryKey) return unstaged[0] ?? staged[0] ?? null;
@@ -256,15 +268,23 @@ export function CommitPanelScreen() {
     }
     const kind: DiffKind =
       selected.side === "staged" ? "IndexToHead" : "WorktreeToIndex";
+    setDiffError(null);
+    // An embedded repo has no diff — say what the row is instead of asking for
+    // one and rendering the backend's terse refusal.
+    if (selected.status.embedded) {
+      setDiff(null);
+      setDiffLoading(false);
+      setDiffError(`${selected.path} — ${EMBEDDED_REPO_HELP}`);
+      return;
+    }
     let cancelled = false;
     setDiffLoading(true);
-    setDiffError(null);
     getDiff(repo.id, selected.path, kind, diffContextLines)
       .then((d) => {
         if (!cancelled) setDiff(d);
       })
       .catch((e) => {
-        if (!cancelled) setDiffError(String(e?.message ?? e));
+        if (!cancelled) setDiffError(appErrorMessage(e));
       })
       .finally(() => {
         if (!cancelled) setDiffLoading(false);
@@ -272,7 +292,7 @@ export function CommitPanelScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selected?.path, selected?.side, repo, diffContextLines]);
+  }, [selected?.path, selected?.side, selected?.status.embedded, repo, diffContextLines]);
 
   const headBranch = currentBranch(branches);
   const defaultRemote = remotes[0] ?? null;
@@ -306,7 +326,7 @@ export function CommitPanelScreen() {
       if (!f) return;
       // Space acts on the whole multi-selection when the row is part of it.
       if (f.side === "staged") unstage(togglePaths(f));
-      else stage(togglePaths(f));
+      else stageToggled(f);
     },
     searchText: (i) => combined[i]?.path ?? "",
   });
@@ -452,7 +472,7 @@ export function CommitPanelScreen() {
                 <PGButton
                   size="xs"
                   variant="ghost"
-                  onClick={() => stage(unstaged.map((f) => f.path))}
+                  onClick={() => stage(stageablePaths(status))}
                   disabled={unstaged.length === 0}
                 >
                   Stage all
@@ -488,7 +508,7 @@ export function CommitPanelScreen() {
               selected={effectiveKeys.has(keyOf(f))}
               onClick={onRowClick(f)}
               onContextMenu={onRowContextMenu(f)}
-              onToggle={() => stage(togglePaths(f))}
+              onToggle={() => stageToggled(f)}
             />
           ))}
         </FocusableScroll>
@@ -801,16 +821,28 @@ function keyOf(f: FileSlot): string {
   return `${f.side}:${f.path}`;
 }
 
-/** Split the selected row keys into staged/unstaged path arrays for multi-file ops. */
+/**
+ * Split the selected row keys into staged/unstaged path arrays for multi-file
+ * ops. Embedded git repositories go into their own bucket instead: they are not
+ * files, so Stage/Unstage/Discard must not reach them (see FileStatus.embedded).
+ */
 function splitByKeys(
   keys: string[],
   staged: FileSlot[],
   unstaged: FileSlot[],
-): { stagedPaths: string[]; unstagedPaths: string[] } {
+): { stagedPaths: string[]; unstagedPaths: string[]; embeddedPaths: string[] } {
   const set = new Set(keys);
+  const selected = [...staged, ...unstaged].filter((f) => set.has(keyOf(f)));
+  const actionable = (side: FileSlot["side"]) =>
+    selected
+      .filter((f) => f.side === side && !f.status.embedded)
+      .map((f) => f.path);
   return {
-    stagedPaths: staged.filter((f) => set.has(keyOf(f))).map((f) => f.path),
-    unstagedPaths: unstaged.filter((f) => set.has(keyOf(f))).map((f) => f.path),
+    stagedPaths: actionable("staged"),
+    unstagedPaths: actionable("unstaged"),
+    embeddedPaths: [
+      ...new Set(selected.filter((f) => f.status.embedded).map((f) => f.path)),
+    ],
   };
 }
 
