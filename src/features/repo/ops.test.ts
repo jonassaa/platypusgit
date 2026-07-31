@@ -13,6 +13,7 @@ const staged = (path: string): FileStatus => ({
   index: { kind: "Modified" },
   additions: 0,
   deletions: 0,
+  embedded: false,
 });
 const unstaged = (path: string): FileStatus => ({
   path,
@@ -20,6 +21,7 @@ const unstaged = (path: string): FileStatus => ({
   index: { kind: "Unmodified" },
   additions: 0,
   deletions: 0,
+  embedded: false,
 });
 
 describe("stageAllOp / unstageAllOp", () => {

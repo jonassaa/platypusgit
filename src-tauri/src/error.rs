@@ -47,6 +47,9 @@ pub enum AppError {
 
     #[error("network error: {0}")]
     Network(String),
+
+    #[error("embedded repository: {0}")]
+    EmbeddedRepo(String),
 }
 
 impl From<git2::Error> for AppError {

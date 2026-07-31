@@ -38,6 +38,15 @@ pub struct FileStatus {
     pub additions: u32,
     /// Lines removed in this file vs HEAD (working tree + index combined).
     pub deletions: u32,
+    /// True when this entry is a directory that is itself a git repository and
+    /// is not a registered submodule (a vendored dependency, a stray clone).
+    /// libgit2 refuses to recurse across the nested `.git` boundary, so it
+    /// reports the directory as ONE entry — with a trailing slash — instead of
+    /// its files. Such an entry has no diff, no blame and no history, and
+    /// staging it writes a bare gitlink no clone can resolve, so the UI has to
+    /// treat the row as its own thing rather than as a file. Always false for
+    /// ordinary files and for registered submodules.
+    pub embedded: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

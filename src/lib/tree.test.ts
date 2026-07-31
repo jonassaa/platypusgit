@@ -9,6 +9,7 @@ function file(path: string, worktree: StatusFlag["kind"] = "Modified"): FileStat
     index: { kind: "Unmodified" },
     additions: 0,
     deletions: 0,
+    embedded: false,
   };
 }
 
