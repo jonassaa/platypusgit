@@ -2,6 +2,7 @@ pub mod cli;
 pub mod commands;
 pub mod error;
 pub mod git;
+pub mod opener;
 pub mod state;
 pub mod update;
 

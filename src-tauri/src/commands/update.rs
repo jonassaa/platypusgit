@@ -1,5 +1,8 @@
+use std::ffi::OsStr;
+
 use crate::{
     error::{AppError, AppResult},
+    opener,
     update::{self, UpdateCapability, UpdateInfo},
 };
 
@@ -28,30 +31,15 @@ pub async fn check_for_update() -> AppResult<UpdateInfo> {
 pub fn get_update_capability() -> AppResult<UpdateCapability> {
     Ok(update::capability(
         std::env::consts::OS,
-        std::env::var("APPIMAGE").is_ok(),
+        // `APPIMAGE=` (set but empty) is not an AppImage install.
+        std::env::var("APPIMAGE").is_ok_and(|v| !v.is_empty()),
     ))
 }
 
 /// Open an https URL in the user's default browser (notify-path "View release").
+/// Validation + the shell-free spawn both live in `opener`.
 #[tauri::command]
 pub async fn open_url(url: String) -> AppResult<()> {
-    if !update::is_safe_url(&url) {
-        return Err(AppError::InvalidPath(format!(
-            "refusing to open non-https url: {url}"
-        )));
-    }
-    #[cfg(target_os = "macos")]
-    let (prog, pre): (&str, Vec<&str>) = ("open", vec![]);
-    #[cfg(target_os = "linux")]
-    let (prog, pre): (&str, Vec<&str>) = ("xdg-open", vec![]);
-    #[cfg(target_os = "windows")]
-    let (prog, pre): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", ""]);
-
-    tokio::process::Command::new(prog)
-        .args(&pre)
-        .arg(&url)
-        .status()
-        .await
-        .map_err(|e| AppError::Io(e.to_string()))?;
-    Ok(())
+    let safe = opener::safe_url(&url)?;
+    opener::open_with_default_app(OsStr::new(&safe)).await
 }

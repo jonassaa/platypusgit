@@ -2,6 +2,7 @@ export type AppError =
   | { kind: "NotARepo"; message: string }
   | { kind: "UnknownRepo"; message: string }
   | { kind: "InvalidPath"; message: string }
+  | { kind: "InvalidUrl"; message: string }
   | { kind: "Io"; message: string }
   | { kind: "Git"; message: string }
   | { kind: "NotImplemented"; message?: string }

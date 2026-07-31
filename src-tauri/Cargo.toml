@@ -41,6 +41,9 @@ tauri-plugin-single-instance = "2.4.2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 ureq = "2"
+# Already in the tree transitively; declared directly so `open_url` can really
+# parse a URL instead of prefix-matching one.
+url = "2"
 
 [features]
 # Compile + wire the WebDriver plugin. Set only by the e2e debug build.

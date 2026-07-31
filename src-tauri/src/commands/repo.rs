@@ -116,7 +116,7 @@ pub async fn open_in_editor(
     })
     .await
     .map_err(|e| AppError::Internal(e.to_string()))??;
-    let abs = workdir.join(&relative_path);
+    let abs = crate::opener::safe_workdir_path(&workdir, &relative_path)?;
 
     let editor = std::env::var("VISUAL")
         .ok()
@@ -140,18 +140,7 @@ pub async fn open_in_editor(
         return Ok(());
     }
 
-    #[cfg(target_os = "macos")]
-    let (prog, args): (&str, Vec<&str>) = ("open", vec![]);
-    #[cfg(target_os = "linux")]
-    let (prog, args): (&str, Vec<&str>) = ("xdg-open", vec![]);
-    #[cfg(target_os = "windows")]
-    let (prog, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", ""]);
-
-    tokio::process::Command::new(prog)
-        .args(&args)
-        .arg(&abs)
-        .status()
-        .await
-        .map_err(|e| AppError::Io(e.to_string()))?;
-    Ok(())
+    // No shell interpreter, and the exit status is checked — see opener.rs for
+    // the `cmd /C start` injection this replaces.
+    crate::opener::open_with_default_app(abs.as_os_str()).await
 }
