@@ -46,6 +46,7 @@ pnpm vite build                             # bundle frontend only
 cargo check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build                            # production bundle (.msi/.dmg/.deb/.AppImage)
+pnpm tauri build --no-sign                  # ...without updater signing (see note below)
 pnpm test                                   # vitest (unit logic + component tests)
 pnpm test:e2e                               # full e2e: debug build + all specs (CI does this; local only rarely)
 pnpm test:e2e:build                         # rebuild debug binary snapshot only (after src/ or src-tauri/ change)
@@ -53,6 +54,16 @@ pnpm test:e2e:run --spec e2e/specs/X.e2e.ts # run ONLY relevant spec(s) against 
 pnpm test:e2e:docker                        # headless e2e in Docker (macOS: only way to run WITHOUT a window)
 pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc excludes e2e/)
 ```
+
+**Local production builds need the updater signing key.** `tauri.conf.json`
+sets `plugins.updater.pubkey` + `bundle.createUpdaterArtifacts: true`, so
+tauri-cli signs updater artifacts while bundling — and a pubkey with no private
+key is a **hard error**, not a skip: *"A public key has been found, but no
+private key. Make sure to set `TAURI_SIGNING_PRIVATE_KEY` environment
+variable."* A plain `pnpm tauri build` therefore fails on any target that
+produces an updater artifact (msi on Windows, AppImage on Linux). Either export
+`TAURI_SIGNING_PRIVATE_KEY` (+ `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) or build
+with `--no-sign`. CI is unaffected — release.yml passes both from repo secrets.
 
 ### Headless e2e in Docker (`pnpm test:e2e:docker`)
 
@@ -160,6 +171,14 @@ Four layers, each run independently:
 ```
 error.rs         AppError enum (thiserror + serde-tagged) — ONLY error type crossing IPC
 state.rs         AppState { backend: Arc<dyn GitBackend> }
+opener.rs        Handing URLs/paths to the OS default handler. SECURITY-critical:
+                 safe_url (parse + https-only + reject quotes/control chars),
+                 safe_workdir_path (no absolute/`..` escape), and a spawn that
+                 NEVER goes through a shell — no `cmd /C start`, and the child's
+                 exit status is checked. Both open_url and open_in_editor use it.
+update.rs        Update discovery — semver compare (semver crate, cmp_precedence),
+                 dev-build (0.0.0) short-circuit BEFORE any network call,
+                 GitHub release parsing, ureq agent w/ timeout + https_only
 lib.rs           Tauri builder + invoke_handler! registry (all commands listed there)
 cli.rs           CLI arg parsing (LaunchIntent, parse_args, resolve_repo_root),
                  shim install/status helpers (install_shim, shim_status) —
@@ -243,6 +262,11 @@ features/            Per-feature: components + Zustand store colocated
 │                    (Rider 3-pane: ours | editable result | theirs), chevron +
 │                    F7/⌘1-3/⌘↵ chords, openMergeWindow (opener). Applies via
 │                    save_resolution, emits merge://resolved → main refreshes.
+├── update/          useUpdateStore (discovery, semver-aware dismiss memory,
+│                    self-update install w/ its own `installing` flag),
+│                    semver.ts (§11 precedence, hand-rolled + tested),
+│                    UpdateChip (titlebar), UpdatePanel (Escape via the
+│                    keymap's app.closeOverlay, not a local listener)
 ├── diff/            diff-specific components
 └── cli/             useCliLaunch — takes the stashed first-launch intent +
                      listens for forwarded `cli-launch` events, drives
@@ -304,7 +328,8 @@ lib/
 - Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
 
 ### Permissions (Tauri 2)
-- All permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
+- Shared permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
+- **Self-update permissions are scoped narrower** — `updater:default` + `process:allow-restart` live in `src-tauri/capabilities/updater.json` with `windows: ["main"]`, NOT in `default.json`. The merge resolver window must not be able to swap the binary or relaunch the process mid-conflict. Keep new privileged permissions out of the shared capability unless both windows genuinely need them.
 - **E2E-only permissions** live in the inline `e2e-focus` capability in `src-tauri/tauri.e2e.conf.json`, NOT in `default.json`: `core:window:allow-set-focus` + `wdio-webdriver:default`. That capability is loaded only via `--config src-tauri/tauri.e2e.conf.json`, and the `tauri-plugin-wdio-webdriver` crate is an optional dep behind the `e2e` cargo feature (`--features …,e2e` in `test:e2e:build`), so the WebDriver bridge is never compiled into or permitted in dev/production builds.
 - New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`, register with `.plugin(tauri_plugin_X::init())` in `lib.rs`, add plugin permissions to capability file.
 

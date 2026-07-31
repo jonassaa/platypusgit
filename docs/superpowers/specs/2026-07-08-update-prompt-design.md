@@ -192,7 +192,20 @@ Notify-only platforms defer trust to the OS package manager / user's own downloa
 
 ## Open items (human, before self-update goes live)
 
-1. Generate the minisign keypair and add `TAURI_SIGNING_PRIVATE_KEY` +
+1. ~~Generate the minisign keypair and add `TAURI_SIGNING_PRIVATE_KEY` +
    `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets; paste the public key into
-   `tauri.conf.json`. Until done, self-update is dormant (updater check fails
-   quietly); **notify-only works immediately on every platform**.
+   `tauri.conf.json`.~~ **Done** — the secrets exist and `tauri.conf.json`
+   carries the pubkey, so CI signs updater artifacts.
+
+   **Correction to this spec's original claim.** It said that until the keypair
+   existed "self-update is dormant (updater check fails quietly); notify-only
+   works immediately on every platform". That was wrong, and the failure mode
+   was worse than dormancy: once a `pubkey` is present in `tauri.conf.json`
+   alongside `createUpdaterArtifacts: true`, tauri-cli signs the updater
+   artifacts during bundling, and a missing `TAURI_SIGNING_PRIVATE_KEY` is a
+   **hard error** — "A public key has been found, but no private key. Make sure
+   to set `TAURI_SIGNING_PRIVATE_KEY` environment variable." So a release build
+   that bundles an updater-enabled target (msi on Windows, AppImage on Linux)
+   fails outright rather than quietly skipping self-update. Pass `--no-sign` to
+   skip it deliberately ("Updater signing is skipped due to --no-sign flag").
+   See CLAUDE.md → Toolchain for the local-build note.
