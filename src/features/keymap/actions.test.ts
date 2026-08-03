@@ -3,6 +3,7 @@ import { ACTIONS, ALL_ACTION_IDS } from "./actions";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { useOverlayStore } from "./useOverlayStore";
+import { useUpdateStore } from "@/features/update/useUpdateStore";
 
 describe("action catalog", () => {
   it("every action has a title and category", () => {
@@ -86,6 +87,15 @@ describe("default runners", () => {
     expect(ACTIONS["app.closeOverlay"].run?.()).not.toBe(false);
     expect(useOverlayStore.getState().cheatSheetOpen).toBe(false);
     // Nothing left to close — the runner must decline so Escape falls through.
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(false);
+  });
+
+  it("app.closeOverlay also closes the update panel", () => {
+    useOverlayStore.setState({ cheatSheetOpen: false });
+    useUpdateStore.setState({ panelOpen: true });
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+    expect(useUpdateStore.getState().panelOpen).toBe(false);
+    // ...and still declines once it is closed.
     expect(ACTIONS["app.closeOverlay"].run?.()).toBe(false);
   });
 

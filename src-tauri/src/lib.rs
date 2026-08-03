@@ -2,7 +2,9 @@ pub mod cli;
 pub mod commands;
 pub mod error;
 pub mod git;
+pub mod opener;
 pub mod state;
+pub mod update;
 
 use std::sync::{Arc, Mutex};
 
@@ -65,7 +67,9 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_os::init());
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
 
     // WebDriver server for E2E tests. Compiled + wired ONLY under the `e2e`
     // cargo feature (test:e2e:build) — never linked into dev/production
@@ -170,6 +174,9 @@ pub fn run() {
             commands::cli::take_launch_intent,
             commands::cli::cli_shim_status,
             commands::cli::install_cli_shim,
+            commands::update::check_for_update,
+            commands::update::get_update_capability,
+            commands::update::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

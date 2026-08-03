@@ -38,6 +38,15 @@ log = "0.4.29"
 # capability in tauri.e2e.conf.json, not the shared capabilities/default.json.
 tauri-plugin-wdio-webdriver = { version = "1.2.0", optional = true }
 tauri-plugin-single-instance = "2.4.2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+ureq = "2"
+# Already in the tree transitively; declared directly so `open_url` can really
+# parse a URL instead of prefix-matching one.
+url = "2"
+# Ditto — update discovery must use the SAME semver implementation
+# tauri-plugin-updater compares with, so the two can never disagree.
+semver = "1"
 
 [features]
 # Compile + wire the WebDriver plugin. Set only by the e2e debug build.

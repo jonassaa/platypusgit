@@ -278,6 +278,18 @@ export async function switchScreen(id: string): Promise<void> {
   await $(`[data-activity="${id}"]`).click();
 }
 
+/** Open the Settings screen via the titlebar gear.
+ *
+ * The gear is rendered unconditionally, and AppShell's body gate is
+ * `repo || screen === "settings"` — so this works with no repository open. */
+export async function openSettings(): Promise<void> {
+  await $('button[title="Settings"]').click();
+  await $("div*=Default pull mode").waitForDisplayed({
+    timeout: 10_000,
+    timeoutMsg: "Settings screen never appeared",
+  });
+}
+
 export const stagedRow = (p: string) =>
   $(`[data-testid="staged-list"] [data-path="${p}"]`);
 export const changeRow = (p: string) =>

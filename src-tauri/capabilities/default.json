@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for platypusgit",
-  "windows": ["main", "merge"],
+  "windows": [
+    "main",
+    "merge"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",

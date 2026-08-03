@@ -12,6 +12,9 @@ pub enum AppError {
     #[error("invalid path: {0}")]
     InvalidPath(String),
 
+    #[error("invalid url: {0}")]
+    InvalidUrl(String),
+
     #[error("io error: {0}")]
     Io(String),
 

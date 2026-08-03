@@ -5,16 +5,8 @@ import {
 import {
   openRepo, reopenRepo, resetApp, stubNativeDialogs, confirmCallCount,
   openPalette, paletteDialog, paletteInput, switchScreen, stagedRow,
-  executeOnce,
+  executeOnce, openSettings,
 } from "../support/app";
-
-/** Open the Settings screen via the titlebar gear. */
-async function openSettings(): Promise<void> {
-  await $('button[title="Settings"]').click();
-  await $("div*=Default pull mode").waitForDisplayed({
-    timeout: 10_000, timeoutMsg: "Settings screen never appeared",
-  });
-}
 
 async function clickPaletteRow(text: string): Promise<void> {
   const row = $(paletteDialog).$(`[data-pal-index]*=${text}`);
@@ -68,6 +60,32 @@ describe("settings", () => {
     await resetApp();
     repo?.dispose(); repo = null;
     pair?.dispose(); pair = null;
+  });
+
+  // Deterministic + offline. We do NOT click "Check for updates" — that hits
+  // the live GitHub API — and the e2e build reports 0.0.0, which the backend
+  // short-circuits before any network call anyway. Discovery + install logic
+  // is unit-tested in src/features/update/*.test.*.
+  //
+  // No repo fixture: AppShell's body gate is `repo || screen === "settings"`,
+  // so Settings renders standalone (this used to be its own spec file with a
+  // whole app session + temp repo behind it).
+  it("Updates section shows the running version and a check button", async () => {
+    await openSettings();
+
+    const section = $('[data-testid="settings-updates"]');
+    await section.waitForExist({
+      timeout: 10_000, timeoutMsg: "Updates section never rendered",
+    });
+    await expect(section).toHaveText(expect.stringContaining("Updates"));
+    await expect(section.$("div*=Current version")).toBeExisting();
+
+    // Assert the version RESOLVED. The old `toBeExisting` on the label passed
+    // even when getVersion() rejected — Settings caught it and rendered "…"
+    // forever, so the check proved nothing.
+    await expect(section.$("code")).toHaveText(/\d+\.\d+\.\d+/);
+
+    await expect(section.$("button*=Check for updates")).toBeExisting();
   });
 
   it("pull mode persists across reload and FF-only refuses a diverged pull", async () => {

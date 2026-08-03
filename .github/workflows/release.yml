@@ -52,6 +52,19 @@ jobs:
     # Skip the redundant `released` run on a direct full-release publish (which
     # also fires `published`). Every other job chains off `version`, so this one
     # gate collapses the double-trigger into a single build+bump.
+    #
+    # ⚠️ RUNBOOK — PROMOTING A PRERELEASE BREAKS SELF-UPDATE UNTIL YOU ACT.
+    # Flipping "prerelease" off on an existing release fires `released` ONLY
+    # (never `published`), so this gate makes the whole workflow a no-op:
+    # `latest.json` is never attached for that tag. Meanwhile GitHub's
+    # /releases/latest immediately starts returning it, so every installed
+    # client discovers the new version and the updater then fetches
+    #   releases/latest/download/latest.json  ->  404.
+    # Self-update is offered and fails for as long as that state lasts.
+    # FIX: after promoting, re-run this workflow via workflow_dispatch with the
+    # tag (that also bumps the Homebrew cask, which has the same gap).
+    # Do not "fix" this by widening the gate — `released` + `published` both
+    # fire on a direct publish and would double-build.
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.action == 'published' }}
     outputs:
       version: ${{ steps.resolve.outputs.version }}
@@ -143,6 +156,8 @@ jobs:
   windows:
     needs: version
     runs-on: windows-latest
+    outputs:
+      sig: ${{ steps.sig.outputs.sig }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -181,6 +196,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Rename bundle to stable name
@@ -190,6 +208,9 @@ jobs:
           msi_dir="src-tauri/target/release/bundle/msi"
           cp "$(ls "$msi_dir"/*.msi | head -n1)" "$msi_dir/PlatypusGit_x64.msi"
 
+      # Attach BEFORE reading the signature. Under `set -euo pipefail` a glob
+      # miss in the sig step aborts the job, and when that step ran first the
+      # release ended up with no installer attached at all.
       - name: Attach installer to release
         uses: softprops/action-gh-release@v2
         with:
@@ -197,9 +218,29 @@ jobs:
           files: src-tauri/target/release/bundle/msi/PlatypusGit_x64.msi
           fail_on_unmatched_files: true
 
+      - name: Read updater signature
+        id: sig
+        shell: bash
+        run: |
+          set -euo pipefail
+          msi_dir="src-tauri/target/release/bundle/msi"
+          sig_file="$(ls "$msi_dir"/*.msi.sig 2>/dev/null | head -n1 || true)"
+          if [ -z "$sig_file" ] || [ ! -f "$sig_file" ]; then
+            echo "No .msi.sig produced — is TAURI_SIGNING_PRIVATE_KEY set?" >&2
+            exit 1
+          fi
+          sig="$(cat "$sig_file")"
+          if [ -z "$sig" ]; then
+            echo "Updater signature file $sig_file is empty" >&2
+            exit 1
+          fi
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
+
   linux:
     needs: version
     runs-on: ubuntu-22.04
+    outputs:
+      sig: ${{ steps.sig.outputs.sig }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -248,6 +289,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Rename bundles to stable names
@@ -258,6 +302,7 @@ jobs:
           cp "$(ls "$deb_dir"/*.deb | head -n1)" "$deb_dir/PlatypusGit_amd64.deb"
           cp "$(ls "$appimage_dir"/*.AppImage | head -n1)" "$appimage_dir/PlatypusGit_amd64.AppImage"
 
+      # Attach BEFORE reading the signature — see the windows job for why.
       - name: Attach bundles to release
         uses: softprops/action-gh-release@v2
         with:
@@ -266,6 +311,23 @@ jobs:
             src-tauri/target/release/bundle/deb/PlatypusGit_amd64.deb
             src-tauri/target/release/bundle/appimage/PlatypusGit_amd64.AppImage
           fail_on_unmatched_files: true
+
+      - name: Read updater signature
+        id: sig
+        run: |
+          set -euo pipefail
+          appimage_dir="src-tauri/target/release/bundle/appimage"
+          sig_file="$(ls "$appimage_dir"/*.AppImage.sig 2>/dev/null | head -n1 || true)"
+          if [ -z "$sig_file" ] || [ ! -f "$sig_file" ]; then
+            echo "No .AppImage.sig produced — is TAURI_SIGNING_PRIVATE_KEY set?" >&2
+            exit 1
+          fi
+          sig="$(cat "$sig_file")"
+          if [ -z "$sig" ]; then
+            echo "Updater signature file $sig_file is empty" >&2
+            exit 1
+          fi
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
 
   # Pin the Homebrew cask to this release: rewrite version + sha256 in
   # jonassaa/homebrew-platypusgit and commit straight to that tap's main.
@@ -331,3 +393,72 @@ jobs:
           git add Casks/platypusgit.rb
           git commit -m "chore: bump platypusgit to ${{ needs.version.outputs.version }}"
           git push
+
+  # Publish the updater manifest so tauri-plugin-updater can verify + install.
+  # Points at the stable-named release assets. macOS is intentionally omitted
+  # (notify-only). Skipped for plain prereleases, same gate as bump-cask.
+  updater-manifest:
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Build latest.json
+        # Values reach the shell as env vars, never as `${{ }}` interpolated
+        # into the script body — RELEASE_BODY is user-authored text.
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+          WIN_SIG: ${{ needs.windows.outputs.sig }}
+          LIN_SIG: ${{ needs.linux.outputs.sig }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+        run: |
+          set -euo pipefail
+          # An empty signature publishes `"signature": ""`, which every client
+          # rejects at install time — fail loudly instead (same guard shape as
+          # bump-cask's sha256 check).
+          for name in WIN_SIG LIN_SIG; do
+            if [ -z "${!name}" ]; then
+              echo "Empty updater signature ($name) — refusing to publish latest.json" >&2
+              exit 1
+            fi
+          done
+          base="https://github.com/jonassaa/platypusgit/releases/download/${TAG}"
+          # Real release notes; fall back to a link for workflow_dispatch runs
+          # (no release payload) or an empty body.
+          notes="${RELEASE_BODY}"
+          if [ -z "$notes" ]; then
+            notes="See https://github.com/jonassaa/platypusgit/releases/tag/${TAG}"
+          fi
+          # pub_date must be RFC3339. The release's own published_at already is;
+          # workflow_dispatch has none, so stamp "now".
+          pub_date="${RELEASE_PUBLISHED_AT}"
+          if [ -z "$pub_date" ]; then
+            pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          fi
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$notes" \
+            --arg pub_date "$pub_date" \
+            --arg win_sig "$WIN_SIG" \
+            --arg win_url "${base}/PlatypusGit_x64.msi" \
+            --arg lin_sig "$LIN_SIG" \
+            --arg lin_url "${base}/PlatypusGit_amd64.AppImage" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": { signature: $win_sig, url: $win_url },
+                "linux-x86_64": { signature: $lin_sig, url: $lin_url }
+              }
+            }' > latest.json
+          echo "--- latest.json ---"
+          cat latest.json
+
+      - name: Attach latest.json to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          files: latest.json
+          fail_on_unmatched_files: true

@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "updater",
+  "description": "Self-update: check/download/install a signed release, then relaunch. Scoped to the main window ONLY — the merge resolver window (label \"merge\") has no business swapping the binary out from under an in-progress conflict resolution, let alone restarting the process.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "updater:default",
+    "process:allow-restart"
+  ]
+}

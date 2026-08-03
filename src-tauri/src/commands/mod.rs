@@ -8,3 +8,4 @@ pub mod rebase;
 pub mod reflog;
 pub mod repo;
 pub mod stash;
+pub mod update;
