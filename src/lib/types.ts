@@ -26,6 +26,16 @@ export interface FileStatus {
   additions: number;
   /** Lines removed vs HEAD (worktree + index). */
   deletions: number;
+  /**
+   * True when this entry is a directory that is itself a git repository and is
+   * not a registered submodule (vendored dependency, stray clone, submodule
+   * nobody registered). libgit2 will not recurse across the nested `.git`, so
+   * it reports the directory as ONE entry — with a trailing slash — instead of
+   * its files. Such a row has no diff, no blame and no history, and staging it
+   * would write a bare gitlink no clone can resolve, so the UI treats it as its
+   * own kind of thing rather than as a file.
+   */
+  embedded: boolean;
 }
 
 export interface CommitInfo {

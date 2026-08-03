@@ -91,3 +91,43 @@ export function buildStatusTree(
 
   return children as PGFileTreeNode[];
 }
+
+/**
+ * Repo-relative path for a PGFileTree row key. Keys are built by joining node
+ * names with "/" from an empty root, so they carry a leading slash: "/a/b".
+ */
+export function treeKeyToPath(key: string): string {
+  return key.replace(/^\//, "");
+}
+
+/**
+ * Find the FileStatus for a repo-relative path, tolerating the trailing slash
+ * libgit2 puts on an embedded-repo entry.
+ *
+ * {@link buildStatusTree} splits paths on "/" and drops empty segments, so
+ * `vendor/lib/` becomes the key "/vendor/lib" and an exact `s.path === path`
+ * lookup can never match it back. Every call site that maps a row key to its
+ * status must go through here, or they disagree about the same row: the ones
+ * that miss treat an embedded repo as an ordinary file (and used to stage it as
+ * a gitlink), while the ones that hit correctly refuse.
+ */
+export function findStatusByPath<T extends { path: string }>(
+  files: readonly T[],
+  path: string,
+): T | undefined {
+  const withSlash = `${path}/`;
+  return files.find((f) => f.path === path || f.path === withSlash);
+}
+
+/** {@link findStatusByPath} for a PGFileTree row key, across several lists. */
+export function findStatusByTreeKey<T extends { path: string }>(
+  key: string,
+  ...lists: readonly (readonly T[])[]
+): T | undefined {
+  const path = treeKeyToPath(key);
+  for (const list of lists) {
+    const hit = findStatusByPath(list, path);
+    if (hit) return hit;
+  }
+  return undefined;
+}

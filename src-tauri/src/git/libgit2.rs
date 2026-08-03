@@ -321,6 +321,92 @@ enum StatusSide {
     Index,
 }
 
+// ─── Embedded (nested) repositories ──────────────────────────────────────────
+
+/// Drop the trailing separator libgit2 appends to directory status entries, so
+/// `vendor/lib/` and `vendor/lib` normalize to the same path. BOTH forms reach
+/// the backend: `status()` emits the slashed one, while the file-tree UI splits
+/// paths into segments and rebuilds the slashless one.
+fn strip_trailing_slash(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    let trimmed = s.trim_end_matches(['/', '\\']);
+    PathBuf::from(trimmed)
+}
+
+/// True when `path` names a directory inside the worktree that is itself a git
+/// repository and is NOT a registered submodule.
+///
+/// Tests the actual condition — the path is opened as a repository — rather
+/// than guessing from the path's shape, because the trailing slash `status()`
+/// adds is lost before most call sites and a plain directory looks identical
+/// once it is gone.
+///
+/// It matters because libgit2 stops at the nested `.git` boundary: such a path
+/// has no diff (an empty one comes back, so the viewer shows a blank panel), no
+/// blame ("path does not exist in the given tree"), no file history (0 entries
+/// after a full revwalk), and — worst — `Index::add_path` accepts the slashless
+/// form and writes a bare `160000` gitlink with no `.gitmodules` entry, which
+/// no clone can resolve.
+///
+/// A registered submodule is deliberately excluded: its gitlink is intentional,
+/// and staging or diffing it is an ordinary submodule-pointer update that must
+/// keep working.
+fn is_embedded_repo(repo: &Repository, path: &Path) -> bool {
+    let Some(workdir) = repo.workdir() else {
+        return false;
+    };
+    let rel = strip_trailing_slash(path);
+    if rel.as_os_str().is_empty() {
+        return false;
+    }
+    // Never let a path escape the worktree (see `save_resolution` for the
+    // Windows driveless-root case that `is_absolute()` misses).
+    if rel.is_absolute()
+        || rel.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return false;
+    }
+    let full = workdir.join(&rel);
+    if !full.is_dir() {
+        return false;
+    }
+    // `Repository::open` does not search parent directories, so a plain
+    // subdirectory of the outer repo fails here — only a real nested `.git`
+    // (directory or gitfile) succeeds.
+    if Repository::open(&full).is_err() {
+        return false;
+    }
+    !is_registered_submodule(repo, &rel)
+}
+
+/// True when `rel` is a submodule the repository actually declares, i.e. it has
+/// a `.gitmodules` entry with a URL.
+///
+/// `find_submodule` alone is not enough: libgit2 also reports a bare `160000`
+/// index entry as a submodule, and that bare gitlink is precisely the damage an
+/// accidental stage does. Only a `.gitmodules` URL makes the gitlink resolvable
+/// by a clone — without one it stays embedded, and the UI should keep saying so
+/// until the user either registers or ignores it.
+fn is_registered_submodule(repo: &Repository, rel: &Path) -> bool {
+    repo.find_submodule(&rel.to_string_lossy())
+        .ok()
+        .and_then(|sm| sm.url().map(|url| !url.is_empty()))
+        .unwrap_or(false)
+}
+
+/// `Err(AppError::EmbeddedRepo)` when `path` is an embedded repository.
+fn reject_embedded_repo(repo: &Repository, path: &Path) -> AppResult<()> {
+    if is_embedded_repo(repo, path) {
+        return Err(AppError::EmbeddedRepo(path.to_string_lossy().to_string()));
+    }
+    Ok(())
+}
+
 fn map_status_flag(s: Status, side: StatusSide) -> StatusFlag {
     match side {
         StatusSide::Worktree => {
@@ -840,12 +926,14 @@ impl GitBackend for Libgit2Backend {
                 let path = entry.path().unwrap_or("").to_string();
                 let s = entry.status();
                 let (additions, deletions) = stats.get(&path).copied().unwrap_or((0, 0));
+                let embedded = is_embedded_repo(repo, Path::new(&path));
                 out.push(FileStatus {
                     path,
                     worktree: map_status_flag(s, StatusSide::Worktree),
                     index: map_status_flag(s, StatusSide::Index),
                     additions,
                     deletions,
+                    embedded,
                 });
             }
             Ok(out)
@@ -867,6 +955,7 @@ impl GitBackend for Libgit2Backend {
                     continue;
                 }
                 let s = entry.status();
+                let embedded = is_embedded_repo(repo, Path::new(&path));
                 out.push(FileStatus {
                     path,
                     worktree: map_status_flag(s, StatusSide::Worktree),
@@ -875,6 +964,7 @@ impl GitBackend for Libgit2Backend {
                     // line stats — the tree shows status marks, not counts.
                     additions: 0,
                     deletions: 0,
+                    embedded,
                 });
             }
             Ok(out)
@@ -1080,6 +1170,9 @@ impl GitBackend for Libgit2Backend {
         context_lines: u32,
     ) -> AppResult<FileDiff> {
         self.with_repo(repo_id, |repo| {
+            // Without this the diff comes back valid but empty — a blank panel
+            // with no explanation. See `is_embedded_repo`.
+            reject_embedded_repo(repo, path)?;
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
             opts.context_lines(context_lines);
@@ -1318,6 +1411,9 @@ impl GitBackend for Libgit2Backend {
                             index: StatusFlag::Unmodified,
                             additions: 0,
                             deletions: 0,
+                            // Blobs only — a committed tree never yields a
+                            // directory entry, embedded or otherwise.
+                            embedded: false,
                         });
                     }
                 }
@@ -1434,8 +1530,22 @@ impl GitBackend for Libgit2Backend {
 
     fn stage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
+            // Embedded repos can't be staged (see `is_embedded_repo`), but a
+            // batch must not be all-or-nothing: "Stage all" passes every
+            // unstaged path, and rejecting the whole batch would leave the user
+            // unable to stage anything until they gitignore the nested repo.
+            // Skip them, stage the rest, and only error when nothing is left.
+            let (skipped, stageable): (Vec<&PathBuf>, Vec<&PathBuf>) =
+                paths.iter().partition(|p| is_embedded_repo(repo, p));
+            if stageable.is_empty() {
+                return match skipped.first() {
+                    Some(p) => Err(AppError::EmbeddedRepo(p.to_string_lossy().to_string())),
+                    // Empty batch — nothing asked for, nothing refused.
+                    None => Ok(()),
+                };
+            }
             let mut index = repo.index()?;
-            for p in paths {
+            for p in stageable {
                 // `add_path` treats paths as repo-relative; it handles creates and modifications.
                 // For deletions from the worktree, we need `remove_path` instead.
                 if repo.workdir().map(|w| w.join(p).exists()).unwrap_or(false) {
@@ -2466,6 +2576,9 @@ impl GitBackend for Libgit2Backend {
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>> {
         self.with_repo(repo_id, |repo| {
+            // Without this the walk runs to completion and returns 0 commits —
+            // indistinguishable from a file that genuinely has no history.
+            reject_embedded_repo(repo, path)?;
             let mut revwalk = repo.revwalk()?;
             revwalk.push_head().or_else(|e| {
                 if e.code() == git2::ErrorCode::UnbornBranch {
@@ -2515,6 +2628,9 @@ impl GitBackend for Libgit2Backend {
 
     fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>> {
         self.with_repo(repo_id, |repo| {
+            // Without this libgit2 answers with a cryptic
+            // "path 'vendor' does not exist in the given tree".
+            reject_embedded_repo(repo, path)?;
             let mut opts = git2::BlameOptions::new();
             let blame = repo.blame_file(path, Some(&mut opts))?;
 
