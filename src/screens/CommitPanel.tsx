@@ -28,7 +28,13 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { PGPane, FocusableScroll, usePaneList, useAction } from "@/features/keymap";
 import { stageablePaths } from "@/features/repo/ops";
-import { currentBranch, isStaged, isUnstaged, statusMark } from "@/lib/derive";
+import {
+  currentBranch,
+  isStaged,
+  isUnstaged,
+  isUntracked,
+  statusMark,
+} from "@/lib/derive";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import {
   clickSelection,
@@ -92,6 +98,7 @@ export function CommitPanelScreen() {
         path: f?.path,
         staged: f?.side === "staged",
         embedded: f?.status.embedded,
+        untracked: !!f && f.side === "unstaged" && isUntracked(f.status),
       });
     },
   );
@@ -830,7 +837,12 @@ function splitByKeys(
   keys: string[],
   staged: FileSlot[],
   unstaged: FileSlot[],
-): { stagedPaths: string[]; unstagedPaths: string[]; embeddedPaths: string[] } {
+): {
+  stagedPaths: string[];
+  unstagedPaths: string[];
+  embeddedPaths: string[];
+  untrackedPaths: string[];
+} {
   const set = new Set(keys);
   const selected = [...staged, ...unstaged].filter((f) => set.has(keyOf(f)));
   const actionable = (side: FileSlot["side"]) =>
@@ -843,6 +855,12 @@ function splitByKeys(
     embeddedPaths: [
       ...new Set(selected.filter((f) => f.status.embedded).map((f) => f.path)),
     ],
+    untrackedPaths: selected
+      .filter(
+        (f) =>
+          f.side === "unstaged" && !f.status.embedded && isUntracked(f.status),
+      )
+      .map((f) => f.path),
   };
 }
 

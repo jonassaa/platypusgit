@@ -1,12 +1,17 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import { browser, $, expect } from "@wdio/globals";
 import { dirtyRepo, TempRepo } from "../support/tempRepo";
 import {
   changeRow,
+  confirmCallCount,
   jsClickMenuItem,
   jsContextMenu,
   openRepo,
   resetApp,
   stagedRow,
+  stubNativeDialogs,
   switchScreen,
 } from "../support/app";
 
@@ -82,5 +87,29 @@ describe("status & staging", () => {
     );
     // verify on disk: content back to committed v2
     expect(repo.read("a.txt")).toBe("alpha v2\n");
+  });
+
+  // #67: discard used to report success and delete nothing for an untracked
+  // path — `checkout_index` has no index entry to restore from — so the file
+  // stayed on disk after the app said the changes were lost.
+  it("deletes an untracked file via context menu", async () => {
+    await stubNativeDialogs({ confirm: true });
+    await jsContextMenu('[data-testid="changes-list"] [data-path="new.txt"]');
+    // Untracked has nothing to restore from, so the item reads Delete, not
+    // Discard changes, and goes through a confirm.
+    await $("span=Delete file…").waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "Delete file… menu item never appeared",
+    });
+    await jsClickMenuItem("Delete file…");
+
+    await browser.waitUntil(
+      async () => !(await changeRow("new.txt").isExisting()),
+      { timeout: 30_000, timeoutMsg: "new.txt still listed after delete" },
+    );
+    expect(await confirmCallCount()).toBe(1);
+    // repo truth: gone from the worktree, not merely dropped from the list
+    expect(existsSync(join(repo.path, "new.txt"))).toBe(false);
+    expect(repo.git("status", "--porcelain", "--", "new.txt").trim()).toBe("");
   });
 });

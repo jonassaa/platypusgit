@@ -32,6 +32,7 @@ import {
   currentBranch,
   isStaged,
   isUnstaged,
+  isUntracked,
   relativeTime,
   statusMark,
 } from "@/lib/derive";
@@ -295,10 +296,12 @@ export function RepoBrowserScreen() {
       unstagedPaths: string[];
       paths: string[];
       embeddedPaths: string[];
+      untrackedPaths: string[];
     } => {
       const stagedPaths: string[] = [];
       const unstagedPaths: string[] = [];
       const embeddedPaths: string[] = [];
+      const untrackedPaths: string[] = [];
       const paths: string[] = [];
       const seen = new Set<string>();
       const add = (st: FileStatus) => {
@@ -314,6 +317,7 @@ export function RepoBrowserScreen() {
         }
         if (isStaged(st)) stagedPaths.push(st.path);
         if (isUnstaged(st)) unstagedPaths.push(st.path);
+        if (isUntracked(st)) untrackedPaths.push(st.path);
       };
       for (const key of keys) {
         const st = findStatusByTreeKey(key, status, allFiles);
@@ -327,7 +331,7 @@ export function RepoBrowserScreen() {
           if (child.path.startsWith(prefix)) add(child);
         }
       }
-      return { stagedPaths, unstagedPaths, paths, embeddedPaths };
+      return { stagedPaths, unstagedPaths, paths, embeddedPaths, untrackedPaths };
     },
     [status, allFiles, filteredStatus],
   );
@@ -347,6 +351,7 @@ export function RepoBrowserScreen() {
         path,
         staged: !!st && isStaged(st) && !isUnstaged(st),
         embedded: !!st?.embedded,
+        untracked: !!st && isUntracked(st),
       });
     },
   );

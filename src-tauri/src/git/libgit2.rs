@@ -10,6 +10,7 @@ use git2::{
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+use crate::opener::safe_workdir_path;
 
 use super::{
     types::{
@@ -397,6 +398,23 @@ fn is_registered_submodule(repo: &Repository, rel: &Path) -> bool {
         .ok()
         .and_then(|sm| sm.url().map(|url| !url.is_empty()))
         .unwrap_or(false)
+}
+
+/// True when the index holds at least one entry *beneath* `rel`, i.e. `rel`
+/// names a directory that contains tracked files.
+///
+/// Directories are never index entries themselves, so `discard` needs this to
+/// tell an untracked directory (safe to delete) from a tracked one (must be
+/// restored, not removed).
+fn index_has_entry_under(index: &git2::Index, rel: &Path) -> bool {
+    let prefix = strip_trailing_slash(rel).to_string_lossy().to_string();
+    if prefix.is_empty() {
+        return false;
+    }
+    let prefix = format!("{prefix}/");
+    index
+        .iter()
+        .any(|e| String::from_utf8_lossy(&e.path).starts_with(&prefix))
 }
 
 /// `Err(AppError::EmbeddedRepo)` when `path` is an embedded repository.
@@ -1585,12 +1603,76 @@ impl GitBackend for Libgit2Backend {
     }
     fn discard(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
-            let mut opts = git2::build::CheckoutBuilder::new();
-            opts.force();
-            for p in paths {
-                opts.path(p);
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::InvalidPath("bare repository has no workdir".into()))?
+                .to_path_buf();
+
+            // Embedded repos take the same batch semantics as `stage`: skip
+            // them, act on the rest, error only when nothing is left. Discard
+            // now deletes untracked paths, and an embedded repo is untracked —
+            // removing one would destroy commits git cannot recover.
+            let (skipped, discardable): (Vec<&PathBuf>, Vec<&PathBuf>) =
+                paths.iter().partition(|p| is_embedded_repo(repo, p));
+            if discardable.is_empty() {
+                return match skipped.first() {
+                    Some(p) => Err(AppError::EmbeddedRepo(p.to_string_lossy().to_string())),
+                    // Empty batch — nothing asked for, nothing refused.
+                    None => Ok(()),
+                };
             }
-            repo.checkout_index(None, Some(&mut opts))?;
+
+            // `checkout_index` can only restore paths that HAVE an index entry.
+            // An untracked path has none, so libgit2 finds nothing to check out
+            // and returns Ok(()) — which is how discard used to report success
+            // while leaving the file untouched. Split the batch: restore what
+            // the index knows, delete what it doesn't.
+            let index = repo.index()?;
+            let mut restore: Vec<&PathBuf> = Vec::new();
+            let mut delete: Vec<PathBuf> = Vec::new();
+            for p in discardable {
+                // Validate before touching disk: `Path::join` silently replaces
+                // the base on an absolute path, so an unvalidated frontend
+                // string could otherwise name — and delete — any file.
+                let abs = safe_workdir_path(&workdir, &p.to_string_lossy())?;
+                // A directory is never its own index entry, so "absent from the
+                // index" must not be read as "untracked" for one: deleting
+                // `src/` because `src` isn't an entry would wipe every tracked
+                // file beneath it. Restoring is what `git checkout -- src` does.
+                if index.get_path(p, 0).is_some() || index_has_entry_under(&index, p) {
+                    restore.push(p);
+                } else if abs.exists() {
+                    delete.push(abs);
+                } else {
+                    return Err(AppError::InvalidPath(format!(
+                        "nothing to discard: {} is neither tracked nor present in the worktree",
+                        p.display()
+                    )));
+                }
+            }
+
+            for abs in delete {
+                if abs.is_dir() {
+                    std::fs::remove_dir_all(&abs)
+                } else {
+                    std::fs::remove_file(&abs)
+                }
+                .map_err(|e| {
+                    AppError::Io(format!("failed to discard {}: {e}", abs.display()))
+                })?;
+            }
+
+            // Guard the empty case: a `CheckoutBuilder` with no path filter and
+            // `force()` checks out the ENTIRE index, clobbering every modified
+            // file in the worktree.
+            if !restore.is_empty() {
+                let mut opts = git2::build::CheckoutBuilder::new();
+                opts.force();
+                for p in restore {
+                    opts.path(p);
+                }
+                repo.checkout_index(None, Some(&mut opts))?;
+            }
             Ok(())
         })
     }
