@@ -37,6 +37,17 @@ export function isUnstaged(s: FileStatus): boolean {
 }
 
 /**
+ * Never committed and never staged — git holds no copy of it.
+ *
+ * Discarding one deletes it outright rather than restoring it, so the UI has to
+ * say "delete", not "discard changes", and must confirm first: unlike every
+ * other discard, there is nothing to recover it from.
+ */
+export function isUntracked(s: FileStatus): boolean {
+  return s.worktree.kind === "Untracked" && s.index.kind === "Unmodified";
+}
+
+/**
  * One-character status mark for UI (matches the PGStatusMark kinds).
  * Priority: embedded repo > conflicted > index side > worktree side.
  *

@@ -911,9 +911,15 @@ function embeddedRepoMenuItems(path: string): ContextMenuItem[] {
 }
 
 export function fileMenuItems(
-  file: { path?: string; staged?: boolean; embedded?: boolean } | null,
+  file: {
+    path?: string;
+    staged?: boolean;
+    embedded?: boolean;
+    untracked?: boolean;
+  } | null,
 ): ContextMenuItem[] {
   const staged = !!file?.staged;
+  const untracked = !!file?.untracked;
   const path = file?.path || "";
   if (file?.embedded) return embeddedRepoMenuItems(path);
   return [
@@ -982,15 +988,34 @@ export function fileMenuItems(
       onClick: () => navigator.clipboard?.writeText(path),
     },
     { divider: true },
-    {
-      icon: "undo",
-      label: "Discard changes",
-      danger: true,
-      disabled: staged,
-      onClick: () => {
-        if (path) useRepoStore.getState().discard([path]);
-      },
-    },
+    // An untracked file has no copy in the index or in history, so discarding
+    // it deletes it for good — say so, and never do it on a single click the
+    // way a recoverable "restore from index" can be.
+    untracked
+      ? {
+          icon: "trash",
+          label: "Delete file…",
+          danger: true,
+          onClick: () => {
+            if (!path) return;
+            if (
+              window.confirm(
+                `Delete ${path}? It is untracked, so this cannot be undone.`,
+              )
+            ) {
+              useRepoStore.getState().discard([path]);
+            }
+          },
+        }
+      : {
+          icon: "undo",
+          label: "Discard changes",
+          danger: true,
+          disabled: staged,
+          onClick: () => {
+            if (path) useRepoStore.getState().discard([path]);
+          },
+        },
     {
       icon: "trash",
       label: "Ignore this file",
@@ -1018,6 +1043,12 @@ export interface MultiFileMenuSelection {
    * their own remedy instead.
    */
   embeddedPaths?: string[];
+  /**
+   * Subset of `unstagedPaths` that is untracked. Discarding those deletes them
+   * outright — git has no copy — so the confirm has to name that separately
+   * from the recoverable "restore from index" case.
+   */
+  untrackedPaths?: string[];
 }
 
 /**
@@ -1084,9 +1115,15 @@ export function multiFileMenuItems(
         label: `Discard changes in ${files(unstagedPaths.length)}…`,
         danger: true,
         onClick: () => {
+          const untracked = sel?.untrackedPaths ?? [];
+          const deleted = untracked.length
+            ? ` ${files(untracked.length)} ${
+                untracked.length === 1 ? "is" : "are"
+              } untracked and will be deleted permanently.`
+            : "";
           if (
             window.confirm(
-              `Discard changes in ${files(unstagedPaths.length)}? The changes will be lost.`,
+              `Discard changes in ${files(unstagedPaths.length)}? The changes will be lost.${deleted}`,
             )
           ) {
             useRepoStore.getState().discard(unstagedPaths);

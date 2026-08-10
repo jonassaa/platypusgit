@@ -225,3 +225,98 @@ describe("RepoBrowser embedded git repositories", () => {
     await waitFor(() => expect(ignored).toEqual(["vendor/lib/"]));
   });
 });
+
+/**
+ * Discarding an untracked file DELETES it — git holds no copy to restore from,
+ * so unlike "restore this modified file from the index" there is no way back.
+ * The menu says so and never fires on a single click.
+ */
+describe("RepoBrowser discarding untracked files", () => {
+  const discardCalls: string[][] = [];
+
+  function untracked(path: string): FileStatus {
+    return {
+      path,
+      worktree: { kind: "Untracked" },
+      index: { kind: "Unmodified" },
+      additions: 0,
+      deletions: 0,
+      embedded: false,
+    };
+  }
+
+  beforeEach(() => {
+    discardCalls.length = 0;
+    resetStore({
+      status: [modified("a.txt"), untracked("loose.txt")],
+      discard: async (paths: string[]) => {
+        discardCalls.push(paths);
+      },
+    } as never);
+    wireMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("offers Delete, not Discard changes, for an untracked file", async () => {
+    render(<RepoBrowserScreen />);
+    const row = await waitFor(() => treeRow("loose.txt"));
+
+    fireEvent.contextMenu(row);
+
+    const menu = await waitFor(contextMenu);
+    expect(within(menu).getByText("Delete file…")).toBeInTheDocument();
+    expect(within(menu).queryByText("Discard changes")).toBeNull();
+  });
+
+  it("confirms before deleting an untracked file", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<RepoBrowserScreen />);
+    const row = await waitFor(() => treeRow("loose.txt"));
+
+    fireEvent.contextMenu(row);
+    fireEvent.click(within(await waitFor(contextMenu)).getByText("Delete file…"));
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Delete loose.txt? It is untracked, so this cannot be undone.",
+    );
+    expect(discardCalls).toEqual([]);
+
+    confirm.mockReturnValue(true);
+    fireEvent.contextMenu(treeRow("loose.txt"));
+    fireEvent.click(within(await waitFor(contextMenu)).getByText("Delete file…"));
+
+    await waitFor(() => expect(discardCalls).toEqual([["loose.txt"]]));
+  });
+
+  it("keeps Discard changes for a tracked modification", async () => {
+    render(<RepoBrowserScreen />);
+    const row = await waitFor(() => treeRow("a.txt"));
+
+    fireEvent.contextMenu(row);
+
+    const menu = await waitFor(contextMenu);
+    expect(within(menu).getByText("Discard changes")).toBeInTheDocument();
+    expect(within(menu).queryByText("Delete file…")).toBeNull();
+  });
+
+  it("warns that untracked files are deleted permanently in a multi-file discard", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<RepoBrowserScreen />);
+    await waitFor(() => treeRow("loose.txt"));
+
+    fireEvent.click(treeRow("a.txt"));
+    fireEvent.click(treeRow("loose.txt"), { ctrlKey: true });
+    fireEvent.contextMenu(treeRow("loose.txt"));
+
+    const menu = await waitFor(contextMenu);
+    fireEvent.click(within(menu).getByText("Discard changes in 2 files…"));
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Discard changes in 2 files? The changes will be lost. 1 file is untracked and will be deleted permanently.",
+    );
+    expect(discardCalls).toEqual([]);
+  });
+});
