@@ -11,6 +11,8 @@ import {
   PGToolbar,
   KV,
   branchMenuItems,
+  pgConfirm,
+  pgPrompt,
   remoteBranchMenuItems,
   stashMenuItems,
   tagMenuItems,
@@ -49,8 +51,15 @@ export function BranchesScreen() {
     "all" | "local" | "remote" | "tags" | "stashes"
   >("all");
 
-  const startCreate = () => {
-    const raw = window.prompt("New branch name");
+  const startCreate = async () => {
+    const raw = await pgPrompt({
+      title: "New branch",
+      body: "Created from the current HEAD and checked out.",
+      placeholder: "feat/my-branch",
+      confirmLabel: "Create",
+      requireValue: true,
+      mono: true,
+    });
     if (!raw) return;
     const name = raw.trim();
     if (!name) return;
@@ -794,8 +803,13 @@ function BranchActions({ branch }: { branch: BranchInfo }) {
         icon="merge"
         disabled={branch.isHead}
         title={`Merge ${branch.name} into current branch`}
-        onClick={() => {
-          if (!window.confirm(`Merge ${branch.name} into the current branch?`))
+        onClick={async () => {
+          if (
+            !(await pgConfirm({
+              title: `Merge ${branch.name} into the current branch?`,
+              confirmLabel: "Merge",
+            }))
+          )
             return;
           useRepoStore.getState().mergeBranch(branch.name);
         }}
@@ -807,11 +821,13 @@ function BranchActions({ branch }: { branch: BranchInfo }) {
         icon="rebase"
         disabled={branch.isHead}
         title={`Rebase current branch onto ${branch.name}`}
-        onClick={() => {
+        onClick={async () => {
           if (
-            !window.confirm(
-              `Rebase the current branch onto ${branch.name}? This rewrites history.`,
-            )
+            !(await pgConfirm({
+              title: `Rebase the current branch onto ${branch.name}?`,
+              body: "Your commits are replayed on top — this rewrites history, so their SHAs change.",
+              confirmLabel: "Rebase",
+            }))
           )
             return;
           useRepoStore.getState().rebaseOnto(branch.name);
@@ -824,8 +840,14 @@ function BranchActions({ branch }: { branch: BranchInfo }) {
         tone="danger"
         icon="trash"
         disabled={branch.isHead}
-        onClick={() => {
-          if (window.confirm(`Delete ${branch.name}?`))
+        onClick={async () => {
+          if (
+            await pgConfirm({
+              title: `Delete branch ${branch.name}?`,
+              danger: true,
+              confirmLabel: "Delete",
+            })
+          )
             useRepoStore.getState().deleteBranch(branch.name);
         }}
       >
@@ -897,8 +919,15 @@ function TagActions({ tag }: { tag: TagInfo }) {
         variant="ghost"
         tone="danger"
         icon="trash"
-        onClick={() => {
-          if (window.confirm(`Delete tag ${tag.name}?`))
+        onClick={async () => {
+          if (
+            await pgConfirm({
+              title: `Delete tag ${tag.name}?`,
+              body: "Only the local tag — a tag already pushed stays on the remote.",
+              danger: true,
+              confirmLabel: "Delete tag",
+            })
+          )
             useRepoStore.getState().deleteTag(tag.name);
         }}
       >
@@ -968,8 +997,15 @@ function StashActions({ stash }: { stash: StashInfo }) {
         variant="ghost"
         tone="danger"
         icon="trash"
-        onClick={() => {
-          if (window.confirm(`Drop stash@{${stash.index}}?`))
+        onClick={async () => {
+          if (
+            await pgConfirm({
+              title: `Drop stash@{${stash.index}}?`,
+              body: "The stashed changes are discarded.",
+              danger: true,
+              confirmLabel: "Drop",
+            })
+          )
             useRepoStore.getState().stashDrop(stash.index);
         }}
       >

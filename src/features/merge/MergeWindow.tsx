@@ -7,7 +7,14 @@
 import React from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit, listen } from "@tauri-apps/api/event";
-import { PGButton, PGEmpty, PGIcon, PGSpinner } from "@/design";
+import {
+  PGButton,
+  PGDialogHost,
+  PGEmpty,
+  PGIcon,
+  PGSpinner,
+  pgConfirm,
+} from "@/design";
 import {
   acceptOurs as acceptOursIpc,
   acceptTheirs as acceptTheirsIpc,
@@ -192,6 +199,7 @@ export function MergeWindow() {
   }, [canApply, model, repoId, path, advance]);
 
   // --- Close (confirm when this file has unsaved progress) ----------------
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const requestClose = React.useCallback(() => {
     const body = bodyRef.current;
     const regs = body?.regions() ?? regionStates;
@@ -199,9 +207,22 @@ export function MergeWindow() {
     const touched =
       regs.some((r) => r.resolution !== null) ||
       (editorText != null && model != null && editorText !== model.initialResult);
-    if (!touched || window.confirm("Discard this file's merge progress?")) {
+    if (!touched) {
       void getCurrentWindow().close();
+      return;
     }
+    void (async () => {
+      if (
+        await pgConfirm({
+          title: "Discard this file's merge progress?",
+          body: "Side picks and edits to the result pane are lost; the file stays conflicted.",
+          danger: true,
+          confirmLabel: "Discard",
+        })
+      ) {
+        void getCurrentWindow().close();
+      }
+    })();
   }, [regionStates, model]);
 
   // --- Chord table: window-level keydown, capture phase (beats CM keymap) --
@@ -242,6 +263,9 @@ export function MergeWindow() {
         color: "var(--fg-0)",
       }}
     >
+      {/* Own host: this is a separate Tauri window, so it cannot share the
+          main window's. */}
+      <PGDialogHost />
       <div
         style={{
           padding: "10px 14px",

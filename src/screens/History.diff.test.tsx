@@ -81,7 +81,11 @@ describe("History inline commit diff", () => {
     await waitFor(() => {
       expect(screen.getByText(/@@ -0,0 \+1,2 @@/)).toBeInTheDocument();
     });
-    expect(screen.getByText("src/foo.ts")).toBeInTheDocument();
+    // Rows render the basename and the directory in separate spans, so assert
+    // on the row's stable `data-path` rather than a single joined text node.
+    expect(document.querySelector('[data-path="src/foo.ts"]')).not.toBeNull();
+    expect(document.querySelector('[data-path="README.md"]')).not.toBeNull();
+    expect(screen.getByText("foo.ts")).toBeInTheDocument();
     expect(screen.getByText("README.md")).toBeInTheDocument();
 
     // Diff was fetched for the top (default-selected) commit.

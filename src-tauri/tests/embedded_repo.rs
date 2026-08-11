@@ -222,7 +222,7 @@ fn diff_rejects_the_embedded_repo_instead_of_returning_an_empty_diff() {
 
     for path in ["vendor/lib/", "vendor/lib"] {
         let err = backend
-            .diff(&handle.id, &PathBuf::from(path), DiffKind::WorktreeToHead, 3)
+            .diff(&handle.id, &PathBuf::from(path), DiffKind::WorktreeToHead, 3, false)
             .unwrap_err();
         assert!(matches!(err, AppError::EmbeddedRepo(p) if p == path));
     }
@@ -263,7 +263,7 @@ fn guards_leave_ordinary_paths_alone() {
 
     let readme = PathBuf::from("README.md");
     assert!(backend
-        .diff(&handle.id, &readme, DiffKind::WorktreeToHead, 3)
+        .diff(&handle.id, &readme, DiffKind::WorktreeToHead, 3, false)
         .is_ok());
     assert!(backend.blame_file(&handle.id, &readme).is_ok());
     assert_eq!(

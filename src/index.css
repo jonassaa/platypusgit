@@ -1,6 +1,17 @@
 @import "tailwindcss";
 @import "highlight.js/styles/github-dark.css";
 
+/* Bundled type (#61 B5). The design is mono-forward, but the stacks below used
+ * to *name* Inter / JetBrains Mono without shipping them — on a machine that
+ * lacks both, the whole app silently fell back to system sans/mono and lost
+ * the intended look. These are the OFL-1.1 variable builds: one file per
+ * unicode-range subset, so a browser fetches only the subset it renders, and
+ * one variable axis covers every weight the UI asks for. Family names are
+ * "* Variable"; the locally-installed static names stay next in the stack so a
+ * user who has them keeps using them. */
+@import "@fontsource-variable/inter/index.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
+
 /* ============================================================
  * PlatypusGit Design Tokens
  * Dense, utilitarian, monospace-forward. Dark mode hero.
@@ -8,9 +19,9 @@
 
 :root {
   /* ===== TYPE ===== */
-  --font-sans: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Menlo", Consolas, monospace;
-  --font-display: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+  --font-sans: "Inter Variable", "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", ui-monospace, "Menlo", Consolas, monospace;
+  --font-display: "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", ui-monospace, monospace;
 
   --fs-10: 10px;
   --fs-11: 11px;
@@ -89,7 +100,15 @@
   --logo: #3e9b91;   /* head */
   --logo-2: #e6a95a; /* bill */
 
-  /* ===== SEMANTIC (git states) ===== */
+  /* ===== SEMANTIC (git states) =====
+   * Everything from here to --shadow-inset, plus --accent-2..5 and
+   * --bg-selection* above, is ALSO written by applyTheme()
+   * (features/settings/useSettingsStore.ts) from SEMANTIC_TOKENS /
+   * SELECTION_TOKENS, calibrated per theme mode — light themes need their own
+   * values or diff colors, graph lanes and shadows stay dark-calibrated over a
+   * light canvas. These declarations are the pre-hydration defaults only, and
+   * are kept byte-identical to the `dark` column there. Editing one without
+   * the other makes them drift. */
   --git-added: oklch(0.72 0.15 155);
   --git-added-bg: oklch(0.35 0.08 155 / 0.25);
   --git-added-gutter: oklch(0.45 0.12 155 / 0.5);

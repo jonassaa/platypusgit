@@ -4,6 +4,13 @@ import { render, screen, waitFor, fireEvent, within } from "@testing-library/rea
 import { RepoBrowserScreen } from "./RepoBrowser";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { mockInvoke } from "@/test/invokeMock";
+import {
+  WithDialogs,
+  acceptDialog,
+  dialogTitle,
+  dismissDialog,
+  resetDialogs,
+} from "@/test/dialog";
 import type { FileStatus, RepoHandle } from "@/lib/types";
 
 const repo: RepoHandle = {
@@ -247,6 +254,7 @@ describe("RepoBrowser discarding untracked files", () => {
 
   beforeEach(() => {
     discardCalls.length = 0;
+    resetDialogs();
     resetStore({
       status: [modified("a.txt"), untracked("loose.txt")],
       discard: async (paths: string[]) => {
@@ -272,21 +280,27 @@ describe("RepoBrowser discarding untracked files", () => {
   });
 
   it("confirms before deleting an untracked file", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<RepoBrowserScreen />);
+    render(
+      <WithDialogs>
+        <RepoBrowserScreen />
+      </WithDialogs>,
+    );
     const row = await waitFor(() => treeRow("loose.txt"));
 
     fireEvent.contextMenu(row);
     fireEvent.click(within(await waitFor(contextMenu)).getByText("Delete file…"));
 
-    expect(confirm).toHaveBeenCalledWith(
-      "Delete loose.txt? It is untracked, so this cannot be undone.",
+    await waitFor(() => expect(dialogTitle()).toBe("Delete loose.txt?"));
+    expect(screen.getByTestId("dialog-title").parentElement?.textContent).toContain(
+      "cannot be undone",
     );
+    await dismissDialog();
     expect(discardCalls).toEqual([]);
 
-    confirm.mockReturnValue(true);
     fireEvent.contextMenu(treeRow("loose.txt"));
     fireEvent.click(within(await waitFor(contextMenu)).getByText("Delete file…"));
+    await waitFor(() => expect(dialogTitle()).toBe("Delete loose.txt?"));
+    await acceptDialog();
 
     await waitFor(() => expect(discardCalls).toEqual([["loose.txt"]]));
   });
@@ -303,8 +317,11 @@ describe("RepoBrowser discarding untracked files", () => {
   });
 
   it("warns that untracked files are deleted permanently in a multi-file discard", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<RepoBrowserScreen />);
+    render(
+      <WithDialogs>
+        <RepoBrowserScreen />
+      </WithDialogs>,
+    );
     await waitFor(() => treeRow("loose.txt"));
 
     fireEvent.click(treeRow("a.txt"));
@@ -314,9 +331,14 @@ describe("RepoBrowser discarding untracked files", () => {
     const menu = await waitFor(contextMenu);
     fireEvent.click(within(menu).getByText("Discard changes in 2 files…"));
 
-    expect(confirm).toHaveBeenCalledWith(
-      "Discard changes in 2 files? The changes will be lost. 1 file is untracked and will be deleted permanently.",
+    await waitFor(() =>
+      expect(dialogTitle()).toBe("Discard changes in 2 files?"),
     );
+    expect(screen.getByTestId("dialog-title").parentElement?.textContent).toContain(
+      "1 file is untracked and will be deleted permanently.",
+    );
+
+    await dismissDialog();
     expect(discardCalls).toEqual([]);
   });
 });

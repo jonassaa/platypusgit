@@ -13,7 +13,7 @@ fn diff_commit_shows_only_that_commits_change() {
     // Two more commits, each adding one file.
     let oids = support::linear_history(&tr, 2); // file0.txt, file1.txt
 
-    let diffs = backend.diff_commit(&handle.id, &oids[1], 3).unwrap();
+    let diffs = backend.diff_commit(&handle.id, &oids[1], 3, false).unwrap();
 
     assert_eq!(diffs.len(), 1, "only the file this commit touched");
     assert_eq!(diffs[0].path, "file1.txt");
@@ -35,7 +35,7 @@ fn diff_commit_root_is_all_added() {
         .oid
         .clone();
 
-    let diffs = backend.diff_commit(&handle.id, &root, 3).unwrap();
+    let diffs = backend.diff_commit(&handle.id, &root, 3, false).unwrap();
 
     let readme = diffs.iter().find(|d| d.path == "README.md").expect("README.md in root diff");
     assert!(readme.additions >= 2, "both lines added");
@@ -85,7 +85,7 @@ fn diff_commit_merge_uses_first_parent() {
             .to_string()
     };
 
-    let diffs = backend.diff_commit(&handle.id, &merge_oid, 3).unwrap();
+    let diffs = backend.diff_commit(&handle.id, &merge_oid, 3, false).unwrap();
     let paths: Vec<&str> = diffs.iter().map(|d| d.path.as_str()).collect();
 
     // feat.txt is what the merge brings in relative to the first parent (main).

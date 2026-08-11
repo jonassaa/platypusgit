@@ -10,6 +10,7 @@ import {
   PGSectionHeader,
   PGSpinner,
   conflictMenuItems,
+  pgConfirm,
   useContextMenu,
   usePaneWidth,
 } from "@/design";
@@ -167,11 +168,14 @@ function ConflictHeader({
         icon="x"
         disabled={repoState === "Clean"}
         data-testid="conflict-abort"
-        onClick={() => {
+        onClick={async () => {
           if (
-            window.confirm(
-              "Abort the current operation? The working tree will be reset to HEAD.",
-            )
+            await pgConfirm({
+              title: "Abort the current operation?",
+              body: "The working tree is reset to HEAD and any conflict resolutions are discarded.",
+              danger: true,
+              confirmLabel: "Abort",
+            })
           )
             useRepoStore.getState().abortOperation();
         }}

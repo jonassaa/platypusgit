@@ -69,11 +69,15 @@ pub async fn get_diff(
     path: String,
     kind: DiffKind,
     context_lines: u32,
+    // Viewing option only — see the `diff` doc on GitBackend. Optional so an
+    // older caller (or a test) that omits it keeps the exact git default.
+    ignore_whitespace: Option<bool>,
 ) -> AppResult<FileDiff> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let path = PathBuf::from(path);
-    tokio::task::spawn_blocking(move || backend.diff(&repo_id, &path, kind, context_lines))
+    let iw = ignore_whitespace.unwrap_or(false);
+    tokio::task::spawn_blocking(move || backend.diff(&repo_id, &path, kind, context_lines, iw))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
@@ -127,11 +131,13 @@ pub async fn diff_commits(
     from_oid: String,
     to_oid: String,
     context_lines: u32,
+    ignore_whitespace: Option<bool>,
 ) -> AppResult<Vec<FileDiff>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
+    let iw = ignore_whitespace.unwrap_or(false);
     tokio::task::spawn_blocking(move || {
-        backend.diff_commits(&repo_id, &from_oid, &to_oid, context_lines)
+        backend.diff_commits(&repo_id, &from_oid, &to_oid, context_lines, iw)
     })
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?
@@ -143,10 +149,12 @@ pub async fn diff_commit(
     repo_id: String,
     oid: String,
     context_lines: u32,
+    ignore_whitespace: Option<bool>,
 ) -> AppResult<Vec<FileDiff>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
-    tokio::task::spawn_blocking(move || backend.diff_commit(&repo_id, &oid, context_lines))
+    let iw = ignore_whitespace.unwrap_or(false);
+    tokio::task::spawn_blocking(move || backend.diff_commit(&repo_id, &oid, context_lines, iw))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

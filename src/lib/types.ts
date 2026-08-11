@@ -244,3 +244,13 @@ export interface UpdateInfo {
 }
 
 export type UpdateCapability = "self-update" | "notify";
+
+/**
+ * "Commit as" identity. Mirrors Rust `AuthorOverride` (git/types.rs) — it sets
+ * the commit's AUTHOR only; the committer stays the repo config identity, the
+ * same split `git commit --author` uses.
+ */
+export interface AuthorOverride {
+  name: string;
+  email: string;
+}

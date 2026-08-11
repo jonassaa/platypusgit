@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MergeWindow, findNextConflict } from "./MergeWindow";
 import { mockInvoke, getInvokeCalls } from "@/test/invokeMock";
+import { dialogTitle, dismissDialog, resetDialogs } from "@/test/dialog";
 import type { ConflictSides, FileStatus } from "@/lib/types";
 
 function conflictedStatus(paths: string[]): FileStatus[] {
@@ -108,6 +109,7 @@ describe("MergeWindow shell", () => {
 
 describe("MergeWindow resolution flow", () => {
   async function setup(paths = ["conflict.txt"]) {
+    resetDialogs();
     setSearch("window=merge&repoId=r1&path=conflict.txt");
     mockInvoke("get_status", () => conflictedStatus(paths));
     mockInvoke("conflict_sides", () => textSides());
@@ -191,13 +193,28 @@ describe("MergeWindow resolution flow", () => {
   });
 
   it("Escape with progress asks for confirmation", async () => {
+    // MergeWindow mounts its own PGDialogHost (separate Tauri window), so the
+    // styled confirm renders without a test wrapper.
     await setup();
     chord("1", { metaKey: true, code: "Digit1" });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     chord("Escape");
-    expect(confirmSpy).toHaveBeenCalled();
+
+    await waitFor(() =>
+      expect(dialogTitle()).toBe("Discard this file's merge progress?"),
+    );
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     expect(getCurrentWindow().close).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
+
+    await dismissDialog();
+    expect(getCurrentWindow().close).not.toHaveBeenCalled();
+  });
+
+  it("Escape with no progress closes without asking", async () => {
+    await setup();
+    chord("Escape");
+
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await waitFor(() => expect(getCurrentWindow().close).toHaveBeenCalled());
+    expect(dialogTitle()).toBeNull();
   });
 });

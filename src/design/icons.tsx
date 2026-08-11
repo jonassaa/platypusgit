@@ -3,6 +3,9 @@ import type { CSSProperties, ReactNode } from "react";
 export type IconName =
   | "repo" | "branch" | "commit" | "merge" | "fork" | "tag"
   | "folder" | "folderOpen" | "file" | "fileCode"
+  // File-type category glyphs — resolved per path by lib/fileIcon.ts.
+  | "fileData" | "fileDoc" | "fileStyle" | "fileImage" | "fileShell"
+  | "fileConfig" | "fileLock" | "fileArchive" | "fileBinary" | "fileGit"
   | "plus" | "minus" | "check" | "x"
   | "chevronRight" | "chevronDown" | "chevronUp" | "chevronLeft"
   | "search" | "settings" | "filter" | "sort" | "more"
@@ -12,7 +15,8 @@ export type IconName =
   | "download" | "upload" | "link" | "lock"
   | "play" | "pause" | "star" | "copy" | "external"
   | "edit" | "trash" | "conflict" | "squash" | "drag" | "bell"
-  | "diff" | "undo" | "fix" | "expandAll" | "collapseAll";
+  | "diff" | "undo" | "fix" | "expandAll" | "collapseAll"
+  | "viewTree" | "viewList";
 
 const ICONS: Record<IconName, ReactNode> = {
   repo: <>
@@ -54,6 +58,60 @@ const ICONS: Record<IconName, ReactNode> = {
   fileCode: <>
     <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
     <path d="M9 1.5v4h4M6 9l-1.5 1.5L6 12M10 9l1.5 1.5L10 12" />
+  </>,
+  // ── File-type category glyphs ───────────────────────────────────────────
+  // All share the `file` page outline so a mixed list reads as one family;
+  // the mark inside the page is what distinguishes the category.
+  fileData: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4M6.5 8.5c-1 0-1 1.25-1 1.25s0 1.25 1 1.25M9.5 8.5c1 0 1 1.25 1 1.25s0 1.25-1 1.25" />
+  </>,
+  fileDoc: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4M4.5 8.5h5M4.5 10.5h5M4.5 12.5h3" />
+  </>,
+  fileStyle: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4M8 8.5c-1.5 1.6-2.25 2.6-2.25 3.35a2.25 2.25 0 0 0 4.5 0C10.25 11.1 9.5 10.1 8 8.5z" />
+  </>,
+  fileImage: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4M2 12.5l3-3 2.5 2.5M9 10l1.5-1.5 2.5 2.5" />
+    <circle cx="6" cy="7.5" r=".9" />
+  </>,
+  fileShell: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4M4.5 8.5l2 1.75-2 1.75M8 12.25h3" />
+  </>,
+  fileConfig: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <circle cx="7.5" cy="10.5" r="1.6" />
+    <path d="M7.5 7.6v1.3M7.5 12.1v1.3M4.9 9v0M10.1 12v0M4.9 12v0M10.1 9v0" />
+  </>,
+  fileLock: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <rect x="5" y="10" width="6" height="3.5" rx=".75" />
+    <path d="M6.25 10V9a1.75 1.75 0 0 1 3.5 0v1" />
+  </>,
+  fileArchive: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4M6.5 2v1M8 3.5v1M6.5 5v1M8 6.5v1M6.5 8v1" />
+    <rect x="6" y="10" width="2.5" height="3" rx=".5" />
+  </>,
+  fileBinary: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4M5 8.75l1-.5v3.5M4.75 11.75h2.5" />
+    <rect x="8.75" y="8.25" width="2.5" height="3.5" rx="1.25" />
+  </>,
+  fileGit: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <circle cx="5.5" cy="8.5" r="1" />
+    <circle cx="5.5" cy="12.5" r="1" />
+    <circle cx="10" cy="9.75" r="1" />
+    <path d="M5.5 9.5v2M5.5 11c0-1.5 1.5-1.25 3.5-1.25" />
   </>,
   plus: <path d="M8 3v10M3 8h10" />,
   minus: <path d="M3 8h10" />,
@@ -189,6 +247,17 @@ const ICONS: Record<IconName, ReactNode> = {
   expandAll: <path d="M4.5 6L8 2.5 11.5 6M4.5 10L8 13.5 11.5 10" />,
   // Chevrons pointing toward center = fold (collapse all).
   collapseAll: <path d="M4.5 3L8 6.5 11.5 3M4.5 13L8 9.5 11.5 13" />,
+  // View-mode pair: an indented hierarchy vs a flat stack of rows.
+  viewTree: <>
+    <path d="M2.5 2.5v9.5M2.5 5.5h3M2.5 9h3M2.5 12.5h3" />
+    <path d="M7 2.5h6.5M7 5.5h6.5M7 9h6.5M7 12.5h6.5" />
+  </>,
+  viewList: <>
+    <circle cx="3" cy="4" r=".9" fill="currentColor" stroke="none" />
+    <circle cx="3" cy="8" r=".9" fill="currentColor" stroke="none" />
+    <circle cx="3" cy="12" r=".9" fill="currentColor" stroke="none" />
+    <path d="M6 4h8M6 8h8M6 12h8" />
+  </>,
 };
 
 export interface PGIconProps {

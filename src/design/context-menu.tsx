@@ -1,6 +1,7 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PGIcon, type IconName } from "./icons";
+import { pgConfirm, pgPrompt } from "./dialog";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
@@ -17,7 +18,8 @@ export interface ContextMenuItem {
   divider?: boolean;
   __menuTitle?: string;
   submenu?: ContextMenuItem[];
-  onClick?: () => void;
+  /** May be async — the styled confirm/prompt dialogs are promise-based. */
+  onClick?: () => void | Promise<void>;
 }
 
 // Tiny toast
@@ -73,7 +75,9 @@ function ContextMenuItemView({
     if (disabled) return;
     if (hasSubmenu) return;
     e.stopPropagation();
-    item.onClick?.();
+    // Fire-and-forget: an async handler awaits a dialog long after the menu
+    // has closed, and nothing here consumes its result.
+    void item.onClick?.();
     onClose();
   };
 
@@ -346,9 +350,15 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "check",
       label: "Check out this commit",
-      onClick: () => {
+      onClick: async () => {
         if (!commit?.sha) return;
-        if (window.confirm(`Check out ${sha.slice(0, 7)} in detached HEAD?`))
+        if (
+          await pgConfirm({
+            title: `Check out ${sha.slice(0, 7)} in detached HEAD?`,
+            body: "You won't be on a branch. New commits are easy to lose unless you create one.",
+            confirmLabel: "Check out",
+          })
+        )
           useRepoStore.getState().checkoutRef(commit.sha);
       },
     },
@@ -357,7 +367,14 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       label: "Create branch from here…",
       onClick: async () => {
         if (!commit?.sha) return;
-        const name = window.prompt("New branch name");
+        const name = await pgPrompt({
+          title: "Create branch from here",
+          body: `Branching at ${sha.slice(0, 7)}.`,
+          placeholder: "feat/my-branch",
+          confirmLabel: "Create",
+          requireValue: true,
+          mono: true,
+        });
         if (!name) return;
         await useRepoStore.getState().createBranch(name, commit.sha);
         await useRepoStore.getState().checkoutBranch(name);
@@ -366,8 +383,15 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "tag",
       label: "Create tag here…",
-      onClick: () => {
-        const name = window.prompt("Tag name");
+      onClick: async () => {
+        const name = await pgPrompt({
+          title: "Create tag here",
+          body: `Tagging ${sha.slice(0, 7)}.`,
+          placeholder: "v1.0.0",
+          confirmLabel: "Create tag",
+          requireValue: true,
+          mono: true,
+        });
         if (!name || !commit) return;
         useRepoStore.getState().createTag(name, {
           oid: commit.sha ?? "",
@@ -450,9 +474,15 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "squash",
       label: "Squash this commit into its parent",
-      onClick: () => {
+      onClick: async () => {
         if (!commit?.sha) return;
-        const msg = window.prompt("New commit message for squashed commit");
+        const msg = await pgPrompt({
+          title: "Squash into parent",
+          body: "Message for the combined commit.",
+          initialValue: commit.subject ?? "",
+          confirmLabel: "Squash",
+          requireValue: true,
+        });
         if (!msg) return;
         const commits = useRepoStore.getState().commits;
         const idx = commits.findIndex((c) => c.oid === commit.sha);
@@ -535,11 +565,13 @@ export function commitMultiMenuItems(oids: string[]): ContextMenuItem[] {
     {
       icon: "rebase",
       label: `Cherry-pick ${n} onto current`,
-      onClick: () => {
+      onClick: async () => {
         if (
-          window.confirm(
-            `Cherry-pick ${n} commits onto the current branch (oldest first)?`,
-          )
+          await pgConfirm({
+            title: `Cherry-pick ${n} commits onto the current branch?`,
+            body: "They are applied oldest first.",
+            confirmLabel: "Cherry-pick",
+          })
         )
           useRepoStore.getState().cherryPickMany(plan.oids);
       },
@@ -548,9 +580,14 @@ export function commitMultiMenuItems(oids: string[]): ContextMenuItem[] {
       icon: "squash",
       label: squashBlock ? `Squash ${n} — ${squashBlock}` : `Squash ${n} into one…`,
       disabled: !!squashBlock,
-      onClick: () => {
+      onClick: async () => {
         if (squashBlock || !plan.baseOid) return;
-        const msg = window.prompt("New commit message for the squashed commit");
+        const msg = await pgPrompt({
+          title: `Squash ${n} commits into one`,
+          body: "Message for the combined commit.",
+          confirmLabel: "Squash",
+          requireValue: true,
+        });
         if (!msg) return;
         const rebasePlan = buildRebasePlan(commits, plan.baseOid, {
           kind: "squash-range",
@@ -593,12 +630,13 @@ export function branchMenuItems(
       icon: "merge",
       label: "Merge into current",
       disabled: isCurrent,
-      onClick: () => {
+      onClick: async () => {
         if (!name) return;
         if (
-          window.confirm(
-            `Merge ${name} into the current branch?`,
-          )
+          await pgConfirm({
+            title: `Merge ${name} into the current branch?`,
+            confirmLabel: "Merge",
+          })
         )
           useRepoStore.getState().mergeBranch(name);
       },
@@ -607,12 +645,14 @@ export function branchMenuItems(
       icon: "rebase",
       label: "Rebase current onto this",
       disabled: isCurrent,
-      onClick: () => {
+      onClick: async () => {
         if (!name) return;
         if (
-          window.confirm(
-            `Rebase the current branch onto ${name}?`,
-          )
+          await pgConfirm({
+            title: `Rebase the current branch onto ${name}?`,
+            body: "Your commits are replayed on top — their SHAs change.",
+            confirmLabel: "Rebase",
+          })
         )
           useRepoStore.getState().rebaseOnto(name);
       },
@@ -642,8 +682,14 @@ export function branchMenuItems(
     {
       icon: "edit",
       label: "Rename…",
-      onClick: () => {
-        const to = window.prompt("New name", name);
+      onClick: async () => {
+        const to = await pgPrompt({
+          title: `Rename ${name}`,
+          initialValue: name,
+          confirmLabel: "Rename",
+          requireValue: true,
+          mono: true,
+        });
         if (to && to !== name) useRepoStore.getState().renameBranch(name, to);
       },
     },
@@ -661,8 +707,14 @@ export function branchMenuItems(
       label: "Delete",
       danger: true,
       disabled: isCurrent,
-      onClick: () => {
-        if (window.confirm(`Delete ${name}?`))
+      onClick: async () => {
+        if (
+          await pgConfirm({
+            title: `Delete branch ${name}?`,
+            danger: true,
+            confirmLabel: "Delete",
+          })
+        )
           useRepoStore.getState().deleteBranch(name);
       },
     },
@@ -671,8 +723,15 @@ export function branchMenuItems(
       label: "Force delete (-D)",
       danger: true,
       disabled: isCurrent,
-      onClick: () => {
-        if (window.confirm(`Force-delete ${name}? This will discard unmerged commits.`))
+      onClick: async () => {
+        if (
+          await pgConfirm({
+            title: `Force-delete branch ${name}?`,
+            body: "Unmerged commits on it are discarded and are not recoverable from the branch.",
+            danger: true,
+            confirmLabel: "Force delete",
+          })
+        )
           useRepoStore.getState().deleteBranch(name, true);
       },
     },
@@ -690,32 +749,46 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
     {
       icon: "branch",
       label: "Check out as new local branch…",
-      onClick: () => {
+      onClick: async () => {
         if (!name) return;
-        const localName = window.prompt("Local branch name", shortName);
+        const localName = await pgPrompt({
+          title: "Check out as new local branch",
+          body: `Tracking ${name}.`,
+          initialValue: shortName,
+          confirmLabel: "Check out",
+          requireValue: true,
+          mono: true,
+        });
         if (!localName) return;
-        (async () => {
-          await useRepoStore.getState().createBranch(localName, name);
-          await useRepoStore.getState().checkoutBranch(localName);
-        })();
+        await useRepoStore.getState().createBranch(localName, name);
+        await useRepoStore.getState().checkoutBranch(localName);
       },
     },
     {
       icon: "merge",
       label: "Merge into current",
-      onClick: () => {
+      onClick: async () => {
         if (!name) return;
-        if (window.confirm(`Merge ${name} into the current branch?`))
+        if (
+          await pgConfirm({
+            title: `Merge ${name} into the current branch?`,
+            confirmLabel: "Merge",
+          })
+        )
           useRepoStore.getState().mergeBranch(name);
       },
     },
     {
       icon: "rebase",
       label: "Rebase current onto this",
-      onClick: () => {
+      onClick: async () => {
         if (!name) return;
         if (
-          window.confirm(`Rebase the current branch onto ${name}?`)
+          await pgConfirm({
+            title: `Rebase the current branch onto ${name}?`,
+            body: "Your commits are replayed on top — their SHAs change.",
+            confirmLabel: "Rebase",
+          })
         )
           useRepoStore.getState().rebaseOnto(name);
       },
@@ -749,12 +822,16 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
       icon: "trash",
       label: "Delete on remote",
       danger: true,
-      onClick: () => {
+      onClick: async () => {
         if (!remoteName || !shortName) return;
         if (
-          window.confirm(
-            `Delete ${shortName} on ${remoteName}? This cannot be undone.`,
-          )
+          await pgConfirm({
+            title: `Delete ${shortName} on ${remoteName}?`,
+            body: "This deletes the branch for everyone and cannot be undone from here. Type the branch name to confirm.",
+            danger: true,
+            confirmLabel: "Delete on remote",
+            requireText: shortName,
+          })
         )
           useRepoStore.getState().pushDeleteBranch(remoteName, shortName);
       },
@@ -781,8 +858,15 @@ export function remoteMenuItems(remote: { name?: string; url?: string | null } |
     {
       icon: "edit",
       label: "Edit URL…",
-      onClick: () => {
-        const newUrl = window.prompt("New URL", url);
+      onClick: async () => {
+        const newUrl = await pgPrompt({
+          title: `URL for remote ${name}`,
+          initialValue: url,
+          placeholder: "git@github.com:owner/repo.git",
+          confirmLabel: "Save",
+          requireValue: true,
+          mono: true,
+        });
         if (newUrl && newUrl !== url)
           useRepoStore.getState().setRemoteUrl(name, newUrl);
       },
@@ -790,8 +874,14 @@ export function remoteMenuItems(remote: { name?: string; url?: string | null } |
     {
       icon: "edit",
       label: "Rename…",
-      onClick: () => {
-        const to = window.prompt("New name", name);
+      onClick: async () => {
+        const to = await pgPrompt({
+          title: `Rename remote ${name}`,
+          initialValue: name,
+          confirmLabel: "Rename",
+          requireValue: true,
+          mono: true,
+        });
         if (to && to !== name)
           useRepoStore.getState().renameRemote(name, to);
       },
@@ -809,8 +899,15 @@ export function remoteMenuItems(remote: { name?: string; url?: string | null } |
       icon: "trash",
       label: "Remove remote",
       danger: true,
-      onClick: () => {
-        if (window.confirm(`Remove remote "${name}"?`))
+      onClick: async () => {
+        if (
+          await pgConfirm({
+            title: `Remove remote "${name}"?`,
+            body: "Local branches stay; they just stop tracking it.",
+            danger: true,
+            confirmLabel: "Remove",
+          })
+        )
           useRepoStore.getState().removeRemote(name);
       },
     },
@@ -835,9 +932,16 @@ export function tagMenuItems(
     {
       icon: "branch",
       label: "Create branch from tag…",
-      onClick: () => {
+      onClick: async () => {
         if (!name) return;
-        const branchName = window.prompt("New branch name");
+        const branchName = await pgPrompt({
+          title: "Create branch from tag",
+          body: `Branching at ${name}.`,
+          placeholder: "release/1.0",
+          confirmLabel: "Create",
+          requireValue: true,
+          mono: true,
+        });
         if (!branchName) return;
         useRepoStore.getState().createBranch(branchName, name);
       },
@@ -846,9 +950,15 @@ export function tagMenuItems(
     {
       icon: "push",
       label: "Push tag to remote…",
-      onClick: () => {
+      onClick: async () => {
         if (!name) return;
-        const remote = window.prompt("Remote name", "origin");
+        const remote = await pgPrompt({
+          title: `Push tag ${name}`,
+          initialValue: "origin",
+          confirmLabel: "Push",
+          requireValue: true,
+          mono: true,
+        });
         if (!remote) return;
         useRepoStore.getState().pushTag(remote, name);
       },
@@ -866,8 +976,16 @@ export function tagMenuItems(
       icon: "trash",
       label: "Delete tag",
       danger: true,
-      onClick: () => {
-        if (name && window.confirm(`Delete tag ${name}?`))
+      onClick: async () => {
+        if (!name) return;
+        if (
+          await pgConfirm({
+            title: `Delete tag ${name}?`,
+            body: "Only the local tag — a tag already pushed stays on the remote.",
+            danger: true,
+            confirmLabel: "Delete tag",
+          })
+        )
           useRepoStore.getState().deleteTag(name);
       },
     },
@@ -996,12 +1114,15 @@ export function fileMenuItems(
           icon: "trash",
           label: "Delete file…",
           danger: true,
-          onClick: () => {
+          onClick: async () => {
             if (!path) return;
             if (
-              window.confirm(
-                `Delete ${path}? It is untracked, so this cannot be undone.`,
-              )
+              await pgConfirm({
+                title: `Delete ${path}?`,
+                body: "It is untracked — there is no copy in the index or in history, so this cannot be undone.",
+                danger: true,
+                confirmLabel: "Delete file",
+              })
             ) {
               useRepoStore.getState().discard([path]);
             }
@@ -1114,7 +1235,7 @@ export function multiFileMenuItems(
         icon: "undo",
         label: `Discard changes in ${files(unstagedPaths.length)}…`,
         danger: true,
-        onClick: () => {
+        onClick: async () => {
           const untracked = sel?.untrackedPaths ?? [];
           const deleted = untracked.length
             ? ` ${files(untracked.length)} ${
@@ -1122,9 +1243,12 @@ export function multiFileMenuItems(
               } untracked and will be deleted permanently.`
             : "";
           if (
-            window.confirm(
-              `Discard changes in ${files(unstagedPaths.length)}? The changes will be lost.${deleted}`,
-            )
+            await pgConfirm({
+              title: `Discard changes in ${files(unstagedPaths.length)}?`,
+              body: `The changes will be lost.${deleted}`,
+              danger: true,
+              confirmLabel: "Discard",
+            })
           ) {
             useRepoStore.getState().discard(unstagedPaths);
           }
@@ -1160,7 +1284,14 @@ export function stashMenuItems(
       label: "Branch from stash…",
       onClick: async () => {
         if (stash?.index == null) return;
-        const branch = window.prompt("Branch name");
+        const branch = await pgPrompt({
+          title: "Branch from stash",
+          body: `Creates a branch and applies ${name} onto it.`,
+          placeholder: "fix/from-stash",
+          confirmLabel: "Create branch",
+          requireValue: true,
+          mono: true,
+        });
         if (!branch) return;
         await useRepoStore.getState().stashBranch(stash.index, branch);
       },
@@ -1170,10 +1301,15 @@ export function stashMenuItems(
       icon: "trash",
       label: "Drop",
       danger: true,
-      onClick: () => {
+      onClick: async () => {
+        if (stash?.index == null) return;
         if (
-          stash?.index != null &&
-          window.confirm(`Drop ${name}?`)
+          await pgConfirm({
+            title: `Drop ${name}?`,
+            body: "The stashed changes are discarded.",
+            danger: true,
+            confirmLabel: "Drop",
+          })
         )
           useRepoStore.getState().stashDrop(stash.index);
       },
@@ -1235,12 +1371,15 @@ export function conflictMenuItems(conflict: { path?: string } | null): ContextMe
       icon: "undo",
       label: "Restart resolution",
       danger: true,
-      onClick: () => {
+      onClick: async () => {
         if (!conflict?.path) return;
         if (
-          window.confirm(
-            `Restart resolution for ${conflict.path}? Current edits are discarded.`,
-          )
+          await pgConfirm({
+            title: `Restart resolution for ${conflict.path}?`,
+            body: "Current edits to the conflicted file are discarded and the markers come back.",
+            danger: true,
+            confirmLabel: "Restart",
+          })
         )
           useRepoStore.getState().restartConflict(conflict.path);
       },

@@ -57,12 +57,19 @@ pub trait GitBackend: Send + Sync {
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
     /// Diff a single file. `context_lines` controls how many unchanged lines
     /// surround each hunk (git default: 3).
+    ///
+    /// `ignore_whitespace` turns lines that differ only in whitespace into
+    /// context lines. It is a VIEWING option only: the hunks it produces are
+    /// not the hunks git would apply, so a hunk index taken from such a diff
+    /// must never be fed to `stage_hunk`/`unstage_hunk`/`discard_hunk` — see
+    /// the note on those.
     fn diff(
         &self,
         repo_id: &RepoId,
         path: &Path,
         kind: DiffKind,
         context_lines: u32,
+        ignore_whitespace: bool,
     ) -> AppResult<FileDiff>;
     /// Read the full content of a file from the worktree. Falls back to the
     /// HEAD blob when the worktree copy is missing (e.g. a deleted file).
@@ -89,6 +96,7 @@ pub trait GitBackend: Send + Sync {
         from_oid: &str,
         to_oid: &str,
         context_lines: u32,
+        ignore_whitespace: bool,
     ) -> AppResult<Vec<FileDiff>>;
     /// Diff a single commit against its first parent — i.e. "what this commit
     /// changed." A root commit (no parent) diffs against the empty tree
@@ -100,6 +108,7 @@ pub trait GitBackend: Send + Sync {
         repo_id: &RepoId,
         oid: &str,
         context_lines: u32,
+        ignore_whitespace: bool,
     ) -> AppResult<Vec<FileDiff>>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>>;
@@ -120,6 +129,11 @@ pub trait GitBackend: Send + Sync {
     // Callers MUST pass the same `context_lines` they used for the `diff` that
     // displayed the hunks — a different context width can merge/split hunks
     // and shift indices, applying the wrong hunk.
+    //
+    // For the same reason these take no `ignore_whitespace`: that flag rewrites
+    // whitespace-only changes into context lines, so its hunks neither line up
+    // with these indices nor describe a patch that would apply. The UI disables
+    // hunk staging while the whitespace-ignore toggle is on (#61 D2).
     /// Stage a single hunk (by index into the WorktreeToIndex diff) for `path`.
     fn stage_hunk(
         &self,

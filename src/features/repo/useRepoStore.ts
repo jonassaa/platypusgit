@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AuthorOverride,
   BranchInfo,
   CommitInfo,
   FileContent,
@@ -186,6 +187,8 @@ interface RepoStoreState {
     message: string,
     amend?: boolean,
     signoff?: boolean,
+    /** "Commit as" — null uses the repo config identity. */
+    authorOverride?: AuthorOverride | null,
   ) => Promise<string | null>;
   reset: (target: string, mode: ResetMode) => Promise<void>;
   checkoutBranch: (name: string) => Promise<void>;
@@ -546,11 +549,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
-  async commit(message, amend = false, signoff = false) {
+  async commit(message, amend = false, signoff = false, authorOverride = null) {
     const repo = get().current;
     if (!repo) return null;
     try {
-      const oid = await commitFn(repo.id, message, amend, signoff);
+      const oid = await commitFn(repo.id, message, amend, signoff, authorOverride);
       await get().refreshAll();
       return oid;
     } catch (e) {

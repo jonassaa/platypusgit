@@ -1,6 +1,8 @@
 import React from "react";
-import { PGSpinner } from "@/design";
+import { PGIcon, PGSpinner } from "@/design";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
+import { fileIconSpec } from "@/lib/fileIcon";
+import { WhitespaceToggle } from "./WhitespaceToggle";
 import type { FileDiff } from "@/lib/types";
 
 export interface CommitDiffPanelProps {
@@ -88,12 +90,24 @@ export function CommitDiffPanel({
               padding: "6px 12px",
               borderBottom: "1px solid var(--border-0)",
               color: "var(--fg-3)",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
             }}
           >
-            {header}
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {header}
+            </span>
+            {/* Read-only surface: no hunk staging to gate here. */}
+            <WhitespaceToggle />
           </div>
           {loading && (
             <div style={{ padding: 12 }}>
@@ -106,13 +120,19 @@ export function CommitDiffPanel({
           {!loading && !error && diffs.length === 0 && (
             <div style={{ padding: 12, color: "var(--fg-3)" }}>{emptyLabel}</div>
           )}
-          {diffs.map((d) => (
+          {diffs.map((d) => {
+            const glyph = fileIconSpec(d.path);
+            const parts = d.path.split("/");
+            const base = parts.pop();
+            const dir = parts.join("/");
+            return (
             <div
               key={d.path}
               onClick={() => setSelected(d.path)}
               data-pg-row=""
               data-selected={d.path === selected ? "" : undefined}
               data-path={d.path}
+              title={d.oldPath && d.oldPath !== d.path ? `${d.oldPath} → ${d.path}` : d.path}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -124,12 +144,44 @@ export function CommitDiffPanel({
             >
               <span
                 style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 6,
+                  minWidth: 0,
                   overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
                 }}
               >
-                {d.path}
+                <PGIcon
+                  name={glyph.icon}
+                  size={11}
+                  style={{ color: glyph.color, flexShrink: 0, alignSelf: "center" }}
+                />
+                <span
+                  style={{
+                    color: "var(--fg-0)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                    maxWidth: "70%",
+                  }}
+                >
+                  {base}
+                </span>
+                {dir && (
+                  <span
+                    style={{
+                      color: "var(--fg-3)",
+                      fontSize: "var(--fs-10)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      direction: "rtl",
+                    }}
+                  >
+                    {dir}
+                  </span>
+                )}
               </span>
               <span style={{ flexShrink: 0, fontSize: "var(--fs-10)" }}>
                 {d.additions > 0 && (
@@ -140,7 +192,8 @@ export function CommitDiffPanel({
                 )}
               </span>
             </div>
-          ))}
+            );
+          })}
         </FocusableScroll>
       </PGPane>
       <PGPane

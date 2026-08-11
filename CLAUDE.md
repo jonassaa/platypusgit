@@ -143,6 +143,11 @@ Four layers, each run independently:
     project skill** (`.claude/skills/e2e-testing/SKILL.md`) — selector
     conventions and traps, driver-bridge/5s-penalty rules, native-dialog
     stubbing, fixture geometry gotchas, rebuild discipline, debugging flow.
+  - `stubNativeDialogs()` keeps its name and options but no longer stubs
+    natives: since #61 C3 confirms/prompts are real in-page modals
+    (`[data-pg-dialog]`, `data-pg-dialog-kind`), so it installs an observer
+    that answers each one as it appears. Call sites are unchanged;
+    `confirmCallCount()` still counts confirm dialogs only.
   - CI: `.github/workflows/e2e.yml` (ubuntu-latest + xvfb, PRs to `main` +
     push to `main`). Headless local runs use `pnpm test:e2e:docker` (same
     WebKitGTK + xvfb stack) — see the "Headless e2e in Docker" section above.
@@ -224,8 +229,10 @@ design/              In-house design system (NOT components/ui/). Exports via de
 ├── primitives.tsx       PGButton, PGIconButton, etc.
 ├── chrome.tsx           PGTitlebar, PGActivityBar, PGStatusBar, PGStatusItem
 ├── git-components.tsx   Git-specific UI bits
-├── icons.tsx            Icon set (name-based <PGIcon>)
+├── icons.tsx            Icon set (name-based <PGIcon>), incl. file-type glyphs
 ├── context-menu.tsx     Context menu primitive
+├── dialog.tsx           PGDialogHost + pgConfirm/pgPrompt — the ONLY confirm /
+│                        prompt path (no window.confirm/prompt anywhere)
 ├── empty-state.tsx      Empty-state component
 ├── resizable.tsx        Resizable panes
 ├── ui-helpers.tsx       pgFlash, misc helpers
@@ -267,7 +274,10 @@ features/            Per-feature: components + Zustand store colocated
 │                    semver.ts (§11 precedence, hand-rolled + tested),
 │                    UpdateChip (titlebar), UpdatePanel (Escape via the
 │                    keymap's app.closeOverlay, not a local listener)
-├── diff/            diff-specific components
+├── diff/            CommitDiffPanel (shared commit-diff view) + WhitespaceToggle
+│                    (ignore-whitespace control; also owns
+│                    useHunkActionsDisabledReason — hunk staging is disabled
+│                    while whitespace is ignored, see #61 D2)
 └── cli/             useCliLaunch — takes the stashed first-launch intent +
                      listens for forwarded `cli-launch` events, drives
                      openRepo + nav screen-switch intent
@@ -278,7 +288,10 @@ lib/
 ├── errors.ts        AppError discriminated union 1:1 with Rust enum
 ├── derive.ts        Selectors: currentBranch, isStaged, isUnstaged, totalAheadBehind, …
 ├── highlight.ts     Syntax highlighting for preview/diff
-├── tree.ts          Tree-building helpers (file tree from flat paths)
+├── fileIcon.ts      path → file-type glyph + themeable tint (tested)
+├── tree.ts          buildStatusTree / buildStatusList — SAME row keys, which is
+│                    what makes the tree⇄flat toggle free of per-mode branches
+├── useTreeViewMode.ts  Persisted tree|flat preference, one key per surface
 └── recents.ts       Recent-repo persistence
 ```
 
@@ -317,8 +330,19 @@ lib/
 - Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block async runtime.
 
 ### Styling
-- Tailwind v4 (CSS-first config). Theme tokens in `src/index.css` under `@theme { … }`. Use CSS vars (`var(--color-accent)`, `var(--bg-0)`, `var(--fg-0)`, `var(--git-*)`) or Tailwind arbitrary-value syntax.
+- Tailwind v4 (CSS-first config). Theme tokens are declared on plain `:root` in `src/index.css` (there is no `@theme {}` block). Use CSS vars (`var(--accent)`, `var(--bg-0)`, `var(--fg-0)`, `var(--git-*)`) or Tailwind arbitrary-value syntax.
 - No `tailwind.config.js` — v4 doesn't need one.
+- **`:root` is only the pre-hydration default for the themeable tokens.**
+  `applyTheme()` (`features/settings/useSettingsStore.ts`) is the source of
+  truth: besides the editable palette it writes `SEMANTIC_TOKENS`
+  (`--git-*`, `--graph-*`, `--accent-2..5`, `--shadow-*`) per theme **mode**,
+  and `SELECTION_TOKENS` (`--bg-selection*`) derived from `--accent`. Light
+  themes need their own calibration or diff colors, graph lanes and shadows
+  stay dark-calibrated over a light canvas (#61 B4). The `dark` column is kept
+  byte-identical to `index.css`; edit both or they drift.
+- Never hardcode the accent hue. Use `var(--accent)` or relative-color
+  `oklch(from var(--accent) l c h / <alpha>)` so custom themes carry through.
+- Fonts are vendored (`@fontsource-variable/*`), not assumed present.
 - Inline `style={{…}}` with CSS vars is fine and used widely in chrome components.
 - **Any new list-row surface must opt into UI density**, or the Settings toggle
   silently skips it (that's how it rotted the first time — issue #70). Write
@@ -338,6 +362,32 @@ lib/
 - New shared primitive → add to appropriate file in `src/design/` and re-export via `index.ts`.
 - `PGButton`/`PGInput` spread `...rest` onto their DOM node (so `data-testid` etc. pass through); `PGIconButton` does NOT (forwards `title` only). Row components (`PGChangeRow`, `PGCommitRow`, `PGFileTreeRow`, …) need explicit prop threading for new attributes.
 - Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
+
+### Dialogs
+- **Never call `window.confirm` / `window.prompt`.** Use `pgConfirm` /
+  `pgPrompt` from `@/design` (`design/dialog.tsx`) — promise-shaped, so
+  `if (await pgConfirm(…))` replaces the native line directly. They match the
+  native contract: dismissal → `false`/`null`, Escape and backdrop dismiss, and
+  an empty prompt string stays distinct from `null`.
+- `PGConfirmOptions` carries `body`, `danger`, and `requireText` (type-the-name
+  gate) — use them for destructive ops instead of cramming everything into one
+  sentence.
+- A `<PGDialogHost />` must be mounted in each window (`AppShell`, `MergeWindow`);
+  with none mounted the calls resolve `false`/`null` rather than hanging.
+- Component tests that render a screen in isolation need `WithDialogs` from
+  `@/test/dialog`, or every confirmation silently reads as "cancelled".
+
+### File lists
+- Row glyph + tint come from `lib/fileIcon.ts` (`fileIconSpec(path)`) — one
+  category glyph per file type, per-extension tint from the `--graph-*` tokens.
+  Add a language by adding a map entry, not a new SVG.
+- `buildStatusTree` and `buildStatusList` (`lib/tree.ts`) emit the **same row
+  keys** (`"/" + full path`). That is what lets the tree⇄flat toggle
+  (`lib/useTreeViewMode.ts`) work without per-mode branches in selection,
+  staging, or context menus — keep it true.
+- Tree keyboard behavior belongs to the owning screen via `usePaneList`, not to
+  `PGFileTree`: a local `onKeyDown` plus the global dispatcher both answer
+  ArrowDown and the selection moves twice.
 
 ### Permissions (Tauri 2)
 - Shared permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).

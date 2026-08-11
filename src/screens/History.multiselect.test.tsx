@@ -3,11 +3,18 @@
 // set, squash gating).
 
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HistoryScreen } from "./History";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
+import {
+  WithDialogs,
+  acceptDialog,
+  dialogTitle,
+  dismissDialog,
+  resetDialogs,
+} from "@/test/dialog";
 import type { CommitInfo } from "@/lib/types";
 
 // Newest-first linear log: a → b → c → d(root).
@@ -61,6 +68,7 @@ const isSelected = (text: string) => rowFor(text).hasAttribute("data-selected");
 
 describe("History multi-select", () => {
   beforeEach(() => {
+    resetDialogs();
     useRepoStore.setState({
       current: { id: "r1", path: "/repo", head: "main" },
       commits: [
@@ -135,19 +143,50 @@ describe("History multi-select", () => {
     });
   });
 
-  it("Cherry-pick N confirms then calls cherryPickMany oldest→newest", () => {
+  it("Cherry-pick N confirms then calls cherryPickMany oldest→newest", async () => {
     const picked: string[][] = [];
     useRepoStore.setState({
       cherryPickMany: async (oids: string[]) => {
         picked.push(oids);
       },
     } as never);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<HistoryScreen />);
+    render(
+      <WithDialogs>
+        <HistoryScreen />
+      </WithDialogs>,
+    );
     fireEvent.click(rowFor("commit A"));
     fireEvent.click(rowFor("commit B"), { shiftKey: true }); // A,B
     fireEvent.click(screen.getByTestId("multi-cherry-pick"));
+
+    await waitFor(() =>
+      expect(dialogTitle()).toBe(
+        "Cherry-pick 2 commits onto the current branch?",
+      ),
+    );
+    await acceptDialog();
     expect(picked).toEqual([[B, A]]); // oldest first
+  });
+
+  it("Cherry-pick N does nothing when the confirmation is dismissed", async () => {
+    const picked: string[][] = [];
+    useRepoStore.setState({
+      cherryPickMany: async (oids: string[]) => {
+        picked.push(oids);
+      },
+    } as never);
+    render(
+      <WithDialogs>
+        <HistoryScreen />
+      </WithDialogs>,
+    );
+    fireEvent.click(rowFor("commit A"));
+    fireEvent.click(rowFor("commit B"), { shiftKey: true });
+    fireEvent.click(screen.getByTestId("multi-cherry-pick"));
+
+    await waitFor(() => expect(dialogTitle()).not.toBeNull());
+    await dismissDialog();
+    expect(picked).toEqual([]);
   });
 
   it("Squash is disabled for a non-contiguous selection", () => {

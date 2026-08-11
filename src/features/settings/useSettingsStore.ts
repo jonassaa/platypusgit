@@ -311,6 +311,108 @@ export const BUILTIN_THEMES: ThemeDef[] = [
 // APPLY + PERSIST
 // ═════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Semantic tokens that are NOT part of the editable theme palette but still
+ * have to change with the theme's mode (#61 B4).
+ *
+ * These carry meaning of their own — diff green must stay green, graph lanes
+ * must stay mutually distinguishable — so they are deliberately not derived
+ * from the accent. What they cannot be is fixed: the dark set is calibrated
+ * for text on a dark canvas, and reusing it on a light theme leaves diff
+ * add/remove, graph lanes, branch pills and shadows washed out and low
+ * contrast. Two calibrations, picked by `theme.mode`.
+ *
+ * The dark column is byte-identical to the `:root` defaults in index.css, so
+ * every dark theme renders exactly as before.
+ */
+const SEMANTIC_TOKENS: Record<"dark" | "light", Record<string, string>> = {
+  dark: {
+    "--git-added": "oklch(0.72 0.15 155)",
+    "--git-added-bg": "oklch(0.35 0.08 155 / 0.25)",
+    "--git-added-gutter": "oklch(0.45 0.12 155 / 0.5)",
+    "--git-removed": "oklch(0.68 0.18 25)",
+    "--git-removed-bg": "oklch(0.35 0.10 25 / 0.25)",
+    "--git-removed-gutter": "oklch(0.45 0.14 25 / 0.5)",
+    "--git-modified": "oklch(0.75 0.14 75)",
+    "--git-modified-bg": "oklch(0.35 0.08 75 / 0.2)",
+    "--git-renamed": "oklch(0.72 0.15 235)",
+    "--git-conflict": "oklch(0.72 0.15 325)",
+    "--git-untracked": "oklch(0.72 0.12 295)",
+    "--git-staged": "oklch(0.72 0.15 155)",
+    "--git-ignored": "oklch(0.55 0.005 260)",
+    "--graph-1": "oklch(0.72 0.15 235)",
+    "--graph-2": "oklch(0.72 0.15 295)",
+    "--graph-3": "oklch(0.72 0.15 155)",
+    "--graph-4": "oklch(0.72 0.15 65)",
+    "--graph-5": "oklch(0.72 0.15 25)",
+    "--graph-6": "oklch(0.72 0.15 355)",
+    "--graph-7": "oklch(0.72 0.15 195)",
+    "--accent-2": "oklch(0.72 0.15 295)",
+    "--accent-3": "oklch(0.72 0.15 155)",
+    "--accent-4": "oklch(0.72 0.15 65)",
+    "--accent-5": "oklch(0.72 0.15 25)",
+    "--shadow-1": "0 1px 2px rgba(0,0,0,0.4)",
+    "--shadow-2": "0 4px 12px rgba(0,0,0,0.35)",
+    "--shadow-3": "0 12px 40px rgba(0,0,0,0.5)",
+    "--shadow-inset": "inset 0 1px 0 rgba(255,255,255,0.04)",
+  },
+  light: {
+    // Foreground hues drop to ~0.55 L so they carry contrast against a near-
+    // white canvas; the *-bg fills invert — light tints instead of dark
+    // washes — and gutters sit between the two.
+    "--git-added": "oklch(0.55 0.16 155)",
+    "--git-added-bg": "oklch(0.90 0.08 155 / 0.55)",
+    "--git-added-gutter": "oklch(0.76 0.14 155 / 0.65)",
+    "--git-removed": "oklch(0.54 0.20 25)",
+    "--git-removed-bg": "oklch(0.91 0.07 25 / 0.55)",
+    "--git-removed-gutter": "oklch(0.75 0.16 25 / 0.65)",
+    "--git-modified": "oklch(0.58 0.14 75)",
+    "--git-modified-bg": "oklch(0.91 0.08 75 / 0.5)",
+    "--git-renamed": "oklch(0.53 0.16 235)",
+    "--git-conflict": "oklch(0.53 0.19 325)",
+    "--git-untracked": "oklch(0.51 0.17 295)",
+    "--git-staged": "oklch(0.55 0.16 155)",
+    "--git-ignored": "oklch(0.66 0.005 260)",
+    "--graph-1": "oklch(0.56 0.16 235)",
+    "--graph-2": "oklch(0.54 0.17 295)",
+    "--graph-3": "oklch(0.55 0.15 155)",
+    "--graph-4": "oklch(0.60 0.14 65)",
+    "--graph-5": "oklch(0.56 0.18 25)",
+    "--graph-6": "oklch(0.55 0.18 355)",
+    "--graph-7": "oklch(0.55 0.13 195)",
+    "--accent-2": "oklch(0.54 0.17 295)",
+    "--accent-3": "oklch(0.55 0.15 155)",
+    "--accent-4": "oklch(0.60 0.14 65)",
+    "--accent-5": "oklch(0.56 0.18 25)",
+    // Dark themes cast shadows with pure black; on a light canvas that reads
+    // as grime. Tint them with the same cool ink the text uses, and lighten.
+    "--shadow-1": "0 1px 2px rgba(20,26,38,0.10)",
+    "--shadow-2": "0 4px 12px rgba(20,26,38,0.12)",
+    "--shadow-3": "0 12px 40px rgba(20,26,38,0.18)",
+    "--shadow-inset": "inset 0 1px 0 rgba(255,255,255,0.65)",
+  },
+};
+
+/**
+ * Selection tints and the focus ring genuinely ARE accent-tinted, so they are
+ * derived from `--accent` with relative-color syntax rather than tabulated —
+ * that way a custom accent carries through instead of leaving blue selection
+ * on an amber theme. Light mode substitutes a high lightness so the tint sits
+ * *behind* dark text instead of drowning it.
+ */
+const SELECTION_TOKENS: Record<"dark" | "light", Record<string, string>> = {
+  dark: {
+    "--bg-selection": "oklch(from var(--accent) 0.35 calc(c * 0.35) h / 0.4)",
+    "--bg-selection-dim": "oklch(from var(--accent) 0.35 calc(c * 0.15) h / 0.22)",
+    "--bg-selection-focused": "oklch(from var(--accent) 0.45 calc(c * 0.6) h / 0.35)",
+  },
+  light: {
+    "--bg-selection": "oklch(from var(--accent) 0.88 calc(c * 0.5) h / 0.55)",
+    "--bg-selection-dim": "oklch(from var(--accent) 0.93 calc(c * 0.3) h / 0.6)",
+    "--bg-selection-focused": "oklch(from var(--accent) 0.84 calc(c * 0.8) h / 0.6)",
+  },
+};
+
 /** Apply theme by writing every color slot to CSS vars on :root. */
 export function applyTheme(theme: ThemeDef) {
   const root = document.documentElement;
@@ -336,6 +438,16 @@ export function applyTheme(theme: ThemeDef) {
   root.style.setProperty("--logo", c.logo ?? LOGO_PRIMARY);
   root.style.setProperty("--logo-2", c.logo2 ?? LOGO_SECONDARY);
   root.style.setProperty("--ring", `0 0 0 2px ${c.accent}80`);
+  // Mode-calibrated semantics + accent-derived selection tints. Written on
+  // every apply (not only on a mode change) so switching dark → light → dark
+  // can't leave a stale calibration behind.
+  const mode = theme.mode === "light" ? "light" : "dark";
+  for (const [token, value] of Object.entries(SEMANTIC_TOKENS[mode])) {
+    root.style.setProperty(token, value);
+  }
+  for (const [token, value] of Object.entries(SELECTION_TOKENS[mode])) {
+    root.style.setProperty(token, value);
+  }
   root.dataset.theme = theme.id;
   root.dataset.themeMode = theme.mode;
 }
@@ -390,8 +502,12 @@ export function applyDensity(density: UiDensity) {
 // Removed settings (persisted keys are dropped by load()'s known-key filter):
 // - signCommits: GPG/SSH signing needs real key plumbing; a toggle that only
 //   pretends to sign erodes trust. Re-add together with actual signing.
-// - showWhitespaceInDiff: no cheap consumer — libgit2's whitespace flags
-//   invert the semantics and would desync hunk indices from staging.
+//
+// `ignoreWhitespaceInDiff` is the successor to the removed showWhitespaceInDiff.
+// The hunk-index desync that killed the first attempt is real (see the
+// whitespace_diff.rs backend test), and is handled rather than ignored: the
+// flag reaches the diff READ paths only, and every surface disables its
+// hunk-level stage/discard while it is on.
 interface PersistedState {
   activeThemeId: string;
   customThemes: ThemeDef[];
@@ -404,6 +520,7 @@ interface PersistedState {
   autoStashBeforePull: boolean;
   addSignoff: boolean;
   diffContextLines: number;
+  ignoreWhitespaceInDiff: boolean;
 }
 
 export interface SettingsState extends PersistedState {
@@ -433,6 +550,7 @@ const DEFAULTS: PersistedState = {
   autoStashBeforePull: true,
   addSignoff: false,
   diffContextLines: 3,
+  ignoreWhitespaceInDiff: false,
 };
 
 function load(): PersistedState {
@@ -493,6 +611,7 @@ function snapshot(s: SettingsState): PersistedState {
     autoStashBeforePull: s.autoStashBeforePull,
     addSignoff: s.addSignoff,
     diffContextLines: s.diffContextLines,
+    ignoreWhitespaceInDiff: s.ignoreWhitespaceInDiff,
   };
 }
 

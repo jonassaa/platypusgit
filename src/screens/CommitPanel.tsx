@@ -7,6 +7,7 @@ import {
   PGChangeRow,
   PGCheckbox,
   PGEmpty,
+  PGFileTree,
   PGHunk,
   PGIconButton,
   PGInput,
@@ -17,10 +18,14 @@ import {
   PGTextarea,
   fileMenuItems,
   multiFileMenuItems,
+  pgConfirm,
   pgFlash,
+  pgPrompt,
   useContextMenu,
   usePaneWidth,
   type DiffLineData,
+  type PGFileTreeNode,
+  type PGStageState,
   type SideLine,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -44,7 +49,20 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { getDiff } from "@/lib/tauri";
-import type { CommitInfo, DiffKind, FileDiff, FileStatus } from "@/lib/types";
+import {
+  WhitespaceToggle,
+  useHunkActionsDisabledReason,
+  useIgnoreWhitespace,
+} from "@/features/diff/WhitespaceToggle";
+import { buildStatusTree, findStatusByTreeKey, treeKeyToPath } from "@/lib/tree";
+import { useTreeViewMode } from "@/lib/useTreeViewMode";
+import type {
+  AuthorOverride,
+  CommitInfo,
+  DiffKind,
+  FileDiff,
+  FileStatus,
+} from "@/lib/types";
 
 interface FileSlot {
   path: string;
@@ -68,12 +86,24 @@ export function CommitPanelScreen() {
   const addSignoff = useSettingsStore((s) => s.addSignoff);
   const setSetting = useSettingsStore((s) => s.set);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
+  const ignoreWhitespace = useIgnoreWhitespace();
+  const hunkActionsDisabled = useHunkActionsDisabledReason();
   const [message, setMessage] = React.useState("");
   const [body, setBody] = React.useState("");
   const [amend, setAmend] = React.useState(false);
   // Sign-off toggle seeds from the persisted preference; toggling it writes back.
   const [signoff, setSignoff] = React.useState(addSignoff);
+  // Attribution (#61 D1). Blank author = repo config identity, the normal case.
+  const [authorAs, setAuthorAs] = React.useState("");
+  const [coAuthors, setCoAuthors] = React.useState("");
   const [diffMode, setDiffMode] = React.useState<"unified" | "split">("unified");
+  const [viewMode, setViewMode] = useTreeViewMode("pg-commit-view-mode", "flat");
+  const [stagedExpanded, setStagedExpanded] = React.useState<
+    Record<string, boolean>
+  >({});
+  const [unstagedExpanded, setUnstagedExpanded] = React.useState<
+    Record<string, boolean>
+  >({});
   const [sel, setSel] = React.useState<Selection>(emptySelection);
   const changesPane = usePaneWidth(320, {
     min: 220,
@@ -89,10 +119,29 @@ export function CommitPanelScreen() {
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [diffError, setDiffError] = React.useState<string | null>(null);
 
+  // Folder rows (tree mode only) get the batch menu over everything beneath
+  // them — stage / unstage / discard all — same as a multi-row selection.
+  const { onContextMenu: onFolderCtx, menu: folderMenu } = useContextMenu<string>(
+    (navKey) =>
+      multiFileMenuItems(
+        splitByKeys(
+          expandSelectionKeys(navKey ? [navKey] : [], staged, unstaged),
+          staged,
+          unstaged,
+        ),
+      ),
+  );
+
   const { onContextMenu: onFileCtx, menu: fileMenu } = useContextMenu<FileSlot>(
     (f) => {
       if (f && sel.keys.length > 1 && sel.keys.includes(keyOf(f))) {
-        return multiFileMenuItems(splitByKeys(sel.keys, staged, unstaged));
+        return multiFileMenuItems(
+          splitByKeys(
+            expandSelectionKeys(sel.keys, staged, unstaged),
+            staged,
+            unstaged,
+          ),
+        );
       }
       return fileMenuItems({
         path: f?.path,
@@ -201,6 +250,20 @@ export function CommitPanelScreen() {
   );
   const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
 
+  // ── Tree ⇄ flat (#61 A6) ──────────────────────────────────────────────────
+  // Both sections render the same rows either way; only the nesting differs.
+  // Tree keys are "/a/b" while this screen's selection keys are "side:path",
+  // so each section converts between the two at its edges — the selection
+  // model, staging and context menus stay in one key space.
+  const stagedTree = React.useMemo(
+    () => (viewMode === "tree" ? buildStatusTree(staged.map((f) => f.status)) : []),
+    [staged, viewMode],
+  );
+  const unstagedTree = React.useMemo(
+    () => (viewMode === "tree" ? buildStatusTree(unstaged.map((f) => f.status)) : []),
+    [unstaged, viewMode],
+  );
+
   // Selection is local state keyed by side:path — reset on repo switch and
   // prune keys whose rows disappeared (refresh, stage/unstage moving files).
   React.useEffect(() => {
@@ -230,11 +293,73 @@ export function CommitPanelScreen() {
     onFileCtx(e, f);
   };
 
+  // ── Tree-mode row handlers ────────────────────────────────────────────────
+  // Tree rows arrive already translated to this screen's `side:path` (or
+  // `side:dir:path`) key space, so these mirror the flat handlers above and
+  // additionally cope with a folder key having no FileSlot behind it.
+  const slotForKey = React.useCallback(
+    (navKey: string): FileSlot | null =>
+      [...staged, ...unstaged].find((f) => keyOf(f) === navKey) ?? null,
+    [staged, unstaged],
+  );
+
+  const onNavSelect = React.useCallback(
+    (navKey: string, e?: React.MouseEvent) => {
+      setSel((s) =>
+        clickSelection(rowOrder, s, navKey, {
+          toggle: !!e && (e.metaKey || e.ctrlKey),
+          // A folder is not in rowOrder, so a range through it would collapse
+          // to a single row — treat Shift on a folder as a plain click.
+          range: !!e?.shiftKey && rowOrder.includes(navKey),
+        }),
+      );
+    },
+    [rowOrder],
+  );
+
+  const onNavContextMenu = React.useCallback(
+    (e: React.MouseEvent, navKey: string) => {
+      const slot = slotForKey(navKey);
+      if (!(sel.keys.length > 1 && sel.keys.includes(navKey))) {
+        setSel({ keys: [navKey], anchor: navKey });
+      }
+      // A folder has no single-file menu — give it the batch menu over
+      // everything beneath it, matching the repo browser.
+      if (!slot) {
+        onFolderCtx(e, navKey);
+        return;
+      }
+      onFileCtx(e, slot);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sel, slotForKey, onFileCtx],
+  );
+
+  const onNavStageToggle = React.useCallback(
+    (navKey: string, next: boolean) => {
+      const split = splitByKeys(
+        expandSelectionKeys([navKey], staged, unstaged),
+        staged,
+        unstaged,
+      );
+      if (next) {
+        if (split.unstagedPaths.length) stage(split.unstagedPaths);
+      } else if (split.stagedPaths.length) {
+        unstage(split.stagedPaths);
+      }
+    },
+    [staged, unstaged, stage, unstage],
+  );
+
   // Checkbox on a row inside the multi-selection stages/unstages every
   // selected row on that side; on an unselected row it stays single-file.
   const togglePaths = (f: FileSlot): string[] => {
     if (sel.keys.length > 1 && sel.keys.includes(keyOf(f))) {
-      const split = splitByKeys(sel.keys, staged, unstaged);
+      const split = splitByKeys(
+        expandSelectionKeys(sel.keys, staged, unstaged),
+        staged,
+        unstaged,
+      );
       const paths = f.side === "staged" ? split.stagedPaths : split.unstagedPaths;
       if (paths.length > 0) return paths;
     }
@@ -286,7 +411,7 @@ export function CommitPanelScreen() {
     }
     let cancelled = false;
     setDiffLoading(true);
-    getDiff(repo.id, selected.path, kind, diffContextLines)
+    getDiff(repo.id, selected.path, kind, diffContextLines, ignoreWhitespace)
       .then((d) => {
         if (!cancelled) setDiff(d);
       })
@@ -299,7 +424,7 @@ export function CommitPanelScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selected?.path, selected?.side, selected?.status.embedded, repo, diffContextLines]);
+  }, [selected?.path, selected?.side, selected?.status.embedded, repo, diffContextLines, ignoreWhitespace]);
 
   const headBranch = currentBranch(branches);
   const defaultRemote = remotes[0] ?? null;
@@ -341,7 +466,19 @@ export function CommitPanelScreen() {
   // Commit chords (⌘↵ / ⌘⇧↵ / ⌘⇧M). Shared with the two buttons below so the
   // chord and click paths cannot drift. Handlers decline exactly when the
   // matching button is disabled, letting the chord fall through.
-  const canCommit = (amend || staged.length > 0) && !!message.trim();
+  // A typed-but-unparseable author blocks the commit rather than being silently
+  // ignored — landing the wrong author in history costs a rewrite to fix.
+  const authorIdentity = React.useMemo(
+    () => (authorAs.trim() ? parseIdentity(authorAs) : null),
+    [authorAs],
+  );
+  const authorInvalid = authorAs.trim().length > 0 && authorIdentity === null;
+  const coAuthorCount = React.useMemo(
+    () => coAuthorTrailers(coAuthors).length,
+    [coAuthors],
+  );
+  const canCommit =
+    (amend || staged.length > 0) && !!message.trim() && !authorInvalid;
   const canCommitAndPush = canCommit && !!headBranch && !!defaultRemote;
   // Guards against a second commit firing before the first resolves and clears
   // the message/staged state — key auto-repeat (holding ⌘↵) and double-taps
@@ -351,12 +488,14 @@ export function CommitPanelScreen() {
     if (committingRef.current) return null;
     committingRef.current = true;
     try {
-      const full = buildMessage(message, body);
-      const oid = await commitAction(full, amend, signoff);
+      const full = buildMessage(message, body, coAuthorTrailers(coAuthors));
+      const oid = await commitAction(full, amend, signoff, authorIdentity);
       if (oid) {
         setMessage("");
         setBody("");
         setAmend(false);
+        // Attribution is sticky: pairing usually spans several commits, so
+        // clearing it after each one would mean retyping every time.
       }
       return oid;
     } finally {
@@ -376,7 +515,7 @@ export function CommitPanelScreen() {
       void doCommit();
       return true;
     },
-    [canCommit, message, body, amend, signoff],
+    [canCommit, message, body, amend, signoff, authorIdentity, coAuthors],
   );
   useAction(
     "commit.commitAndPush",
@@ -385,7 +524,17 @@ export function CommitPanelScreen() {
       void doCommitAndPush();
       return true;
     },
-    [canCommitAndPush, message, body, amend, signoff, headBranch, defaultRemote],
+    [
+      canCommitAndPush,
+      message,
+      body,
+      amend,
+      signoff,
+      authorIdentity,
+      coAuthors,
+      headBranch,
+      defaultRemote,
+    ],
   );
   useAction(
     "commit.toggleAmend",
@@ -429,14 +578,29 @@ export function CommitPanelScreen() {
             title="STAGED"
             badge={<PGBadge tone="success">{staged.length}</PGBadge>}
             action={
-              <PGButton
-                size="xs"
-                variant="ghost"
-                onClick={() => unstage(staged.map((f) => f.path))}
-                disabled={staged.length === 0}
-              >
-                Unstage all
-              </PGButton>
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                {/* One toggle for the whole pane — both sections follow it. */}
+                <PGIconButton
+                  icon={viewMode === "tree" ? "viewTree" : "viewList"}
+                  size="sm"
+                  title={
+                    viewMode === "tree"
+                      ? "Tree view — switch to flat list"
+                      : "Flat list — switch to tree view"
+                  }
+                  onClick={() =>
+                    setViewMode(viewMode === "tree" ? "flat" : "tree")
+                  }
+                />
+                <PGButton
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => unstage(staged.map((f) => f.path))}
+                  disabled={staged.length === 0}
+                >
+                  Unstage all
+                </PGButton>
+              </div>
             }
           />
           {staged.length === 0 && (
@@ -451,20 +615,36 @@ export function CommitPanelScreen() {
               Nothing staged
             </div>
           )}
-          {staged.map((f) => (
-            <PGChangeRow
-              key={`s:${f.path}`}
-              path={f.path}
-              status={statusMark(f.status)}
-              staged
-              additions={f.status.additions}
-              deletions={f.status.deletions}
-              selected={effectiveKeys.has(keyOf(f))}
-              onClick={onRowClick(f)}
-              onContextMenu={onRowContextMenu(f)}
-              onToggle={() => unstage(togglePaths(f))}
+          {viewMode === "tree" ? (
+            <SectionTree
+              side="staged"
+              nodes={stagedTree}
+              files={staged}
+              expanded={stagedExpanded}
+              onExpandedChange={(k, next) =>
+                setStagedExpanded((e) => ({ ...e, [k]: next }))
+              }
+              selectedKeys={effectiveKeys}
+              onSelect={onNavSelect}
+              onRowContextMenu={onNavContextMenu}
+              onStageToggle={onNavStageToggle}
             />
-          ))}
+          ) : (
+            staged.map((f) => (
+              <PGChangeRow
+                key={`s:${f.path}`}
+                path={f.path}
+                status={statusMark(f.status)}
+                staged
+                additions={f.status.additions}
+                deletions={f.status.deletions}
+                selected={effectiveKeys.has(keyOf(f))}
+                onClick={onRowClick(f)}
+                onContextMenu={onRowContextMenu(f)}
+                onToggle={() => unstage(togglePaths(f))}
+              />
+            ))
+          )}
         </div>
         <FocusableScroll
           testId="changes-list"
@@ -489,7 +669,12 @@ export function CommitPanelScreen() {
                   variant="ghost"
                   disabled={unstaged.length === 0 && staged.length === 0}
                   onClick={async () => {
-                    const message = window.prompt("Stash message (optional)");
+                    const message = await pgPrompt({
+                      title: "Stash changes",
+                      body: "Saves your working tree and resets it to HEAD. Untracked files are included.",
+                      placeholder: "Message (optional)",
+                      confirmLabel: "Stash",
+                    });
                     if (message === null) return;
                     await useRepoStore.getState().stashSave({
                       message: message || null,
@@ -504,20 +689,36 @@ export function CommitPanelScreen() {
             }
             border
           />
-          {unstaged.map((f) => (
-            <PGChangeRow
-              key={`u:${f.path}`}
-              path={f.path}
-              status={statusMark(f.status)}
-              staged={false}
-              additions={f.status.additions}
-              deletions={f.status.deletions}
-              selected={effectiveKeys.has(keyOf(f))}
-              onClick={onRowClick(f)}
-              onContextMenu={onRowContextMenu(f)}
-              onToggle={() => stageToggled(f)}
+          {viewMode === "tree" ? (
+            <SectionTree
+              side="unstaged"
+              nodes={unstagedTree}
+              files={unstaged}
+              expanded={unstagedExpanded}
+              onExpandedChange={(k, next) =>
+                setUnstagedExpanded((e) => ({ ...e, [k]: next }))
+              }
+              selectedKeys={effectiveKeys}
+              onSelect={onNavSelect}
+              onRowContextMenu={onNavContextMenu}
+              onStageToggle={onNavStageToggle}
             />
-          ))}
+          ) : (
+            unstaged.map((f) => (
+              <PGChangeRow
+                key={`u:${f.path}`}
+                path={f.path}
+                status={statusMark(f.status)}
+                staged={false}
+                additions={f.status.additions}
+                deletions={f.status.deletions}
+                selected={effectiveKeys.has(keyOf(f))}
+                onClick={onRowClick(f)}
+                onContextMenu={onRowContextMenu(f)}
+                onToggle={() => stageToggled(f)}
+              />
+            ))
+          )}
         </FocusableScroll>
       </PGPane>
       <PGResizeHandle onDrag={changesPane.resize} />
@@ -548,6 +749,7 @@ export function CommitPanelScreen() {
           {selected && <PGStatusMark kind={statusMark(selected.status)} />}
           <span>{selected?.path ?? "no file selected"}</span>
           <div style={{ flex: 1 }} />
+          <WhitespaceToggle />
           <PGButtonGroup
             value={diffMode}
             onChange={(v) => setDiffMode(v as typeof diffMode)}
@@ -614,6 +816,7 @@ export function CommitPanelScreen() {
                 lines={h.lines.map(toUiLine)}
                 expanded={true}
                 staged={selected?.side === "staged"}
+                actionsDisabledReason={hunkActionsDisabled}
                 onStage={() => {
                   if (!selected) return;
                   if (selected.side === "staged") {
@@ -622,9 +825,16 @@ export function CommitPanelScreen() {
                     useRepoStore.getState().stageHunk(selected.path, i);
                   }
                 }}
-                onDiscard={() => {
+                onDiscard={async () => {
                   if (!selected) return;
-                  if (window.confirm("Discard this hunk? The change will be lost.")) {
+                  if (
+                    await pgConfirm({
+                      title: "Discard this hunk?",
+                      body: `The change to ${selected.path} will be lost.`,
+                      danger: true,
+                      confirmLabel: "Discard hunk",
+                    })
+                  ) {
                     useRepoStore.getState().discardHunk(selected.path, i);
                   }
                 }}
@@ -730,6 +940,7 @@ export function CommitPanelScreen() {
               onChange={setBody}
               rows={8}
               mono
+              data-testid="commit-body"
               data-pg-focus-target=""
               className="focusable"
               style={{ flex: 1 }}
@@ -761,18 +972,54 @@ export function CommitPanelScreen() {
             />
           </div>
 
+          {/* Attribution (#61 D1). Both blank is the normal case. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <PGInput
+              value={authorAs}
+              onChange={setAuthorAs}
+              placeholder="Author — Name <email>, blank for git config"
+              icon="user"
+              size="sm"
+              mono
+              error={authorInvalid}
+              title="Commit as another author. The committer stays your git config identity, matching `git commit --author`."
+              data-testid="commit-author"
+            />
+            <PGInput
+              value={coAuthors}
+              onChange={setCoAuthors}
+              placeholder="Co-authors — Name <email>, comma-separated"
+              icon="user"
+              size="sm"
+              mono
+              title="Appended as Co-Authored-By trailers."
+              data-testid="commit-coauthors"
+            />
+          </div>
+
           <div
             style={{
               display: "flex",
               gap: 4,
               alignItems: "center",
               fontSize: "var(--fs-11)",
-              color: "var(--fg-2)",
+              color: authorInvalid ? "var(--git-removed)" : "var(--fg-2)",
               fontFamily: "var(--font-mono)",
             }}
+            data-testid="commit-attribution"
           >
-            <PGAvatar name="you" size={14} />
-            (signature will come from git config)
+            <PGAvatar name={authorIdentity?.name ?? "you"} size={14} />
+            {authorInvalid
+              ? "Author must look like: Name <email@example.com>"
+              : authorIdentity
+                ? `${authorIdentity.name} <${authorIdentity.email}> — you stay the committer`
+                : "(signature will come from git config)"}
+            {coAuthorCount > 0 && !authorInvalid && (
+              <span style={{ color: "var(--fg-3)" }}>
+                {" "}
+                +{coAuthorCount} co-author{coAuthorCount !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
           <div
             style={{
@@ -820,12 +1067,130 @@ export function CommitPanelScreen() {
         </div>
       </PGPane>
       {fileMenu}
+      {folderMenu}
     </div>
   );
 }
 
 function keyOf(f: FileSlot): string {
   return `${f.side}:${f.path}`;
+}
+
+/**
+ * Selection key for a folder row in tree mode. The `dir:` marker keeps folder
+ * keys out of the file key space (`side:path`), so nothing can mistake a
+ * directory for a file with an unlucky name.
+ */
+function dirKeyOf(side: FileSlot["side"], dirPath: string): string {
+  return `${side}:dir:${dirPath}`;
+}
+
+/**
+ * Replace any folder key with the keys of every file beneath it, so folder
+ * rows feed the same path-based ops (stage / unstage / discard / copy) as a
+ * multi-row selection. File keys pass through untouched, deduped.
+ */
+function expandSelectionKeys(
+  keys: string[],
+  staged: FileSlot[],
+  unstaged: FileSlot[],
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (k: string) => {
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(k);
+  };
+  for (const key of keys) {
+    const m = /^(staged|unstaged):dir:(.*)$/.exec(key);
+    if (!m) {
+      push(key);
+      continue;
+    }
+    const side = m[1] as FileSlot["side"];
+    const prefix = `${m[2]}/`;
+    for (const f of side === "staged" ? staged : unstaged) {
+      if (f.path.startsWith(prefix)) push(keyOf(f));
+    }
+  }
+  return out;
+}
+
+/**
+ * One change section (STAGED or CHANGES) rendered as a nested tree.
+ *
+ * Translates at its edges only: PGFileTree speaks "/a/b" row keys, this screen
+ * speaks `side:path`. Every file row therefore carries the exact key its flat
+ * PGChangeRow twin would, so selection, staging and the context menu behave
+ * identically in both view modes.
+ */
+function SectionTree({
+  side,
+  nodes,
+  files,
+  expanded,
+  onExpandedChange,
+  selectedKeys,
+  onSelect,
+  onRowContextMenu,
+  onStageToggle,
+}: {
+  side: FileSlot["side"];
+  nodes: PGFileTreeNode[];
+  files: FileSlot[];
+  expanded: Record<string, boolean>;
+  onExpandedChange: (key: string, next: boolean) => void;
+  selectedKeys: ReadonlySet<string>;
+  onSelect: (navKey: string, e?: React.MouseEvent) => void;
+  onRowContextMenu: (e: React.MouseEvent, navKey: string) => void;
+  onStageToggle: (navKey: string, next: boolean) => void;
+}) {
+  const navKeyFor = React.useCallback(
+    (treeKey: string): string => {
+      const slot = findStatusByTreeKey(treeKey, files);
+      return slot ? keyOf(slot) : dirKeyOf(side, treeKeyToPath(treeKey));
+    },
+    [files, side],
+  );
+
+  // Every row in a section shares that section's staged-ness: the STAGED list
+  // only holds staged work, CHANGES only unstaged. Embedded repos are the one
+  // exception — they can't be staged at all, so they get no checkbox.
+  const stageState = React.useCallback(
+    (treeKey: string): PGStageState | undefined => {
+      const slot = findStatusByTreeKey(treeKey, files);
+      if (slot?.status.embedded) return undefined;
+      return side === "staged" ? "all" : "none";
+    },
+    [files, side],
+  );
+
+  return (
+    <PGFileTree
+      nodes={nodes}
+      expanded={expanded}
+      onToggle={onExpandedChange}
+      selectedKeys={
+        new Set(
+          [...selectedKeys]
+            .filter((k) => k.startsWith(`${side}:`))
+            .map((k) =>
+              k.startsWith(`${side}:dir:`)
+                ? `/${k.slice(`${side}:dir:`.length)}`
+                : `/${k.slice(`${side}:`.length)}`,
+            )
+            // An embedded repo's status path keeps a trailing slash the row key
+            // has already lost.
+            .map((k) => k.replace(/\/+$/, "")),
+        )
+      }
+      onSelect={(treeKey, _node, e) => onSelect(navKeyFor(treeKey), e)}
+      onRowContextMenu={(e, treeKey) => onRowContextMenu(e, navKeyFor(treeKey))}
+      stageState={stageState}
+      onStageToggle={(treeKey, _node, next) => onStageToggle(navKeyFor(treeKey), next)}
+    />
+  );
 }
 
 /**
@@ -864,9 +1229,48 @@ function splitByKeys(
   };
 }
 
-function buildMessage(subject: string, body: string): string {
+/**
+ * Parse a `Name <email>` identity. Returns null for anything else, which is
+ * what gates the commit button — a half-typed author is a mistake worth
+ * catching before it lands in history, where fixing it means a rewrite.
+ */
+export function parseIdentity(raw: string): AuthorOverride | null {
+  const m = /^\s*(\S.*?)\s*<\s*([^<>\s]+@[^<>\s]+)\s*>\s*$/.exec(raw);
+  if (!m) return null;
+  return { name: m[1], email: m[2] };
+}
+
+/**
+ * `Co-Authored-By:` trailers for a comma/newline-separated list of identities.
+ * Unparseable entries are dropped rather than emitted malformed — GitHub only
+ * credits a trailer it can parse.
+ */
+export function coAuthorTrailers(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const chunk of raw.split(/[\n,]/)) {
+    const id = parseIdentity(chunk);
+    if (!id) continue;
+    const line = `Co-Authored-By: ${id.name} <${id.email}>`;
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(line);
+  }
+  return out;
+}
+
+function buildMessage(subject: string, body: string, coAuthors: string[] = []): string {
   const parts: string[] = [subject];
-  if (body.trim()) parts.push("", body.trim());
+  const trimmedBody = body.trim();
+  if (trimmedBody) parts.push("", trimmedBody);
+  // Trailers go in their own block after one blank line — that separation is
+  // what `git interpret-trailers` (and GitHub) key on. Skip any the body
+  // already spells out, so hand-written and generated trailers can't double up.
+  const fresh = coAuthors.filter(
+    (t) => !trimmedBody.toLowerCase().includes(t.toLowerCase()),
+  );
+  if (fresh.length) parts.push("", fresh.join("\n"));
   return parts.join("\n");
 }
 
