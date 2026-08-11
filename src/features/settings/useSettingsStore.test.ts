@@ -200,4 +200,16 @@ describe("uiDensity CSS hook", () => {
     const { DENSITY_STEP_PX } = await freshStore();
     expect(DENSITY_STEP_PX.compact).toBe(0);
   });
+
+  // load() copies any persisted value for a known key without validating it,
+  // so an unrecognized density must degrade to compact rather than emit
+  // `--row-step: undefinedpx` — an invalid substitution makes every
+  // `calc(Npx + var(--row-step))` compute to `auto`, collapsing the height of
+  // every row in the app at once.
+  it("degrades an unrecognized persisted density to compact", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "cozy" }));
+    await freshStore();
+    expect(rowStep()).toBe("0px");
+    expect(document.documentElement.dataset.density).toBe("compact");
+  });
 });

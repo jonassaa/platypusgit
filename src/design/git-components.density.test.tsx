@@ -4,7 +4,7 @@
 // number. A `calc()` on the row alone would desync the curves from the row
 // pitch — the most visible list in the app. These tests pin them together.
 import { describe, it, expect, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 
 import {
   COMMIT_ROW_BASE_H,
@@ -50,6 +50,22 @@ describe("PGCommitRow density", () => {
   it("grows row and graph gutter together when density is comfortable", () => {
     useSettingsStore.getState().set("uiDensity", "comfortable");
     const { row, svg } = renderCommitRow();
+    expect(row.style.height).toBe("30px");
+    expect(svg.getAttribute("height")).toBe("30");
+  });
+
+  // Every other test here measures a fresh mount, which a subscription-free
+  // `useSettingsStore.getState()` read would also satisfy. This one changes the
+  // setting under an ALREADY-MOUNTED row: without a real subscription the
+  // gutter would keep drawing at the old pitch until the screen remounted.
+  it("re-renders a mounted row and gutter when density changes", () => {
+    const { row, svg } = renderCommitRow();
+    expect(svg.getAttribute("height")).toBe("26");
+
+    act(() => {
+      useSettingsStore.getState().set("uiDensity", "comfortable");
+    });
+
     expect(row.style.height).toBe("30px");
     expect(svg.getAttribute("height")).toBe("30");
   });

@@ -352,16 +352,35 @@ export function applyTheme(theme: ThemeDef) {
  */
 export const DENSITY_STEP_PX = { compact: 0, comfortable: 4 } as const;
 
+export type UiDensity = keyof typeof DENSITY_STEP_PX;
+
+/**
+ * Coerce a persisted density into a known one.
+ *
+ * `load()` copies any JSON value for a known key without validating it, so
+ * state can hold a density this build has never heard of — a hand-edited
+ * `pg-settings-v2`, or a value written by a newer build the user downgraded
+ * from. That must degrade to compact: an unknown key would otherwise emit
+ * `--row-step: undefinedpx`, and one invalid substitution makes every
+ * `calc(Npx + var(--row-step))` compute to `auto`, collapsing the height of
+ * every row in the app at once.
+ */
+function normalizeDensity(density: UiDensity): UiDensity {
+  return density in DENSITY_STEP_PX ? density : "compact";
+}
+
 /**
  * Apply UI density by writing the row-step slot to CSS vars on :root.
  *
- * `data-density` is also set: it's the hook for any density rule that isn't a
- * simple pixel delta, and e2e asserts against it.
+ * `data-density` is also set — a reserved hook for any future density rule
+ * that isn't a simple pixel delta. Nothing reads it today (it's asserted only
+ * in useSettingsStore.test.ts); drop it if that stays true.
  */
-export function applyDensity(density: "compact" | "comfortable") {
+export function applyDensity(density: UiDensity) {
   const root = document.documentElement;
-  root.style.setProperty("--row-step", `${DENSITY_STEP_PX[density]}px`);
-  root.dataset.density = density;
+  const d = normalizeDensity(density);
+  root.style.setProperty("--row-step", `${DENSITY_STEP_PX[d]}px`);
+  root.dataset.density = d;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -733,5 +752,5 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
  * drawing (see `PGGraphRow`), which a `calc()` cannot reach.
  */
 export function useDensityStep(): number {
-  return DENSITY_STEP_PX[useSettingsStore((s) => s.uiDensity)];
+  return DENSITY_STEP_PX[normalizeDensity(useSettingsStore((s) => s.uiDensity))];
 }

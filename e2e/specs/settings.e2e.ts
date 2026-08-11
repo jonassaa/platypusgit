@@ -60,8 +60,9 @@ async function clickSettingsToggleRow(labelText: string): Promise<void> {
  * are `calc(Npx + var(--row-step))`, which jsdom does not resolve (the store
  * side is unit-tested in src/features/settings/useSettingsStore.test.ts).
  *
- * Read-only script, so bare `browser.execute` is correct — no `executeOnce`
- * token needed (a driver retry re-measures harmlessly).
+ * Measures via `getSize("height")` on the same elements it waits for, so a
+ * selector change surfaces as "row never appeared" rather than as a wrong
+ * height — and reuses `changeRow()` instead of restating its selector.
  */
 async function measureRows(): Promise<{
   changeRow: number;
@@ -69,38 +70,35 @@ async function measureRows(): Promise<{
   commitRow: number;
   graphSvg: number;
 }> {
-  const h = (sel: string) =>
-    browser.execute((s: string) => {
-      const el = document.querySelector(s);
-      return el ? Math.round(el.getBoundingClientRect().height) : -1;
-    }, sel);
-
   await switchScreen("commit");
-  await changeRow("a.txt").waitForDisplayed({
+  const change = changeRow("a.txt");
+  await change.waitForDisplayed({
     timeout: 10_000, timeoutMsg: "change row never appeared for measurement",
   });
   // PGChangeRow reads --row-h, the token that already existed before density
   // was wired — this is the regression guard on the calc chain itself.
-  const changeRowH = await h('[data-testid="changes-list"] [data-path="a.txt"]');
+  const changeRowH = await change.getSize("height");
 
   await switchScreen("branches");
-  await $('[data-testid="branch-row"]').waitForDisplayed({
+  const branch = $('[data-testid="branch-row"]');
+  await branch.waitForDisplayed({
     timeout: 10_000, timeoutMsg: "branch row never appeared for measurement",
   });
-  const branchRowH = await h('[data-testid="branch-row"]');
+  const branchRowH = await branch.getSize("height");
 
   await switchScreen("history");
-  await $('[data-testid="commit-row"]').waitForDisplayed({
+  const commit = $('[data-testid="commit-row"]');
+  await commit.waitForDisplayed({
     timeout: 10_000, timeoutMsg: "commit row never appeared for measurement",
   });
-  const commitRowH = await h('[data-testid="commit-row"]');
-  const graphSvgH = await h('[data-testid="commit-row"] svg');
+  const commitRowH = await commit.getSize("height");
+  const graphSvgH = await commit.$("svg").getSize("height");
 
   return {
-    changeRow: changeRowH,
-    branchRow: branchRowH,
-    commitRow: commitRowH,
-    graphSvg: graphSvgH,
+    changeRow: Math.round(changeRowH),
+    branchRow: Math.round(branchRowH),
+    commitRow: Math.round(commitRowH),
+    graphSvg: Math.round(graphSvgH),
   };
 }
 

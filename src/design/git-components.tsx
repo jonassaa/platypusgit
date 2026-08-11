@@ -880,16 +880,25 @@ export interface GraphNode {
   merge?: boolean;
 }
 
+/**
+ * `height` is REQUIRED and must be the caller's actual row pitch in px.
+ *
+ * The lane geometry below is in SVG user units (`y2={height}`, bezier control
+ * points at `height / 2`), so it cannot read `--row-step` — a default here
+ * would silently draw at one pitch while density moved the rows to another,
+ * leaving lanes that don't meet between rows. Callers derive the number from
+ * `useDensityStep()`; see `PGCommitRow`.
+ */
 export function PGGraphRow({
   lanes = [],
   node,
   width = 140,
-  height = 26,
+  height,
 }: {
   lanes?: GraphLane[];
   node?: GraphNode;
   width?: number;
-  height?: number;
+  height: number;
 }) {
   return (
     <svg
