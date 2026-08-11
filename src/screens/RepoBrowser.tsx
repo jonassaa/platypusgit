@@ -5,7 +5,6 @@ import {
   PGButton,
   PGButtonGroup,
   PGEmpty,
-  PGFileTree,
   PGHunk,
   PGIconButton,
   PGInput,
@@ -48,9 +47,14 @@ import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import {
   buildStatusTree,
+  expandTreeKeys,
   findStatusByTreeKey,
   treeKeyToPath,
 } from "@/lib/tree";
+import {
+  ChangeTree,
+  type ChangeTreeViewMode,
+} from "@/features/repo/ChangeTree";
 import { fuzzyMatch } from "@/features/palette/fuzzyMatch";
 import { PGPane, FocusableScroll, useAction } from "@/features/keymap";
 import type {
@@ -96,6 +100,35 @@ function PGBreadcrumb({ items }: { items: string[] }) {
   );
 }
 
+const VIEW_KEY = "pg-browser-view";
+
+/** RepoBrowser defaults to TREE — that is what it has always rendered. */
+export function readViewMode(): ChangeTreeViewMode {
+  return localStorage.getItem(VIEW_KEY) === "flat" ? "flat" : "tree";
+}
+
+export function writeViewMode(mode: ChangeTreeViewMode): void {
+  localStorage.setItem(VIEW_KEY, mode);
+}
+
+/**
+ * Selection keys that are still addressable in the given view mode.
+ *
+ * Tree mode validates against the FULL tree, not just visible rows —
+ * collapsing a folder hides rows without deselecting them. Flat mode has no
+ * folder rows at all, so folder keys must drop: left alive they are invisible
+ * to the user but still expanded by `splitSelection`, silently widening a
+ * Stage or Discard batch to files that are not on screen.
+ */
+export function validSelectionKeys(
+  viewMode: ChangeTreeViewMode,
+  tree: PGFileTreeNode[],
+  files: readonly FileStatus[],
+): Set<string> {
+  if (viewMode === "flat") return new Set(files.map((s) => `/${s.path}`));
+  return new Set(flattenAllKeys(tree));
+}
+
 export function RepoBrowserScreen() {
   const repo = useRepoStore((s) => s.current);
   const status = useRepoStore((s) => s.status);
@@ -110,6 +143,11 @@ export function RepoBrowserScreen() {
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
 
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  const [viewMode, setViewMode] = React.useState<ChangeTreeViewMode>(readViewMode);
+  const changeViewMode = React.useCallback((m: ChangeTreeViewMode) => {
+    setViewMode(m);
+    writeViewMode(m);
+  }, []);
   const [treeFilter, setTreeFilter] = React.useState("");
   const filterInputRef = React.useRef<HTMLInputElement>(null);
   const [sel, setSel] = React.useState<Selection>(emptySelection);
@@ -251,6 +289,13 @@ export function RepoBrowserScreen() {
   const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
   const selected = primarySelectedKey(sel);
 
+  // Flat-mode rows come from the same set the tree is built from, so switching
+  // view mode never changes which files are shown — only how they are grouped.
+  const changeTreeFiles = React.useMemo(
+    () => filteredStatus.map((s) => ({ path: s.path, status: s })),
+    [filteredStatus],
+  );
+
   // ⌘⇧F focuses the filter box (chord advertised by the search chip).
   useAction(
     "tree.find",
@@ -266,11 +311,13 @@ export function RepoBrowserScreen() {
   // Validity is against the full tree, not just visible rows — collapsing a
   // folder hides rows without deselecting them.
   React.useEffect(() => {
-    setSel((s) => pruneSelection(s, new Set(flattenAllKeys(tree))));
-  }, [tree]);
+    setSel((s) =>
+      pruneSelection(s, validSelectionKeys(viewMode, tree, filteredStatus)),
+    );
+  }, [tree, viewMode, filteredStatus]);
 
   const onTreeSelect = React.useCallback(
-    (key: string, _node: PGFileTreeNode, e?: React.MouseEvent) => {
+    (key: string, e?: React.MouseEvent) => {
       setSel((s) =>
         clickSelection(rowOrder, s, key, {
           toggle: !!e && (e.metaKey || e.ctrlKey),
@@ -303,10 +350,7 @@ export function RepoBrowserScreen() {
       const embeddedPaths: string[] = [];
       const untrackedPaths: string[] = [];
       const paths: string[] = [];
-      const seen = new Set<string>();
       const add = (st: FileStatus) => {
-        if (seen.has(st.path)) return;
-        seen.add(st.path);
         paths.push(st.path);
         // An embedded repo counts and copies like any row, but it is not a
         // file — keep it out of the stage/unstage/discard subsets so a batch
@@ -319,21 +363,30 @@ export function RepoBrowserScreen() {
         if (isUnstaged(st)) unstagedPaths.push(st.path);
         if (isUntracked(st)) untrackedPaths.push(st.path);
       };
-      for (const key of keys) {
-        const st = findStatusByTreeKey(key, status, allFiles);
-        if (st) {
-          add(st);
-          continue;
-        }
-        // Folder key: pull in every visible file beneath it.
-        const prefix = treeKeyToPath(key) + "/";
-        for (const child of filteredStatus) {
-          if (child.path.startsWith(prefix)) add(child);
-        }
+      // expandTreeKeys resolves a file key to its own entry and a folder key to
+      // every visible file beneath it, deduped by path. Shared with CommitPanel
+      // so the two screens cannot disagree about what a folder selection means.
+      for (const st of expandTreeKeys(keys, {
+        lookup: [status, allFiles],
+        descendants: filteredStatus,
+      })) {
+        add(st);
       }
       return { stagedPaths, unstagedPaths, paths, embeddedPaths, untrackedPaths };
     },
     [status, allFiles, filteredStatus],
+  );
+
+  // Folder or file checkbox. Stage unless everything beneath is already
+  // staged — a partially staged row moves toward fully staged, never backward.
+  const onTreeCheck = React.useCallback(
+    (key: string) => {
+      const { stagedPaths, unstagedPaths } = splitSelection([key]);
+      const store = useRepoStore.getState();
+      if (unstagedPaths.length > 0) store.stage(unstagedPaths);
+      else if (stagedPaths.length > 0) store.unstage(stagedPaths);
+    },
+    [splitSelection],
   );
 
   const fileCtx = useContextMenu<{ key: string; node: PGFileTreeNode }>(
@@ -341,7 +394,11 @@ export function RepoBrowserScreen() {
       if (sel.keys.length > 1 && sel.keys.includes(key)) {
         return multiFileMenuItems(splitSelection(sel.keys));
       }
-      if (node.children?.length) return [];
+      // A folder acts on every file beneath it — splitSelection expands the
+      // key, so the menu is identical to selecting those files by hand.
+      if (node.children?.length) {
+        return multiFileMenuItems(splitSelection([key]));
+      }
       const st = findStatusByTreeKey(key, status);
       // Act on the status entry's own path, not the key: an embedded repo's
       // path carries a trailing slash the key has already lost, and that slash
@@ -357,12 +414,14 @@ export function RepoBrowserScreen() {
   );
 
   const onTreeContextMenu = React.useCallback(
-    (e: React.MouseEvent, key: string, node: PGFileTreeNode) => {
+    (e: React.MouseEvent, key: string, node?: PGFileTreeNode) => {
       if (browsingRev) return; // committed snapshot — no worktree to act on
       if (!(sel.keys.length > 1 && sel.keys.includes(key))) {
         setSel({ keys: [key], anchor: key });
       }
-      fileCtx.onContextMenu(e, { key, node });
+      // Flat mode has file rows only, so a missing node is always a file; the
+      // menu builder branches on `children`, which a bare name node lacks.
+      fileCtx.onContextMenu(e, { key, node: node ?? { name: key } });
     },
     [browsingRev, sel, fileCtx],
   );
@@ -544,13 +603,29 @@ export function RepoBrowserScreen() {
                 icon="expandAll"
                 size="sm"
                 title="Expand all"
+                disabled={viewMode === "flat"}
                 onClick={expandAll}
               />
               <PGIconButton
                 icon="collapseAll"
                 size="sm"
                 title="Collapse all"
+                disabled={viewMode === "flat"}
                 onClick={collapseAll}
+              />
+              <PGIconButton
+                icon="folderOpen"
+                size="sm"
+                title="Tree view"
+                active={viewMode === "tree"}
+                onClick={() => changeViewMode("tree")}
+              />
+              <PGIconButton
+                icon="file"
+                size="sm"
+                title="Flat view"
+                active={viewMode === "flat"}
+                onClick={() => changeViewMode("flat")}
               />
             </div>
           </div>
@@ -586,17 +661,22 @@ export function RepoBrowserScreen() {
                 <PGSpinner size={14} />
               </div>
             )}
-            <PGFileTree
+            <ChangeTree
+              files={changeTreeFiles}
               nodes={tree}
+              viewMode={viewMode}
               expanded={expandedForRender}
-              onToggle={(k) =>
+              onToggleExpand={(k) =>
                 setExpanded((e) => ({ ...e, [k]: !e[k] }))
               }
-              selected={selected ?? undefined}
+              primaryKey={selected ?? undefined}
               selectedKeys={selectedKeys}
               onSelect={onTreeSelect}
-              onActivate={(k, n) => onTreeSelect(k, n)}
+              onActivate={(k) => onTreeSelect(k)}
               onRowContextMenu={onTreeContextMenu}
+              onCheck={onTreeCheck}
+              checkboxes={browsingRev ? "none" : "changed-only"}
+              keyOf={(k) => k}
             />
             {fileCtx.menu}
           </div>

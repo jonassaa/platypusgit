@@ -3,6 +3,8 @@ import type { CSSProperties, ReactNode } from "react";
 export type IconName =
   | "repo" | "branch" | "commit" | "merge" | "fork" | "tag"
   | "folder" | "folderOpen" | "file" | "fileCode"
+  | "fileMarkup" | "fileStyle" | "fileConfig" | "fileDoc"
+  | "fileImage" | "fileArchive" | "fileBinary"
   | "plus" | "minus" | "check" | "x"
   | "chevronRight" | "chevronDown" | "chevronUp" | "chevronLeft"
   | "search" | "settings" | "filter" | "sort" | "more"
@@ -54,6 +56,45 @@ const ICONS: Record<IconName, ReactNode> = {
   fileCode: <>
     <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
     <path d="M9 1.5v4h4M6 9l-1.5 1.5L6 12M10 9l1.5 1.5L10 12" />
+  </>,
+  fileMarkup: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <path d="M6 9.5 4.5 11 6 12.5M10 9.5 11.5 11 10 12.5M9.1 8.8 6.9 13.2" />
+  </>,
+  fileStyle: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <path d="M8 8.6 10.1 11 8 13.4 5.9 11z" />
+  </>,
+  fileConfig: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <circle cx="7.75" cy="10.75" r="1.4" />
+    <path d="M7.75 8.1v.9M7.75 12.5v.9M5.1 10.75H6M9.5 10.75h.9" />
+  </>,
+  fileDoc: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <path d="M4.5 8.8h5M4.5 11h7M4.5 13.2h4" />
+  </>,
+  fileImage: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <circle cx="5.6" cy="9.4" r="0.75" />
+    <path d="M3.4 13.2 6.2 10.6 7.9 12.3 9.7 10.4 12.4 13.2" />
+  </>,
+  fileArchive: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <path d="M7.5 6.2v1.3M7.5 8.1v1.3" />
+    <rect x="6.4" y="10.2" width="2.2" height="2.8" rx="0.7" />
+  </>,
+  fileBinary: <>
+    <path d="M3 1.5h6l4 4V13.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+    <path d="M9 1.5v4h4" />
+    <path d="M4.9 9.9 5.9 9.2v4.2M5 13.4h1.9" />
+    <rect x="8.4" y="9.2" width="2.4" height="4.2" rx="1.2" />
   </>,
   plus: <path d="M8 3v10M3 8h10" />,
   minus: <path d="M3 8h10" />,
@@ -246,6 +287,7 @@ export function PGIcon({
       strokeLinejoin="round"
       className={className}
       style={{ flexShrink: 0, ...style }}
+      data-icon={name}
     >
       {content}
     </svg>

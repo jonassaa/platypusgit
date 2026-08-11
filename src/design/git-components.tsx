@@ -17,12 +17,21 @@ import { useDensityStep } from "@/features/settings/useSettingsStore";
 // FILE TREE
 // ═════════════════════════════════════════════════════════
 
+/** Tri-state staging rollup. `undefined` = nothing stageable here. */
+export type PGStageState = "none" | "some" | "all";
+
 export interface PGFileTreeNode {
   name: string;
   status?: string;
   defaultExpanded?: boolean;
   children?: PGFileTreeNode[];
   extra?: ReactNode;
+  /** Staging state of this node (leaf) or its changed descendants (folder). */
+  staged?: PGStageState;
+  /** File-type glyph; falls back to the generic file/folder icon when absent. */
+  icon?: IconName;
+  /** CSS var expression for the glyph color. */
+  iconColor?: string;
 }
 
 export interface PGFileTreeRowProps {
@@ -39,6 +48,15 @@ export interface PGFileTreeRowProps {
   onContextMenu?: (e: MouseEvent) => void;
   extra?: ReactNode;
   hideStatus?: boolean;
+  /** Reserve the checkbox gutter even on rows that have no checkbox. */
+  checkboxSlot?: boolean;
+  checked?: boolean;
+  indeterminate?: boolean;
+  /** When set (and `checked` is defined), the row renders a staging checkbox. */
+  onCheck?: (v: boolean) => void;
+  /** File-type glyph; falls back to the generic file/folder icon. */
+  icon?: IconName;
+  iconColor?: string;
 }
 
 export function PGFileTreeRow({
@@ -55,6 +73,12 @@ export function PGFileTreeRow({
   onContextMenu,
   extra,
   hideStatus,
+  checkboxSlot,
+  checked,
+  indeterminate,
+  onCheck,
+  icon,
+  iconColor,
 }: PGFileTreeRowProps) {
   const [hover, setHover] = React.useState(false);
   return (
@@ -109,13 +133,36 @@ export function PGFileTreeRow({
           <PGIcon name={expanded ? "chevronDown" : "chevronRight"} size={10} />
         )}
       </span>
+      {checkboxSlot && (
+        <span
+          data-testid="row-toggle-slot"
+          style={{ width: 14, flexShrink: 0, display: "inline-flex" }}
+          // Keep a checkbox click from also selecting the row.
+          onClick={(e) => e.stopPropagation()}
+        >
+          {checked !== undefined && onCheck && (
+            <span data-testid="row-toggle">
+              <PGCheckbox
+                checked={checked}
+                indeterminate={indeterminate}
+                onChange={onCheck}
+              />
+            </span>
+          )}
+        </span>
+      )}
       <PGIcon
         name={
-          kind === "folder" ? (expanded ? "folderOpen" : "folder") : "file"
+          kind === "folder"
+            ? expanded
+              ? "folderOpen"
+              : "folder"
+            : (icon ?? "file")
         }
         size={12}
         style={{
-          color: kind === "folder" ? "var(--accent-4)" : "var(--fg-2)",
+          color:
+            kind === "folder" ? "var(--accent-4)" : (iconColor ?? "var(--fg-2)"),
         }}
       />
       <span
@@ -146,6 +193,10 @@ export interface PGFileTreeProps {
   onActivate?: (key: string, node: PGFileTreeNode) => void;
   onRowContextMenu?: (e: MouseEvent, key: string, node: PGFileTreeNode) => void;
   showStatus?: boolean;
+  /** Reserve the checkbox gutter on every row. */
+  checkboxSlot?: boolean;
+  /** Staging toggle. Rows whose node has no `staged` state render no checkbox. */
+  onCheck?: (key: string, node: PGFileTreeNode) => void;
 }
 
 export interface PGFileTreeFlatNode {
@@ -190,6 +241,8 @@ export function PGFileTree({
   onActivate,
   onRowContextMenu,
   showStatus = true,
+  checkboxSlot,
+  onCheck,
 }: PGFileTreeProps) {
   const flat = flattenFileTree(nodes, expanded);
   const selectedIdx = selected
@@ -272,6 +325,14 @@ export function PGFileTree({
           hideStatus={!showStatus}
           expanded={f.isExpanded}
           hasChildren={f.hasChildren}
+          checkboxSlot={checkboxSlot}
+          checked={
+            f.node.staged === undefined ? undefined : f.node.staged === "all"
+          }
+          indeterminate={f.node.staged === "some"}
+          onCheck={onCheck ? () => onCheck(f.key, f.node) : undefined}
+          icon={f.node.icon}
+          iconColor={f.node.iconColor}
           selected={selected === f.key || !!selectedKeys?.has(f.key)}
           onClick={(e) => {
             onSelect?.(f.key, f.node, e);
@@ -297,7 +358,8 @@ export function PGFileTree({
 
 export interface PGChangeRowProps {
   path: string;
-  status: string;
+  /** Omitted for an unmodified file — the row then renders no status mark. */
+  status?: string;
   staged?: boolean;
   onToggle?: (v: boolean) => void;
   selected?: boolean;
@@ -306,6 +368,9 @@ export interface PGChangeRowProps {
   additions?: number;
   deletions?: number;
   renamed?: string;
+  /** File-type glyph; falls back to the generic file icon. */
+  icon?: IconName;
+  iconColor?: string;
 }
 
 export function PGChangeRow({
@@ -319,6 +384,8 @@ export function PGChangeRow({
   additions,
   deletions,
   renamed,
+  icon,
+  iconColor,
 }: PGChangeRowProps) {
   const [hover, setHover] = React.useState(false);
   const parts = path.split("/");
@@ -369,11 +436,15 @@ export function PGChangeRow({
           />
         </span>
       )}
-      <PGStatusMark kind={status} size={14} />
+      {status ? (
+        <PGStatusMark kind={status} size={14} />
+      ) : (
+        <span style={{ width: 14, flexShrink: 0 }} />
+      )}
       <PGIcon
-        name="file"
+        name={icon ?? "file"}
         size={11}
-        style={{ color: "var(--fg-3)", flexShrink: 0 }}
+        style={{ color: iconColor ?? "var(--fg-3)", flexShrink: 0 }}
       />
       <span
         style={{

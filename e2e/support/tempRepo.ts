@@ -73,6 +73,25 @@ export function dirtyRepo(): TempRepo {
   return r;
 }
 
+/**
+ * Two modified files under one directory, plus an untouched root file.
+ *
+ * The tree needs a real folder row to click, which `dirtyRepo` cannot give —
+ * all its files are at the repo root. Both dirty files sit directly under
+ * `src/` so path compaction (which merges single-child chains) leaves `src` as
+ * its own clickable row. `root.txt` stays clean so a folder-scoped stage can be
+ * shown NOT to touch it.
+ */
+export function nestedDirtyRepo(): TempRepo {
+  const r = new TempRepo();
+  r.commitFile("src/one.txt", "one\n", "feat: one");
+  r.commitFile("src/two.txt", "two\n", "feat: two");
+  r.commitFile("root.txt", "root\n", "feat: root");
+  r.write("src/one.txt", "one dirty\n");
+  r.write("src/two.txt", "two dirty\n");
+  return r;
+}
+
 export function branchyRepo(): TempRepo {
   const r = basicRepo();
   r.git("checkout", "-b", "feature");

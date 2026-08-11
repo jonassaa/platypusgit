@@ -4,7 +4,6 @@ import {
   PGBadge,
   PGButton,
   PGButtonGroup,
-  PGChangeRow,
   PGCheckbox,
   PGEmpty,
   PGHunk,
@@ -44,12 +43,28 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { getDiff } from "@/lib/tauri";
+import { buildStatusTree, expandTreeKeys, treeKeyToPath } from "@/lib/tree";
+import {
+  ChangeTree,
+  type ChangeTreeViewMode,
+} from "@/features/repo/ChangeTree";
 import type { CommitInfo, DiffKind, FileDiff, FileStatus } from "@/lib/types";
 
 interface FileSlot {
   path: string;
   status: FileStatus;
   side: "staged" | "unstaged";
+}
+
+const VIEW_KEY = "pg-commit-view";
+
+/** CommitPanel defaults to FLAT — that is what it has always rendered. */
+export function readViewMode(): ChangeTreeViewMode {
+  return localStorage.getItem(VIEW_KEY) === "tree" ? "tree" : "flat";
+}
+
+export function writeViewMode(mode: ChangeTreeViewMode): void {
+  localStorage.setItem(VIEW_KEY, mode);
 }
 
 export function CommitPanelScreen() {
@@ -74,6 +89,17 @@ export function CommitPanelScreen() {
   // Sign-off toggle seeds from the persisted preference; toggling it writes back.
   const [signoff, setSignoff] = React.useState(addSignoff);
   const [diffMode, setDiffMode] = React.useState<"unified" | "split">("unified");
+  const [viewMode, setViewMode] = React.useState<ChangeTreeViewMode>(readViewMode);
+  const changeViewMode = React.useCallback((m: ChangeTreeViewMode) => {
+    setViewMode(m);
+    writeViewMode(m);
+  }, []);
+  const [expandedStaged, setExpandedStaged] = React.useState<
+    Record<string, boolean>
+  >({});
+  const [expandedUnstaged, setExpandedUnstaged] = React.useState<
+    Record<string, boolean>
+  >({});
   const [sel, setSel] = React.useState<Selection>(emptySelection);
   const changesPane = usePaneWidth(320, {
     min: 220,
@@ -102,6 +128,16 @@ export function CommitPanelScreen() {
       });
     },
   );
+
+  // Folder rows in tree mode act on their descendants — same menu multi-select
+  // already builds, so the two paths cannot drift.
+  const folderCtx = useContextMenu<{
+    paths: string[];
+    stagedPaths: string[];
+    unstagedPaths: string[];
+    embeddedPaths: string[];
+    untrackedPaths: string[];
+  }>((sel) => multiFileMenuItems(sel));
 
   const moreMenu = useContextMenu<{ path: string; diff: FileDiff | null }>(
     (p) => [
@@ -199,6 +235,18 @@ export function CommitPanelScreen() {
     () => [...staged.map(keyOf), ...unstaged.map(keyOf)],
     [staged, unstaged],
   );
+
+  // One tree per section: a partially staged file legitimately appears in
+  // BOTH, so a single merged tree would need one row to represent a file that
+  // is simultaneously staged and unstaged.
+  const stagedTree = React.useMemo(
+    () => buildStatusTree(staged.map((f) => f.status)),
+    [staged],
+  );
+  const unstagedTree = React.useMemo(
+    () => buildStatusTree(unstaged.map((f) => f.status)),
+    [unstaged],
+  );
   const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
 
   // Selection is local state keyed by side:path — reset on repo switch and
@@ -211,11 +259,13 @@ export function CommitPanelScreen() {
     setSel((s) => pruneSelection(s, valid));
   }, [rowOrder]);
 
-  const onRowClick = (f: FileSlot) => (e: React.MouseEvent) => {
+  // Both sections' trees route here, so a shift-range still extends over the
+  // combined rowOrder and may cross the STAGED → CHANGES boundary.
+  const onSelectKey = (key: string, e?: React.MouseEvent) => {
     setSel((s) =>
-      clickSelection(rowOrder, s, keyOf(f), {
-        toggle: e.metaKey || e.ctrlKey,
-        range: e.shiftKey,
+      clickSelection(rowOrder, s, key, {
+        toggle: !!e && (e.metaKey || e.ctrlKey),
+        range: !!e?.shiftKey,
       }),
     );
   };
@@ -249,6 +299,71 @@ export function CommitPanelScreen() {
     }
     stage(togglePaths(f));
   };
+
+  /** Section key ("staged:a/b") back to the raw tree key ("/a/b"). */
+  const rawKeyOf = (side: "staged" | "unstaged", key: string) =>
+    `/${key.slice(side.length + 1)}`;
+
+  const sectionList = (side: "staged" | "unstaged"): FileSlot[] =>
+    side === "staged" ? staged : unstaged;
+
+  /**
+   * Checkbox on a row. A folder key resolves to every file beneath it in THAT
+   * section — each tree is single-sided, so a folder click is always "stage all
+   * in folder" (CHANGES) or "unstage all in folder" (STAGED).
+   */
+  const onSectionCheck = (side: "staged" | "unstaged") => (key: string) => {
+    const list = sectionList(side);
+    const hits = expandTreeKeys([rawKeyOf(side, key)], {
+      lookup: [list],
+      descendants: list,
+    });
+    // A single file row keeps the existing multi-selection semantics.
+    if (hits.length === 1 && hits[0].path === treeKeyToPath(rawKeyOf(side, key))) {
+      if (side === "staged") unstage(togglePaths(hits[0]));
+      else stageToggled(hits[0]);
+      return;
+    }
+    const paths = hits.filter((f) => !f.status.embedded).map((f) => f.path);
+    if (paths.length === 0) {
+      // Folder containing only embedded repos — say why instead of no-opping.
+      if (hits.length > 0) pgFlash(EMBEDDED_REPO_HELP);
+      return;
+    }
+    if (side === "staged") unstage(paths);
+    else stage(paths);
+  };
+
+  /**
+   * ChangeTree hands back a key, not the FileSlot the existing handler wants.
+   * A key with no slot is a folder row: collapse the selection onto it and open
+   * the multi-file menu over its descendants.
+   */
+  const onKeyContextMenu =
+    (side: "staged" | "unstaged") => (key: string) => (e: React.MouseEvent) => {
+      const f = sectionList(side).find((s) => keyOf(s) === key);
+      if (f) return onRowContextMenu(f)(e);
+      if (!(sel.keys.length > 1 && sel.keys.includes(key))) {
+        setSel({ keys: [key], anchor: key });
+      }
+      const list = sectionList(side);
+      const hits = expandTreeKeys([rawKeyOf(side, key)], {
+        lookup: [list],
+        descendants: list,
+      });
+      const paths = hits.map((h) => h.path);
+      const embeddedPaths = hits.filter((h) => h.status.embedded).map((h) => h.path);
+      const actionable = hits.filter((h) => !h.status.embedded);
+      folderCtx.onContextMenu(e, {
+        paths,
+        embeddedPaths,
+        stagedPaths: side === "staged" ? actionable.map((h) => h.path) : [],
+        unstagedPaths: side === "unstaged" ? actionable.map((h) => h.path) : [],
+        untrackedPaths: actionable
+          .filter((h) => isUntracked(h.status))
+          .map((h) => h.path),
+      });
+    };
 
   const primaryKey = primarySelectedKey(sel);
   const selected = React.useMemo(() => {
@@ -451,20 +566,24 @@ export function CommitPanelScreen() {
               Nothing staged
             </div>
           )}
-          {staged.map((f) => (
-            <PGChangeRow
-              key={`s:${f.path}`}
-              path={f.path}
-              status={statusMark(f.status)}
-              staged
-              additions={f.status.additions}
-              deletions={f.status.deletions}
-              selected={effectiveKeys.has(keyOf(f))}
-              onClick={onRowClick(f)}
-              onContextMenu={onRowContextMenu(f)}
-              onToggle={() => unstage(togglePaths(f))}
-            />
-          ))}
+          <ChangeTree
+            files={staged}
+            nodes={stagedTree}
+            viewMode={viewMode}
+            expanded={expandedStaged}
+            onToggleExpand={(k) =>
+              setExpandedStaged((e) => ({ ...e, [k]: !(e[k] ?? false) }))
+            }
+            selectedKeys={effectiveKeys}
+            primaryKey={
+              selected && selected.side === "staged" ? keyOf(selected) : undefined
+            }
+            onSelect={onSelectKey}
+            onRowContextMenu={(e, key) => onKeyContextMenu("staged")(key)(e)}
+            onCheck={onSectionCheck("staged")}
+            checkboxes="always"
+            keyOf={(raw) => `staged:${treeKeyToPath(raw)}`}
+          />
         </div>
         <FocusableScroll
           testId="changes-list"
@@ -475,7 +594,21 @@ export function CommitPanelScreen() {
             title="CHANGES"
             badge={<PGBadge tone="warn">{unstaged.length}</PGBadge>}
             action={
-              <div style={{ display: "flex", gap: 4 }}>
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <PGIconButton
+                  icon="folderOpen"
+                  size="sm"
+                  title="Tree view"
+                  active={viewMode === "tree"}
+                  onClick={() => changeViewMode("tree")}
+                />
+                <PGIconButton
+                  icon="file"
+                  size="sm"
+                  title="Flat view"
+                  active={viewMode === "flat"}
+                  onClick={() => changeViewMode("flat")}
+                />
                 <PGButton
                   size="xs"
                   variant="ghost"
@@ -504,20 +637,26 @@ export function CommitPanelScreen() {
             }
             border
           />
-          {unstaged.map((f) => (
-            <PGChangeRow
-              key={`u:${f.path}`}
-              path={f.path}
-              status={statusMark(f.status)}
-              staged={false}
-              additions={f.status.additions}
-              deletions={f.status.deletions}
-              selected={effectiveKeys.has(keyOf(f))}
-              onClick={onRowClick(f)}
-              onContextMenu={onRowContextMenu(f)}
-              onToggle={() => stageToggled(f)}
-            />
-          ))}
+          <ChangeTree
+            files={unstaged}
+            nodes={unstagedTree}
+            viewMode={viewMode}
+            expanded={expandedUnstaged}
+            onToggleExpand={(k) =>
+              setExpandedUnstaged((e) => ({ ...e, [k]: !(e[k] ?? false) }))
+            }
+            selectedKeys={effectiveKeys}
+            primaryKey={
+              selected && selected.side === "unstaged"
+                ? keyOf(selected)
+                : undefined
+            }
+            onSelect={onSelectKey}
+            onRowContextMenu={(e, key) => onKeyContextMenu("unstaged")(key)(e)}
+            onCheck={onSectionCheck("unstaged")}
+            checkboxes="always"
+            keyOf={(raw) => `unstaged:${treeKeyToPath(raw)}`}
+          />
         </FocusableScroll>
       </PGPane>
       <PGResizeHandle onDrag={changesPane.resize} />
@@ -820,6 +959,7 @@ export function CommitPanelScreen() {
         </div>
       </PGPane>
       {fileMenu}
+      {folderCtx.menu}
     </div>
   );
 }

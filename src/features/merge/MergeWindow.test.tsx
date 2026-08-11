@@ -114,6 +114,16 @@ describe("MergeWindow resolution flow", () => {
     mockInvoke("save_resolution", () => undefined);
     render(<MergeWindow />);
     await screen.findByTestId("merge-result");
+    // `merge-result` mounts before MergeBody's effect pushes regionStates. The
+    // tests below fire a chord immediately after setup, so wait for the counter
+    // to show an unresolved region first — otherwise the chord can land before
+    // the model is settled and be dropped. Rare when this file runs alone;
+    // reproducible under a loaded parallel run.
+    await waitFor(() =>
+      expect(screen.getByTestId("merge-conflict-counter")).toHaveTextContent(
+        /^0\//,
+      ),
+    );
   }
 
   // Regression: a text conflict must start with Apply DISABLED. If the parent's

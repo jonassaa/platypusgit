@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { browser, $, expect } from "@wdio/globals";
-import { dirtyRepo, TempRepo } from "../support/tempRepo";
+import { dirtyRepo, nestedDirtyRepo, TempRepo } from "../support/tempRepo";
 import {
   changeRow,
   confirmCallCount,
@@ -111,5 +111,89 @@ describe("status & staging", () => {
     // repo truth: gone from the worktree, not merely dropped from the list
     expect(existsSync(join(repo.path, "new.txt"))).toBe(false);
     expect(repo.git("status", "--porcelain", "--", "new.txt").trim()).toBe("");
+  });
+});
+
+// #61 A5/A6: the tree can stage. Needs its own fixture — dirtyRepo's files are
+// all at the repo root, so it renders no folder row to act on.
+describe("folder staging in tree view", () => {
+  let repo: TempRepo;
+
+  // All selectors are lazy: `$` needs an initialized browser, which does not
+  // exist while the describe body is being evaluated.
+  // PGIconButton forwards `title` only, so that is the handle for the toggles.
+  const viewToggle = (mode: "Tree view" | "Flat view") => $(`[title="${mode}"]`);
+  const folderRow = () => $('[data-testid="changes-list"] [data-path="src"]');
+  // Tree rows reuse PGChangeRow's row-toggle testid, so this mirrors rowToggle.
+  const folderToggle = () =>
+    $(
+      '[data-testid="changes-list"] [data-path="src"] [data-testid="row-toggle"] input',
+    );
+
+  /** Staged paths per git itself — the acceptance signal. */
+  const stagedPaths = () =>
+    repo
+      .git("diff", "--cached", "--name-only")
+      .split("\n")
+      .filter(Boolean)
+      .sort();
+
+  beforeEach(async () => {
+    repo = nestedDirtyRepo();
+    await openRepo(repo.path);
+    await switchScreen("commit");
+    await changeRow("src/one.txt").waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "commit screen never showed the nested changes",
+    });
+    await viewToggle("Tree view").click();
+    await folderRow().waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "tree mode never rendered the src folder row",
+    });
+  });
+
+  afterEach(async () => {
+    await resetApp();
+    repo.dispose();
+  });
+
+  it("stages a whole folder from the tree checkbox", async () => {
+    await folderToggle().click();
+
+    await stagedRow("src/one.txt").waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "folder checkbox did not stage src/one.txt",
+    });
+    // repo truth: both files under src staged, the clean root file untouched.
+    expect(stagedPaths()).toEqual(["src/one.txt", "src/two.txt"]);
+  });
+
+  it("offers stage-all on a folder's context menu", async () => {
+    // Before #61 a folder right-click produced an EMPTY menu.
+    await jsContextMenu('[data-testid="changes-list"] [data-path="src"]');
+    await $("span*=Stage 2 files").waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "folder context menu never offered Stage 2 files",
+    });
+    await jsClickMenuItem("Stage 2 files");
+
+    await stagedRow("src/one.txt").waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "folder context menu did not stage the folder",
+    });
+    expect(stagedPaths()).toEqual(["src/one.txt", "src/two.txt"]);
+  });
+
+  it("keeps the same files visible when switching back to flat", async () => {
+    await viewToggle("Flat view").click();
+    // Flat mode has file rows only — the folder row must be gone, both files
+    // still listed by full path.
+    await browser.waitUntil(async () => !(await folderRow().isExisting()), {
+      timeout: 30_000,
+      timeoutMsg: "folder row still present in flat mode",
+    });
+    await expect(changeRow("src/one.txt")).toBeDisplayed();
+    await expect(changeRow("src/two.txt")).toBeDisplayed();
   });
 });

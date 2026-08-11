@@ -139,6 +139,7 @@ export interface PGIconButtonProps {
   onClick?: (e: React.MouseEvent) => void;
   title?: string;
   active?: boolean;
+  disabled?: boolean;
   tone?: string;
   style?: CSSProperties;
 }
@@ -149,6 +150,7 @@ export function PGIconButton({
   onClick,
   title,
   active,
+  disabled,
   tone,
   style,
 }: PGIconButtonProps) {
@@ -159,18 +161,24 @@ export function PGIconButton({
     <button
       onClick={onClick}
       title={title}
+      disabled={disabled}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       className="focusable"
       style={{
         width: sz,
         height: sz,
-        background: active ? "var(--bg-3)" : hover ? "var(--bg-2)" : "transparent",
+        background: active
+          ? "var(--bg-3)"
+          : hover && !disabled
+            ? "var(--bg-2)"
+            : "transparent",
         border: "1px solid transparent",
         borderColor: active ? "var(--border-1)" : "transparent",
         borderRadius: "var(--r-3)",
         color: tone || (active ? "var(--accent)" : "var(--fg-1)"),
-        cursor: "pointer",
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? "default" : "pointer",
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -797,6 +805,7 @@ export function PGStatusMark({
   return (
     <span
       title={v.title}
+      data-pg-status={kind}
       style={{
         width: size,
         height: size,

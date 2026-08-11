@@ -1,12 +1,55 @@
-import type { PGFileTreeNode } from "@/design";
+import type { IconName, PGFileTreeNode, PGStageState } from "@/design";
 import type { FileStatus } from "./types";
-import { statusMark } from "./derive";
+import { isStaged, isUnstaged, statusMark } from "./derive";
+import { fileIcon } from "./fileIcons";
+
+export type StageState = PGStageState;
 
 interface MutableNode {
   name: string;
   status?: string;
   children?: MutableNode[];
   defaultExpanded?: boolean;
+  staged?: StageState;
+  icon?: IconName;
+  iconColor?: string;
+}
+
+/**
+ * Staging state of one file. `undefined` for an unmodified file — that is the
+ * signal to render no checkbox at all, rather than an empty one.
+ *
+ * An embedded repo keeps a "none" state (and therefore a checkbox) so the
+ * existing stage guard can flash its explanation on click, matching what the
+ * flat CommitPanel row does today.
+ */
+export function fileStageState(f: FileStatus): StageState | undefined {
+  const st = isStaged(f);
+  const wt = isUnstaged(f);
+  if (!st && !wt) return undefined;
+  if (st && wt) return "some";
+  return st ? "all" : "none";
+}
+
+/**
+ * Bottom-up staging rollup over changed descendants only. Must run AFTER
+ * compaction — compaction merges folder chains, so a rollup computed before it
+ * would be attached to an intermediate node that no longer renders.
+ */
+function rollupStaged(node: MutableNode): StageState | undefined {
+  if (!node.children) return node.staged;
+  let seen = false;
+  let allStaged = true;
+  let noneStaged = true;
+  for (const child of node.children) {
+    const s = rollupStaged(child);
+    if (s === undefined) continue;
+    seen = true;
+    if (s !== "all") allStaged = false;
+    if (s !== "none") noneStaged = false;
+  }
+  node.staged = !seen ? undefined : allStaged ? "all" : noneStaged ? "none" : "some";
+  return node.staged;
 }
 
 /**
@@ -59,9 +102,18 @@ export function buildStatusTree(
       cursor.children = cursor.children ?? [];
       let next = cursor.children.find((c) => c.name === part);
       if (!next) {
-        next = isLeaf
-          ? { name: part, status: hasChange ? statusMark(f) : undefined }
-          : { name: part, children: [] };
+        if (isLeaf) {
+          const { icon, tint } = fileIcon(f.path);
+          next = {
+            name: part,
+            status: hasChange ? statusMark(f) : undefined,
+            staged: fileStageState(f),
+            icon,
+            iconColor: tint,
+          };
+        } else {
+          next = { name: part, children: [] };
+        }
         cursor.children.push(next);
       }
       cursor = next;
@@ -83,6 +135,10 @@ export function buildStatusTree(
 
   let children = root.children ?? [];
   if (compact) children = children.map(compactNode);
+
+  // After compaction, never before: a rollup computed pre-merge would be
+  // attached to an intermediate node that no longer renders.
+  children.forEach(rollupStaged);
 
   // Expand the first level by default.
   children.forEach((c) => {
@@ -130,4 +186,42 @@ export function findStatusByTreeKey<T extends { path: string }>(
     if (hit) return hit;
   }
   return undefined;
+}
+
+/**
+ * Resolve tree row keys to the file entries they act on.
+ *
+ * A key that matches a file yields that file. A key that matches nothing is
+ * treated as a FOLDER prefix and yields every entry beneath it — otherwise a
+ * selected folder is silently dropped from a Stage or Discard batch,
+ * under-counting a destructive op.
+ *
+ * `lookup` lists are searched in order for the direct hit (the caller decides
+ * precedence, e.g. worktree status before the all-files list); `descendants` is
+ * the set scanned for the prefix expansion, and should be the same set the tree
+ * was built from so a batch never reaches a row the user cannot see.
+ */
+export function expandTreeKeys<T extends { path: string }>(
+  keys: readonly string[],
+  opts: { lookup: readonly (readonly T[])[]; descendants: readonly T[] },
+): T[] {
+  const out: T[] = [];
+  const seen = new Set<string>();
+  const add = (entry: T) => {
+    if (seen.has(entry.path)) return;
+    seen.add(entry.path);
+    out.push(entry);
+  };
+  for (const key of keys) {
+    const hit = findStatusByTreeKey(key, ...opts.lookup);
+    if (hit) {
+      add(hit);
+      continue;
+    }
+    const prefix = treeKeyToPath(key) + "/";
+    for (const child of opts.descendants) {
+      if (child.path.startsWith(prefix)) add(child);
+    }
+  }
+  return out;
 }
