@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{CommitInfo, CommitOptions, LogFilter, RepoId},
+    git::types::{AuthorOverride, CommitInfo, CommitOptions, LogFilter, RepoId},
     state::AppState,
 };
 
@@ -59,13 +59,17 @@ pub async fn commit(
     message: String,
     amend: bool,
     signoff: Option<bool>,
+    // "Commit as someone else" — the backend has honored this since the commit
+    // op was written; nothing sent it until #61 D1. Absent means "use the repo
+    // config identity", which is the overwhelmingly common case.
+    author_override: Option<AuthorOverride>,
 ) -> AppResult<String> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let opts = CommitOptions {
         message,
         amend,
-        author_override: None,
+        author_override,
         signoff: signoff.unwrap_or(false),
     };
     tokio::task::spawn_blocking(move || backend.commit(&repo_id, opts))

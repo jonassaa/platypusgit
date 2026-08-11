@@ -6,6 +6,7 @@ import {
   PGRemoteRow,
   PGSectionHeader,
   pgFlash,
+  pgPrompt,
   remoteMenuItems,
   useContextMenu,
 } from "@/design";
@@ -49,10 +50,23 @@ export function RemoteScreen() {
     store.push(defaultRemote, defaultBranch);
   };
 
-  const handleAddRemote = () => {
-    const name = window.prompt("Remote name (e.g. origin)");
+  const handleAddRemote = async () => {
+    const name = await pgPrompt({
+      title: "Add remote",
+      body: "Short name you'll refer to it by.",
+      initialValue: "origin",
+      confirmLabel: "Next",
+      requireValue: true,
+      mono: true,
+    });
     if (!name) return;
-    const url = window.prompt("Remote URL");
+    const url = await pgPrompt({
+      title: `URL for "${name}"`,
+      placeholder: "git@github.com:owner/repo.git",
+      confirmLabel: "Add remote",
+      requireValue: true,
+      mono: true,
+    });
     if (!url) return;
     store.addRemote(name, url);
   };
@@ -214,7 +228,7 @@ export function RemoteScreen() {
                 size="xs"
                 variant="ghost"
                 icon="plus"
-                onClick={handleAddRemote}
+                onClick={() => void handleAddRemote()}
               >
                 Add remote
               </PGButton>

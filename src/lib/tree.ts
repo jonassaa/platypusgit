@@ -93,6 +93,30 @@ export function buildStatusTree(
 }
 
 /**
+ * Flat counterpart of {@link buildStatusTree}: one leaf node per file, named
+ * with its full path, no nesting.
+ *
+ * Row keys come out identical to the nested build ("/" + full path), which is
+ * what lets a view flip between tree and flat without touching selection,
+ * staging state, or context menus — they all key off the same strings.
+ */
+export function buildStatusList(files: FileStatus[]): PGFileTreeNode[] {
+  return files
+    .map((f) => {
+      const hasChange =
+        f.worktree.kind !== "Unmodified" || f.index.kind !== "Unmodified";
+      return {
+        // libgit2's embedded-repo entry carries a trailing slash; the nested
+        // build drops it when splitting, so drop it here too or the two modes
+        // would disagree about one row's key.
+        name: f.path.replace(/\/+$/, ""),
+        status: hasChange ? statusMark(f) : undefined,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
  * Repo-relative path for a PGFileTree row key. Keys are built by joining node
  * names with "/" from an empty root, so they carry a leading slash: "/a/b".
  */

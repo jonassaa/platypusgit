@@ -4,6 +4,7 @@ export * from "./primitives";
 export * from "./git-components";
 export * from "./chrome";
 export * from "./context-menu";
+export * from "./dialog";
 export * from "./ui-helpers";
 export * from "./empty-state";
 export * from "./use-prevent-browser-context-menu";

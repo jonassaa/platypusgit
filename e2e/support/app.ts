@@ -242,27 +242,93 @@ export function buildExecuteOnceScript(fn: (...args: never[]) => unknown): strin
   `;
 }
 
-/** WebDriver can't drive native prompt/confirm — stub them in-page BEFORE the
- *  action that triggers them. Reset by any refresh.
- *  `promptQueue`: successive `window.prompt` calls consume queue entries in
- *  order (Add remote fires TWO prompts: name, then URL — a single string
- *  would set name === url). Falls back to `promptText` when drained.
- *  Confirm calls are counted on `window.__pgConfirmCalls` — read it via
- *  `confirmCallCount()` to prove a confirm gate fired (or didn't). */
+/** Auto-answer the app's confirm/prompt dialogs. Install BEFORE the action that
+ *  triggers them; reset by any refresh.
+ *
+ *  These used to be native `window.confirm` / `window.prompt`, which WebDriver
+ *  can't drive, so they were stubbed out. Since #61 C3 they are real in-page
+ *  modals (`[data-pg-dialog]`) that a driver CAN click — but a spec would then
+ *  have to interleave a click into every destructive action. Instead this
+ *  installs an observer that answers each dialog as it appears, so every call
+ *  site below keeps the same shape it had against the native stubs.
+ *
+ *  `promptQueue`: successive PROMPT dialogs consume queue entries in order
+ *  (Add remote fires TWO: name, then URL — a single string would set
+ *  name === url). Falls back to `promptText` when drained.
+ *  `confirm: false` dismisses instead of accepting.
+ *  Confirm dialogs are counted on `window.__pgConfirmCalls` — read it via
+ *  `confirmCallCount()` to prove a confirm gate fired (or didn't). Prompts are
+ *  not counted, matching the old native-stub behavior. */
 export async function stubNativeDialogs(
   opts: { promptText?: string; confirm?: boolean; promptQueue?: string[] } = {},
 ): Promise<void> {
   // executeOnce: a driver-retry re-run would zero __pgConfirmCalls after a
-  // confirm already fired and re-clone the prompt queue mid-consumption.
+  // confirm already fired, re-clone the prompt queue mid-consumption, and
+  // attach a second observer that double-answers every dialog.
   await executeOnce(
     (promptText: string | null, confirm: boolean, queue: string[]) => {
       const q = [...queue];
-      (window as any).__pgConfirmCalls = 0;
-      (window as any).prompt = () => (q.length ? q.shift()! : promptText);
-      (window as any).confirm = () => {
-        (window as any).__pgConfirmCalls++;
+      const w = window as any;
+      w.__pgConfirmCalls = 0;
+
+      // Natives are still stubbed: harmless, and keeps any path that has not
+      // been converted from blocking the driver.
+      w.prompt = () => (q.length ? q.shift()! : promptText);
+      w.confirm = () => {
+        w.__pgConfirmCalls++;
         return confirm;
       };
+
+      const handled = new WeakSet<Element>();
+      const testId = (root: Element, id: string) =>
+        root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+
+      const answer = () => {
+        const root = document.querySelector("[data-pg-dialog]");
+        if (!root || handled.has(root)) return;
+        handled.add(root);
+
+        if (root.getAttribute("data-pg-dialog-kind") === "confirm") {
+          w.__pgConfirmCalls++;
+        }
+
+        const input = testId(root, "dialog-input") as HTMLInputElement | null;
+        if (confirm && input) {
+          // React tracks the previous value on the DOM node, so assigning
+          // `.value` directly is swallowed as a no-op change. Go through the
+          // prototype setter, then dispatch the event React listens for.
+          const value = q.length ? q.shift()! : (promptText ?? "");
+          const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            "value",
+          )?.set;
+          setter?.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+
+        // `requireValue` / `requireText` keep the primary button disabled until
+        // React has re-rendered with the value above, so poll briefly rather
+        // than clicking into the void.
+        const wanted = confirm ? "dialog-confirm" : "dialog-cancel";
+        let tries = 0;
+        const click = () => {
+          const live = document.querySelector("[data-pg-dialog]");
+          if (!live) return;
+          const btn = testId(live, wanted) as HTMLButtonElement | null;
+          if (btn && !btn.disabled) {
+            btn.click();
+            return;
+          }
+          if (tries++ < 50) setTimeout(click, 20);
+        };
+        setTimeout(click, 0);
+      };
+
+      // A dialog already up when this installs is answered too.
+      const obs = new MutationObserver(() => answer());
+      obs.observe(document.body, { childList: true, subtree: true });
+      w.__pgDialogObserver = obs;
+      answer();
     },
     opts.promptText ?? "e2e",
     opts.confirm ?? true,

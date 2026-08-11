@@ -1186,6 +1186,7 @@ impl GitBackend for Libgit2Backend {
         path: &Path,
         kind: DiffKind,
         context_lines: u32,
+        ignore_whitespace: bool,
     ) -> AppResult<FileDiff> {
         self.with_repo(repo_id, |repo| {
             // Without this the diff comes back valid but empty — a blank panel
@@ -1194,6 +1195,7 @@ impl GitBackend for Libgit2Backend {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
             opts.context_lines(context_lines);
+            opts.ignore_whitespace(ignore_whitespace);
             // Include untracked files as if their full content were a new addition
             // so the diff viewer shows file contents for newly created files.
             if matches!(kind, DiffKind::WorktreeToIndex | DiffKind::WorktreeToHead) {
@@ -1495,6 +1497,7 @@ impl GitBackend for Libgit2Backend {
         from_oid: &str,
         to_oid: &str,
         context_lines: u32,
+        ignore_whitespace: bool,
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
             let from = repo.revparse_single(from_oid)?.peel_to_commit()?.id();
@@ -1504,6 +1507,7 @@ impl GitBackend for Libgit2Backend {
 
             let mut opts = DiffOptions::new();
             opts.context_lines(context_lines);
+            opts.ignore_whitespace(ignore_whitespace);
             let mut diff =
                 repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))?;
 
@@ -1520,6 +1524,7 @@ impl GitBackend for Libgit2Backend {
         repo_id: &RepoId,
         oid: &str,
         context_lines: u32,
+        ignore_whitespace: bool,
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
             let commit = repo.revparse_single(oid)?.peel_to_commit()?;
@@ -1532,6 +1537,7 @@ impl GitBackend for Libgit2Backend {
 
             let mut opts = DiffOptions::new();
             opts.context_lines(context_lines);
+            opts.ignore_whitespace(ignore_whitespace);
             let mut diff = repo.diff_tree_to_tree(
                 from_tree.as_ref(),
                 Some(&to_tree),

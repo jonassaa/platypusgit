@@ -1,6 +1,7 @@
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { debug as logDebug, warn as logWarn, error as logError } from "@tauri-apps/plugin-log";
 import type {
+  AuthorOverride,
   BlameLine,
   BranchInfo,
   CliInstallOutcome,
@@ -149,13 +150,26 @@ export async function listRemotes(repoId: string): Promise<RemoteInfo[]> {
   return invoke<RemoteInfo[]>("list_remotes", { repoId });
 }
 
+/**
+ * `ignoreWhitespace` is a VIEWING option: it folds whitespace-only changes into
+ * context. Hunk indices from such a diff do NOT line up with the ones
+ * stageHunk/discardHunk expect, so callers must disable hunk-level actions
+ * while it is on (#61 D2).
+ */
 export async function getDiff(
   repoId: string,
   path: string,
   kind: DiffKind = "WorktreeToIndex",
   contextLines = 3,
+  ignoreWhitespace = false,
 ): Promise<FileDiff> {
-  return invoke<FileDiff>("get_diff", { repoId, path, kind, contextLines });
+  return invoke<FileDiff>("get_diff", {
+    repoId,
+    path,
+    kind,
+    contextLines,
+    ignoreWhitespace,
+  });
 }
 
 export async function getReflog(repoId: string): Promise<ReflogEntry[]> {
@@ -174,8 +188,15 @@ export async function diffCommits(
   fromOid: string,
   toOid: string,
   contextLines = 3,
+  ignoreWhitespace = false,
 ): Promise<FileDiff[]> {
-  return invoke<FileDiff[]>("diff_commits", { repoId, fromOid, toOid, contextLines });
+  return invoke<FileDiff[]>("diff_commits", {
+    repoId,
+    fromOid,
+    toOid,
+    contextLines,
+    ignoreWhitespace,
+  });
 }
 
 /**
@@ -187,8 +208,14 @@ export async function diffCommit(
   repoId: string,
   oid: string,
   contextLines = 3,
+  ignoreWhitespace = false,
 ): Promise<FileDiff[]> {
-  return invoke<FileDiff[]>("diff_commit", { repoId, oid, contextLines });
+  return invoke<FileDiff[]>("diff_commit", {
+    repoId,
+    oid,
+    contextLines,
+    ignoreWhitespace,
+  });
 }
 
 export async function stagePaths(repoId: string, paths: string[]): Promise<void> {
@@ -204,8 +231,16 @@ export async function commit(
   message: string,
   amend = false,
   signoff = false,
+  /** "Commit as" — omit to use the repo config identity. */
+  authorOverride: AuthorOverride | null = null,
 ): Promise<string> {
-  return invoke<string>("commit", { repoId, message, amend, signoff });
+  return invoke<string>("commit", {
+    repoId,
+    message,
+    amend,
+    signoff,
+    authorOverride,
+  });
 }
 
 export async function discardPaths(repoId: string, paths: string[]): Promise<void> {

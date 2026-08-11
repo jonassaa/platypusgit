@@ -71,6 +71,7 @@ impl GitBackend for CliBackend {
         _path: &Path,
         _kind: DiffKind,
         _context_lines: u32,
+        _ignore_whitespace: bool,
     ) -> AppResult<FileDiff> {
         Err(AppError::NotImplemented)
     }
@@ -94,6 +95,7 @@ impl GitBackend for CliBackend {
         _from_oid: &str,
         _to_oid: &str,
         _context_lines: u32,
+        _ignore_whitespace: bool,
     ) -> AppResult<Vec<FileDiff>> {
         Err(AppError::NotImplemented)
     }
@@ -102,6 +104,7 @@ impl GitBackend for CliBackend {
         _repo_id: &RepoId,
         _oid: &str,
         _context_lines: u32,
+        _ignore_whitespace: bool,
     ) -> AppResult<Vec<FileDiff>> {
         Err(AppError::NotImplemented)
     }

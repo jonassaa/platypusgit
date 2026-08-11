@@ -14,7 +14,9 @@ import {
   PGToolbar,
   commitMenuItems,
   commitMultiMenuItems,
+  pgConfirm,
   pgFlash,
+  pgPrompt,
   useContextMenu,
   usePaneWidth,
 } from "@/design";
@@ -26,6 +28,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
+import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import { diffCommit } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
@@ -106,6 +109,7 @@ export function HistoryScreen() {
   });
   const repo = useRepoStore((s) => s.current);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
+  const ignoreWhitespace = useIgnoreWhitespace();
   // Below-layout panel height reuses the clamped/persisted pane-size hook.
   const detailHeight = usePaneWidth(320, {
     min: 140,
@@ -246,7 +250,7 @@ export function HistoryScreen() {
     setInlineLoading(true);
     setInlineError(null);
     const handle = window.setTimeout(() => {
-      diffCommit(repo.id, inlineOid, diffContextLines)
+      diffCommit(repo.id, inlineOid, diffContextLines, ignoreWhitespace)
         .then((d) => { if (!cancelled) setInlineDiffs(d); })
         .catch((e) => {
           if (!cancelled) { setInlineDiffs([]); setInlineError(appErrorMessage(e)); }
@@ -254,7 +258,7 @@ export function HistoryScreen() {
         .finally(() => { if (!cancelled) setInlineLoading(false); });
     }, INLINE_DIFF_DEBOUNCE_MS);
     return () => { cancelled = true; window.clearTimeout(handle); };
-  }, [repo?.id, inlineOid, diffContextLines]);
+  }, [repo?.id, inlineOid, diffContextLines, ignoreWhitespace]);
 
   const exportVisible = React.useCallback(() => {
     const lines = visible.map(
@@ -597,15 +601,24 @@ function MultiCommitDetail({
         ? "oldest commit is the root"
         : null;
 
-  const cherryPickSet = () => {
+  const cherryPickSet = async () => {
     if (
-      window.confirm(`Cherry-pick ${n} commits onto the current branch (oldest first)?`)
+      await pgConfirm({
+        title: `Cherry-pick ${n} commits onto the current branch?`,
+        body: "They are applied oldest first.",
+        confirmLabel: "Cherry-pick",
+      })
     )
       useRepoStore.getState().cherryPickMany(plan.oids);
   };
-  const squashSet = () => {
+  const squashSet = async () => {
     if (squashBlock || !plan.baseOid) return;
-    const msg = window.prompt("New commit message for the squashed commit");
+    const msg = await pgPrompt({
+      title: `Squash ${n} commits into one`,
+      body: "Message for the combined commit.",
+      confirmLabel: "Squash",
+      requireValue: true,
+    });
     if (!msg) return;
     const rebasePlan = buildRebasePlan(commits, plan.baseOid, {
       kind: "squash-range",
@@ -716,27 +729,59 @@ function MultiCommitDetail({
 
 function CommitActionRow({ commit }: { commit: CommitInfo }) {
   const store = useRepoStore;
-  const branchHere = React.useCallback(() => {
-    const name = window.prompt(`Create branch at ${commit.shortOid}`);
+  const branchHere = React.useCallback(async () => {
+    const name = await pgPrompt({
+      title: "Create branch here",
+      body: `Branching at ${commit.shortOid}.`,
+      placeholder: "feat/my-branch",
+      confirmLabel: "Create",
+      requireValue: true,
+      mono: true,
+    });
     if (!name) return;
     store.getState().createBranch(name, commit.oid);
   }, [commit, store]);
-  const tagHere = React.useCallback(() => {
-    const name = window.prompt(`Tag name for ${commit.shortOid}`);
+  const tagHere = React.useCallback(async () => {
+    const name = await pgPrompt({
+      title: "Create tag here",
+      body: `Tagging ${commit.shortOid}.`,
+      placeholder: "v1.0.0",
+      confirmLabel: "Next",
+      requireValue: true,
+      mono: true,
+    });
     if (!name) return;
-    const annotation = window.prompt("Annotation (optional, leave blank for lightweight)");
+    // An empty annotation is meaningful — it makes a lightweight tag — so a
+    // blank answer must still create the tag; only a dismissal aborts.
+    const annotation = await pgPrompt({
+      title: `Annotation for ${name}`,
+      body: "Leave blank for a lightweight tag.",
+      confirmLabel: "Create tag",
+    });
+    if (annotation === null) return;
     store.getState().createTag(name, {
       oid: commit.oid,
       annotation: annotation ? annotation : null,
     });
   }, [commit, store]);
-  const cherryPick = React.useCallback(() => {
-    if (!window.confirm(`Cherry-pick ${commit.shortOid} onto current branch?`))
+  const cherryPick = React.useCallback(async () => {
+    if (
+      !(await pgConfirm({
+        title: `Cherry-pick ${commit.shortOid} onto the current branch?`,
+        confirmLabel: "Cherry-pick",
+      }))
+    )
       return;
     store.getState().cherryPick(commit.oid);
   }, [commit, store]);
-  const revert = React.useCallback(() => {
-    if (!window.confirm(`Revert ${commit.shortOid}? A new commit will be created.`))
+  const revert = React.useCallback(async () => {
+    if (
+      !(await pgConfirm({
+        title: `Revert ${commit.shortOid}?`,
+        body: "A new commit undoing its changes is created; history is not rewritten.",
+        confirmLabel: "Revert",
+      }))
+    )
       return;
     store.getState().revert(commit.oid);
   }, [commit, store]);

@@ -19,6 +19,7 @@ import {
   fileMenuItems,
   flattenFileTree,
   multiFileMenuItems,
+  pgConfirm,
   useContextMenu,
   usePaneWidth,
   type ContextMenuItem,
@@ -47,12 +48,19 @@ import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { highlightFile } from "@/lib/highlight";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import {
+  buildStatusList,
   buildStatusTree,
   findStatusByTreeKey,
   treeKeyToPath,
 } from "@/lib/tree";
+import { useTreeViewMode } from "@/lib/useTreeViewMode";
 import { fuzzyMatch } from "@/features/palette/fuzzyMatch";
-import { PGPane, FocusableScroll, useAction } from "@/features/keymap";
+import {
+  WhitespaceToggle,
+  useHunkActionsDisabledReason,
+  useIgnoreWhitespace,
+} from "@/features/diff/WhitespaceToggle";
+import { PGPane, FocusableScroll, useAction, usePaneList } from "@/features/keymap";
 import type {
   BranchInfo,
   FileContent,
@@ -108,11 +116,15 @@ export function RepoBrowserScreen() {
   const listFilesAtRev = useRepoStore((s) => s.listFilesAtRev);
   const readFileContentAtRev = useRepoStore((s) => s.readFileContentAtRev);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
+  const ignoreWhitespace = useIgnoreWhitespace();
+  const hunkActionsDisabled = useHunkActionsDisabledReason();
 
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   const [treeFilter, setTreeFilter] = React.useState("");
   const filterInputRef = React.useRef<HTMLInputElement>(null);
   const [sel, setSel] = React.useState<Selection>(emptySelection);
+  /** Moving end of a keyboard Shift range — see the usePaneList block below. */
+  const [leadKey, setLeadKey] = React.useState<string | null>(null);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
@@ -130,6 +142,7 @@ export function RepoBrowserScreen() {
     () => new Set(),
   );
   const [sortMode, setSortMode] = React.useState<SortMode>("asc");
+  const [viewMode, setViewMode] = useTreeViewMode("pg-repo-view-mode");
   const setNavIntent = useNavStore((s) => s.setIntent);
   const treePane = usePaneWidth(280, {
     min: 180,
@@ -214,10 +227,16 @@ export function RepoBrowserScreen() {
     return base;
   }, [status, allFiles, filterMode, hiddenKinds, browsingRev, revFiles, treeFilter]);
 
+  // Flat mode reuses the very same row component and row keys — only the
+  // nesting differs — so selection, staging and context menus need no
+  // per-mode branches anywhere below.
   const tree = React.useMemo<PGFileTreeNode[]>(() => {
-    const t = buildStatusTree(filteredStatus);
+    const t =
+      viewMode === "flat"
+        ? buildStatusList(filteredStatus)
+        : buildStatusTree(filteredStatus);
     return sortMode === "desc" ? reverseTree(t) : t;
-  }, [filteredStatus, sortMode]);
+  }, [filteredStatus, sortMode, viewMode]);
 
   // Expand-all / collapse-all: set every folder key true / false. Collapse must
   // write explicit `false` (not clear the map) to override defaultExpanded.
@@ -242,12 +261,13 @@ export function RepoBrowserScreen() {
     [filtering, folderKeys, expanded],
   );
 
-  // Visible row order (folders included) for shift-click ranges; selection
-  // keys are PGFileTree keys of the form "/a/b/c".
-  const rowOrder = React.useMemo(
-    () => flattenFileTree(tree, expandedForRender).map((f) => f.key),
+  // Visible rows (folders included) for shift ranges and keyboard nav;
+  // selection keys are PGFileTree keys of the form "/a/b/c".
+  const flatRows = React.useMemo(
+    () => flattenFileTree(tree, expandedForRender),
     [tree, expandedForRender],
   );
+  const rowOrder = React.useMemo(() => flatRows.map((f) => f.key), [flatRows]);
   const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
   const selected = primarySelectedKey(sel);
 
@@ -277,6 +297,7 @@ export function RepoBrowserScreen() {
           range: !!e?.shiftKey,
         }),
       );
+      setLeadKey(key);
     },
     [rowOrder],
   );
@@ -336,12 +357,155 @@ export function RepoBrowserScreen() {
     [status, allFiles, filteredStatus],
   );
 
+  /**
+   * Tri-state staging for every tree row, computed in one bottom-up walk.
+   *
+   * Per-row lookup would be O(rows x files) — a folder would rescan the whole
+   * status list on every render — so counts roll up from the leaves instead:
+   * a folder is "all" only when every stageable descendant is fully staged,
+   * "none" when none are, "partial" otherwise. Rows with nothing to stage
+   * (unmodified in All-files mode, embedded repos, folders holding only such
+   * rows) are absent from the map and render no checkbox.
+   */
+  const stageStates = React.useMemo(() => {
+    const out = new Map<string, "none" | "partial" | "all">();
+    // Browsing a committed snapshot: there is no worktree to stage from.
+    if (browsingRev) return out;
+    const byPath = new Map<string, FileStatus>();
+    for (const s of filteredStatus) byPath.set(s.path.replace(/\/+$/, ""), s);
+
+    type Counts = { all: number; partial: number; none: number };
+    const walk = (nodes: PGFileTreeNode[], parentKey: string): Counts => {
+      const acc: Counts = { all: 0, partial: 0, none: 0 };
+      for (const n of nodes) {
+        const key = parentKey + "/" + n.name;
+        if (n.children?.length) {
+          const c = walk(n.children, key);
+          const total = c.all + c.partial + c.none;
+          if (total > 0) {
+            out.set(
+              key,
+              c.all === total ? "all" : c.none === total ? "none" : "partial",
+            );
+          }
+          acc.all += c.all;
+          acc.partial += c.partial;
+          acc.none += c.none;
+          continue;
+        }
+        const st = byPath.get(key.replace(/^\//, ""));
+        // An embedded repo can't be staged (it would write a bare gitlink), and
+        // an unmodified file has nothing to stage.
+        if (!st || st.embedded) continue;
+        const staged = isStaged(st);
+        const unstaged = isUnstaged(st);
+        if (!staged && !unstaged) continue;
+        const state = staged ? (unstaged ? "partial" : "all") : "none";
+        out.set(key, state);
+        acc[state] += 1;
+      }
+      return acc;
+    };
+    walk(tree, "");
+    return out;
+  }, [tree, filteredStatus, browsingRev]);
+
+  const onStageToggle = React.useCallback(
+    (key: string, _node: PGFileTreeNode, next: boolean) => {
+      // Reuse the selection splitter: it already expands a folder key to every
+      // visible descendant and keeps embedded repos out of the batch.
+      const { stagedPaths, unstagedPaths } = splitSelection([key]);
+      const store = useRepoStore.getState();
+      if (next) {
+        if (unstagedPaths.length) void store.stage(unstagedPaths);
+      } else if (stagedPaths.length) {
+        void store.unstage(stagedPaths);
+      }
+    },
+    [splitSelection],
+  );
+
+  // ── Keyboard (#61 A7) ─────────────────────────────────────────────────────
+  // The tree now goes through the same `usePaneList` every flat pane uses, so
+  // it gets Home/End, Shift+Arrow ranges, Space-to-stage and type-to-jump
+  // speed-search for free instead of the bare-arrow-only handler it had.
+  //
+  // `leadKey` is the moving end of a Shift range, tracked separately from the
+  // anchor: primarySelectedKey() returns the anchor while it stays selected,
+  // so extending from it alone would make repeated Shift+↓ oscillate between
+  // two rows instead of growing the range.
+  React.useEffect(() => {
+    setLeadKey((prev) => (prev && rowOrder.includes(prev) ? prev : null));
+  }, [rowOrder]);
+
+  // -1 while nothing is selected yet, so the first ↓ lands on row 0 instead of
+  // skipping it (usePaneList clamps -1 ± 1 back into range).
+  const cursorIdx =
+    leadKey === null && selected === null
+      ? -1
+      : Math.max(0, rowOrder.indexOf(leadKey ?? selected ?? ""));
+  const moveTo = React.useCallback(
+    (i: number, range: boolean) => {
+      const key = rowOrder[Math.max(0, Math.min(rowOrder.length - 1, i))];
+      if (!key) return;
+      setSel((prev) => clickSelection(rowOrder, prev, key, { range }));
+      setLeadKey(key);
+    },
+    [rowOrder],
+  );
+
+  usePaneList({
+    paneId: "repo.tree",
+    count: rowOrder.length,
+    selectedIndex: cursorIdx,
+    onSelect: (i) => moveTo(i, false),
+    onExtendUp: () => moveTo(cursorIdx - 1, true),
+    onExtendDown: () => moveTo(cursorIdx + 1, true),
+    // → opens a collapsed folder, then walks into it; ← closes an open folder,
+    // else jumps to the parent row (standard tree semantics).
+    onExpand: (i) => {
+      const row = flatRows[i];
+      if (!row?.hasChildren) return;
+      if (!row.isExpanded) setExpanded((e) => ({ ...e, [row.key]: true }));
+      else moveTo(i + 1, false);
+    },
+    onCollapse: (i) => {
+      const row = flatRows[i];
+      if (row?.hasChildren && row.isExpanded) {
+        setExpanded((e) => ({ ...e, [row.key]: false }));
+        return;
+      }
+      const parentKey = row?.key.split("/").slice(0, -1).join("/");
+      const parentIdx = parentKey ? rowOrder.indexOf(parentKey) : -1;
+      if (parentIdx >= 0) moveTo(parentIdx, false);
+    },
+    onActivate: (i) => {
+      const row = flatRows[i];
+      if (row?.hasChildren) {
+        setExpanded((e) => ({ ...e, [row.key]: !row.isExpanded }));
+      }
+    },
+    // Space stages/unstages the row (file or whole folder), matching the
+    // checkbox it drives.
+    onToggle: (i) => {
+      const row = flatRows[i];
+      if (!row) return;
+      const state = stageStates.get(row.key);
+      if (state === undefined) return;
+      onStageToggle(row.key, row.node, state !== "all");
+    },
+    // Type-to-jump over the visible path, so "feat" lands on src/features.
+    searchText: (i) => rowOrder[i]?.replace(/^\//, "") ?? "",
+  });
+
   const fileCtx = useContextMenu<{ key: string; node: PGFileTreeNode }>(
     ({ key, node }) => {
       if (sel.keys.length > 1 && sel.keys.includes(key)) {
         return multiFileMenuItems(splitSelection(sel.keys));
       }
-      if (node.children?.length) return [];
+      // Folder: act on every file beneath it — stage / unstage / discard all,
+      // the same batch menu a multi-row selection gets.
+      if (node.children?.length) return multiFileMenuItems(splitSelection([key]));
       const st = findStatusByTreeKey(key, status);
       // Act on the status entry's own path, not the key: an embedded repo's
       // path carries a trailing slash the key has already lost, and that slash
@@ -432,7 +596,13 @@ export function RepoBrowserScreen() {
         });
     } else {
       setFileContent(null);
-      getDiff(repo.id, selectedFile.path, "WorktreeToHead", diffContextLines)
+      getDiff(
+        repo.id,
+        selectedFile.path,
+        "WorktreeToHead",
+        diffContextLines,
+        ignoreWhitespace,
+      )
         .then((d) => {
           if (!cancelled) setDiff(d);
         })
@@ -451,7 +621,7 @@ export function RepoBrowserScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selectedFile?.path, selectedFile?.embedded, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev, diffContextLines]);
+  }, [selectedFile?.path, selectedFile?.embedded, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev, diffContextLines, ignoreWhitespace]);
 
   const breadcrumbItems = React.useMemo(() => {
     const root = repo?.path.split("/").filter(Boolean).pop() ?? "repository";
@@ -541,17 +711,34 @@ export function RepoBrowserScreen() {
                 style={{ flex: 1, minWidth: 0 }}
               />
               <PGIconButton
-                icon="expandAll"
+                icon={viewMode === "tree" ? "viewTree" : "viewList"}
                 size="sm"
-                title="Expand all"
-                onClick={expandAll}
+                title={
+                  viewMode === "tree"
+                    ? "Tree view — switch to flat list"
+                    : "Flat list — switch to tree view"
+                }
+                onClick={() =>
+                  setViewMode(viewMode === "tree" ? "flat" : "tree")
+                }
               />
-              <PGIconButton
-                icon="collapseAll"
-                size="sm"
-                title="Collapse all"
-                onClick={collapseAll}
-              />
+              {/* Nothing to fold in a flat list. */}
+              {viewMode === "tree" && (
+                <>
+                  <PGIconButton
+                    icon="expandAll"
+                    size="sm"
+                    title="Expand all"
+                    onClick={expandAll}
+                  />
+                  <PGIconButton
+                    icon="collapseAll"
+                    size="sm"
+                    title="Collapse all"
+                    onClick={collapseAll}
+                  />
+                </>
+              )}
             </div>
           </div>
           <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
@@ -589,14 +776,13 @@ export function RepoBrowserScreen() {
             <PGFileTree
               nodes={tree}
               expanded={expandedForRender}
-              onToggle={(k) =>
-                setExpanded((e) => ({ ...e, [k]: !e[k] }))
-              }
+              onToggle={(k, next) => setExpanded((e) => ({ ...e, [k]: next }))}
               selected={selected ?? undefined}
               selectedKeys={selectedKeys}
               onSelect={onTreeSelect}
-              onActivate={(k, n) => onTreeSelect(k, n)}
               onRowContextMenu={onTreeContextMenu}
+              stageState={(k) => stageStates.get(k)}
+              onStageToggle={onStageToggle}
             />
             {fileCtx.menu}
           </div>
@@ -658,6 +844,7 @@ export function RepoBrowserScreen() {
               </span>
             )}
             <div style={{ flex: 1 }} />
+            <WhitespaceToggle />
             <PGButton
               size="xs"
               variant="ghost"
@@ -742,13 +929,21 @@ export function RepoBrowserScreen() {
                   lines={h.lines.map(toUiLine)}
                   expanded={true}
                   staged={false}
+                  actionsDisabledReason={hunkActionsDisabled}
                   onStage={() => {
                     if (!selectedFile) return;
                     useRepoStore.getState().stageHunk(selectedFile.path, i);
                   }}
-                  onDiscard={() => {
+                  onDiscard={async () => {
                     if (!selectedFile) return;
-                    if (window.confirm("Discard this hunk? The change will be lost.")) {
+                    if (
+                      await pgConfirm({
+                        title: "Discard this hunk?",
+                        body: `The change to ${selectedFile.path} will be lost.`,
+                        danger: true,
+                        confirmLabel: "Discard hunk",
+                      })
+                    ) {
                       useRepoStore.getState().discardHunk(selectedFile.path, i);
                     }
                   }}

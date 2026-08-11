@@ -12,6 +12,7 @@ import {
   PGSelect,
 } from "./primitives";
 import { useDensityStep } from "@/features/settings/useSettingsStore";
+import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
 
 // ═════════════════════════════════════════════════════════
 // FILE TREE
@@ -24,6 +25,14 @@ export interface PGFileTreeNode {
   children?: PGFileTreeNode[];
   extra?: ReactNode;
 }
+
+/**
+ * Staged-ness of a tree row. Folders are tri-state over their descendants:
+ * "all" every stageable leaf fully staged, "none" none of them, "partial"
+ * anything in between (including a single file with both staged and unstaged
+ * changes). `undefined` means the row isn't stageable at all — no checkbox.
+ */
+export type PGStageState = "none" | "partial" | "all";
 
 export interface PGFileTreeRowProps {
   name: string;
@@ -39,6 +48,12 @@ export interface PGFileTreeRowProps {
   onContextMenu?: (e: MouseEvent) => void;
   extra?: ReactNode;
   hideStatus?: boolean;
+  /** Tri-state staging checkbox. Omit for a row that can't be staged. */
+  stageState?: PGStageState;
+  /** Reserve the checkbox column even when this row has no `stageState`, so
+   *  rows stay aligned in a tree where only some rows are stageable. */
+  stageSlot?: boolean;
+  onStageToggle?: (next: boolean) => void;
 }
 
 export function PGFileTreeRow({
@@ -55,8 +70,17 @@ export function PGFileTreeRow({
   onContextMenu,
   extra,
   hideStatus,
+  stageState,
+  stageSlot,
+  onStageToggle,
 }: PGFileTreeRowProps) {
   const [hover, setHover] = React.useState(false);
+  // Folders keep the shared accent tint; files resolve a per-type glyph + tint
+  // from their path (falling back to `name` for callers that pass no path).
+  const glyph =
+    kind === "folder"
+      ? { icon: (expanded ? "folderOpen" : "folder") as IconName, color: FOLDER_ICON_COLOR }
+      : fileIconSpec(path ?? name);
   return (
     <div
       data-path={path}
@@ -109,15 +133,24 @@ export function PGFileTreeRow({
           <PGIcon name={expanded ? "chevronDown" : "chevronRight"} size={10} />
         )}
       </span>
-      <PGIcon
-        name={
-          kind === "folder" ? (expanded ? "folderOpen" : "folder") : "file"
-        }
-        size={12}
-        style={{
-          color: kind === "folder" ? "var(--accent-4)" : "var(--fg-2)",
-        }}
-      />
+      {stageState !== undefined ? (
+        <span
+          data-testid="tree-row-toggle"
+          // The checkbox owns its click: selecting the row underneath as well
+          // would move the selection every time you stage something.
+          onClick={(e) => e.stopPropagation()}
+          style={{ display: "inline-flex", flexShrink: 0 }}
+        >
+          <PGCheckbox
+            checked={stageState === "all"}
+            indeterminate={stageState === "partial"}
+            onChange={(v) => onStageToggle?.(v)}
+          />
+        </span>
+      ) : (
+        stageSlot && <span style={{ width: 14, flexShrink: 0 }} />
+      )}
+      <PGIcon name={glyph.icon} size={12} style={{ color: glyph.color }} />
       <span
         style={{
           flex: 1,
@@ -137,15 +170,28 @@ export function PGFileTreeRow({
 export interface PGFileTreeProps {
   nodes: PGFileTreeNode[];
   expanded?: Record<string, boolean>;
-  onToggle?: (key: string) => void;
+  /**
+   * Fold/unfold a folder. `nextExpanded` is computed here rather than left to
+   * the caller: a row's current state is `expanded[key] ?? node.defaultExpanded`,
+   * so a caller writing `!expanded[key]` gets it wrong for every
+   * default-expanded folder — the first click would re-set `true` and appear
+   * to do nothing.
+   */
+  onToggle?: (key: string, nextExpanded: boolean) => void;
   selected?: string;
   /** Extra keys rendered as selected (multi-select). `selected` stays the primary row. */
   selectedKeys?: ReadonlySet<string>;
   onSelect?: (key: string, node: PGFileTreeNode, e?: MouseEvent) => void;
-  /** Fired on Enter or double-click. For folders, toggles; for files, caller decides. */
-  onActivate?: (key: string, node: PGFileTreeNode) => void;
   onRowContextMenu?: (e: MouseEvent, key: string, node: PGFileTreeNode) => void;
   showStatus?: boolean;
+  /**
+   * Staging column. Return a state per row key to render its checkbox, or
+   * `undefined` for a row that can't be staged (unmodified file, embedded
+   * repo, empty folder). Omit the prop entirely to hide the column — the
+   * reserved slot only appears once some row in the tree is stageable.
+   */
+  stageState?: (key: string, node: PGFileTreeNode) => PGStageState | undefined;
+  onStageToggle?: (key: string, node: PGFileTreeNode, next: boolean) => void;
 }
 
 export interface PGFileTreeFlatNode {
@@ -187,81 +233,30 @@ export function PGFileTree({
   selected,
   selectedKeys,
   onSelect,
-  onActivate,
   onRowContextMenu,
   showStatus = true,
+  stageState,
+  onStageToggle,
 }: PGFileTreeProps) {
   const flat = flattenFileTree(nodes, expanded);
-  const selectedIdx = selected
-    ? flat.findIndex((f) => f.key === selected)
-    : -1;
+  const rowStage = flat.map((f) => stageState?.(f.key, f.node));
+  // Reserve the checkbox column for the whole tree as soon as one row uses it,
+  // so a mixed tree (changed + unmodified files) keeps its names aligned.
+  const stageSlot = rowStage.some((s) => s !== undefined);
 
-  const focus = (idx: number) => {
-    const n = flat[idx];
-    if (!n) return;
-    onSelect?.(n.key, n.node);
-  };
-
-  const handleKey = (e: React.KeyboardEvent) => {
-    if (e.defaultPrevented) return;
-    if (flat.length === 0) return;
-    // Leave modifier+arrow combos (e.g. Alt+Arrow pane focus) to global
-    // keymap shortcuts — only handle bare arrows for in-tree navigation.
-    if (e.altKey || e.metaKey || e.ctrlKey) return;
-    const cur = selectedIdx >= 0 ? selectedIdx : 0;
-    const node = flat[cur];
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        focus(Math.min(cur + 1, flat.length - 1));
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        focus(Math.max(cur - 1, 0));
-        break;
-      case "ArrowRight":
-        e.preventDefault();
-        if (node?.hasChildren) {
-          if (!node.isExpanded) onToggle?.(node.key);
-          else focus(Math.min(cur + 1, flat.length - 1));
-        }
-        break;
-      case "ArrowLeft":
-        e.preventDefault();
-        if (node?.hasChildren && node.isExpanded) {
-          onToggle?.(node.key);
-        } else {
-          // move to parent if any
-          const parentKey = node?.key
-            .split("/")
-            .slice(0, -1)
-            .join("/");
-          const parentIdx = flat.findIndex((f) => f.key === parentKey);
-          if (parentIdx >= 0) focus(parentIdx);
-        }
-        break;
-      case "Enter":
-        e.preventDefault();
-        if (node) {
-          if (node.hasChildren) {
-            onToggle?.(node.key);
-          } else {
-            onActivate?.(node.key, node.node);
-          }
-        }
-        break;
-    }
-  };
-
+  // Keyboard navigation lives with the owning screen, not here: it goes
+  // through the keymap's `usePaneList` so the tree gets the same arrow keys,
+  // Home/End, Shift+Arrow ranges, Space-to-stage and type-to-jump
+  // speed-search as every flat pane, and so a bare ArrowDown isn't handled
+  // twice (once by the dispatcher, once by a local onKeyDown).
   return (
     <div
       tabIndex={0}
-      onKeyDown={handleKey}
       style={{ outline: "none" }}
       data-pg-focus-target=""
       className="focusable"
     >
-      {flat.map((f) => (
+      {flat.map((f, i) => (
         <PGFileTreeRow
           key={f.key}
           name={f.node.name}
@@ -270,15 +265,18 @@ export function PGFileTree({
           kind={f.hasChildren ? "folder" : "file"}
           status={f.node.status}
           hideStatus={!showStatus}
+          stageState={rowStage[i]}
+          stageSlot={stageSlot}
+          onStageToggle={(next) => onStageToggle?.(f.key, f.node, next)}
           expanded={f.isExpanded}
           hasChildren={f.hasChildren}
           selected={selected === f.key || !!selectedKeys?.has(f.key)}
           onClick={(e) => {
             onSelect?.(f.key, f.node, e);
             if (f.hasChildren && !e.metaKey && !e.ctrlKey && !e.shiftKey)
-              onToggle?.(f.key);
+              onToggle?.(f.key, !f.isExpanded);
           }}
-          onToggle={() => onToggle?.(f.key)}
+          onToggle={() => onToggle?.(f.key, !f.isExpanded)}
           onContextMenu={
             onRowContextMenu
               ? (e) => onRowContextMenu(e, f.key, f.node)
@@ -324,6 +322,7 @@ export function PGChangeRow({
   const parts = path.split("/");
   const file = parts.pop();
   const dir = parts.join("/");
+  const glyph = fileIconSpec(path);
   return (
     <div
       data-path={path}
@@ -371,9 +370,9 @@ export function PGChangeRow({
       )}
       <PGStatusMark kind={status} size={14} />
       <PGIcon
-        name="file"
+        name={glyph.icon}
         size={11}
-        style={{ color: "var(--fg-3)", flexShrink: 0 }}
+        style={{ color: glyph.color, flexShrink: 0 }}
       />
       <span
         style={{
@@ -722,6 +721,12 @@ export interface PGHunkProps {
   onDiscard?: () => void;
   expanded?: boolean;
   onToggle?: () => void;
+  /**
+   * Disable Stage/Discard and explain why on hover. Set while the diff is
+   * whitespace-ignoring: those hunks are a rewritten view, so their indices
+   * don't address the hunks git would apply (#61 D2).
+   */
+  actionsDisabledReason?: string;
 }
 
 export function PGHunk({
@@ -732,6 +737,7 @@ export function PGHunk({
   onDiscard,
   expanded = true,
   onToggle,
+  actionsDisabledReason,
 }: PGHunkProps) {
   return (
     <div style={{ borderBottom: "1px solid var(--border-0)" }}>
@@ -755,7 +761,14 @@ export function PGHunk({
         />
         <span style={{ color: "var(--accent)" }}>@@ {header} @@</span>
         <div style={{ flex: 1 }} />
-        <PGButton size="xs" variant="ghost" onClick={onDiscard} icon="x">
+        <PGButton
+          size="xs"
+          variant="ghost"
+          onClick={onDiscard}
+          icon="x"
+          disabled={!!actionsDisabledReason}
+          title={actionsDisabledReason}
+        >
           Discard
         </PGButton>
         <PGButton
@@ -764,6 +777,8 @@ export function PGHunk({
           variant={staged ? "outline" : "primary"}
           onClick={onStage}
           icon={staged ? "check" : "plus"}
+          disabled={!!actionsDisabledReason}
+          title={actionsDisabledReason}
         >
           {staged ? "Staged" : "Stage hunk"}
         </PGButton>

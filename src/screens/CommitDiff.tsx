@@ -4,6 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
+import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { diffCommit, diffCommits } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
@@ -31,6 +32,7 @@ function targetHeader(target: Target): string {
 export function CommitDiffScreen() {
   const repo = useRepoStore((s) => s.current);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
+  const ignoreWhitespace = useIgnoreWhitespace();
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
 
@@ -62,19 +64,20 @@ export function CommitDiffScreen() {
     setError(null);
     const fetch =
       target.kind === "commit-self"
-        ? diffCommit(repo.id, target.oid, diffContextLines)
+        ? diffCommit(repo.id, target.oid, diffContextLines, ignoreWhitespace)
         : diffCommits(
             repo.id,
             target.kind === "commit-vs-commit" ? target.from : target.oid,
             target.kind === "commit-vs-commit" ? target.to : "HEAD",
             diffContextLines,
+            ignoreWhitespace,
           );
     fetch
       .then((d) => { if (!cancelled) setDiffs(d); })
       .catch((e) => { if (!cancelled) { setDiffs([]); setError(appErrorMessage(e)); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [repo?.id, target, diffContextLines]);
+  }, [repo?.id, target, diffContextLines, ignoreWhitespace]);
 
   if (!target) {
     return (

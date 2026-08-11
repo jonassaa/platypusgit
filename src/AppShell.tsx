@@ -3,6 +3,7 @@ import React from "react";
 import {
   PGActivityBar,
   PGButton,
+  PGDialogHost,
   PGIconButton,
   PGStatusBar,
   PGStatusItem,
@@ -250,6 +251,9 @@ export function AppShell() {
       }}
     >
       <AppTitlebar onOpenSettings={() => setScreen("settings")} />
+      {/* Styled confirm/prompt host — pgConfirm/pgPrompt resolve false/null
+          unless one of these is mounted. */}
+      <PGDialogHost />
       <UpdatePanel />
       <CheatSheet />
       {error && (

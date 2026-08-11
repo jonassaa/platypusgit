@@ -7,6 +7,7 @@ import {
   PGInput,
   PGSelect,
   PGToggle,
+  pgConfirm,
   pgFlash,
 } from "@/design";
 import {
@@ -200,6 +201,16 @@ export function SettingsScreen() {
                   s.set("diffContextLines", n);
                 }}
                 style={{ width: 72 }}
+              />
+            }
+          />
+          <Row
+            label="Ignore whitespace"
+            hint="Hide whitespace-only changes when reviewing reformatted code. Hunk staging is unavailable while this is on — the filtered hunks aren't the ones git would apply."
+            control={
+              <PGToggle
+                checked={s.ignoreWhitespaceInDiff}
+                onChange={(v) => s.set("ignoreWhitespaceInDiff", v)}
               />
             }
           />
@@ -451,8 +462,16 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
     }
   };
 
-  const onDelete = () => {
-    if (!window.confirm(`Delete theme "${active.name}"?`)) return;
+  const onDelete = async () => {
+    if (
+      !(await pgConfirm({
+        title: `Delete theme "${active.name}"?`,
+        body: "Custom themes aren't recoverable unless you exported the file.",
+        danger: true,
+        confirmLabel: "Delete theme",
+      }))
+    )
+      return;
     s.deleteTheme(active.id);
   };
 
@@ -514,7 +533,7 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
             size="sm"
             variant="default"
             icon="trash"
-            onClick={onDelete}
+            onClick={() => void onDelete()}
           >
             Delete
           </PGButton>

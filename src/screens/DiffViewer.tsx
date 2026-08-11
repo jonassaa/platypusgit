@@ -19,6 +19,10 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import {
+  WhitespaceToggle,
+  useIgnoreWhitespace,
+} from "@/features/diff/WhitespaceToggle";
 import { statusMark } from "@/lib/derive";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
@@ -29,6 +33,7 @@ export function DiffViewerScreen() {
   const repo = useRepoStore((s) => s.current);
   const status = useRepoStore((s) => s.status);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
+  const ignoreWhitespace = useIgnoreWhitespace();
   const [mode, setMode] = React.useState<"unified" | "split">("unified");
   const [wrap, setWrap] = React.useState(false);
   const [filter, setFilter] = React.useState("");
@@ -88,7 +93,7 @@ export function DiffViewerScreen() {
     }
     let cancelled = false;
     setDiffLoading(true);
-    getDiff(repo.id, current.path, "WorktreeToHead", diffContextLines)
+    getDiff(repo.id, current.path, "WorktreeToHead", diffContextLines, ignoreWhitespace)
       .then((d) => {
         if (!cancelled) setDiff(d);
       })
@@ -105,7 +110,7 @@ export function DiffViewerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [current?.path, current?.embedded, repo, diffContextLines]);
+  }, [current?.path, current?.embedded, repo, diffContextLines, ignoreWhitespace]);
 
   const findFiltered = React.useMemo<FileDiff | null>(() => {
     if (!diff || !findQuery.trim()) return diff;
@@ -194,6 +199,7 @@ export function DiffViewerScreen() {
         }
         right={
           <>
+            <WhitespaceToggle />
             <PGButtonGroup
               value={mode}
               onChange={(v) => setMode(v as typeof mode)}

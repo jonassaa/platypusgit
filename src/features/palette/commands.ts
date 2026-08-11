@@ -1,4 +1,5 @@
 // src/features/palette/commands.ts
+import { pgConfirm } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -209,15 +210,20 @@ export function buildCommands(): PaletteItem[] {
           })),
     });
     const guardedForcePush = (remote: string, branch: string) => {
-      if (
-        useSettingsStore.getState().confirmForcePush &&
-        !window.confirm(
-          `Force-push ${branch} to ${remote} (with lease)? This overwrites the remote branch.`,
-        )
-      ) {
-        return;
-      }
-      void repo.push(remote, branch, "WithLease");
+      void (async () => {
+        if (
+          useSettingsStore.getState().confirmForcePush &&
+          !(await pgConfirm({
+            title: `Force-push ${branch} to ${remote}?`,
+            body: "Overwrites the remote branch. --force-with-lease still refuses if someone else pushed since your last fetch.",
+            danger: true,
+            confirmLabel: "Force-push",
+          }))
+        ) {
+          return;
+        }
+        void repo.push(remote, branch, "WithLease");
+      })();
     };
     items.push({
       type: "command", id: "action:force-push-current",

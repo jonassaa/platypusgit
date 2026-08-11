@@ -4,6 +4,13 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { CommitPanelScreen } from "./CommitPanel";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
+import {
+  WithDialogs,
+  acceptDialog,
+  dialogTitle,
+  dismissDialog,
+  resetDialogs,
+} from "@/test/dialog";
 import type { FileStatus, RepoHandle } from "@/lib/types";
 
 const repo: RepoHandle = {
@@ -105,6 +112,7 @@ function selectedPaths(): string[] {
 
 describe("CommitPanel multi-file selection", () => {
   beforeEach(() => {
+    resetDialogs();
     resetStore();
     wireMocks();
   });
@@ -163,11 +171,11 @@ describe("CommitPanel multi-file selection", () => {
   });
 
   it("multi-file discard asks for confirmation and aborts when declined", async () => {
-    const confirm = vi
-      .spyOn(window, "confirm")
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
-    render(<CommitPanelScreen />);
+    render(
+      <WithDialogs>
+        <CommitPanelScreen />
+      </WithDialogs>,
+    );
 
     fireEvent.click(changeRow("a.txt"));
     fireEvent.click(changeRow("c.txt"), { shiftKey: true });
@@ -175,12 +183,19 @@ describe("CommitPanel multi-file selection", () => {
     // declined → nothing dispatched
     fireEvent.contextMenu(changeRow("b.txt"));
     fireEvent.click(await screen.findByText("Discard changes in 3 files…"));
-    expect(confirm).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(dialogTitle()).toBe("Discard changes in 3 files?"),
+    );
+    await dismissDialog();
     expect(getInvokeCalls().find((c) => c.cmd === "discard_paths")).toBeUndefined();
 
     // accepted → full path array
     fireEvent.contextMenu(changeRow("b.txt"));
     fireEvent.click(await screen.findByText("Discard changes in 3 files…"));
+    await waitFor(() =>
+      expect(dialogTitle()).toBe("Discard changes in 3 files?"),
+    );
+    await acceptDialog();
     await waitFor(() => {
       const call = getInvokeCalls().find((c) => c.cmd === "discard_paths");
       expect(call).toBeDefined();
