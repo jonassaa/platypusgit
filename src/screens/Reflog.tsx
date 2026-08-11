@@ -237,6 +237,10 @@ export function ReflogScreen() {
           {entries.map((e) => (
             <PGCommitRow
               key={`${e.oid}-${e.timestamp}`}
+              // Reflog has no lanes to draw — 0 drops the graph column
+              // entirely, rather than reserving an empty 140px gutter. Distinct
+              // from graphWidth(0), which is a real one-lane log.
+              graphW={0}
               sha={e.shortOid}
               message={`${opLabel(e.op)}: ${e.message || "(no message)"}`}
               author=""

@@ -1,5 +1,5 @@
 import { browser, $, $$, expect } from "@wdio/globals";
-import { branchyRepo, dirtyRepo, TempRepo } from "../support/tempRepo";
+import { basicRepo, branchyRepo, dirtyRepo, TempRepo } from "../support/tempRepo";
 import { openRepo, resetApp, switchScreen } from "../support/app";
 
 describe("history & diff", () => {
@@ -92,5 +92,60 @@ describe("history & diff", () => {
       async () => repo.git("diff", "--cached", "--name-only").includes("a.txt"),
       { timeout: 20_000, timeoutMsg: "hunk stage did not reach the index" },
     );
+  });
+
+  // Issue #68 G2. basicRepo's messages are, oldest first: "feat: add a.txt",
+  // "feat: add b.txt", "fix: update a.txt" — so searching "a.txt" matches the
+  // oldest and newest with one commit elided between them, on one branch.
+  //
+  // The acceptance here is rendered geometry, not repo truth: the bug was that
+  // the graph drew the wrong pixels for a correct history, so there is no
+  // `repo.git(...)` analogue to assert against.
+  it("keeps two same-branch search hits in one lane with no phantom lane", async () => {
+    repo = basicRepo();
+    await openRepo(repo.path);
+    await switchScreen("history");
+
+    await browser.waitUntil(
+      async () => (await $$('[data-testid="commit-row"]').length) === 3,
+      { timeout: 20_000, timeoutMsg: "expected basicRepo's 3 commit rows" },
+    );
+
+    const search = $('[data-testid="history-search"]');
+    await search.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "history search input never appeared",
+    });
+    await search.setValue("a.txt");
+
+    await browser.waitUntil(
+      async () => (await $$('[data-testid="commit-row"]').length) === 2,
+      {
+        timeout: 20_000,
+        timeoutMsg: "expected only the two commits whose message mentions a.txt",
+      },
+    );
+
+    // Spread into a plain array: the awaited $$ result keeps async `map`/
+    // `length`, which don't compose with Promise.all / arithmetic.
+    const rows = [...(await $$('[data-testid="commit-row"]'))];
+    expect(rows).toHaveLength(2);
+
+    // Both hits sit in the SAME lane: their node dots share an x. Before the
+    // fix each hit opened its own lane.
+    const cxNewest = await rows[0]!.$("svg circle").getAttribute("cx");
+    const cxOldest = await rows[1]!.$("svg circle").getAttribute("cx");
+    expect(cxNewest).toEqual(cxOldest);
+
+    // The elided span between them is drawn dashed.
+    await expect($('[data-testid="commit-row"] [stroke-dasharray]')).toBeExisting();
+
+    // THE PHANTOM LANE: the oldest match is basicRepo's root, so nothing may
+    // continue below it. Before the fix a lane ran off the bottom of the list
+    // toward the filtered-out parent.
+    const trailing = [
+      ...(await rows[1]!.$$('svg [data-lane-kind="half-bot"], svg [data-lane-kind="line"]')),
+    ];
+    expect(trailing).toHaveLength(0);
   });
 });
