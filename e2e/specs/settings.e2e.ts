@@ -4,7 +4,7 @@ import {
 } from "../support/tempRepo";
 import {
   openRepo, reopenRepo, resetApp, stubNativeDialogs, confirmCallCount,
-  openPalette, paletteDialog, paletteInput, switchScreen, stagedRow,
+  openPalette, paletteDialog, paletteInput, switchScreen, stagedRow, changeRow,
   executeOnce, openSettings,
 } from "../support/app";
 
@@ -50,6 +50,56 @@ async function clickSettingsToggleRow(labelText: string): Promise<void> {
     return true;
   }, labelText);
   if (!ok) throw new Error(`settings toggle row not found: ${labelText}`);
+}
+
+/**
+ * Measure the rendered height of one row per density mechanism.
+ *
+ * There is no repo truth for a layout setting, so rendered geometry IS the
+ * acceptance here — and it can only be measured in a real webview: the tokens
+ * are `calc(Npx + var(--row-step))`, which jsdom does not resolve (the store
+ * side is unit-tested in src/features/settings/useSettingsStore.test.ts).
+ *
+ * Measures via `getSize("height")` on the same elements it waits for, so a
+ * selector change surfaces as "row never appeared" rather than as a wrong
+ * height — and reuses `changeRow()` instead of restating its selector.
+ */
+async function measureRows(): Promise<{
+  changeRow: number;
+  branchRow: number;
+  commitRow: number;
+  graphSvg: number;
+}> {
+  await switchScreen("commit");
+  const change = changeRow("a.txt");
+  await change.waitForDisplayed({
+    timeout: 10_000, timeoutMsg: "change row never appeared for measurement",
+  });
+  // PGChangeRow reads --row-h, the token that already existed before density
+  // was wired — this is the regression guard on the calc chain itself.
+  const changeRowH = await change.getSize("height");
+
+  await switchScreen("branches");
+  const branch = $('[data-testid="branch-row"]');
+  await branch.waitForDisplayed({
+    timeout: 10_000, timeoutMsg: "branch row never appeared for measurement",
+  });
+  const branchRowH = await branch.getSize("height");
+
+  await switchScreen("history");
+  const commit = $('[data-testid="commit-row"]');
+  await commit.waitForDisplayed({
+    timeout: 10_000, timeoutMsg: "commit row never appeared for measurement",
+  });
+  const commitRowH = await commit.getSize("height");
+  const graphSvgH = await commit.$("svg").getSize("height");
+
+  return {
+    changeRow: Math.round(changeRowH),
+    branchRow: Math.round(branchRowH),
+    commitRow: Math.round(commitRowH),
+    graphSvg: Math.round(graphSvgH),
+  };
 }
 
 describe("settings", () => {
@@ -208,6 +258,40 @@ describe("settings", () => {
       async () => pair!.bareGit("rev-parse", "main").trim() === localHead,
       { timeout: 20_000, timeoutMsg: "force-push never landed on the bare remote" },
     );
+  });
+
+  it("UI density scales every row surface, and compact restores them", async () => {
+    repo = dirtyRepo(); // a.txt unstaged, so CommitPanel has a change row
+    await openRepo(repo.path);
+
+    const compact = await measureRows();
+    // Compact is the pre-density baseline — pinned so a future token edit
+    // can't silently reflow the default layout.
+    expect(compact).toEqual({
+      changeRow: 24, branchRow: 28, commitRow: 26, graphSvg: 26,
+    });
+
+    await openSettings();
+    await $("button*=Comfortable").click();
+    await browser.waitUntil(
+      async () => $('button[aria-pressed="true"]*=Comfortable').isExisting(),
+      { timeout: 10_000, timeoutMsg: "Comfortable never became active" },
+    );
+
+    // Every surface gains exactly the one step — including the SVG graph
+    // gutter, which draws in user units and would otherwise desync from the
+    // commit rows it sits beside.
+    expect(await measureRows()).toEqual({
+      changeRow: 28, branchRow: 32, commitRow: 30, graphSvg: 30,
+    });
+
+    await openSettings();
+    await $("button*=Compact").click();
+    await browser.waitUntil(
+      async () => $('button[aria-pressed="true"]*=Compact').isExisting(),
+      { timeout: 10_000, timeoutMsg: "Compact never became active" },
+    );
+    expect(await measureRows()).toEqual(compact);
   });
 
   it("confirmForcePush=off skips the confirm entirely", async () => {

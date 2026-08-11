@@ -119,7 +119,7 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (16 files, 76
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (17 files, 86
   tests, all passing) drive the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
@@ -320,6 +320,18 @@ lib/
 - Tailwind v4 (CSS-first config). Theme tokens in `src/index.css` under `@theme { … }`. Use CSS vars (`var(--color-accent)`, `var(--bg-0)`, `var(--fg-0)`, `var(--git-*)`) or Tailwind arbitrary-value syntax.
 - No `tailwind.config.js` — v4 doesn't need one.
 - Inline `style={{…}}` with CSS vars is fine and used widely in chrome components.
+- **Any new list-row surface must opt into UI density**, or the Settings toggle
+  silently skips it (that's how it rotted the first time — issue #70). Write
+  `height: "calc(<base>px + var(--row-step))"`, or
+  `padding: "calc(<base>px + var(--row-step) / 2) …"` for padding-sized rows;
+  `--row-h` is the shared token for plain 24px rows. `--row-step` is 0 in
+  compact, so keep each surface's existing base and the default layout is
+  unchanged. `grep -rn 'var(--row-step)' src/` lists what participates.
+  Chrome (titlebar, status bar, toolbars, panel headers) stays fixed, as does
+  diff/code line geometry (`--lh-code` owns that). The one surface that can't
+  use the token is `PGGraphRow` — it draws in SVG user units, so `PGCommitRow`
+  feeds it the number from `useDensityStep()`; those two must stay in sync or
+  the History graph desyncs from its rows.
 
 ### Design system
 - Import UI primitives from `@/design` (not per-file). `design/index.ts` barrel re-exports everything.

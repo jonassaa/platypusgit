@@ -306,7 +306,8 @@ export function CommandPalette() {
         onClick={() => activate(row)}
         onMouseEnter={() => setActiveIndex(flatIndex)}
         style={{
-          display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 12px",
+          display: "flex", alignItems: "center", gap: 8,
+          height: "calc(30px + var(--row-step))", padding: "0 12px",
           background: active ? "var(--bg-selection)" : "transparent", cursor: "pointer",
           fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)",
         }}

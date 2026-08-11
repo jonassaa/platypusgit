@@ -258,7 +258,7 @@ export function BranchesScreen() {
               style={{
                 display: "grid",
                 gridTemplateColumns: gridTemplate,
-                height: 24,
+                height: "calc(24px + var(--row-step))",
                 background: "var(--bg-2)",
                 borderBottom: "1px solid var(--border-0)",
                 alignItems: "center",
@@ -309,6 +309,7 @@ export function BranchesScreen() {
                 onClick={() => setSelection({ kind: "branch", name: b.name })}
                 onContextMenu={(e) => onBranchCtx(e, b)}
                 data-pg-row=""
+                data-testid="branch-row"
                 data-selected={
                   selection?.kind === "branch" && selection.name === b.name
                     ? ""
@@ -318,7 +319,7 @@ export function BranchesScreen() {
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
                   alignItems: "center",
-                  height: 28,
+                  height: "calc(28px + var(--row-step))",
                   background:
                     selection?.kind === "branch" && selection.name === b.name
                       ? undefined
@@ -457,7 +458,7 @@ export function BranchesScreen() {
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
                   alignItems: "center",
-                  height: 28,
+                  height: "calc(28px + var(--row-step))",
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--fs-12)",
                   borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",
@@ -537,7 +538,7 @@ export function BranchesScreen() {
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
                   alignItems: "center",
-                  height: 28,
+                  height: "calc(28px + var(--row-step))",
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--fs-12)",
                   borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",

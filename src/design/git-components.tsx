@@ -11,6 +11,7 @@ import {
   PGCheckbox,
   PGSelect,
 } from "./primitives";
+import { useDensityStep } from "@/features/settings/useSettingsStore";
 
 // ═════════════════════════════════════════════════════════
 // FILE TREE
@@ -739,7 +740,7 @@ export function PGHunk({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          height: 26,
+          height: "calc(26px + var(--row-step))",
           padding: "0 8px",
           background: "var(--bg-2)",
           fontFamily: "var(--font-mono)",
@@ -879,16 +880,25 @@ export interface GraphNode {
   merge?: boolean;
 }
 
+/**
+ * `height` is REQUIRED and must be the caller's actual row pitch in px.
+ *
+ * The lane geometry below is in SVG user units (`y2={height}`, bezier control
+ * points at `height / 2`), so it cannot read `--row-step` — a default here
+ * would silently draw at one pitch while density moved the rows to another,
+ * leaving lanes that don't meet between rows. Callers derive the number from
+ * `useDensityStep()`; see `PGCommitRow`.
+ */
 export function PGGraphRow({
   lanes = [],
   node,
   width = 140,
-  height = 26,
+  height,
 }: {
   lanes?: GraphLane[];
   node?: GraphNode;
   width?: number;
-  height?: number;
+  height: number;
 }) {
   return (
     <svg
@@ -1028,7 +1038,15 @@ export interface PGCommitRowProps {
   onClick?: (e: MouseEvent) => void;
   onContextMenu?: (e: MouseEvent) => void;
   tagged?: string;
+  /**
+   * Row height in px. Defaults to the density-derived height. Unlike every
+   * other row surface this can't be a `--row-h` calc: PGGraphRow draws lanes
+   * in SVG user units, so the row box and the gutter must share one NUMBER.
+   */
+  rowHeight?: number;
 }
+
+export const COMMIT_ROW_BASE_H = 26;
 
 export function PGCommitRow({
   lanes,
@@ -1042,8 +1060,11 @@ export function PGCommitRow({
   onClick,
   onContextMenu,
   tagged,
+  rowHeight,
 }: PGCommitRowProps) {
   const [hover, setHover] = React.useState(false);
+  const step = useDensityStep();
+  const h = rowHeight ?? COMMIT_ROW_BASE_H + step;
   return (
     <div
       data-testid="commit-row"
@@ -1058,7 +1079,7 @@ export function PGCommitRow({
         display: "grid",
         gridTemplateColumns: "140px 70px 1fr 150px 90px",
         alignItems: "center",
-        height: 26,
+        height: h,
         background: !selected && hover ? "var(--bg-2)" : undefined,
         fontFamily: "var(--font-mono)",
         fontSize: "var(--fs-12)",
@@ -1079,7 +1100,7 @@ export function PGCommitRow({
           }}
         />
       )}
-      <PGGraphRow lanes={lanes} node={node} />
+      <PGGraphRow lanes={lanes} node={node} height={h} />
       <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-11)" }}>{sha}</span>
       <div
         style={{
@@ -1347,7 +1368,7 @@ export function PGConflictRow({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "8px 10px 4px",
+          padding: "calc(8px + var(--row-step) / 2) 10px calc(4px + var(--row-step) / 2)",
         }}
       >
         {resolved ? (
@@ -1609,7 +1630,7 @@ export function PGRebaseRow({
         display: "flex",
         alignItems: "center",
         gap: 8,
-        padding: "6px 10px",
+        padding: "calc(6px + var(--row-step) / 2) 10px",
         background: dragging ? "var(--bg-3)" : "var(--bg-1)",
         border: "1px solid var(--border-0)",
         borderLeft: `3px solid ${current.color}`,
@@ -1737,7 +1758,7 @@ export function PGRemoteRow({
       onContextMenu={onContextMenu}
       data-remote={dataRemote}
       style={{
-        padding: 10,
+        padding: "calc(10px + var(--row-step) / 2) 10px",
         background: "var(--bg-1)",
         border: "1px solid var(--border-0)",
         borderRadius: "var(--r-3)",

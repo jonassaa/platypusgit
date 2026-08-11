@@ -163,7 +163,7 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
           display: "flex",
           alignItems: "center",
           gap: 6,
-          height: 26,
+          height: "calc(26px + var(--row-step))",
           padding: "0 10px",
           background: active ? "var(--bg-selection)" : "transparent",
           cursor: r.kind === "local" && r.isHead ? "default" : "pointer",

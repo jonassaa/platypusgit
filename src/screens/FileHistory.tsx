@@ -81,7 +81,7 @@ export function FileHistoryScreen() {
             style={{
               display: "flex",
               gap: 10,
-              padding: "6px 12px",
+              padding: "calc(6px + var(--row-step) / 2) 12px",
               borderBottom: "1px solid var(--border-0)",
               fontFamily: "var(--font-mono)",
               fontSize: "var(--fs-12)",

@@ -340,11 +340,47 @@ export function applyTheme(theme: ThemeDef) {
   root.dataset.themeMode = theme.mode;
 }
 
-/** Apply UI density by writing the row-height slot to CSS vars on :root. */
-export function applyDensity(density: "compact" | "comfortable") {
+/**
+ * Extra vertical pixels each row-ish surface adds for a given density.
+ *
+ * THE source of truth for the number. `index.css` declares `--row-step: 0px`
+ * as a pre-hydration default and derives every row token from it
+ * (`--row-h: calc(24px + var(--row-step))`, …); `applyDensity` overwrites the
+ * var from this table, so CSS never hardcodes the comfortable delta and cannot
+ * drift from the JS one. Compact is 0 by definition — comfortable is opt-in,
+ * and the default layout stays pixel-identical to the pre-density one.
+ */
+export const DENSITY_STEP_PX = { compact: 0, comfortable: 4 } as const;
+
+export type UiDensity = keyof typeof DENSITY_STEP_PX;
+
+/**
+ * Coerce a persisted density into a known one.
+ *
+ * `load()` copies any JSON value for a known key without validating it, so
+ * state can hold a density this build has never heard of — a hand-edited
+ * `pg-settings-v2`, or a value written by a newer build the user downgraded
+ * from. That must degrade to compact: an unknown key would otherwise emit
+ * `--row-step: undefinedpx`, and one invalid substitution makes every
+ * `calc(Npx + var(--row-step))` compute to `auto`, collapsing the height of
+ * every row in the app at once.
+ */
+function normalizeDensity(density: UiDensity): UiDensity {
+  return density in DENSITY_STEP_PX ? density : "compact";
+}
+
+/**
+ * Apply UI density by writing the row-step slot to CSS vars on :root.
+ *
+ * `data-density` is also set — a reserved hook for any future density rule
+ * that isn't a simple pixel delta. Nothing reads it today (it's asserted only
+ * in useSettingsStore.test.ts); drop it if that stays true.
+ */
+export function applyDensity(density: UiDensity) {
   const root = document.documentElement;
-  root.style.setProperty("--row-h", density === "comfortable" ? "28px" : "24px");
-  root.dataset.density = density;
+  const d = normalizeDensity(density);
+  root.style.setProperty("--row-step", `${DENSITY_STEP_PX[d]}px`);
+  root.dataset.density = d;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -707,4 +743,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   const active = findTheme(s, s.activeThemeId) ?? BUILTIN_THEMES[0];
   applyTheme(active);
   applyDensity(s.uiDensity);
+}
+
+/**
+ * The active density's pixel step, for surfaces that need the NUMBER rather
+ * than the `--row-step` CSS var — i.e. anything doing geometry math in JS.
+ * Prefer the CSS token everywhere it works; this exists for SVG user-unit
+ * drawing (see `PGGraphRow`), which a `calc()` cannot reach.
+ */
+export function useDensityStep(): number {
+  return DENSITY_STEP_PX[normalizeDensity(useSettingsStore((s) => s.uiDensity))];
 }

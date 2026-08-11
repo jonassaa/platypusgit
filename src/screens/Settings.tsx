@@ -11,6 +11,7 @@ import {
 } from "@/design";
 import {
   BUILTIN_THEMES,
+  DENSITY_STEP_PX,
   THEME_COLOR_FIELDS,
   applyTheme,
   useSettingsStore,
@@ -548,7 +549,7 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
 
       <Row
         label="UI density"
-        hint="Compact matches the dense IDE feel; comfortable adds padding."
+        hint={`Compact matches the dense IDE feel; comfortable gives every list row ${DENSITY_STEP_PX.comfortable}px more breathing room.`}
         control={
           <PGButtonGroup
             size="sm"
