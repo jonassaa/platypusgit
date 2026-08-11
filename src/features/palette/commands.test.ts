@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { buildCommands } from "./commands";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useCreateStore } from "@/features/create/useCreateStore";
 import { paletteInitial, usePaletteStore } from "./usePaletteStore";
 import type { BranchInfo, StashInfo } from "@/lib/types";
 
@@ -47,6 +48,24 @@ describe("buildCommands", () => {
     expect(byId.get("screen:settings")?.actionId).toBe("nav.settings");
     expect(byId.get("action:fetch-all")?.actionId).toBe("repo.fetch");
     expect(byId.get("action:refresh")?.actionId).toBe("repo.refresh");
+  });
+
+  it("includes clone/init rows wired to the keymap (chip derives live, not hardcoded)", () => {
+    const byId = new Map(buildCommands().map((i) => [i.id, i]));
+    expect(byId.get("action:clone")?.actionId).toBe("repo.clone");
+    expect(byId.get("action:init")?.actionId).toBe("repo.init");
+  });
+
+  it("action:clone opens the clone dialog; action:init opens the init dialog", () => {
+    useCreateStore.setState({ open: "none", busy: false, progress: null, error: null });
+    const byId = new Map(buildCommands().map((i) => [i.id, i]));
+
+    byId.get("action:clone")!.run();
+    expect(useCreateStore.getState().open).toBe("clone");
+
+    useCreateStore.setState({ open: "none", busy: false, progress: null, error: null });
+    byId.get("action:init")!.run();
+    expect(useCreateStore.getState().open).toBe("init");
   });
 
   it("links push/pull rows to repo actions when a branch is current", () => {

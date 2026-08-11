@@ -37,6 +37,31 @@ describe.each(BUILTIN_PRESETS.map((p) => [p.name, p] as const))(
         ).toBeLessThanOrEqual(1);
       }
     });
+
+    // No new Mod+Alt+<letter> chords: on Windows, Ctrl+Alt = AltGr, which
+    // types characters on many European layouts (e.g. AltGr+N -> "ń" on
+    // Polish) — and useKeymapStore's hasRealModifier() treats any chord
+    // containing "+Alt+" as a real modifier, so it still dispatches while
+    // typing in an input/textarea, silently eating the character. Rule
+    // documented in docs/superpowers/specs/2026-07-02-keyboard-navigation-v2-design.md:85-88
+    // and docs/superpowers/specs/2026-07-06-keymap-power-shortcuts-design.md:58-59.
+    // Mod+Alt+Y (repo.refresh) is the one grandfathered exception, vetted in
+    // both specs because Y has no common AltGr assignment — allowlisted below
+    // rather than exempted silently, so a new Mod+Alt+<letter> still fails.
+    it("adds no new Mod+Alt+<letter> chords (AltGr on Windows) beyond the grandfathered Mod+Alt+Y", () => {
+      const ALTGR_ALLOWLIST = new Set(["Mod+Alt+Y"]);
+      for (const [id, chords] of Object.entries(preset.bindings)) {
+        for (const chord of chords ?? []) {
+          if (/^Mod\+Alt\+[A-Za-z]$/.test(chord) && !ALTGR_ALLOWLIST.has(chord)) {
+            expect.fail(
+              `${id} binds ${chord}, a new Mod+Alt+<letter> chord — forbidden ` +
+                `(AltGr on Windows types characters on many European layouts; ` +
+                `see the two keymap specs cited above the allowlist).`,
+            );
+          }
+        }
+      }
+    });
   },
 );
 

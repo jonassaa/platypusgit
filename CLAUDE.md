@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-10-clone-init-*` — clone (streaming progress) + init repository (#61 D3/D4).
 - `2026-07-07-merge-resolver-window-*` — Rider-style separate merge window (#25 pt 2); per-conflict keyboard side selection, editable CM6 result pane.
 - `2026-07-07-cli-launch-*` — `pgit` CLI launch, single-instance forwarding, shim install (#25).
 - `2026-07-06-keymap-power-shortcuts-*` — speed-search, commit chords, F7 hunk nav.
@@ -213,7 +214,9 @@ commands/        Thin Tauri handlers, one file per area:
 │                  save_resolution, abort/continue_operation, run_mergetool,
 │                  restart_conflict
 ├── rebase.rs      rebase_start/continue/abort/status (interactive)
-└── reflog.rs      get_reflog, checkout_detached
+├── reflog.rs      get_reflog, checkout_detached
+└── create.rs      init_repo, default_init_branch, clone_repo (streaming
+                   git clone → clone://progress events)
 ```
 
 ### Frontend (`src/`)
@@ -234,6 +237,7 @@ design/              In-house design system (NOT components/ui/). Exports via de
 ├── dialog.tsx           PGDialogHost + pgConfirm/pgPrompt — the ONLY confirm /
 │                        prompt path (no window.confirm/prompt anywhere)
 ├── empty-state.tsx      Empty-state component
+├── modal.tsx            PGModal — shared dialog shell
 ├── resizable.tsx        Resizable panes
 ├── ui-helpers.tsx       pgFlash, misc helpers
 └── use-prevent-browser-context-menu.ts
@@ -274,6 +278,9 @@ features/            Per-feature: components + Zustand store colocated
 │                    semver.ts (§11 precedence, hand-rolled + tested),
 │                    UpdateChip (titlebar), UpdatePanel (Escape via the
 │                    keymap's app.closeOverlay, not a local listener)
+├── create/          Clone + Init dialogs (PGModal), useCreateStore,
+│                    deriveRepoName. Clone shells out to real git with the
+│                    same prompt-less env as fetch/pull/push.
 ├── diff/            CommitDiffPanel (shared commit-diff view) + WhitespaceToggle
 │                    (ignore-whitespace control; also owns
 │                    useHunkActionsDisabledReason — hunk staging is disabled

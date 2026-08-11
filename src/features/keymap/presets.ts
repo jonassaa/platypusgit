@@ -37,6 +37,11 @@ const POWER_SHORTCUTS = {
 const COMMON = {
   // Open repository (the status bar advertises ⌘O). Same chord both presets.
   "repo.open": ["Mod+O"],
+  "repo.clone": ["Mod+Shift+O"],
+  // Mod+N is new branch; Mod+Shift+N mirrors Mod+O/Mod+Shift+O open/clone.
+  // NOT Mod+Alt+N — AltGr on Windows (see the no-new-Mod+Alt+letter rule in
+  // presets.test.ts and the two specs it cites).
+  "repo.init": ["Mod+Shift+N"],
   "app.closeOverlay": ["Escape"],
   "pane.focusLeft": ["Alt+ArrowLeft"],
   "pane.focusRight": ["Alt+ArrowRight"],

@@ -31,6 +31,9 @@ impl GitBackend for CliBackend {
     fn open(&self, _path: &Path) -> AppResult<RepoHandle> {
         Err(AppError::NotImplemented)
     }
+    fn init(&self, _path: &Path, _initial_branch: Option<&str>) -> AppResult<RepoHandle> {
+        Err(AppError::NotImplemented)
+    }
     fn status(&self, _repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
         Err(AppError::NotImplemented)
     }

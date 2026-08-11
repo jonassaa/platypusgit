@@ -1,5 +1,5 @@
 import React from "react";
-import { PGButton, PGCheckbox, PGInput } from "@/design";
+import { PGButton, PGCheckbox, PGInput, PGModal } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import type { ReflogActionChoice } from "./useReflogStore";
 import { useReflogStore } from "./useReflogStore";
@@ -36,7 +36,7 @@ export function ReflogActionDialog({ entry, onResolve, onCancel }: Props) {
   }
 
   return (
-    <ModalShell onCancel={onCancel}>
+    <PGModal onCancel={onCancel}>
       <div style={{ fontWeight: 600, marginBottom: 10 }}>
         Go to{" "}
         <span style={{ fontFamily: "var(--font-mono)" }}>{entry.shortOid}</span>
@@ -101,7 +101,7 @@ export function ReflogActionDialog({ entry, onResolve, onCancel }: Props) {
           Go
         </PGButton>
       </div>
-    </ModalShell>
+    </PGModal>
   );
 }
 
@@ -148,46 +148,5 @@ function Option({
         {desc}
       </div>
     </label>
-  );
-}
-
-function ModalShell({
-  children,
-  onCancel,
-}: {
-  children: React.ReactNode;
-  onCancel: () => void;
-}) {
-  return (
-    <div
-      role="dialog"
-      aria-modal
-      onClick={(e) => {
-        if (e.currentTarget === e.target) onCancel();
-      }}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "oklch(0 0 0 / 0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 100,
-      }}
-    >
-      <div
-        style={{
-          background: "var(--bg-0)",
-          color: "var(--fg-0)",
-          border: "1px solid var(--border-0)",
-          borderRadius: 6,
-          padding: 16,
-          width: 480,
-          maxWidth: "90vw",
-        }}
-      >
-        {children}
-      </div>
-    </div>
   );
 }

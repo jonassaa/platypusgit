@@ -44,6 +44,8 @@ import {
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { BranchChip } from "@/features/branches/BranchChip";
+import { CloneDialog } from "@/features/create/CloneDialog";
+import { InitDialog } from "@/features/create/InitDialog";
 import { UpdateChip } from "@/features/update/UpdateChip";
 import { UpdatePanel } from "@/features/update/UpdatePanel";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
@@ -256,6 +258,8 @@ export function AppShell() {
       <PGDialogHost />
       <UpdatePanel />
       <CheatSheet />
+      <CloneDialog />
+      <InitDialog />
       {error && (
         <div
           role="alert"

@@ -3,8 +3,9 @@
 // with every unstaged/staged path.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { stageAllOp, unstageAllOp } from "./ops";
+import { cloneRepoOp, initRepoOp, stageAllOp, unstageAllOp } from "./ops";
 import { useRepoStore } from "./useRepoStore";
+import { useCreateStore } from "@/features/create/useCreateStore";
 import type { FileStatus } from "@/lib/types";
 
 const staged = (path: string): FileStatus => ({
@@ -93,5 +94,31 @@ describe("stageAllOp / unstageAllOp", () => {
     expect(unstageAllOp()).toBe(false);
     expect(stageCalls).toEqual([]);
     expect(unstageCalls).toEqual([]);
+  });
+});
+
+describe("cloneRepoOp / initRepoOp", () => {
+  beforeEach(() => {
+    useCreateStore.setState({ open: "none", busy: false, progress: null, error: null });
+  });
+
+  // The action-catalog test only asserts `run` is *a function* — it can't
+  // catch a runner wired to the wrong dialog (e.g. cloneRepoOp calling
+  // openInit()). Assert the actual store field each runner flips.
+  it("cloneRepoOp opens the clone dialog and claims the chord", () => {
+    expect(cloneRepoOp()).toBe(true);
+    expect(useCreateStore.getState().open).toBe("clone");
+  });
+
+  it("initRepoOp opens the init dialog and claims the chord", () => {
+    expect(initRepoOp()).toBe(true);
+    expect(useCreateStore.getState().open).toBe("init");
+  });
+
+  it("each runner opens only its own dialog, not the other", () => {
+    cloneRepoOp();
+    expect(useCreateStore.getState().open).toBe("clone");
+    initRepoOp();
+    expect(useCreateStore.getState().open).toBe("init");
   });
 });

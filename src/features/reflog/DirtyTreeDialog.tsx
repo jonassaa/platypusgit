@@ -1,5 +1,5 @@
 import React from "react";
-import { PGButton } from "@/design";
+import { PGButton, PGModal } from "@/design";
 
 export type DirtyChoice = "stash" | "commit-first" | "discard" | "cancel";
 
@@ -10,7 +10,7 @@ interface Props {
 export function DirtyTreeDialog({ onResolve }: Props) {
   const [confirmingDiscard, setConfirmingDiscard] = React.useState(false);
   return (
-    <Shell onCancel={() => onResolve("cancel")}>
+    <PGModal onCancel={() => onResolve("cancel")} width={420}>
       <div style={{ fontWeight: 600, marginBottom: 6 }}>
         You have uncommitted changes.
       </div>
@@ -44,47 +44,6 @@ export function DirtyTreeDialog({ onResolve }: Props) {
           Cancel
         </PGButton>
       </div>
-    </Shell>
-  );
-}
-
-function Shell({
-  children,
-  onCancel,
-}: {
-  children: React.ReactNode;
-  onCancel: () => void;
-}) {
-  return (
-    <div
-      role="dialog"
-      aria-modal
-      onClick={(e) => {
-        if (e.currentTarget === e.target) onCancel();
-      }}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "oklch(0 0 0 / 0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 101,
-      }}
-    >
-      <div
-        style={{
-          background: "var(--bg-0)",
-          color: "var(--fg-0)",
-          border: "1px solid var(--border-0)",
-          borderRadius: 6,
-          padding: 16,
-          width: 420,
-          maxWidth: "90vw",
-        }}
-      >
-        {children}
-      </div>
-    </div>
+    </PGModal>
   );
 }

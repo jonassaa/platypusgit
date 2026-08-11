@@ -623,3 +623,33 @@ export function getUpdateCapability(): Promise<UpdateCapability> {
 export function openUrl(url: string): Promise<void> {
   return invoke("open_url", { url });
 }
+
+export async function initRepo(
+  path: string,
+  initialBranch?: string,
+): Promise<RepoHandle> {
+  return invoke<RepoHandle>("init_repo", { path, initialBranch });
+}
+
+export async function defaultInitBranch(): Promise<string> {
+  return invoke<string>("default_init_branch");
+}
+
+/**
+ * Clone `url` into `parentDir/name`, resolving with the destination path.
+ * Progress arrives out of band on the `clone://progress` event — listen before
+ * calling, since the first tick can land before this promise settles.
+ */
+export async function cloneRepo(
+  url: string,
+  parentDir: string,
+  name: string,
+  recurseSubmodules: boolean,
+): Promise<string> {
+  return invoke<string>("clone_repo", {
+    url,
+    parentDir,
+    name,
+    recurseSubmodules,
+  });
+}

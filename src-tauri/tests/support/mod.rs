@@ -185,7 +185,15 @@ impl BareTempRepo {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().to_path_buf();
-        Repository::init_bare(&path).expect("init bare");
+        let repo = Repository::init_bare(&path).expect("init bare");
+        // `init_bare` always falls back to libgit2's built-in "master"
+        // default, ignoring ambient init.defaultBranch config (system
+        // gitconfig included) — unlike the real `git` CLI, which on this
+        // machine resolves to "main". Pin HEAD here so every test that
+        // clones/pushes/fetches against a bare fixture sees a "main" HEAD
+        // regardless of the host's config, instead of each caller working
+        // around it individually.
+        repo.set_head("refs/heads/main").expect("set bare HEAD to main");
         BareTempRepo { dir, path }
     }
 }

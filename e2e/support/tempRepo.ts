@@ -157,6 +157,43 @@ export function rebaseConflictRepo(): TempRepo {
   // pick's result) to actually diverge.
 }
 
+/** A bare repository with real commits, for driving the clone path against
+ *  local disk only — no network, no credentials, no flake.
+ *
+ *  Distinct from `remoteRepo()` below: that pairs a *work* repo with a bare
+ *  `origin` for fetch/push/pull coverage. This helper is for tests that only
+ *  want something to `clone_repo` FROM — no local remote-tracking wiring, no
+ *  work repo left behind.
+ *
+ *  Pins the bare repo's HEAD to `main` explicitly (`git init --bare -b
+ *  main`, mirroring `TempRepo`'s own `git init -b main`). Don't drop `-b
+ *  main`: a bare repo's default HEAD branch otherwise comes from whatever
+ *  `init.defaultBranch` / system gitconfig happens to be in scope for
+ *  whoever runs the suite — this machine's Xcode system gitconfig resolves
+ *  `main`, but that's environment-dependent, and a bare repo whose HEAD
+ *  points at a branch nothing was ever pushed to is a dangling symref:
+ *  libgit2's clone follows it into an empty checkout with no error (the same
+ *  trap Task 4's Rust tests hit against a libgit2-inited bare repo, which
+ *  defaults to `master`). */
+export interface BareRepo {
+  readonly path: string;
+  dispose: () => void;
+}
+
+export function bareSourceRepo(): BareRepo {
+  const seed = basicRepo();
+  const barePath = mkdtempSync(path.join(tmpdir(), "pg-e2e-bare-src-"));
+  execFileSync("git", ["init", "--bare", "-b", "main", barePath]);
+  execFileSync("git", ["push", barePath, "HEAD:refs/heads/main"], {
+    cwd: seed.path,
+  });
+  seed.dispose();
+  return {
+    path: barePath,
+    dispose: () => rmSync(barePath, { recursive: true, force: true }),
+  };
+}
+
 /** Work repo + local bare repo wired as `origin` with upstream set.
  *  No network, no credentials: the backend shells to the system git CLI,
  *  which handles filesystem-path remotes natively. */
