@@ -14,6 +14,10 @@ import {
   PGToolbar,
   commitMenuItems,
   commitMultiMenuItems,
+  commitRowGrid,
+  graphWidth,
+  isGraphClamped,
+  maxVisibleCol,
   pgConfirm,
   pgFlash,
   pgPrompt,
@@ -170,7 +174,22 @@ export function HistoryScreen() {
     return list;
   }, [baseCommits, filterKind, myEmail, hideMerges, aheadCount]);
 
-  const rows = React.useMemo(() => layoutGraph(visible), [visible]);
+  // Ancestry pool for parent rewriting. The UNION matters: `searchResults` has
+  // no intervening commits by construction, and `commits` may not reach as deep
+  // as a narrow filter's oldest hit, so each supplies links the other lacks.
+  const ancestry = React.useMemo(
+    () => (searchResults ? [...commits, ...searchResults] : commits),
+    [commits, searchResults],
+  );
+
+  const { rows, maxCol } = React.useMemo(
+    () => layoutGraph(visible, { ancestry }),
+    [visible, ancestry],
+  );
+
+  const graphW = graphWidth(maxCol);
+  const graphClamped = isGraphClamped(maxCol);
+  const hiddenLanes = graphClamped ? maxCol - maxVisibleCol() : 0;
 
   // Visible row order (oids) — the axis shift-ranges and pruning work over.
   const order = React.useMemo(() => visible.map((c) => c.oid), [visible]);
@@ -399,9 +418,10 @@ export function HistoryScreen() {
       }}
     >
       <div
+        data-testid="commit-header"
         style={{
           display: "grid",
-          gridTemplateColumns: "140px 70px 1fr 150px 90px",
+          gridTemplateColumns: commitRowGrid(graphW),
           height: "calc(24px + var(--row-step))",
           background: "var(--bg-2)",
           borderBottom: "1px solid var(--border-0)",
@@ -413,7 +433,12 @@ export function HistoryScreen() {
           alignItems: "center",
         }}
       >
-        <span style={{ paddingLeft: 12 }}>GRAPH</span>
+        {/* The count of lanes that did not fit belongs here, in text: the
+            gutter is a decorative graphic, and Phase 3 (G8) marks it
+            aria-hidden, so a fade alone would state this nowhere. */}
+        <span style={{ paddingLeft: 12 }}>
+          {hiddenLanes > 0 ? `GRAPH +${hiddenLanes}` : "GRAPH"}
+        </span>
         <span>SHA</span>
         <span>SUBJECT</span>
         <span>AUTHOR</span>
@@ -444,6 +469,8 @@ export function HistoryScreen() {
           return (
             <PGCommitRow
               key={c.oid}
+              graphW={graphW}
+              clamped={graphClamped}
               lanes={g?.lanes}
               node={g?.node}
               sha={c.shortOid}
@@ -872,6 +899,7 @@ function HistoryToolbarLeft(props: HistoryToolbarLeftProps) {
         placeholder="Search message, author, sha, path… (e.g. author:bob)"
         shortcut="⌘F"
         style={{ width: 340 }}
+        testId="history-search"
       />
       <PGIconButton
         icon="sort"

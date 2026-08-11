@@ -328,6 +328,13 @@ export interface PGSearchInputProps {
   shortcut?: string;
   style?: CSSProperties;
   inputRef?: React.Ref<HTMLInputElement>;
+  /**
+   * Forwarded to the inner input as `data-testid`. This component has a closed
+   * prop list (it wraps PGInput rather than spreading onto a DOM node), so a
+   * bare `data-testid` would not reach the element — same convention as
+   * FocusableScroll.
+   */
+  testId?: string;
 }
 
 export function PGSearchInput({
@@ -337,6 +344,7 @@ export function PGSearchInput({
   shortcut,
   style,
   inputRef,
+  testId,
 }: PGSearchInputProps) {
   return (
     <div style={{ position: "relative", width: "100%", ...style }}>
@@ -346,6 +354,7 @@ export function PGSearchInput({
         onChange={onChange}
         placeholder={placeholder}
         icon="search"
+        data-testid={testId}
         style={{
           width: "100%",
           paddingRight: shortcut ? 48 : undefined,

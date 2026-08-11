@@ -12,6 +12,7 @@ import {
   type GraphLane,
   type GraphNode,
 } from "./git-components";
+import { graphWidth } from "./graph-geometry";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 
 const lanes: GraphLane[] = [{ col: 0, color: "red", kind: "line" }];
@@ -20,6 +21,7 @@ const node: GraphNode = { col: 0, color: "red" };
 function renderCommitRow() {
   const { container } = render(
     <PGCommitRow
+      graphW={graphWidth(0)}
       lanes={lanes}
       node={node}
       sha="abc1234"
@@ -73,6 +75,7 @@ describe("PGCommitRow density", () => {
   it("lets an explicit rowHeight override the density-derived height", () => {
     const { container } = render(
       <PGCommitRow
+        graphW={graphWidth(0)}
         lanes={lanes}
         node={node}
         sha="abc1234"

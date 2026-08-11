@@ -23,7 +23,7 @@ function c(oid: string, parents: string[] = []): CommitInfo {
 describe("layoutGraph", () => {
   it("linear history: single lane, straight line", () => {
     // A → B → C (newest first, as git log returns)
-    const rows = layoutGraph([c("A", ["B"]), c("B", ["C"]), c("C", [])]);
+    const { rows } = layoutGraph([c("A", ["B"]), c("B", ["C"]), c("C", [])]);
 
     expect(rows).toHaveLength(3);
 
@@ -56,7 +56,7 @@ describe("layoutGraph", () => {
     //   T (main commit between branch-point and merge, child of R)
     //   R (branch point, parent of both T and F)
     //   I (initial, parent of R)
-    const rows = layoutGraph([
+    const { rows } = layoutGraph([
       c("M", ["T", "F"]),
       c("F", ["R"]),
       c("T", ["R"]),
@@ -95,7 +95,7 @@ describe("layoutGraph", () => {
     //   P2
     //   P1
     //   G (grandparent, common ancestor — parent of P1/P2/P3)
-    const rows = layoutGraph([
+    const { rows } = layoutGraph([
       c("O", ["P1", "P2", "P3"]),
       c("P3", ["G"]),
       c("P2", ["G"]),
@@ -121,7 +121,7 @@ describe("layoutGraph", () => {
     // Two totally independent histories visible in the same window:
     //   B2 → B1 (branch B, initial)
     //   A2 → A1 (branch A, initial)
-    const rows = layoutGraph([
+    const { rows } = layoutGraph([
       c("B2", ["B1"]),
       c("B1", []),
       c("A2", ["A1"]),
@@ -146,7 +146,7 @@ describe("layoutGraph", () => {
     //   C (child of P)
     //   P (child of R) — parent of both C and D, NOT itself a merge
     //   R ()
-    const rows = layoutGraph([
+    const { rows } = layoutGraph([
       c("M", ["C", "D"]),
       c("D", ["P"]),
       c("C", ["P"]),
@@ -161,5 +161,133 @@ describe("layoutGraph", () => {
     expect(pMergeTops).toHaveLength(1);
     // The collapsing lane points to P's node column
     expect(pMergeTops[0]!.to).toBe(rows[3]!.node.col);
+  });
+
+  it("reports maxCol 0 for a single-lane linear history", () => {
+    const { rows, maxCol } = layoutGraph([c("A", ["B"]), c("B", ["C"]), c("C", [])]);
+    expect(rows).toHaveLength(3);
+    expect(maxCol).toBe(0);
+  });
+
+  it("reports maxCol across every lane and node in the layout", () => {
+    // M forks a second lane out to col 1.
+    const { maxCol } = layoutGraph([
+      c("M", ["T", "F"]),
+      c("F", ["R"]),
+      c("T", ["R"]),
+      c("R", ["I"]),
+      c("I", []),
+    ]);
+    expect(maxCol).toBe(1);
+  });
+
+  // THE G1 INPUT. The old gutter was a fixed 140px, which fits columns 0-7.
+  // A 10-way octopus needs col 9, and the caller can only size for it if the
+  // layout reports it.
+  it("reports a lane count past the old fixed-width gutter", () => {
+    const parents = Array.from({ length: 10 }, (_, i) => `P${i}`);
+    const { maxCol } = layoutGraph([
+      c("O", parents),
+      ...parents.map((p) => c(p, ["G"])),
+      c("G", []),
+    ]);
+    expect(maxCol).toBe(9);
+    expect(maxCol).toBeGreaterThan(7);
+  });
+
+  // THE REPORTED BUG (#68 G2). Two search hits on one branch must stay in the
+  // same lane, joined by a dashed segment — not split into unrelated lanes,
+  // and not trailing a phantom lane to the bottom of the log.
+  it("keeps two same-branch hits in ONE dashed lane", () => {
+    const all = [c("A", ["B"]), c("B", ["C"]), c("C", ["D"]), c("D", [])];
+    const visible = [c("A", ["B"]), c("D", [])];
+    const { rows, maxCol } = layoutGraph(visible, { ancestry: all });
+
+    // One lane, not two.
+    expect(maxCol).toBe(0);
+    expect(rows[0]!.node.col).toBe(0);
+    expect(rows[1]!.node.col).toBe(0);
+
+    // A's outgoing segment is dashed — history elided here.
+    const aBot = rows[0]!.lanes.find((l) => l.kind === "half-bot");
+    expect(aBot).toBeDefined();
+    expect(aBot!.dashed).toBe(true);
+
+    // D receives that dashed segment and, being a root, ends the lane.
+    const dTop = rows[1]!.lanes.find((l) => l.kind === "half-top");
+    expect(dTop!.dashed).toBe(true);
+    expect(rows[1]!.lanes.some((l) => l.kind === "half-bot")).toBe(false);
+    expect(rows[1]!.node.truncated).toBeFalsy();
+  });
+
+  it("marks a pass-through row of an elided lane dashed too", () => {
+    // Visible: A, X, D. A's parent chain to D is elided; X is an unrelated
+    // root on its own lane, so A's dashed lane passes THROUGH X's row.
+    const all = [c("A", ["B"]), c("B", ["D"]), c("X", []), c("D", [])];
+    const visible = [c("A", ["B"]), c("X", []), c("D", [])];
+    const { rows } = layoutGraph(visible, { ancestry: all });
+
+    const passThrough = rows[1]!.lanes.find((l) => l.kind === "line");
+    expect(passThrough).toBeDefined();
+    expect(passThrough!.dashed).toBe(true);
+  });
+
+  // THE PHANTOM LANE. A hit whose ancestors are all gone must END, freeing the
+  // column, instead of drawing an edge to a commit that never appears.
+  it("ends a lane whose parent resolves to nothing, and frees the slot", () => {
+    const all = [c("A", ["B"]), c("B", ["C"]), c("C", [])];
+    const visible = [c("A", ["B"]), c("Z", [])];
+    const { rows, maxCol } = layoutGraph(visible, { ancestry: all });
+
+    // A has a true parent but no visible ancestor → truncated, lane ends.
+    expect(rows[0]!.node.truncated).toBe(true);
+    expect(rows[0]!.lanes.some((l) => l.kind === "half-bot")).toBe(false);
+
+    // The freed column is reused by the next unrelated commit.
+    expect(rows[1]!.node.col).toBe(0);
+    expect(maxCol).toBe(0);
+  });
+
+  it("distinguishes a true root from a truncated link", () => {
+    const { rows } = layoutGraph([c("R", [])]);
+    expect(rows[0]!.node.truncated).toBeFalsy();
+    expect(rows[0]!.node.solid).toBe(true);
+  });
+
+  it("keeps node.merge true when both parents rewrite to one ancestor", () => {
+    const all = [c("M", ["T", "F"]), c("T", ["P"]), c("F", ["P"]), c("P", [])];
+    const visible = [c("M", ["T", "F"]), c("P", [])];
+    const { rows, maxCol } = layoutGraph(visible, { ancestry: all });
+
+    // Still a merge commit...
+    expect(rows[0]!.node.merge).toBe(true);
+    expect(rows[0]!.node.solid).toBe(false);
+    // ...but the deduped link opens no second lane.
+    expect(maxCol).toBe(0);
+    expect(rows[0]!.lanes.some((l) => l.kind === "fork-bot")).toBe(false);
+  });
+
+  it("rewrites both sides of a merge onto their nearest visible ancestors", () => {
+    const all = [
+      c("M", ["T", "F"]),
+      c("T", ["TT"]),
+      c("F", ["FF"]),
+      c("TT", []),
+      c("FF", []),
+    ];
+    const visible = [c("M", ["T", "F"]), c("TT", []), c("FF", [])];
+    const { rows } = layoutGraph(visible, { ancestry: all });
+
+    const forks = rows[0]!.lanes.filter((l) => l.kind === "fork-bot");
+    expect(forks).toHaveLength(1);
+    expect(forks[0]!.dashed).toBe(true);
+  });
+
+  it("lays out identically to before when ancestry is omitted", () => {
+    const commits = [c("A", ["B"]), c("B", ["C"]), c("C", [])];
+    const withOpts = layoutGraph(commits, {});
+    const without = layoutGraph(commits);
+    expect(withOpts).toEqual(without);
+    expect(without.rows.every((r) => r.lanes.every((l) => !l.dashed))).toBe(true);
   });
 });

@@ -18,6 +18,29 @@ pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc EXCLU
 
 **Stale-binary trap:** `test:e2e:run` tests whatever binary is in `e2e/.bin/`. A green run after touching `src/` proves nothing unless a full `test:e2e` ran after the change. Plain `cargo build` silently rewrites `target/debug/platypusgit` WITHOUT `custom-protocol` (blank window) — that's why the snapshot exists. Close any running dev app first: debug builds all serve WebDriver on port 4445 and the runner may attach to the dev instance and clear its localStorage.
 
+**Wrong-binary trap — NATIVE runs collide across worktrees.** Port 4445 is a
+HOST port for native runs, so if any other worktree has an e2e binary running,
+your runner attaches to **that** binary — a different checkout of the code. The
+failure is maximally confusing: the app responds, IPC works, fixtures load, and
+unrelated specs *pass*, because they pass against someone else's build. Only an
+assertion touching your actual change fails.
+
+Diagnose it in one shot — dump the served bundle and compare to your `dist/`:
+
+```ts
+await browser.execute(() =>
+  [...document.querySelectorAll("script[src]")].map((s) => (s as HTMLScriptElement).src));
+// tauri://localhost/assets/index-<hash>.js  ← must match your dist/assets/
+```
+
+A hash that isn't in your own `dist/assets/` means you are driving another
+worktree's app. Confirm with `ps aux | grep platypusgit` (the path names the
+worktree). **Do not kill it** — with several agents active it is another
+session's run. Use `pnpm test:e2e:docker` instead: compose derives a
+per-worktree project name and keeps 4445 inside the container, so concurrent
+worktrees never collide. This is the operational reason the Docker path exists,
+beyond headlessness.
+
 ## Suite-speed guards (wdio.conf.ts `before` hook — don't remove)
 
 Two conf-level guards eliminate the historical "suite suddenly takes minutes" flakes. Both live in the `before` hook; removing either brings a stall class back:

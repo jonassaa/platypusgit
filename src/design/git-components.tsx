@@ -13,6 +13,7 @@ import {
 } from "./primitives";
 import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
+import { commitRowGrid, laneX } from "./graph-geometry";
 
 // ═════════════════════════════════════════════════════════
 // FILE TREE
@@ -881,11 +882,21 @@ export function PGSideBySideDiff({
 // GRAPH + COMMIT ROW
 // ═════════════════════════════════════════════════════════
 
+/** Dash pattern for an elided link — visibly broken at a 1.5px stroke. */
+const ELIDED_DASH = "3 3";
+
 export interface GraphLane {
   col: number;
   color: string;
-  kind: "line" | "diag" | "half-top" | "half-bot" | "fork-bot" | "merge-top";
+  kind: "line" | "half-top" | "half-bot" | "fork-bot" | "merge-top";
   to?: number;
+  /**
+   * The link this lane segment belongs to skipped at least one commit — a
+   * filter or the log window removed the commits in between. Rendered dashed.
+   * A flag rather than a lane kind because an elided link must render as a
+   * straight run, a half-lane, AND a curve depending on the row.
+   */
+  dashed?: boolean;
 }
 
 export interface GraphNode {
@@ -893,6 +904,12 @@ export interface GraphNode {
   color: string;
   solid?: boolean;
   merge?: boolean;
+  /**
+   * The commit has parents, but none of them resolve to anything in the loaded
+   * window — so the lane ends here with a stub rather than running to the
+   * bottom of the log. Distinct from a true root, which has no parents at all.
+   */
+  truncated?: boolean;
 }
 
 /**
@@ -903,17 +920,25 @@ export interface GraphNode {
  * would silently draw at one pitch while density moved the rows to another,
  * leaving lanes that don't meet between rows. Callers derive the number from
  * `useDensityStep()`; see `PGCommitRow`.
+ *
+ * `width` is REQUIRED for the same reason of principle: it must come from
+ * `graphWidth(maxCol)`. The old `width = 140` default is exactly what let lanes
+ * in column 9 and beyond fall outside the SVG viewport and vanish, node dot
+ * included, with no overflow and no warning (#68 G1).
  */
 export function PGGraphRow({
   lanes = [],
   node,
-  width = 140,
+  width,
   height,
+  clamped,
 }: {
   lanes?: GraphLane[];
   node?: GraphNode;
-  width?: number;
+  width: number;
   height: number;
+  /** Lane count exceeds what the clamped width can show — fade the right edge. */
+  clamped?: boolean;
 }) {
   return (
     <svg
@@ -922,29 +947,21 @@ export function PGGraphRow({
       style={{ flexShrink: 0, display: "block" }}
     >
       {lanes.map((ln, i) => {
-        const x = 12 + ln.col * 16;
+        const x = laneX(ln.col);
+        // An elided link is dashed on every kind it can appear as.
+        const dash = ln.dashed ? ELIDED_DASH : undefined;
         if (ln.kind === "line") {
           return (
             <line
               key={i}
+              data-lane-kind={ln.kind}
               x1={x}
               x2={x}
               y1={0}
               y2={height}
               stroke={ln.color}
               strokeWidth="1.5"
-            />
-          );
-        }
-        if (ln.kind === "diag") {
-          const x2 = 12 + (ln.to ?? ln.col + 1) * 16;
-          return (
-            <path
-              key={i}
-              d={`M ${x} 0 C ${x} ${height / 2}, ${x2} ${height / 2}, ${x2} ${height}`}
-              stroke={ln.color}
-              strokeWidth="1.5"
-              fill="none"
+              strokeDasharray={dash}
             />
           );
         }
@@ -952,12 +969,14 @@ export function PGGraphRow({
           return (
             <line
               key={i}
+              data-lane-kind={ln.kind}
               x1={x}
               x2={x}
               y1={0}
               y2={height / 2}
               stroke={ln.color}
               strokeWidth="1.5"
+              strokeDasharray={dash}
             />
           );
         }
@@ -965,35 +984,41 @@ export function PGGraphRow({
           return (
             <line
               key={i}
+              data-lane-kind={ln.kind}
               x1={x}
               x2={x}
               y1={height / 2}
               y2={height}
               stroke={ln.color}
               strokeWidth="1.5"
+              strokeDasharray={dash}
             />
           );
         }
         if (ln.kind === "fork-bot") {
-          const x2 = 12 + (ln.to ?? ln.col + 1) * 16;
+          const x2 = laneX(ln.to ?? ln.col + 1);
           return (
             <path
               key={i}
+              data-lane-kind={ln.kind}
               d={`M ${x} ${height / 2} C ${x} ${height * 0.75}, ${x2} ${height * 0.75}, ${x2} ${height}`}
               stroke={ln.color}
               strokeWidth="1.5"
+              strokeDasharray={dash}
               fill="none"
             />
           );
         }
         if (ln.kind === "merge-top") {
-          const x2 = 12 + (ln.to ?? ln.col + 1) * 16;
+          const x2 = laneX(ln.to ?? ln.col + 1);
           return (
             <path
               key={i}
+              data-lane-kind={ln.kind}
               d={`M ${x} 0 C ${x} ${height * 0.25}, ${x2} ${height * 0.25}, ${x2} ${height / 2}`}
               stroke={ln.color}
               strokeWidth="1.5"
+              strokeDasharray={dash}
               fill="none"
             />
           );
@@ -1003,7 +1028,7 @@ export function PGGraphRow({
       {node && (
         <>
           <circle
-            cx={12 + node.col * 16}
+            cx={laneX(node.col)}
             cy={height / 2}
             r="4"
             fill="var(--bg-0)"
@@ -1011,16 +1036,11 @@ export function PGGraphRow({
             strokeWidth="1.5"
           />
           {node.solid && (
-            <circle
-              cx={12 + node.col * 16}
-              cy={height / 2}
-              r="2.5"
-              fill={node.color}
-            />
+            <circle cx={laneX(node.col)} cy={height / 2} r="2.5" fill={node.color} />
           )}
           {node.merge && (
             <circle
-              cx={12 + node.col * 16}
+              cx={laneX(node.col)}
               cy={height / 2}
               r="4"
               fill={node.color}
@@ -1028,6 +1048,41 @@ export function PGGraphRow({
               strokeWidth="1.5"
             />
           )}
+          {/* Parents exist but none survive in the loaded window: stop with a
+              short dashed tick instead of a lane running off the bottom. */}
+          {node.truncated && (
+            <line
+              data-graph-stub="true"
+              x1={laneX(node.col)}
+              x2={laneX(node.col)}
+              y1={height / 2 + 6}
+              y2={height / 2 + 11}
+              stroke={node.color}
+              strokeWidth="1.5"
+              strokeDasharray="2 2"
+            />
+          )}
+        </>
+      )}
+      {/* More lanes exist than the clamped width can show. Fade the right edge
+          so the cut reads as deliberate; the count of hidden lanes goes in the
+          GRAPH column header, where a screen reader can reach it. */}
+      {clamped && (
+        <>
+          <defs>
+            <linearGradient id="pg-graph-clip-fade" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0%" stopColor="var(--bg-0)" stopOpacity="0" />
+              <stop offset="100%" stopColor="var(--bg-0)" stopOpacity="1" />
+            </linearGradient>
+          </defs>
+          <rect
+            data-graph-clamped="true"
+            x={width - 16}
+            y={0}
+            width={16}
+            height={height}
+            fill="url(#pg-graph-clip-fade)"
+          />
         </>
       )}
     </svg>
@@ -1059,6 +1114,16 @@ export interface PGCommitRowProps {
    * in SVG user units, so the row box and the gutter must share one NUMBER.
    */
   rowHeight?: number;
+  /**
+   * Width of the graph gutter in px, from `graphWidth(maxCol)`. Required for
+   * the same reason as PGGraphRow's: a default is what hid #68 G1.
+   *
+   * `0` drops the graph column entirely — that is Reflog, which renders no
+   * lanes. Not the same as `graphWidth(0)`, the 24px a real one-lane log needs.
+   */
+  graphW: number;
+  /** Forwarded to PGGraphRow — fade the gutter's right edge. */
+  clamped?: boolean;
 }
 
 export const COMMIT_ROW_BASE_H = 26;
@@ -1076,6 +1141,8 @@ export function PGCommitRow({
   onContextMenu,
   tagged,
   rowHeight,
+  graphW,
+  clamped,
 }: PGCommitRowProps) {
   const [hover, setHover] = React.useState(false);
   const step = useDensityStep();
@@ -1092,7 +1159,7 @@ export function PGCommitRow({
       onMouseLeave={() => setHover(false)}
       style={{
         display: "grid",
-        gridTemplateColumns: "140px 70px 1fr 150px 90px",
+        gridTemplateColumns: commitRowGrid(graphW),
         alignItems: "center",
         height: h,
         background: !selected && hover ? "var(--bg-2)" : undefined,
@@ -1115,7 +1182,15 @@ export function PGCommitRow({
           }}
         />
       )}
-      <PGGraphRow lanes={lanes} node={node} height={h} />
+      {graphW > 0 && (
+        <PGGraphRow
+          lanes={lanes}
+          node={node}
+          width={graphW}
+          height={h}
+          clamped={clamped}
+        />
+      )}
       <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-11)" }}>{sha}</span>
       <div
         style={{
