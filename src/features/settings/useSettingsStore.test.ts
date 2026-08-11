@@ -13,7 +13,7 @@ async function freshStore() {
 
 beforeEach(() => {
   localStorage.clear();
-  document.documentElement.style.removeProperty("--row-h");
+  document.documentElement.style.removeProperty("--row-step");
 });
 
 describe("useSettingsStore persistence", () => {
@@ -160,27 +160,44 @@ describe("logo theme slots", () => {
   });
 });
 
+// Density is one CSS var — `--row-step` — that every row surface adds to its
+// base geometry (index.css derives `--row-h` and friends from it). jsdom can't
+// resolve those calc()s, so the per-surface pixel results are asserted in
+// e2e/specs/settings.e2e.ts against a real webview; here we pin the var itself.
+const rowStep = () =>
+  document.documentElement.style.getPropertyValue("--row-step");
+
 describe("uiDensity CSS hook", () => {
-  it("applies --row-h from the persisted density at load", async () => {
+  it("applies --row-step from the persisted density at load", async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "comfortable" }));
     await freshStore();
-    expect(document.documentElement.style.getPropertyValue("--row-h")).toBe("28px");
+    expect(rowStep()).toBe("4px");
     expect(document.documentElement.dataset.density).toBe("comfortable");
   });
 
-  it("re-applies --row-h when the density setting changes", async () => {
+  it("re-applies --row-step when the density setting changes", async () => {
     const { useSettingsStore } = await freshStore();
-    expect(document.documentElement.style.getPropertyValue("--row-h")).toBe("24px");
+    expect(rowStep()).toBe("0px");
     useSettingsStore.getState().set("uiDensity", "comfortable");
-    expect(document.documentElement.style.getPropertyValue("--row-h")).toBe("28px");
+    expect(rowStep()).toBe("4px");
+    expect(document.documentElement.dataset.density).toBe("comfortable");
     useSettingsStore.getState().set("uiDensity", "compact");
-    expect(document.documentElement.style.getPropertyValue("--row-h")).toBe("24px");
+    expect(rowStep()).toBe("0px");
+    expect(document.documentElement.dataset.density).toBe("compact");
   });
 
   it("reset() restores compact density", async () => {
     const { useSettingsStore } = await freshStore();
     useSettingsStore.getState().set("uiDensity", "comfortable");
     useSettingsStore.getState().reset();
-    expect(document.documentElement.style.getPropertyValue("--row-h")).toBe("24px");
+    expect(rowStep()).toBe("0px");
+    expect(document.documentElement.dataset.density).toBe("compact");
+  });
+
+  // Compact must be a no-op delta: the pre-density layout is the compact
+  // layout, so every `calc(Npx + var(--row-step))` has to collapse to Npx.
+  it("keeps compact at a zero step so the default layout is unchanged", async () => {
+    const { DENSITY_STEP_PX } = await freshStore();
+    expect(DENSITY_STEP_PX.compact).toBe(0);
   });
 });

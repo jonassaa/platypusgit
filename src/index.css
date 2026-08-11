@@ -124,8 +124,22 @@
 
   --ring: 0 0 0 2px oklch(0.72 0.15 235 / 0.5);
 
-  /* density */
-  --row-h: 24px;
+  /* ===== DENSITY =====
+   * One knob: --row-step, the extra vertical pixels a row spends in
+   * "comfortable" mode. applyDensity() (features/settings/useSettingsStore.ts)
+   * overwrites it on :root from DENSITY_STEP_PX — THE source of truth for the
+   * number — so this declaration is only the pre-hydration default.
+   *
+   * Row surfaces opt in with `calc(<their base>px + var(--row-step))`, or
+   * `calc(<base>px + var(--row-step) / 2)` for vertical padding (top+bottom
+   * each take half). Keeping each surface's own base inline means compact
+   * (step 0) renders pixel-identically to the pre-density layout, and
+   * `grep -rn 'var(--row-step)' src/` lists every density-aware surface.
+   *
+   * One surface can't use the token: PGGraphRow draws in SVG user units, so
+   * PGCommitRow feeds it the number via useDensityStep(). */
+  --row-step: 0px;
+  --row-h: calc(24px + var(--row-step));
 
   /* transitions */
   --t-fast: 80ms cubic-bezier(0.4, 0, 0.2, 1);

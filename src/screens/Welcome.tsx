@@ -137,7 +137,7 @@ export function WelcomeScreen() {
                       display: "flex",
                       alignItems: "center",
                       gap: 8,
-                      padding: "6px 8px",
+                      padding: "calc(6px + var(--row-step) / 2) 8px",
                       borderRadius: "var(--r-3)",
                       cursor: loading ? "default" : "pointer",
                       fontSize: "var(--fs-12)",

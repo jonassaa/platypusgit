@@ -398,7 +398,7 @@ export function HistoryScreen() {
         style={{
           display: "grid",
           gridTemplateColumns: "140px 70px 1fr 150px 90px",
-          height: 24,
+          height: "calc(24px + var(--row-step))",
           background: "var(--bg-2)",
           borderBottom: "1px solid var(--border-0)",
           fontFamily: "var(--font-mono)",

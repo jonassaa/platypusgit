@@ -548,7 +548,7 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
 
       <Row
         label="UI density"
-        hint="Compact matches the dense IDE feel; comfortable adds padding."
+        hint="Compact matches the dense IDE feel; comfortable gives every list row 4px more breathing room."
         control={
           <PGButtonGroup
             size="sm"
