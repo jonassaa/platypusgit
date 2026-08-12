@@ -62,7 +62,7 @@ function wireRefreshAllMocks(): void {
   mockInvoke("list_tags", () => []);
   mockInvoke("list_stashes", () => []);
   mockInvoke("list_remotes", () => []);
-  mockInvoke("get_log", () => commits);
+  mockInvoke("get_log_page", () => ({ commits, nextCursor: null }));
   mockInvoke("repo_state", () => "Clean");
   // Post-#28 backend behavior: RebaseState is swept on completion, so the
   // status poll right after a finished rebase reports total: 0.

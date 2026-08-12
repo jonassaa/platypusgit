@@ -5,8 +5,9 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileContent,
-        FileDiff, FileStatus, LogFilter, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo,
-        RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+        FileDiff, FileStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+        RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo,
+        TagTarget,
     },
     GitBackend,
 };
@@ -55,6 +56,25 @@ impl GitBackend for CliBackend {
         _refspec: Option<&str>,
         _limit: usize,
     ) -> AppResult<Vec<CommitInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn log_page(
+        &self,
+        _repo_id: &RepoId,
+        _refspec: Option<&str>,
+        _cursor: Option<&[String]>,
+        _limit: usize,
+    ) -> AppResult<LogPage> {
+        Err(AppError::NotImplemented)
+    }
+    fn log_filtered_page(
+        &self,
+        _repo_id: &RepoId,
+        _filter: &LogFilter,
+        _refspec: Option<&str>,
+        _cursor: Option<&[String]>,
+        _limit: usize,
+    ) -> AppResult<LogPage> {
         Err(AppError::NotImplemented)
     }
     fn commits_since(&self, _repo_id: &RepoId, _base: &str) -> AppResult<Vec<CommitInfo>> {

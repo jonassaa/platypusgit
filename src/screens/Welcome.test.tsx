@@ -35,7 +35,7 @@ function wireRefreshAllMocks(): void {
   mockInvoke("list_tags", () => []);
   mockInvoke("list_stashes", () => []);
   mockInvoke("list_remotes", () => []);
-  mockInvoke("get_log", () => []);
+  mockInvoke("get_log_page", () => ({ commits: [], nextCursor: null }));
   mockInvoke("repo_state", () => "Clean");
   mockInvoke("rebase_status", () => ({
     inProgress: false,

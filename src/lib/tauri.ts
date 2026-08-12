@@ -14,6 +14,7 @@ import type {
   FileStatus,
   LaunchIntent,
   LogFilter,
+  LogPage,
   PullMode,
   PushForce,
   RebaseStatus,
@@ -117,6 +118,40 @@ export async function getLogFiltered(
   return invoke<CommitInfo[]>("get_log_filtered", {
     repoId,
     filter,
+    limit,
+    refspec,
+  });
+}
+
+/**
+ * One page of the log (#68 G11). Pass the previous page's `nextCursor` to
+ * resume; omit it for the first page. `nextCursor === null` means the walk
+ * reached the end of history.
+ *
+ * When `cursor` is given, `refspec` is ignored — the cursor is the walk
+ * frontier and already encodes where this page continues from.
+ */
+export async function getLogPage(
+  repoId: string,
+  cursor?: string[] | null,
+  limit?: number,
+  refspec?: string | null,
+): Promise<LogPage> {
+  return invoke<LogPage>("get_log_page", { repoId, cursor, limit, refspec });
+}
+
+/** `getLogPage` with a filter; only matching commits count toward `limit`. */
+export async function getLogFilteredPage(
+  repoId: string,
+  filter: LogFilter,
+  cursor?: string[] | null,
+  limit?: number,
+  refspec?: string | null,
+): Promise<LogPage> {
+  return invoke<LogPage>("get_log_filtered_page", {
+    repoId,
+    filter,
+    cursor,
     limit,
     refspec,
   });

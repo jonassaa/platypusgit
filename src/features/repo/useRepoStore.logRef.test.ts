@@ -37,9 +37,10 @@ describe("useRepoStore.setLogRef", () => {
   });
 
   it("scopes the log to the given refspec and replaces commits", async () => {
-    mockInvoke("get_log", (args) =>
-      args.refspec === "feature" ? FEATURE_COMMITS : HEAD_COMMITS,
-    );
+    mockInvoke("get_log_page", (args) => ({
+      commits: args.refspec === "feature" ? FEATURE_COMMITS : HEAD_COMMITS,
+      nextCursor: null,
+    }));
 
     await useRepoStore.getState().setLogRef("feature");
 
@@ -50,14 +51,15 @@ describe("useRepoStore.setLogRef", () => {
       "main work",
     ]);
     expect(s.loading).toBe(false);
-    const call = getInvokeCalls().find((c) => c.cmd === "get_log");
+    const call = getInvokeCalls().find((c) => c.cmd === "get_log_page");
     expect(call?.args.refspec).toBe("feature");
   });
 
   it("null refspec returns to the HEAD log", async () => {
-    mockInvoke("get_log", (args) =>
-      args.refspec === "feature" ? FEATURE_COMMITS : HEAD_COMMITS,
-    );
+    mockInvoke("get_log_page", (args) => ({
+      commits: args.refspec === "feature" ? FEATURE_COMMITS : HEAD_COMMITS,
+      nextCursor: null,
+    }));
 
     await useRepoStore.getState().setLogRef("feature");
     await useRepoStore.getState().setLogRef(null);
@@ -68,7 +70,7 @@ describe("useRepoStore.setLogRef", () => {
   });
 
   it("keeps the previous list and sets the error when the ref is invalid", async () => {
-    mockInvoke("get_log", () => {
+    mockInvoke("get_log_page", () => {
       throw { kind: "InvalidRef", message: "no-such-ref" };
     });
 
@@ -83,10 +85,12 @@ describe("useRepoStore.setLogRef", () => {
   it("drops a stale response when a newer scope superseded it", async () => {
     const resolvers = new Map<string, (v: CommitInfo[]) => void>();
     mockInvoke(
-      "get_log",
+      "get_log_page",
       (args) =>
-        new Promise<CommitInfo[]>((res) => {
-          resolvers.set(String(args.refspec), res);
+        new Promise<{ commits: CommitInfo[]; nextCursor: null }>((res) => {
+          resolvers.set(String(args.refspec), (commits) =>
+            res({ commits, nextCursor: null }),
+          );
         }),
     );
 
@@ -106,8 +110,8 @@ describe("useRepoStore.setLogRef", () => {
   });
 
   it("re-runs an active search under the new scope", async () => {
-    mockInvoke("get_log", () => FEATURE_COMMITS);
-    mockInvoke("get_log_filtered", () => [FEATURE_COMMITS[0]]);
+    mockInvoke("get_log_page", () => ({ commits: FEATURE_COMMITS, nextCursor: null }));
+    mockInvoke("get_log_filtered_page", () => ({ commits: [FEATURE_COMMITS[0]], nextCursor: null }));
     useRepoStore.setState({ commitFilter: { message: "cherry" } });
 
     await useRepoStore.getState().setLogRef("feature");
@@ -115,7 +119,7 @@ describe("useRepoStore.setLogRef", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    const search = getInvokeCalls().find((c) => c.cmd === "get_log_filtered");
+    const search = getInvokeCalls().find((c) => c.cmd === "get_log_filtered_page");
     expect(search?.args.refspec).toBe("feature");
     expect(search?.args.filter).toEqual({ message: "cherry" });
   });

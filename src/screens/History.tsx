@@ -56,6 +56,13 @@ type DiffLayout = "below" | "beside";
 
 const SEARCH_DEBOUNCE_MS = 250;
 const DIFF_LAYOUT_KEY = "pg-history-diff-layout";
+
+/**
+ * Rows from the end of the loaded list at which the next page is requested.
+ * Matches the window's overscan so the fetch starts just before the user can
+ * see the bottom, rather than after they hit it (#68 G11).
+ */
+const LOAD_MORE_SLACK = 8;
 /** Small debounce so arrow-scrolling the log doesn't fire a fetch per row. */
 const INLINE_DIFF_DEBOUNCE_MS = 100;
 
@@ -63,6 +70,12 @@ export function HistoryScreen() {
   const commits = useRepoStore((s) => s.commits);
   const searchResults = useRepoStore((s) => s.searchResults);
   const searching = useRepoStore((s) => s.searching);
+  const loadingMore = useRepoStore((s) => s.loadingMore);
+  const loadMoreCommits = useRepoStore((s) => s.loadMoreCommits);
+  // Whichever list is on screen has its own resume point (#68 G11).
+  const hasMoreLog = useRepoStore((s) =>
+    s.searchResults !== null ? s.searchCursor !== null : s.commitCursor !== null,
+  );
   const searchCommits = useRepoStore((s) => s.searchCommits);
   const branches = useRepoStore((s) => s.branches);
   const logRef = useRepoStore((s) => s.logRef);
@@ -203,6 +216,14 @@ export function HistoryScreen() {
   // draws in SVG user units and the window steps by this same number (#70).
   const rowH = COMMIT_ROW_BASE_H + useDensityStep();
   const win = useWindowedList({ count: visible.length, rowHeight: rowH });
+
+  // Fetch the next page as the window reaches the end of the loaded list.
+  // Driven by the window rather than a scroll listener so there is one source
+  // of truth for "where the user is" (#68 G11 on top of G10).
+  React.useEffect(() => {
+    if (!hasMoreLog || loadingMore) return;
+    if (win.end >= visible.length - LOAD_MORE_SLACK) void loadMoreCommits();
+  }, [win.end, visible.length, hasMoreLog, loadingMore, loadMoreCommits]);
 
   const graphW = graphWidth(maxCol);
   const graphClamped = isGraphClamped(maxCol);
@@ -541,6 +562,21 @@ export function HistoryScreen() {
         })}
         <div style={{ height: win.bottomPad }} />
         </div>
+        {/* The log used to just stop at 500 with no signal. Now the bottom
+            either says it is still fetching, or genuinely is the end. */}
+        {loadingMore && (
+          <div
+            data-testid="log-loading-more"
+            style={{
+              padding: "8px 12px",
+              textAlign: "center",
+              color: "var(--fg-3)",
+              fontSize: "var(--fs-11)",
+            }}
+          >
+            Loading older commits…
+          </div>
+        )}
       </FocusableScroll>
     </PGPane>
   );
