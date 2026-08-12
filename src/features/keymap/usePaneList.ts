@@ -31,6 +31,12 @@ export function usePaneList(opts: {
   /** Opt into speed-search: row i's searchable text. Typing (unbound
    *  printable keys) jumps the selection to the first matching row. */
   searchText?: (i: number) => string;
+  /**
+   * Windowed lists supply this so the selection can be scrolled to BY INDEX.
+   * Without it the hook falls back to finding the selected row in the DOM,
+   * which only works while every row is mounted (#68 G10).
+   */
+  scrollToIndex?: (i: number) => void;
 }): void {
   const { paneId, count, selectedIndex } = opts;
   const isFocused = useFocusStore((s) => s.focused === paneId);
@@ -88,11 +94,18 @@ export function usePaneList(opts: {
   // Keep the selected row visible while driving the list from the keyboard.
   React.useEffect(() => {
     if (!isFocused) return;
+    if (opts.scrollToIndex) {
+      // Windowed list: the selected row is frequently NOT mounted, so a DOM
+      // query would find nothing and scrolling would silently stop (#68 G10).
+      opts.scrollToIndex(selectedIndex);
+      return;
+    }
     const row = document.querySelector<HTMLElement>(
       `[data-pg-pane="${paneId}"] [data-pg-row][data-selected]`,
     );
     row?.scrollIntoView?.({ block: "nearest" });
-  }, [selectedIndex, isFocused, paneId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndex, isFocused, paneId, opts.scrollToIndex]);
 
   // Speed-search: register with the dispatcher fallback, jump on query
   // change, and let Escape clear the query (claiming it before the overlay

@@ -14,6 +14,8 @@ export function FocusableScroll({
   style,
   ariaLabel,
   testId,
+  innerRef,
+  onScroll,
 }: {
   children: React.ReactNode;
   className?: string;
@@ -21,8 +23,16 @@ export function FocusableScroll({
   ariaLabel?: string;
   /** Forwarded as data-testid — e2e specs select scroll regions by it. */
   testId?: string;
+  /**
+   * Lets a windowed list own the scroll element (it needs scrollTop and
+   * clientHeight to compute its range). Falls back to the internal ref, so
+   * every existing call site is unaffected.
+   */
+  innerRef?: React.RefObject<HTMLDivElement | null>;
+  onScroll?: React.UIEventHandler<HTMLDivElement>;
 }) {
-  const ref = React.useRef<HTMLDivElement>(null);
+  const ownRef = React.useRef<HTMLDivElement>(null);
+  const ref = innerRef ?? ownRef;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     // The global dispatcher (capture phase) may have already routed this key
@@ -73,6 +83,7 @@ export function FocusableScroll({
       aria-label={ariaLabel}
       data-testid={testId}
       onKeyDown={onKeyDown}
+      onScroll={onScroll}
       style={{ outline: "none", overflow: "auto", ...style }}
     >
       {children}

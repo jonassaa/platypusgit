@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import { cherryRepo, rebaseConflictRepo, TempRepo } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
-  jsContextMenu, jsClickMenuItem, executeOnce,
+  jsContextMenu, jsClickMenuItem, executeOnce, scrollCommitListTo,
 } from "../support/app";
 
 describe("interactive rebase", () => {
@@ -18,6 +18,7 @@ describe("interactive rebase", () => {
     await openRepo(repo.path);
     await stubNativeDialogs({ promptText: "squashed by e2e" });
     await switchScreen("history");
+    await scrollCommitListTo("fix: update a.txt");
     const headRow = $('[data-testid="commit-row"]*=fix: update a.txt');
     await headRow.waitForDisplayed({ timeout: 15_000, timeoutMsg: "HEAD row missing" });
     await jsContextMenu('[data-testid="commit-row"]', { text: "fix: update a.txt" });

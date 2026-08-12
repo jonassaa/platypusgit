@@ -150,6 +150,14 @@ export function ReflogScreen() {
     searchText: (i) => entries[i]?.message ?? "",
   });
 
+  // One handler for every row, so PGCommitRow's memo isn't defeated by a fresh
+  // closure per entry (#68 G9). Reflog's row identity is its oid — matching
+  // `selectedOid === e.oid` below; the React key stays oid+timestamp.
+  const onRowClick = React.useCallback(
+    (oid: string) => void selectEntry(oid),
+    [selectEntry],
+  );
+
   if (!repo) {
     return (
       <PGEmpty title="No repository open">
@@ -246,7 +254,8 @@ export function ReflogScreen() {
               author=""
               date={relativeTime(e.timestamp)}
               selected={selectedOid === e.oid}
-              onClick={() => void selectEntry(e.oid)}
+              oid={e.oid}
+              onRowClick={onRowClick}
             />
           ))}
           </FocusableScroll>

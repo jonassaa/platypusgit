@@ -1,6 +1,12 @@
 import { browser, $, $$, expect } from "@wdio/globals";
 import { basicRepo, branchyRepo, dirtyRepo, TempRepo } from "../support/tempRepo";
-import { openRepo, resetApp, switchScreen } from "../support/app";
+import {
+  commitListTotal,
+  openRepo,
+  resetApp,
+  scrollCommitListTo,
+  switchScreen,
+} from "../support/app";
 
 describe("history & diff", () => {
   let repo: TempRepo;
@@ -21,8 +27,10 @@ describe("history & diff", () => {
       timeoutMsg: "history column headers never appeared",
     });
     const expected = Number(repo.git("rev-list", "--count", "HEAD").trim()); // 5
+    // The list is windowed, so the number of MOUNTED rows is an implementation
+    // detail. data-total is the model count (#68 G10).
     await browser.waitUntil(
-      async () => (await $$('[data-testid="commit-row"]').length) === expected,
+      async () => (await commitListTotal()) === expected,
       { timeout: 20_000, timeoutMsg: `expected ${expected} commit rows` },
     );
     // graph geometry: each row's commit node renders as an svg <circle>
@@ -37,7 +45,7 @@ describe("history & diff", () => {
     await switchScreen("history");
 
     await browser.waitUntil(
-      async () => (await $$('[data-testid="commit-row"]').length) >= 5,
+      async () => (await commitListTotal()) >= 5,
       { timeout: 20_000, timeoutMsg: "commit rows never appeared" },
     );
 
@@ -55,6 +63,7 @@ describe("history & diff", () => {
 
     // Selecting a different commit swaps the inline diff to that commit's own
     // change — the "fix: update a.txt" commit touched a.txt.
+    await scrollCommitListTo("update a.txt");
     await $('[data-testid="commit-row"]*=update a.txt').click();
     await $('[data-testid="history-detail"] [data-path="a.txt"]').waitForDisplayed({
       timeout: 20_000,
@@ -107,7 +116,7 @@ describe("history & diff", () => {
     await switchScreen("history");
 
     await browser.waitUntil(
-      async () => (await $$('[data-testid="commit-row"]').length) === 3,
+      async () => (await commitListTotal()) === 3,
       { timeout: 20_000, timeoutMsg: "expected basicRepo's 3 commit rows" },
     );
 
@@ -119,7 +128,7 @@ describe("history & diff", () => {
     await search.setValue("a.txt");
 
     await browser.waitUntil(
-      async () => (await $$('[data-testid="commit-row"]').length) === 2,
+      async () => (await commitListTotal()) === 2,
       {
         timeout: 20_000,
         timeoutMsg: "expected only the two commits whose message mentions a.txt",
