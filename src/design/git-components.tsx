@@ -885,6 +885,37 @@ export function PGSideBySideDiff({
 /** Dash pattern for an elided link — visibly broken at a 1.5px stroke. */
 const ELIDED_DASH = "3 3";
 
+/** Stroke weight: HEAD's first-parent chain is followable at a glance (#68 G6). */
+const strokeW = (ln: GraphLane): number => (ln.primary ? 2 : 1.5);
+
+/** Extra width of the background casing drawn under a curve. */
+const CASING_EXTRA = 2.5;
+
+const STRAIGHT_KINDS: ReadonlySet<GraphLane["kind"]> = new Set([
+  "line",
+  "half-top",
+  "half-bot",
+]);
+
+/** y-extent of each straight kind, in SVG user units. */
+const straightY = (
+  kind: GraphLane["kind"],
+  height: number,
+): [number, number] => {
+  if (kind === "half-top") return [0, height / 2];
+  if (kind === "half-bot") return [height / 2, height];
+  return [0, height];
+};
+
+/** Curve path for the two bezier kinds. Shared by the casing and the stroke. */
+const curvePath = (ln: GraphLane, height: number): string => {
+  const x = laneX(ln.col);
+  const x2 = laneX(ln.to ?? ln.col + 1);
+  return ln.kind === "fork-bot"
+    ? `M ${x} ${height / 2} C ${x} ${height * 0.75}, ${x2} ${height * 0.75}, ${x2} ${height}`
+    : `M ${x} 0 C ${x} ${height * 0.25}, ${x2} ${height * 0.25}, ${x2} ${height / 2}`;
+};
+
 export interface GraphLane {
   col: number;
   color: string;
@@ -897,6 +928,11 @@ export interface GraphLane {
    * straight run, a half-lane, AND a curve depending on the row.
    */
   dashed?: boolean;
+  /**
+   * This segment is on HEAD's first-parent chain. Drawn heavier so the branch
+   * you are actually on is followable at a glance (#68 G6).
+   */
+  primary?: boolean;
 }
 
 export interface GraphNode {
@@ -910,6 +946,8 @@ export interface GraphNode {
    * bottom of the log. Distinct from a true root, which has no parents at all.
    */
   truncated?: boolean;
+  /** This commit is HEAD. Drawn as a double ring (#68 G7). */
+  head?: boolean;
 }
 
 /**
@@ -944,89 +982,73 @@ export function PGGraphRow({
     <svg
       width={width}
       height={height}
+      aria-hidden="true"
+      focusable="false"
       style={{ flexShrink: 0, display: "block" }}
     >
-      {lanes.map((ln, i) => {
-        const x = laneX(ln.col);
-        // An elided link is dashed on every kind it can appear as.
-        const dash = ln.dashed ? ELIDED_DASH : undefined;
-        if (ln.kind === "line") {
+      {/* Straights first: SVG paint order is document order, so every vertical
+          must be on the canvas before a curve's casing can bridge across it. */}
+      {lanes
+        .filter((ln) => STRAIGHT_KINDS.has(ln.kind))
+        .map((ln, i) => {
+          const x = laneX(ln.col);
+          const [y1, y2] = straightY(ln.kind, height);
           return (
             <line
-              key={i}
+              key={`s${i}`}
               data-lane-kind={ln.kind}
               x1={x}
               x2={x}
-              y1={0}
-              y2={height}
+              y1={y1}
+              y2={y2}
               stroke={ln.color}
-              strokeWidth="1.5"
-              strokeDasharray={dash}
+              strokeWidth={strokeW(ln)}
+              strokeDasharray={ln.dashed ? ELIDED_DASH : undefined}
+              shapeRendering="crispEdges"
             />
           );
-        }
-        if (ln.kind === "half-top") {
+        })}
+      {/* Then each curve as casing + stroke. The casing is a gap punched in
+          whatever it crosses, so it is never dashed. */}
+      {lanes
+        .filter((ln) => !STRAIGHT_KINDS.has(ln.kind))
+        .map((ln, i) => {
+          const d = curvePath(ln, height);
           return (
-            <line
-              key={i}
-              data-lane-kind={ln.kind}
-              x1={x}
-              x2={x}
-              y1={0}
-              y2={height / 2}
-              stroke={ln.color}
-              strokeWidth="1.5"
-              strokeDasharray={dash}
-            />
+            <React.Fragment key={`c${i}`}>
+              <path
+                data-lane-casing="true"
+                d={d}
+                stroke="var(--bg-0)"
+                strokeWidth={strokeW(ln) + CASING_EXTRA}
+                fill="none"
+              />
+              <path
+                data-lane-kind={ln.kind}
+                d={d}
+                stroke={ln.color}
+                strokeWidth={strokeW(ln)}
+                strokeDasharray={ln.dashed ? ELIDED_DASH : undefined}
+                fill="none"
+              />
+            </React.Fragment>
           );
-        }
-        if (ln.kind === "half-bot") {
-          return (
-            <line
-              key={i}
-              data-lane-kind={ln.kind}
-              x1={x}
-              x2={x}
-              y1={height / 2}
-              y2={height}
-              stroke={ln.color}
-              strokeWidth="1.5"
-              strokeDasharray={dash}
-            />
-          );
-        }
-        if (ln.kind === "fork-bot") {
-          const x2 = laneX(ln.to ?? ln.col + 1);
-          return (
-            <path
-              key={i}
-              data-lane-kind={ln.kind}
-              d={`M ${x} ${height / 2} C ${x} ${height * 0.75}, ${x2} ${height * 0.75}, ${x2} ${height}`}
-              stroke={ln.color}
-              strokeWidth="1.5"
-              strokeDasharray={dash}
-              fill="none"
-            />
-          );
-        }
-        if (ln.kind === "merge-top") {
-          const x2 = laneX(ln.to ?? ln.col + 1);
-          return (
-            <path
-              key={i}
-              data-lane-kind={ln.kind}
-              d={`M ${x} 0 C ${x} ${height * 0.25}, ${x2} ${height * 0.25}, ${x2} ${height / 2}`}
-              stroke={ln.color}
-              strokeWidth="1.5"
-              strokeDasharray={dash}
-              fill="none"
-            />
-          );
-        }
-        return null;
-      })}
+        })}
       {node && (
         <>
+          {/* HEAD: a double ring. The outer circle sits outside the dot rather
+              than replacing it, so hollow / solid / merge stay readable. */}
+          {node.head && (
+            <circle
+              data-graph-head="true"
+              cx={laneX(node.col)}
+              cy={height / 2}
+              r="6.5"
+              fill="none"
+              stroke={node.color}
+              strokeWidth="1"
+            />
+          )}
           <circle
             cx={laneX(node.col)}
             cy={height / 2}
@@ -1060,6 +1082,7 @@ export function PGGraphRow({
               stroke={node.color}
               strokeWidth="1.5"
               strokeDasharray="2 2"
+              shapeRendering="crispEdges"
             />
           )}
         </>
@@ -1167,7 +1190,7 @@ export function PGCommitRow({
         fontSize: "var(--fs-12)",
         cursor: "pointer",
         position: "relative",
-        borderBottom: "1px solid oklch(0.22 0.008 260 / 0.5)",
+        borderBottom: "1px solid oklch(from var(--border-0) l c h / 0.5)",
       }}
     >
       {selected && (

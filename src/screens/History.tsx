@@ -183,8 +183,8 @@ export function HistoryScreen() {
   );
 
   const { rows, maxCol } = React.useMemo(
-    () => layoutGraph(visible, { ancestry }),
-    [visible, ancestry],
+    () => layoutGraph(visible, { ancestry, headOid: head?.tip ?? undefined }),
+    [visible, ancestry, head?.tip],
   );
 
   const graphW = graphWidth(maxCol);
