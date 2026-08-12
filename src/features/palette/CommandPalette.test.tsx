@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CommandPalette } from "./CommandPalette";
-import { usePaletteStore } from "./usePaletteStore";
+import { paletteInitial, usePaletteStore } from "./usePaletteStore";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { mockInvoke } from "@/test/invokeMock";
@@ -53,7 +53,12 @@ function resetStores() {
     activity: {},
   });
   useNavStore.setState({ intent: null });
-  usePaletteStore.setState({ open: false, query: "", activeChip: "all" });
+  // Every palette field, not a hand-picked subset: `stack` used to be omitted
+  // here, so a test that pushed a step (pick a branch, pick a reset mode) left
+  // it on the store and the next test rendered that step instead of root.
+  // Order-dependent, invisible in the default order, reproducible under
+  // `vitest --sequence.shuffle`.
+  usePaletteStore.setState(paletteInitial());
   localStorage.clear();
 }
 

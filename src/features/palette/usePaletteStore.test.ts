@@ -1,13 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { usePaletteStore } from "./usePaletteStore";
+import { paletteInitial, usePaletteStore } from "./usePaletteStore";
 
-const reset = () =>
-  usePaletteStore.setState({
-    open: false,
-    stack: [{ kind: "root" }],
-    query: "",
-    activeChip: "all",
-  });
+const reset = () => usePaletteStore.setState(paletteInitial());
 
 describe("usePaletteStore", () => {
   beforeEach(reset);

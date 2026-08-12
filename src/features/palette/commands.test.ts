@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { buildCommands } from "./commands";
 import { useRepoStore } from "@/features/repo/useRepoStore";
-import { usePaletteStore } from "./usePaletteStore";
+import { paletteInitial, usePaletteStore } from "./usePaletteStore";
 import type { BranchInfo, StashInfo } from "@/lib/types";
 
 const mkBranch = (name: string, isHead = false, upstream: string | null = null): BranchInfo => ({
@@ -23,10 +23,15 @@ function setRepo(partial: Record<string, unknown>) {
 
 const ids = () => buildCommands().map((i) => i.id);
 
+// Two tests below swap `pushStep` for a collector via setState. That replaces
+// the store's real action for good, so capture it once and restore it per test
+// — `paletteInitial()` deliberately covers state fields, not actions.
+const realPushStep = usePaletteStore.getState().pushStep;
+
 describe("buildCommands", () => {
   beforeEach(() => {
     setRepo({});
-    usePaletteStore.setState({ open: true, stack: [{ kind: "root" }], query: "", activeChip: "all" });
+    usePaletteStore.setState({ ...paletteInitial(), open: true, pushStep: realPushStep });
   });
 
   it("always includes screen nav + fetch/refresh", () => {

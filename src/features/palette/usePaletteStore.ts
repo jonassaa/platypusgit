@@ -23,13 +23,28 @@ interface PaletteState {
   popStep: () => void;
 }
 
-export const usePaletteStore = create<PaletteState>((set) => ({
+/**
+ * The palette's closed-at-root state.
+ *
+ * Exported so tests can reset every field at once. Listing the fields by hand
+ * in a test helper is how `stack` got left behind: `closePalette()` only clears
+ * `open`, so a test that pushed a step leaked it into whichever test ran next,
+ * which then rendered a pick step where it expected root. Add a field to
+ * `PaletteState` and it belongs here too.
+ */
+export const paletteInitial = (): Pick<
+  PaletteState,
+  "open" | "stack" | "query" | "activeChip"
+> => ({
   open: false,
   stack: [{ kind: "root" }],
   query: "",
   activeChip: "all",
-  openPalette: () =>
-    set({ open: true, stack: [{ kind: "root" }], query: "", activeChip: "all" }),
+});
+
+export const usePaletteStore = create<PaletteState>((set) => ({
+  ...paletteInitial(),
+  openPalette: () => set({ ...paletteInitial(), open: true }),
   closePalette: () => set({ open: false }),
   setQuery: (query) => set({ query }),
   setChip: (activeChip) => set({ activeChip }),
