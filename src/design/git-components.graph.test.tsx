@@ -158,3 +158,121 @@ describe("PGCommitRow graph column", () => {
     expect(svg).toBeNull();
   });
 });
+
+describe("PGGraphRow crossings and emphasis (#68 G6)", () => {
+  it("draws every straight lane before any curve, so casings can bridge them", () => {
+    const svg = renderGraph(
+      [
+        { col: 1, color: "blue", kind: "fork-bot", to: 2 },
+        { col: 0, color: "red", kind: "line" },
+      ],
+      undefined,
+      2,
+    );
+    const kinds = [...svg.querySelectorAll("[data-lane-kind]")].map((el) =>
+      el.getAttribute("data-lane-kind"),
+    );
+    expect(kinds).toEqual(["line", "fork-bot"]);
+  });
+
+  it("puts a background casing under each curve", () => {
+    const svg = renderGraph(
+      [{ col: 0, color: "red", kind: "fork-bot", to: 1 }],
+      undefined,
+      1,
+    );
+    const casing = svg.querySelector('[data-lane-casing="true"]')!;
+    expect(casing).not.toBeNull();
+    // Wider than the stroke it protects, and painted in the row background.
+    expect(Number(casing.getAttribute("stroke-width"))).toBeGreaterThan(1.5);
+    expect(casing.getAttribute("stroke")).toBe("var(--bg-0)");
+    // Immediately precedes its coloured stroke in paint order.
+    expect(casing.nextElementSibling!.getAttribute("data-lane-kind")).toBe("fork-bot");
+  });
+
+  it("does not dash the casing of an elided curve", () => {
+    // The casing is a gap, not a line — dashing it would let the lane beneath
+    // show through the gaps and defeat the bridge.
+    const svg = renderGraph(
+      [{ col: 0, color: "red", kind: "fork-bot", to: 1, dashed: true }],
+      undefined,
+      1,
+    );
+    const casing = svg.querySelector('[data-lane-casing="true"]')!;
+    expect(casing.getAttribute("stroke-dasharray")).toBeNull();
+  });
+
+  it("gives no casing to straight lanes", () => {
+    const svg = renderGraph([{ col: 0, color: "red", kind: "line" }]);
+    expect(svg.querySelector('[data-lane-casing="true"]')).toBeNull();
+  });
+
+  it("weights a primary lane heavier than an ordinary one", () => {
+    const plain = renderGraph([{ col: 0, color: "red", kind: "line" }]);
+    const head = renderGraph([{ col: 0, color: "red", kind: "line", primary: true }]);
+    const w = (svg: SVGElement) =>
+      Number(svg.querySelector("[data-lane-kind]")!.getAttribute("stroke-width"));
+    expect(w(head)).toBeGreaterThan(w(plain));
+  });
+});
+
+describe("PGGraphRow HEAD marker (#68 G7)", () => {
+  const node = (over: Partial<GraphNode> = {}): GraphNode => ({
+    col: 0,
+    color: "red",
+    solid: true,
+    ...over,
+  });
+
+  it("rings the HEAD commit", () => {
+    const svg = renderGraph([], node({ head: true }));
+    const ring = svg.querySelector('[data-graph-head="true"]')!;
+    expect(ring).not.toBeNull();
+    // Outer ring sits outside the r=4 dot.
+    expect(Number(ring.getAttribute("r"))).toBeGreaterThan(4);
+    expect(ring.getAttribute("fill")).toBe("none");
+  });
+
+  it("leaves an ordinary commit unringed", () => {
+    const svg = renderGraph([], node());
+    expect(svg.querySelector('[data-graph-head="true"]')).toBeNull();
+  });
+
+  it("rings a merge commit that is also HEAD", () => {
+    const svg = renderGraph([], node({ solid: false, merge: true, head: true }));
+    expect(svg.querySelector('[data-graph-head="true"]')).not.toBeNull();
+  });
+
+  it("centres the ring on the node's lane", () => {
+    const svg = renderGraph([], node({ col: 2, head: true }), 2);
+    const ring = svg.querySelector('[data-graph-head="true"]')!;
+    expect(Number(ring.getAttribute("cx"))).toBe(laneX(2));
+  });
+});
+
+describe("PGGraphRow accessibility (#68 G8)", () => {
+  it("hides the gutter from assistive tech", () => {
+    // A screen reader walking a 500-row log would otherwise hit 500 unlabeled
+    // graphics that add nothing over the sha / subject / author already in the row.
+    const svg = renderGraph([{ col: 0, color: "red", kind: "line" }]);
+    expect(svg.getAttribute("aria-hidden")).toBe("true");
+    expect(svg.getAttribute("focusable")).toBe("false");
+  });
+
+  it("snaps straight lanes to whole pixels but leaves curves antialiased", () => {
+    const svg = renderGraph(
+      [
+        { col: 0, color: "red", kind: "line" },
+        { col: 0, color: "red", kind: "fork-bot", to: 1 },
+      ],
+      undefined,
+      1,
+    );
+    expect(
+      svg.querySelector('[data-lane-kind="line"]')!.getAttribute("shape-rendering"),
+    ).toBe("crispEdges");
+    expect(
+      svg.querySelector('[data-lane-kind="fork-bot"]')!.getAttribute("shape-rendering"),
+    ).toBeNull();
+  });
+});

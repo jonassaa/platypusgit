@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CommitInfo } from "@/lib/types";
 import { layoutGraph } from "./graphLayout";
+import { PALETTE } from "./laneColors";
 
 /**
  * Build a fake CommitInfo with only the fields layoutGraph uses.
@@ -289,5 +290,93 @@ describe("layoutGraph", () => {
     const without = layoutGraph(commits);
     expect(withOpts).toEqual(without);
     expect(without.rows.every((r) => r.lanes.every((l) => !l.dashed))).toBe(true);
+  });
+});
+
+describe("lane colours (#68 G4)", () => {
+  it("never gives two concurrently-active lanes the same colour below 8-way concurrency", () => {
+    // The old `PALETTE[counter++ % 7]` could duplicate at only SEVEN concurrent
+    // lanes: births 0-6 use the whole palette, then a lane dies WITHOUT its
+    // colour being reused, so birth 7 wraps to --graph-1 while the lane that
+    // already owns --graph-1 is still on screen.
+    const commits = [
+      // Seven tips, each awaiting a root far below, so all seven lanes stay
+      // alive rather than truncating on their own row.
+      ...[1, 2, 3, 4, 5, 6, 7].map((n) => c(`A${n}`, [`Z${n}`])),
+      c("Z4", []), // kills A4's lane — frees a colour, but not the counter
+      c("A8", ["Z8"]), // birth #7 → old code wraps to the palette's first entry
+      ...[1, 2, 3, 5, 6, 7, 8].map((n) => c(`Z${n}`, [])),
+    ];
+    const { rows } = layoutGraph(commits);
+
+    const a8 = rows[commits.findIndex((x) => x.oid === "A8")]!;
+    const colors = a8.lanes.map((l) => l.color);
+    expect(colors.length).toBeGreaterThanOrEqual(7); // concurrency is real
+    expect(new Set(colors).size).toBe(colors.length);
+  });
+
+  it("keeps a lane's colour when the same history is laid out as a subset", () => {
+    // Two independent branches, so a filter that drops the FIRST one changes
+    // every later lane's birth ordinal — which is exactly what used to repaint
+    // the graph. Keys are chosen collision-free ("P" → slot 0, "Q" → slot 2),
+    // the scope in which the spec claims stability.
+    const full = [c("A", ["P"]), c("B", ["Q"]), c("P", []), c("Q", [])];
+    const subset = [c("B", ["Q"]), c("Q", [])];
+
+    // B is born second in `full` (ordinal 1) and first in `subset` (ordinal 0).
+    const fullColor = layoutGraph(full).rows[1]!.node.color;
+    const subsetColor = layoutGraph(subset, { ancestry: full }).rows[0]!.node.color;
+
+    expect(subsetColor).toBe(fullColor);
+  });
+
+  it("draws every colour from the palette", () => {
+    const { rows } = layoutGraph([c("A", ["B"]), c("B", [])]);
+    for (const row of rows) {
+      expect(PALETTE).toContain(row.node.color);
+      for (const lane of row.lanes) expect(PALETTE).toContain(lane.color);
+    }
+  });
+});
+
+describe("HEAD emphasis (#68 G6/G7)", () => {
+  const chain = [c("A", ["B"]), c("B", ["C"]), c("C", [])];
+
+  it("marks the HEAD commit's node", () => {
+    const { rows } = layoutGraph(chain, { headOid: "A" });
+    expect(rows[0]!.node.head).toBe(true);
+    expect(rows[1]!.node.head).toBeFalsy();
+  });
+
+  it("propagates primary down the first-parent chain", () => {
+    const { rows } = layoutGraph(chain, { headOid: "A" });
+    // Every row below HEAD is on its first-parent chain, so every lane there
+    // is the primary lane.
+    for (const row of rows) {
+      expect(row.lanes.every((l) => l.primary)).toBe(true);
+    }
+  });
+
+  it("leaves a merge's second-parent lane unemphasised", () => {
+    // M is HEAD; T is first parent (same lane), F is the merged-in side.
+    const { rows } = layoutGraph(
+      [c("M", ["T", "F"]), c("T", ["R"]), c("F", ["R"]), c("R", [])],
+      { headOid: "M" },
+    );
+    const forkBot = rows[0]!.lanes.find((l) => l.kind === "fork-bot")!;
+    expect(forkBot.primary).toBeFalsy();
+    // F sits on its own, unemphasised lane. Its ROW still contains main's
+    // primary lane passing through on another column — that one stays heavy.
+    const fRow = rows[2]!;
+    const fOwn = fRow.lanes.filter((l) => l.col === fRow.node.col);
+    expect(fOwn.length).toBeGreaterThan(0);
+    expect(fOwn.every((l) => !l.primary)).toBe(true);
+    expect(fRow.lanes.some((l) => l.primary)).toBe(true);
+  });
+
+  it("marks nothing when headOid is absent (detached HEAD)", () => {
+    const { rows } = layoutGraph(chain);
+    expect(rows.every((r) => !r.node.head)).toBe(true);
+    expect(rows.every((r) => r.lanes.every((l) => !l.primary))).toBe(true);
   });
 });

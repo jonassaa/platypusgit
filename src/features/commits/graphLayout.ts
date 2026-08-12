@@ -1,6 +1,7 @@
 import type { CommitInfo } from "@/lib/types";
 import type { GraphLane, GraphNode } from "@/design";
 import { createAncestryResolver } from "./graphAncestry";
+import { createLaneColorer } from "./laneColors";
 
 export interface GraphRow {
   lanes: GraphLane[];
@@ -16,17 +17,9 @@ interface ActiveLane {
    * it, and it resets when the lane reaches its rewritten parent.
    */
   dashed: boolean;
+  /** Lane carries HEAD's first-parent chain. Inherited when a node adopts it. */
+  primary: boolean;
 }
-
-const PALETTE = [
-  "var(--graph-1)",
-  "var(--graph-2)",
-  "var(--graph-3)",
-  "var(--graph-4)",
-  "var(--graph-5)",
-  "var(--graph-6)",
-  "var(--graph-7)",
-];
 
 export interface LayoutOptions {
   /**
@@ -36,8 +29,10 @@ export interface LayoutOptions {
    */
   ancestry?: readonly CommitInfo[];
   /**
-   * HEAD's oid. Reserved for the primary-lane emphasis and HEAD marker in
-   * Phase 3 (#68 G6/G7); declared now so this signature does not churn again.
+   * HEAD's oid. Its node is marked `head` and its lane `primary`; because a
+   * first parent always continues in its node's lane, the flag rides down the
+   * first-parent chain on its own (#68 G6/G7). Omitted on a detached HEAD,
+   * which simply renders no emphasis.
    */
   headOid?: string;
 }
@@ -58,7 +53,6 @@ export function layoutGraph(
 ): GraphLayout {
   const active: Array<ActiveLane | null> = [];
   const rows: GraphRow[] = [];
-  let laneBirthCounter = 0;
   let maxCol = 0;
 
   // Maps each commit's TRUE parents onto the nearest ancestor still in `commits`.
@@ -73,10 +67,13 @@ export function layoutGraph(
     return active.length - 1;
   };
 
-  const nextColor = (): string => {
-    const color = PALETTE[laneBirthCounter % PALETTE.length]!;
-    laneBirthCounter++;
-    return color;
+  const colorer = createLaneColorer();
+
+  /** Colours on screen right now — a collision only matters if it is visible. */
+  const activeColors = (): Set<string> => {
+    const s = new Set<string>();
+    for (const a of active) if (a) s.add(a.color);
+    return s;
   };
 
   for (const commit of commits) {
@@ -85,6 +82,7 @@ export function layoutGraph(
     // deduped link but is still a merge.
     const resolved = ancestry.resolve(commit.oid);
     const trueParents = ancestry.trueParents(commit.oid);
+    const isHead = opts?.headOid !== undefined && commit.oid === opts.headOid;
 
     // 1. Find lanes awaiting this commit (collapse targets)
     const awaiting: number[] = [];
@@ -98,18 +96,29 @@ export function layoutGraph(
     if (awaiting.length === 0) {
       // New root or branch tip visible at top of view
       nodeCol = allocSlot();
-      nodeColor = nextColor();
+      // colorKey is the oid this lane awaits AT BIRTH — the branch-tip-ward
+      // identity, uniform across the node-lane and fork-target cases, and more
+      // stable under filtering than the birth commit's own oid. A root awaits
+      // nothing; its own oid is unique and the lane dies on this row anyway.
+      nodeColor = colorer.pick(resolved[0]?.oid ?? commit.oid, activeColors());
     } else {
       // Leftmost wins; other awaiting lanes collapse into it
       nodeCol = awaiting[0]!;
       nodeColor = active[nodeCol]!.color;
     }
 
+    // HEAD starts the chain; below it, the flag rides the lane the node adopts.
+    const nodePrimary =
+      isHead || (awaiting.length > 0 && active[nodeCol]!.primary);
+
     // Snapshot the top-of-row state before mutating `active`. Carries `dashed`
     // so half-top / merge-top / pass-through lanes inherit the incoming link's
     // elision rather than the outgoing one's.
-    const lanesAtTop: Array<{ col: number; color: string; dashed: boolean } | null> =
-      active.map((a, i) => (a ? { col: i, color: a.color, dashed: a.dashed } : null));
+    const lanesAtTop: Array<
+      { col: number; color: string; dashed: boolean; primary: boolean } | null
+    > = active.map((a, i) =>
+      a ? { col: i, color: a.color, dashed: a.dashed, primary: a.primary } : null,
+    );
     // Lanes that end at this row's node (collapsed secondary matches)
     const collapsingCols = awaiting.slice(1);
 
@@ -119,6 +128,7 @@ export function layoutGraph(
         awaitingOid: resolved[0]!.oid,
         color: nodeColor,
         dashed: resolved[0]!.elided,
+        primary: nodePrimary,
       };
     } else {
       // No resolvable parent: a true root, or a truncated link. Either way the
@@ -142,8 +152,14 @@ export function layoutGraph(
         });
       } else {
         const slot = allocSlot();
-        const color = nextColor();
-        active[slot] = { awaitingOid: link.oid, color, dashed: link.elided };
+        const color = colorer.pick(link.oid, activeColors());
+        // A non-first parent is by definition not on HEAD's first-parent chain.
+        active[slot] = {
+          awaitingOid: link.oid,
+          color,
+          dashed: link.elided,
+          primary: false,
+        };
         forkTargets.push({ toCol: slot, color, dashed: link.elided });
       }
     }
@@ -158,9 +174,21 @@ export function layoutGraph(
 
       if (col === nodeCol) {
         if (top)
-          lanes.push({ col, color: top.color, kind: "half-top", dashed: top.dashed });
+          lanes.push({
+            col,
+            color: top.color,
+            kind: "half-top",
+            dashed: top.dashed,
+            ...(top.primary && { primary: true }),
+          });
         if (bot)
-          lanes.push({ col, color: bot.color, kind: "half-bot", dashed: bot.dashed });
+          lanes.push({
+            col,
+            color: bot.color,
+            kind: "half-bot",
+            dashed: bot.dashed,
+            ...(bot.primary && { primary: true }),
+          });
         continue;
       }
 
@@ -171,13 +199,20 @@ export function layoutGraph(
           kind: "merge-top",
           to: nodeCol,
           dashed: top.dashed,
+          ...(top.primary && { primary: true }),
         });
         continue;
       }
 
       if (top && bot) {
         // Pass-through — lane continues straight down through this row
-        lanes.push({ col, color: top.color, kind: "line", dashed: top.dashed });
+        lanes.push({
+          col,
+          color: top.color,
+          kind: "line",
+          dashed: top.dashed,
+          ...(top.primary && { primary: true }),
+        });
         continue;
       }
 
@@ -207,6 +242,7 @@ export function layoutGraph(
       solid: trueParents.length <= 1,
       merge: trueParents.length >= 2,
       truncated: !isRoot && resolved.length === 0,
+      ...(isHead && { head: true }),
     };
 
     for (const ln of lanes) {

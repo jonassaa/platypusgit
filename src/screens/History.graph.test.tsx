@@ -108,4 +108,24 @@ describe("History graph column", () => {
     await waitFor(() => expect(rows(container).length).toBe(3));
     expect(container.querySelector("[stroke-dasharray]")).toBeNull();
   });
+
+  it("marks HEAD's commit in the graph gutter", async () => {
+    primeStore({
+      branches: [
+        {
+          name: "main",
+          isHead: true,
+          isRemote: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          tip: oid("a"),
+        },
+      ],
+    });
+    const { container } = render(<HistoryScreen />);
+    await waitFor(() => {
+      expect(container.querySelector('[data-graph-head="true"]')).not.toBeNull();
+    });
+  });
 });
