@@ -3,6 +3,7 @@ import { cherryRepo, multiCherryRepo, TempRepo } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
   jsContextMenu, jsHoverMenuItem, jsClickMenuItem, jsSelectValue, jsChord,
+  scrollCommitListTo,
 } from "../support/app";
 
 describe("history danger ops", () => {
@@ -60,6 +61,7 @@ describe("history danger ops", () => {
       timeoutMsg: "history ref selector missing",
     });
     await jsSelectValue('[data-testid="history-ref-select"]', "feature");
+    await scrollCommitListTo("feat: cherry commit");
     const row = $('[data-testid="commit-row"]*=feat: cherry commit');
     await row.waitForDisplayed({
       timeout: 15_000,
@@ -84,6 +86,7 @@ describe("history danger ops", () => {
   it("shows a combined diff of a multi-commit selection", async () => {
     // Click HEAD row (focuses the list pane + selects it), then Shift+ArrowDown
     // extends the range by one. jsChord: the driver can't synthesize modifiers.
+    await scrollCommitListTo("fix: update a.txt");
     await $('[data-testid="commit-row"]*=fix: update a.txt').click();
     await jsChord("Shift+ArrowDown"); // extend to "feat: add b.txt"
     await $("div*=2 commits selected").waitForDisplayed({
@@ -98,6 +101,7 @@ describe("history danger ops", () => {
   });
 
   it("reverts HEAD", async () => {
+    await scrollCommitListTo("fix: update a.txt");
     const row = $('[data-testid="commit-row"]*=fix: update a.txt');
     await row.waitForDisplayed({ timeout: 15_000, timeoutMsg: "HEAD row missing" });
     await row.click();
@@ -132,9 +136,7 @@ describe("history multi cherry-pick", () => {
       timeout: 10_000, timeoutMsg: "history ref selector missing",
     });
     await jsSelectValue('[data-testid="history-ref-select"]', "feature");
-    await $('[data-testid="commit-row"]*=feat: add d.txt').waitForDisplayed({
-      timeout: 15_000, timeoutMsg: "feature commits not visible after scoping",
-    });
+    await scrollCommitListTo("feat: add d.txt");
   });
 
   afterEach(async () => {
@@ -144,6 +146,7 @@ describe("history multi cherry-pick", () => {
 
   it("cherry-picks two selected commits onto main oldest→newest", async () => {
     // Select the top two feature commits (d.txt then, extending up, c.txt).
+    await scrollCommitListTo("feat: add d.txt");
     await $('[data-testid="commit-row"]*=feat: add d.txt').click();
     await jsChord("Shift+ArrowDown"); // extend to "feat: add c.txt"
     await $("div*=2 commits selected").waitForDisplayed({

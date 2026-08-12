@@ -964,7 +964,7 @@ export interface GraphNode {
  * in column 9 and beyond fall outside the SVG viewport and vanish, node dot
  * included, with no overflow and no warning (#68 G1).
  */
-export function PGGraphRow({
+export const PGGraphRow = React.memo(function PGGraphRow({
   lanes = [],
   node,
   width,
@@ -1110,7 +1110,7 @@ export function PGGraphRow({
       )}
     </svg>
   );
-}
+});
 
 export interface CommitRef {
   name: string;
@@ -1128,8 +1128,15 @@ export interface PGCommitRowProps {
   date: string;
   refs?: CommitRef[];
   selected?: boolean;
-  onClick?: (e: MouseEvent) => void;
-  onContextMenu?: (e: MouseEvent) => void;
+  /** Row identity, handed back to the shared handlers below. */
+  oid?: string;
+  /**
+   * Shared across every row — callers pass one `useCallback` pair rather than a
+   * closure per row, which is what lets React.memo actually skip rows whose own
+   * props did not change (#68 G9).
+   */
+  onRowClick?: (oid: string, e: MouseEvent) => void;
+  onRowContext?: (oid: string, e: MouseEvent) => void;
   tagged?: string;
   /**
    * Row height in px. Defaults to the density-derived height. Unlike every
@@ -1151,7 +1158,7 @@ export interface PGCommitRowProps {
 
 export const COMMIT_ROW_BASE_H = 26;
 
-export function PGCommitRow({
+export const PGCommitRow = React.memo(function PGCommitRow({
   lanes,
   node,
   sha,
@@ -1160,8 +1167,9 @@ export function PGCommitRow({
   date,
   refs,
   selected,
-  onClick,
-  onContextMenu,
+  oid,
+  onRowClick,
+  onRowContext,
   tagged,
   rowHeight,
   graphW,
@@ -1176,8 +1184,12 @@ export function PGCommitRow({
       data-sha={sha}
       data-pg-row=""
       data-selected={selected ? "true" : undefined}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
+      onClick={
+        onRowClick && oid !== undefined ? (e) => onRowClick(oid, e) : undefined
+      }
+      onContextMenu={
+        onRowContext && oid !== undefined ? (e) => onRowContext(oid, e) : undefined
+      }
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
@@ -1272,7 +1284,7 @@ export function PGCommitRow({
       <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-11)" }}>{date}</span>
     </div>
   );
-}
+});
 
 export interface PGCommitDetailProps {
   sha: string;

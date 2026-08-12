@@ -629,3 +629,52 @@ export async function jsSelectValue(selector: string, value: string): Promise<vo
   );
   if (!ok) throw new Error(`jsSelectValue: select not found: ${selector}`);
 }
+
+/** Full length of the windowed History list, from the container's data-total. */
+export async function commitListTotal(): Promise<number> {
+  const raw = await $('[data-testid="commit-list"]').getAttribute("data-total");
+  return Number(raw ?? "0");
+}
+
+/**
+ * Scroll the History list until a commit row containing `text` is mounted.
+ *
+ * History is windowed (#68 G10): a commit that exists in the model may not be
+ * in the DOM at all, so a bare `waitForDisplayed` on its text would time out on
+ * a row that is merely off-screen. Small fixtures fit in the first window and
+ * return immediately, so this is cheap to call unconditionally.
+ *
+ * Read-only probing, so bare `browser.execute` is correct here — `executeOnce`
+ * exists for scripts whose effects must not be replayed on a driver retry, and
+ * setting scrollTop to an absolute value is idempotent.
+ */
+export async function scrollCommitListTo(
+  text: string,
+  timeout = 15_000,
+): Promise<void> {
+  const sel = `[data-testid="commit-row"]*=${text}`;
+  let top = 0;
+  // Waits AND scrolls in one loop: the row may be missing because the log is
+  // still loading, or because it is simply outside the window. Treating those
+  // as one condition keeps this as forgiving as the waitForDisplayed it
+  // replaces, instead of failing fast on a slow fixture.
+  await browser.waitUntil(
+    async () => {
+      if (await $(sel).isExisting()) return true;
+      await browser.execute((y: number) => {
+        const el = document.querySelector<HTMLElement>(
+          '[data-pg-pane="history.list"] [data-pg-focus-target]',
+        );
+        if (el) el.scrollTop = y;
+      }, top);
+      // Step by roughly a screenful; wrap so a short list keeps re-probing the
+      // top rather than scrolling past the end forever.
+      top = top >= 20_000 ? 0 : top + 400;
+      return $(sel).isExisting();
+    },
+    {
+      timeout,
+      timeoutMsg: `no commit row matching "${text}" appeared while scrolling the list`,
+    },
+  );
+}

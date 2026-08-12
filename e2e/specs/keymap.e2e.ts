@@ -13,6 +13,7 @@ import {
 import {
   openRepo, resetApp, jsChord, jsDoubleShift, jsKey, jsSelectValue,
   focusedPaneId, paletteDialog, paletteInput, changeRow, stagedRow,
+  scrollCommitListTo,
 } from "../support/app";
 
 const CHEAT_SHEET = "h2*=Keyboard shortcuts";
@@ -259,9 +260,9 @@ describe("keymap — rider preset (default)", () => {
     await jsChord("Mod+9");
     await waitScreen('[data-pg-pane="history.list"]', "History");
     await jsChord("Mod+T");
-    await $('[data-testid="commit-row"]*=feat: remote-only commit').waitForDisplayed({
-      timeout: 20_000, timeoutMsg: "pulled commit never showed up in history after Mod+T",
-    });
+    // The History list is windowed, so the pulled commit may be off-screen
+    // rather than absent (#68 G10).
+    await scrollCommitListTo("feat: remote-only commit", 20_000);
     expect(pair.repo.git("rev-parse", "HEAD").trim()).toBe(remoteTip);
   });
 

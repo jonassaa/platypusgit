@@ -14,6 +14,7 @@ import {
   PGToolbar,
   commitMenuItems,
   commitMultiMenuItems,
+  COMMIT_ROW_BASE_H,
   commitRowGrid,
   graphWidth,
   isGraphClamped,
@@ -23,14 +24,17 @@ import {
   pgPrompt,
   useContextMenu,
   usePaneWidth,
+  type CommitRef,
 } from "@/design";
 import { layoutGraph } from "@/features/commits/graphLayout";
+import { createRowCache } from "@/features/commits/rowIdentity";
+import { useWindowedList } from "@/lib/useWindowedList";
 import { buildLogFilter, isFilterEmpty } from "@/features/commits/logFilter";
 import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
@@ -182,10 +186,23 @@ export function HistoryScreen() {
     [commits, searchResults],
   );
 
-  const { rows, maxCol } = React.useMemo(
+  const { rows: rawRows, maxCol } = React.useMemo(
     () => layoutGraph(visible, { ancestry, headOid: head?.tip ?? undefined }),
     [visible, ancestry, head?.tip],
   );
+
+  // Re-layout on every search keystroke would otherwise hand each row a fresh
+  // lanes/node object and re-render all 500 SVGs, even where nothing moved.
+  const rowCache = React.useRef(createRowCache());
+  const rows = React.useMemo(
+    () => rowCache.current.stabilize(visible, rawRows),
+    [visible, rawRows],
+  );
+
+  // Row pitch MUST come from the density token, not a literal — PGGraphRow
+  // draws in SVG user units and the window steps by this same number (#70).
+  const rowH = COMMIT_ROW_BASE_H + useDensityStep();
+  const win = useWindowedList({ count: visible.length, rowHeight: rowH });
 
   const graphW = graphWidth(maxCol);
   const graphClamped = isGraphClamped(maxCol);
@@ -251,6 +268,9 @@ export function HistoryScreen() {
     onExtendDown: () => moveTo(cursorIdx + 1, true),
     onActivate: activateSelection,
     searchText: (i) => visible[i]?.summary ?? "",
+    // The list is windowed, so the selected row is often unmounted and the
+    // hook's DOM-query fallback would find nothing (#68 G10).
+    scrollToIndex: win.scrollToIndex,
   });
 
   // Single-selection commit whose own diff (parent..commit) feeds the inline
@@ -384,26 +404,53 @@ export function HistoryScreen() {
   const selectedSet = new Set(sel.keys);
   const multiSelected = sel.keys.length > 1;
 
-  const onRowClick = (oid: string, e: React.MouseEvent) => {
-    setSel((prev) =>
-      clickSelection(order, prev, oid, {
-        toggle: e.metaKey || e.ctrlKey,
-        range: e.shiftKey,
-      }),
-    );
-    setLeadOid(oid);
-  };
+  // Both row handlers are shared across every row and stable across renders —
+  // a fresh closure per row would defeat PGCommitRow's memo entirely (#68 G9).
+  const onRowClick = React.useCallback(
+    (oid: string, e: React.MouseEvent) => {
+      setSel((prev) =>
+        clickSelection(order, prev, oid, {
+          toggle: e.metaKey || e.ctrlKey,
+          range: e.shiftKey,
+        }),
+      );
+      setLeadOid(oid);
+    },
+    [order],
+  );
 
-  const onRowContext = (c: CommitInfo, e: React.MouseEvent) => {
-    if (multiSelected && selectedSet.has(c.oid)) {
-      onCommitMulti(e, sel.keys);
-      return;
+  // Oid → commit, so the context handler can take an oid like the click one.
+  const byOid = React.useMemo(
+    () => new Map(visible.map((c) => [c.oid, c])),
+    [visible],
+  );
+
+  // Ref pills, built once per commit instead of twice per row per render
+  // (mapCommitRefs allocated an array, then .filter() allocated another).
+  const refsByOid = React.useMemo(() => {
+    const m = new Map<string, CommitRef[]>();
+    for (const c of visible) {
+      const all = mapCommitRefs(c.refs, headName);
+      m.set(c.oid, refFilter === "local" ? all.filter((r) => !r.remote) : all);
     }
-    // Right-clicking outside the selection collapses to that row first.
-    setSel(clickSelection(order, sel, c.oid, {}));
-    setLeadOid(c.oid);
-    onCommitContext(e, { sha: c.oid, subject: c.summary });
-  };
+    return m;
+  }, [visible, headName, refFilter]);
+
+  const onRowContext = React.useCallback(
+    (oidClicked: string, e: React.MouseEvent) => {
+      const c = byOid.get(oidClicked);
+      if (!c) return;
+      if (multiSelected && selectedSet.has(c.oid)) {
+        onCommitMulti(e, sel.keys);
+        return;
+      }
+      // Right-clicking outside the selection collapses to that row first.
+      setSel(clickSelection(order, sel, c.oid, {}));
+      setLeadOid(c.oid);
+      onCommitContext(e, { sha: c.oid, subject: c.summary });
+    },
+    [byOid, multiSelected, selectedSet, sel, order, onCommitMulti, onCommitContext],
+  );
 
   const listPane = (
     <PGPane
@@ -444,7 +491,12 @@ export function HistoryScreen() {
         <span>AUTHOR</span>
         <span>DATE</span>
       </div>
-      <FocusableScroll style={{ flex: 1 }} ariaLabel="Commit list">
+      <FocusableScroll
+        style={{ flex: 1 }}
+        ariaLabel="Commit list"
+        innerRef={win.viewportRef}
+        onScroll={win.onScroll}
+      >
         {visible.length === 0 && (
           <div
             style={{
@@ -461,11 +513,13 @@ export function HistoryScreen() {
                 : "No commits match the current filters."}
           </div>
         )}
-        {visible.map((c, i) => {
-          const g = rows[i];
-          const refs = mapCommitRefs(c.refs, headName);
-          const visibleRefs =
-            refFilter === "local" ? refs.filter((r) => !r.remote) : refs;
+        {/* Windowed: only the on-screen slice is mounted, with spacer divs
+            above and below so scrollHeight stays exact — FocusableScroll's
+            End/PageDn read scrollHeight and clientHeight (#68 G10). */}
+        <div data-testid="commit-list" data-total={visible.length}>
+        <div style={{ height: win.topPad }} />
+        {visible.slice(win.start, win.end).map((c, sliceIndex) => {
+          const g = rows[win.start + sliceIndex];
           return (
             <PGCommitRow
               key={c.oid}
@@ -477,13 +531,16 @@ export function HistoryScreen() {
               message={c.summary}
               author={c.author || "unknown"}
               date={relativeTime(c.timestamp)}
-              refs={visibleRefs}
+              refs={refsByOid.get(c.oid)}
               selected={selectedSet.has(c.oid)}
-              onClick={(e) => onRowClick(c.oid, e)}
-              onContextMenu={(e) => onRowContext(c, e)}
+              oid={c.oid}
+              onRowClick={onRowClick}
+              onRowContext={onRowContext}
             />
           );
         })}
+        <div style={{ height: win.bottomPad }} />
+        </div>
       </FocusableScroll>
     </PGPane>
   );
