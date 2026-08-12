@@ -49,12 +49,18 @@ cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build                            # production bundle (.msi/.dmg/.deb/.AppImage)
 pnpm tauri build --no-sign                  # ...without updater signing (see note below)
 pnpm test                                   # vitest (unit logic + component tests)
-pnpm test:e2e                               # full e2e: debug build + all specs (CI does this; local only rarely)
-pnpm test:e2e:build                         # rebuild debug binary snapshot only (after src/ or src-tauri/ change)
-pnpm test:e2e:run --spec e2e/specs/X.e2e.ts # run ONLY relevant spec(s) against current snapshot
-pnpm test:e2e:docker                        # headless e2e in Docker (macOS: only way to run WITHOUT a window)
+pnpm test:e2e:docker                        # e2e — THE way to run e2e (headless, same stack as CI)
+pnpm test:e2e:docker run --spec e2e/specs/X.e2e.ts   # ...one spec against this worktree's snapshot
 pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc excludes e2e/)
 ```
+
+**E2E always runs in Docker — never natively, never in a UI window.** The
+`test:e2e`, `test:e2e:build`, and `test:e2e:run` scripts are the in-container
+primitives the Docker wrapper invokes; do not run them directly on the host. A
+host run pops a real WKWebView window, needs foreground focus, is unreliable
+(multi-window specs drop the session) and slow (a full native run has taken 27
+min vs ~1 min in the healthy band) — and a green native run does not predict the
+PR gate. See "Headless e2e in Docker" below.
 
 **Local production builds need the updater signing key.** `tauri.conf.json`
 sets `plugins.updater.pubkey` + `bundle.createUpdaterArtifacts: true`, so
@@ -66,13 +72,19 @@ produces an updater artifact (msi on Windows, AppImage on Linux). Either export
 `TAURI_SIGNING_PRIVATE_KEY` (+ `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) or build
 with `--no-sign`. CI is unaffected — release.yml passes both from repo secrets.
 
-### Headless e2e in Docker (`pnpm test:e2e:docker`)
+### Headless e2e in Docker (`pnpm test:e2e:docker`) — the only supported way
 
 macOS has no headless webview — a native `pnpm test:e2e` run pops a real
-WKWebView window and needs foreground focus (`ensureMacAppFocus`). To run
-headless, drive the CI stack (WebKitGTK + xvfb) in a container. Same webview
-target CI uses, so a green Docker run matches the PR gate; it does NOT prove
-the macOS WKWebView path (run native for that).
+WKWebView window and needs foreground focus (`ensureMacAppFocus`). So e2e runs
+headless in a container driving the CI stack (WebKitGTK + xvfb). Same webview
+target CI uses, so a green Docker run matches the PR gate.
+
+**Never run e2e natively / in a UI window** — not to "check it quickly", not for
+a single spec, not because Docker is cold. It steals foreground focus from
+whoever is at the machine, is flaky on multi-window specs, and its result
+doesn't predict CI. The one exception is a genuinely WKWebView-specific
+question, and that needs the user to ask for it explicitly; say so in the report
+when it happens.
 
 Files: `Dockerfile.e2e` (mirrors `.github/workflows/e2e.yml` deps),
 `docker-compose.e2e.yml`, `e2e/docker-entrypoint.sh` (phase dispatch),
@@ -124,22 +136,27 @@ Four layers, each run independently:
   tests, all passing) drive the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
-  driver or paid service — so it runs on macOS (WKWebView) and on Linux CI
-  (WebKitGTK).
-  - `pnpm test:e2e` = `test:e2e:build` (a tauri debug build with
-    `--features tauri/custom-protocol --config src-tauri/tauri.e2e.conf.json`,
-    snapshotting the binary to gitignored `e2e/.bin/`) followed by
-    `test:e2e:run` (wdio against that snapshot).
-  - **When to run e2e locally:** only once you're DONE developing a change
-    — not on every edit during active development. And run ONLY the spec
-    file(s) relevant to what you touched, not the whole suite. CI runs the
-    full suite on the PR.
+  driver or paid service — so it runs on Linux CI (WebKitGTK) and, in the same
+  container image, locally.
+  - **ALWAYS run e2e through Docker (`pnpm test:e2e:docker …`), never
+    natively.** No host runs, no UI window. `test:e2e` /
+    `test:e2e:build` / `test:e2e:run` are the primitives the container runs:
+    `test:e2e:build` is a tauri debug build with `--features
+    tauri/custom-protocol --config src-tauri/tauri.e2e.conf.json` snapshotting
+    the binary to gitignored `e2e/.bin/`, `test:e2e:run` is wdio against that
+    snapshot. Invoke them via the Docker wrapper, not directly.
+  - **When to run e2e:** only once you're DONE developing a change — not on
+    every edit during active development. And run ONLY the spec file(s)
+    relevant to what you touched, not the whole suite. CI runs the full suite
+    on the PR.
   - **How to run the relevant spec(s):** after a src/ or src-tauri/ change,
-    rebuild the snapshot once with `pnpm test:e2e:build`, then run just the
-    affected spec(s): `pnpm test:e2e:run --spec e2e/specs/<file>.e2e.ts`
-    (repeat `--spec` for more). A spec-only change skips the rebuild — run
-    `pnpm test:e2e:run --spec …` directly. Never rely on a stale snapshot:
-    `test:e2e:run` silently tests the old binary if you skipped the rebuild.
+    rebuild this worktree's snapshot once with `pnpm test:e2e:docker build`,
+    then run just the affected spec(s): `pnpm test:e2e:docker run --spec
+    e2e/specs/<file>.e2e.ts` (repeat `--spec` for more). A spec-only change
+    skips the rebuild — run `pnpm test:e2e:docker run --spec …` directly.
+    `pnpm test:e2e:docker full --spec …` does build + run in one shot. Never
+    rely on a stale snapshot: the `run` phase silently tests the old binary if
+    you skipped the rebuild.
   - **Before writing or debugging any e2e spec, read the `e2e-testing`
     project skill** (`.claude/skills/e2e-testing/SKILL.md`) — selector
     conventions and traps, driver-bridge/5s-penalty rules, native-dialog
@@ -150,8 +167,8 @@ Four layers, each run independently:
     that answers each one as it appears. Call sites are unchanged;
     `confirmCallCount()` still counts confirm dialogs only.
   - CI: `.github/workflows/e2e.yml` (ubuntu-latest + xvfb, PRs to `main` +
-    push to `main`). Headless local runs use `pnpm test:e2e:docker` (same
-    WebKitGTK + xvfb stack) — see the "Headless e2e in Docker" section above.
+    push to `main`). Local runs use `pnpm test:e2e:docker` (same WebKitGTK +
+    xvfb stack) — see the "Headless e2e in Docker" section above.
   - `pnpm.overrides["@wdio/native-utils"] = "2.5.0"` pins around a broken
     dep pin in `@wdio/tauri-service@1.2.0` — don't remove.
   - Only `e2e`-feature builds serve WebDriver on port 4445 (the plugin is now
@@ -162,13 +179,12 @@ Four layers, each run independently:
     launches — without it, `tauri-plugin-single-instance` would forward a
     test binary's launch into any already-running platypusgit instance
     instead of serving WebDriver.
-  - **Second-window e2e is HEADLESS-ONLY** (`merge-window.e2e.ts` drives the
-    `merge` resolver window). Reliable on Linux/WebKitGTK — CI and
-    `pnpm test:e2e:docker`. On a macOS-NATIVE run it's flaky: WKWebView's
+  - Multi-window specs (`merge-window.e2e.ts` drives the `merge` resolver
+    window) are one concrete reason for the Docker-only rule: reliable on
+    Linux/WebKitGTK, broken on a macOS-native run, where WKWebView's
     foreground-focus self-heal can't hold a consistent active window across the
     second window's open/transition/close (`switchWindow` → "No window could be
-    found"). So run any multi-window spec via Docker/CI, not `pnpm test:e2e` on
-    a Mac.
+    found").
 
 ## Architecture
 

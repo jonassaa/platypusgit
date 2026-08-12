@@ -9,14 +9,18 @@ Hard-won rules from building the suite. Every trap below bit a real implementati
 
 ## Commands
 
+**E2E always runs in Docker — never natively, never in a UI window.** The
+`test:e2e*` scripts below are the in-container primitives; drive them through
+the `test:e2e:docker` wrapper, never directly on the host.
+
 ```bash
-pnpm test:e2e        # test:e2e:build + test:e2e:run — REQUIRED after ANY src/ or src-tauri/ change
-pnpm test:e2e:run    # reuses e2e/.bin snapshot — spec-only iterations
-pnpm test:e2e:run --spec e2e/specs/<file>   # single spec
-pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc EXCLUDES e2e/)
+pnpm test:e2e:docker full --spec e2e/specs/<file>  # build + run — REQUIRED after ANY src/ or src-tauri/ change
+pnpm test:e2e:docker run  --spec e2e/specs/<file>  # reuses this worktree's e2e/.bin snapshot — spec-only iterations
+pnpm test:e2e:docker                               # build + whole suite
+pnpm exec tsc -p e2e/tsconfig.json --noEmit        # e2e typecheck gate (root tsc EXCLUDES e2e/)
 ```
 
-**Stale-binary trap:** `test:e2e:run` tests whatever binary is in `e2e/.bin/`. A green run after touching `src/` proves nothing unless a full `test:e2e` ran after the change. Plain `cargo build` silently rewrites `target/debug/platypusgit` WITHOUT `custom-protocol` (blank window) — that's why the snapshot exists. Close any running dev app first: debug builds all serve WebDriver on port 4445 and the runner may attach to the dev instance and clear its localStorage.
+**Stale-binary trap:** the `run` phase tests whatever binary is in `e2e/.bin/`. A green run after touching `src/` proves nothing unless a `build`/`full` ran after the change. Plain `cargo build` silently rewrites `target/debug/platypusgit` WITHOUT `custom-protocol` (blank window) — that's why the snapshot exists. Close any running dev app first: debug builds all serve WebDriver on port 4445 and the runner may attach to the dev instance and clear its localStorage.
 
 **Wrong-binary trap — NATIVE runs collide across worktrees.** Port 4445 is a
 HOST port for native runs, so if any other worktree has an e2e binary running,
@@ -113,7 +117,7 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
 
 ## Debugging
 
-1. Reproduce on one spec: `pnpm test:e2e:run --spec e2e/specs/<file>`.
+1. Reproduce on one spec: `pnpm test:e2e:docker run --spec e2e/specs/<file>`.
 2. Inspect real DOM, don't guess: `await browser.execute(() => document.querySelector('[role="dialog"]')?.outerHTML)`.
 3. Suite slow? → flake bands above (bridge), not the spec.
 4. Selector fights >20min → capture outerHTML evidence, then fix or escalate; never fake a flow by shelling `git` for the action under test.
@@ -127,6 +131,6 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
 
 ## Before committing
 
-- src/ touched → full `pnpm test:e2e` green (paste output, not counts).
+- src/ touched → `pnpm test:e2e:docker full` green (paste output, not counts). Docker, never a native run.
 - `pnpm exec tsc -p e2e/tsconfig.json --noEmit` + `pnpm tsc --noEmit` + `pnpm test`.
 - New refresh site → re-arm rule applied. New helper → lives in `e2e/support/`.
