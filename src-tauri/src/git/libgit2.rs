@@ -43,6 +43,11 @@ pub struct RebaseState {
 pub struct Libgit2Backend {
     repos: Mutex<HashMap<RepoId, Mutex<Repository>>>,
     rebases: Mutex<HashMap<RepoId, RebaseState>>,
+    /// Serializes the guard → write → cleanup window in `init` to prevent two
+    /// concurrent calls on the same path from interfering. Without this lock, call
+    /// A's cleanup could delete `.git` that call B just created, since the
+    /// pre-init guard and post-write cleanup are not atomic across both calls.
+    init_lock: Mutex<()>,
 }
 
 impl Libgit2Backend {
@@ -50,6 +55,7 @@ impl Libgit2Backend {
         Self {
             repos: Mutex::new(HashMap::new()),
             rebases: Mutex::new(HashMap::new()),
+            init_lock: Mutex::new(()),
         }
     }
 
@@ -886,6 +892,46 @@ fn accept_side(
     })
 }
 
+/// Best-effort removal of a failed `init`'s `.git`, whatever shape it turned
+/// out to be. `std::fs::remove_dir_all` alone isn't enough: it only works when
+/// `.git` is a directory. It silently does nothing useful against a plain
+/// file — which is exactly what's there when `Repository::init_opts` fails
+/// because the target already contains a corrupt/malformed `.git` (not a
+/// directory, not a valid gitdir link — `Repository::open` already rejected
+/// it as unusable, or `init` would have refused at the top guard instead of
+/// getting this far). Checked with `symlink_metadata` so a `.git` that is
+/// itself a symlink is removed as the link, not followed into whatever it
+/// points at.
+fn remove_failed_init_git_dir(path: &Path) {
+    let git_path = path.join(".git");
+    match std::fs::symlink_metadata(&git_path) {
+        Ok(meta) if meta.is_dir() => {
+            let _ = std::fs::remove_dir_all(&git_path);
+        }
+        Ok(_) => {
+            // File or symlink.
+            let _ = std::fs::remove_file(&git_path);
+        }
+        Err(_) => {
+            // Nothing there to clean up.
+        }
+    }
+}
+
+/// The branch name a fresh repository should start on: the user's
+/// `init.defaultBranch` if they set one, otherwise `main`.
+///
+/// Reads the default config chain (global + system) rather than a repository's
+/// config — there is no repository yet when this is called.
+pub fn default_branch_name() -> String {
+    git2::Config::open_default()
+        .ok()
+        .and_then(|cfg| cfg.get_string("init.defaultBranch").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "main".to_string())
+}
+
 impl GitBackend for Libgit2Backend {
     fn open(&self, path: &Path) -> AppResult<RepoHandle> {
         if !path.exists() {
@@ -927,6 +973,120 @@ impl GitBackend for Libgit2Backend {
             path: workdir,
             head,
         })
+    }
+
+    fn init(&self, path: &Path, initial_branch: Option<&str>) -> AppResult<RepoHandle> {
+        // Serialize the guard → write → cleanup window to prevent two concurrent
+        // calls on the same path from interfering. Without this, the pre-init
+        // guard and post-write cleanup are not atomic across both calls, so call
+        // A's cleanup could delete `.git` that call B created.
+        let _guard = self
+            .init_lock
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        // The frontend builds `path` by joining a user-typed folder name onto
+        // a directory picked via a native dialog, with no validation of that
+        // name. `Path`'s components never collapse `..`, so a name of ".."
+        // makes `path` resolve to the grandparent of the directory the user
+        // actually picked. `validate_clone_target` (`commands/create.rs`)
+        // already guards clone's equivalent field against exactly this shape;
+        // check the same thing here for the same reason, in the backend
+        // rather than the store, so it holds for any caller, not just today's
+        // one.
+        let last_segment_is_clean = match path.components().last() {
+            Some(Component::Normal(seg)) => {
+                !seg.to_string_lossy().chars().any(|c| c.is_control())
+            }
+            _ => false,
+        };
+        if !last_segment_is_clean {
+            return Err(AppError::InvalidPath(format!(
+                "{} is not a valid repository path",
+                path.display()
+            )));
+        }
+
+        // `Repository::init` on an existing repo silently reopens it. That
+        // reads as success while creating nothing, so refuse up front.
+        if Repository::open(path).is_ok() {
+            return Err(AppError::InvalidPath(format!(
+                "{} is already a git repository",
+                path.display()
+            )));
+        }
+        // A file (not a directory) at `path` would otherwise surface as a
+        // confusing "File exists (os error 17)" out of `create_dir_all` below.
+        if path.exists() && !path.is_dir() {
+            return Err(AppError::InvalidPath(format!(
+                "{} exists and is not a directory",
+                path.display()
+            )));
+        }
+        // A `.git` here is neither a valid, open-able repo (the guard above
+        // would have caught that) nor ours to delete or overwrite. It might
+        // be corrupt-but-precious data the user cares about recovering, not
+        // wreckage from a previous failed `init` — we can't tell those apart,
+        // so don't guess: refuse and let the user remove it themselves.
+        // `symlink_metadata` (not `exists()`) so a `.git` that is itself a
+        // symlink counts as present without following it. Checking this before
+        // any write makes the cleanup below safe: if we get past this point,
+        // `.git` did not exist a moment ago, so anything `init_opts`/`open`
+        // leave behind on failure is ours to clean up, and the `init_lock`
+        // serializes concurrent calls so they don't interfere.
+        if std::fs::symlink_metadata(path.join(".git")).is_ok() {
+            return Err(AppError::InvalidPath(format!(
+                "{} already contains a .git that is not a usable repository — remove it before creating a new repository here",
+                path.display()
+            )));
+        }
+
+        let branch = match initial_branch {
+            Some(b) if !b.trim().is_empty() => b.trim().to_string(),
+            _ => default_branch_name(),
+        };
+        // Validate BEFORE any disk I/O. `RepositoryInitOptions::initial_head`
+        // writes whatever string we hand it straight into HEAD with no
+        // validation of its own, and `Repository::init_opts` happily writes
+        // the rest of a fully-formed `.git` tree around that bad ref and
+        // returns Ok — the failure only surfaces later, inside `self.open`,
+        // when it resolves `repo.head()`. By then a half-built `.git` is
+        // already on disk, and the "already a git repository" guard above
+        // would treat that wreckage as a real repo on every future call,
+        // recoverable only by deleting `.git` outside the app. Catching an
+        // illegal name here, before `create_dir_all` even runs, means that
+        // specific failure mode can never leave anything behind.
+        let ref_name = format!("refs/heads/{branch}");
+        if !git2::Reference::is_valid_name(&ref_name) {
+            return Err(AppError::InvalidPath(format!(
+                "'{branch}' is not a valid branch name"
+            )));
+        }
+
+        std::fs::create_dir_all(path)
+            .map_err(|e| AppError::Io(format!("failed to create {}: {e}", path.display())))?;
+
+        let mut opts = git2::RepositoryInitOptions::new();
+        opts.initial_head(&branch).mkdir(false);
+
+        // Belt-and-suspenders beyond the branch-name check above: ANY failure
+        // from here on (disk error mid-write, a failure inside `self.open`,
+        // ...) must not leave `.git` behind either — that would poison `path`
+        // the same way, permanently, since the guard at the top can't
+        // distinguish "real repo" from "wreckage that merely opens". The guard
+        // proved `.git` did not exist moments ago, so anything left behind on
+        // failure is wreckage from this call. The `init_lock` serializes
+        // concurrent calls so the guard → write → cleanup window is atomic
+        // across the entire operation.
+        let result = Repository::init_opts(path, &opts)
+            .map_err(AppError::from)
+            // Go through `open` so the repo lands in the backend's map with a
+            // real RepoId — a handle that isn't registered 404s on the next call.
+            .and_then(|_| self.open(path));
+        if result.is_err() {
+            remove_failed_init_git_dir(path);
+        }
+        result
     }
 
     fn status(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {

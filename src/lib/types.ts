@@ -254,3 +254,9 @@ export interface AuthorOverride {
   name: string;
   email: string;
 }
+
+/** One tick of `clone://progress`. Mirrors `CloneProgress` in types.rs. */
+export interface CloneProgress {
+  phase: string;
+  percent: number;
+}

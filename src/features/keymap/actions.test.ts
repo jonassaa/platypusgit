@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ACTIONS, ALL_ACTION_IDS } from "./actions";
+import { useCreateStore } from "@/features/create/useCreateStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { useOverlayStore } from "./useOverlayStore";
@@ -88,6 +89,25 @@ describe("default runners", () => {
     expect(useOverlayStore.getState().cheatSheetOpen).toBe(false);
     // Nothing left to close — the runner must decline so Escape falls through.
     expect(ACTIONS["app.closeOverlay"].run?.()).toBe(false);
+  });
+
+  it("app.closeOverlay also closes an open create dialog (clone or init)", () => {
+    useOverlayStore.setState({ cheatSheetOpen: false });
+    useCreateStore.setState({ open: "clone", busy: false });
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+    expect(useCreateStore.getState().open).toBe("none");
+    // ...and still declines once it is closed.
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(false);
+  });
+
+  it("app.closeOverlay claims the chord even while a clone/init is busy (close() no-ops then by design)", () => {
+    useOverlayStore.setState({ cheatSheetOpen: false });
+    useCreateStore.setState({ open: "clone", busy: true });
+    // Claimed so Escape doesn't fall through to another overlay action
+    // mid-run, even though the dialog itself stays open.
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+    expect(useCreateStore.getState().open).toBe("clone");
+    useCreateStore.setState({ open: "none", busy: false });
   });
 
   it("app.closeOverlay also closes the update panel", () => {

@@ -9,10 +9,13 @@
 // A runner returns `false` to decline (nothing to do), letting the key fall
 // through to the browser.
 
+import { useCreateStore } from "@/features/create/useCreateStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import {
+  cloneRepoOp,
   fetchAllOp,
+  initRepoOp,
   openRepoOp,
   pullCurrentOp,
   pushCurrentOp,
@@ -79,7 +82,9 @@ export type ActionId =
   | "commit.toggleAmend"
   | "branch.createNew"
   | "tree.find"
-  | "repo.open";
+  | "repo.open"
+  | "repo.clone"
+  | "repo.init";
 
 export interface ActionDef {
   id: ActionId;
@@ -179,6 +184,15 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
         useOverlayStore.getState().closeCheatSheet();
         return true;
       }
+      // Between the cheat sheet (zIndex 1000, topmost) and the update panel
+      // (zIndex 50, an anchored dropdown) in stacking order — PGModal's
+      // backdrop is zIndex 100. Claim the chord even while busy: close()
+      // no-ops mid-clone/init by design, and an unclaimed Escape must not
+      // fall through to some other overlay action while a run is in flight.
+      if (useCreateStore.getState().open !== "none") {
+        useCreateStore.getState().close();
+        return true;
+      }
       if (useUpdateStore.getState().panelOpen) {
         useUpdateStore.getState().closePanel();
         return true;
@@ -211,6 +225,8 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "diff.prevChange": { id: "diff.prevChange", title: "Previous change (hunk)", category: "Diff", scope: "pane" },
 
   "repo.open": { id: "repo.open", title: "Open repository…", category: "Repository", scope: "global", run: openRepoOp },
+  "repo.clone": { id: "repo.clone", title: "Clone repository…", category: "Repository", scope: "global", run: cloneRepoOp },
+  "repo.init": { id: "repo.init", title: "New repository…", category: "Repository", scope: "global", run: initRepoOp },
   "repo.fetch": { id: "repo.fetch", title: "Fetch all remotes", category: "Repository", scope: "global", run: fetchAllOp },
   "repo.pull": { id: "repo.pull", title: "Pull (update project)", category: "Repository", scope: "global", run: pullCurrentOp },
   "repo.push": { id: "repo.push", title: "Push", category: "Repository", scope: "global", run: pushCurrentOp },

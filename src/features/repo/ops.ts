@@ -5,6 +5,7 @@
 
 import { open } from "@tauri-apps/plugin-dialog";
 import { pgFlash } from "@/design";
+import { useCreateStore } from "@/features/create/useCreateStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { currentBranch, isStaged, isUnstaged } from "@/lib/derive";
 import type { FileStatus } from "@/lib/types";
@@ -37,6 +38,18 @@ export async function openRepoDialog(): Promise<void> {
 /** Keymap runner form of {@link openRepoDialog}. Always claims the chord. */
 export function openRepoOp(): boolean {
   void openRepoDialog();
+  return true;
+}
+
+/** Keymap runners for the create dialogs. Always claim the chord — the
+ *  dialogs are global and need no open repository. */
+export function cloneRepoOp(): boolean {
+  useCreateStore.getState().openClone();
+  return true;
+}
+
+export function initRepoOp(): boolean {
+  useCreateStore.getState().openInit();
   return true;
 }
 

@@ -15,6 +15,12 @@ use types::{
 pub trait GitBackend: Send + Sync {
     // === existing reads ===
     fn open(&self, path: &Path) -> AppResult<RepoHandle>;
+    /// Create a new repository at `path` and register it, returning its handle.
+    ///
+    /// Shaped like `open` rather than the `repo_id` methods below: there is no
+    /// repository to address yet. `initial_branch` overrides the configured
+    /// default; `None` resolves `init.defaultBranch`, falling back to `main`.
+    fn init(&self, path: &Path, initial_branch: Option<&str>) -> AppResult<RepoHandle>;
     fn status(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     /// Like `status`, but also includes tracked-but-unmodified files so UIs
     /// can browse the whole worktree (ignored files are still excluded).

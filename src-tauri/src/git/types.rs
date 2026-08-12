@@ -360,3 +360,13 @@ pub struct ReflogEntry {
     pub op: ReflogOp,
     pub timestamp: i64,
 }
+
+/// One progress tick from `git clone --progress`, as emitted on
+/// `clone://progress`. `phase` is git's own label ("Receiving objects"),
+/// `percent` is 0–100.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneProgress {
+    pub phase: String,
+    pub percent: u8,
+}

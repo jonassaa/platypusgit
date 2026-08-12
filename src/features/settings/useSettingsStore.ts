@@ -521,6 +521,8 @@ interface PersistedState {
   addSignoff: boolean;
   diffContextLines: number;
   ignoreWhitespaceInDiff: boolean;
+  /** Parent directory last used for Clone/Init, prefilled next time. */
+  lastCreateDir: string;
 }
 
 export interface SettingsState extends PersistedState {
@@ -551,6 +553,7 @@ const DEFAULTS: PersistedState = {
   addSignoff: false,
   diffContextLines: 3,
   ignoreWhitespaceInDiff: false,
+  lastCreateDir: "",
 };
 
 function load(): PersistedState {
@@ -612,6 +615,7 @@ function snapshot(s: SettingsState): PersistedState {
     addSignoff: s.addSignoff,
     diffContextLines: s.diffContextLines,
     ignoreWhitespaceInDiff: s.ignoreWhitespaceInDiff,
+    lastCreateDir: s.lastCreateDir,
   };
 }
 

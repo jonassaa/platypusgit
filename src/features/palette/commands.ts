@@ -1,6 +1,7 @@
 // src/features/palette/commands.ts
 import { pgConfirm } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useCreateStore } from "@/features/create/useCreateStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { usePaletteStore } from "./usePaletteStore";
@@ -171,6 +172,16 @@ export function buildCommands(): PaletteItem[] {
       type: "command", id: "action:refresh", search: "Refresh repository",
       label: "Refresh repository", icon: "sync", actionId: "repo.refresh",
       run: direct(() => void repo.refreshAll()),
+    },
+    {
+      type: "command", id: "action:clone", search: "Clone repository git url",
+      label: "Clone repository…", icon: "download", actionId: "repo.clone",
+      run: direct(() => useCreateStore.getState().openClone()),
+    },
+    {
+      type: "command", id: "action:init", search: "New repository init create",
+      label: "New repository…", icon: "plus", actionId: "repo.init",
+      run: direct(() => useCreateStore.getState().openInit()),
     },
   );
 

@@ -1,4 +1,5 @@
 import { PGButton, PGIcon, PGIconButton, PGLogo, PGSpinner } from "@/design";
+import { useCreateStore } from "@/features/create/useCreateStore";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useRecentsStore } from "@/features/repo/useRecentsStore";
 import { openRepoDialog } from "@/features/repo/ops";
@@ -67,7 +68,7 @@ export function WelcomeScreen() {
             Welcome to PlatypusGit
           </div>
           <div style={{ fontSize: "var(--fs-13)", color: "var(--fg-2)" }}>
-            Open a local repository to get started.
+            Open, clone, or create a repository to get started.
           </div>
         </div>
         <PGButton
@@ -90,6 +91,26 @@ export function WelcomeScreen() {
             "Open repository…"
           )}
         </PGButton>
+        <div style={{ display: "flex", gap: 8 }}>
+          <PGButton
+            variant="outline"
+            icon="download"
+            onClick={() => useCreateStore.getState().openClone()}
+            disabled={loading}
+            data-testid="welcome-clone"
+          >
+            Clone repository…
+          </PGButton>
+          <PGButton
+            variant="outline"
+            icon="plus"
+            onClick={() => useCreateStore.getState().openInit()}
+            disabled={loading}
+            data-testid="welcome-init"
+          >
+            New repository…
+          </PGButton>
+        </div>
         <div
           style={{
             fontSize: "var(--fs-11)",

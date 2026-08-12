@@ -2,6 +2,7 @@ pub mod branches;
 pub mod cli;
 pub mod commits;
 pub mod conflict;
+pub mod create;
 pub mod diff;
 pub mod history;
 pub mod rebase;
