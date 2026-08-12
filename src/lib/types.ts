@@ -51,6 +51,18 @@ export interface CommitInfo {
   refs: string[];
 }
 
+/** One page of a resumable log walk (#68 G11). Mirrors Rust `LogPage`. */
+export interface LogPage {
+  commits: CommitInfo[];
+  /**
+   * Frontier oids to resume from — every parent still awaited when the page
+   * ended; null at the true end of history. A SET, not a single oid: several
+   * lanes are alive at a page boundary, and resuming from just the last
+   * emitted commit would silently drop every other branch.
+   */
+  nextCursor: string[] | null;
+}
+
 /**
  * Backend commit-log filter. All set fields are ANDed. String matches are
  * case-insensitive substring matches except `shaPrefix` (matches a prefix of the full OID, hex).

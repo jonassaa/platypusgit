@@ -15,7 +15,8 @@ use crate::opener::safe_workdir_path;
 use super::{
     types::{
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
-        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LogFilter, RebaseAction,
+        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LogFilter, LogPage,
+        RebaseAction,
         RebaseStatus, RebaseStep, ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState,
         ResetMode,
         StashInfo, StashSaveOptions, StatusFlag, TagInfo, TagTarget,
@@ -770,6 +771,93 @@ fn push_log_start(
     }
 }
 
+/// Accumulates the walk frontier while a page is emitted (#68 G11).
+///
+/// The frontier is the set of parents seen but not themselves walked — the
+/// points the next page resumes from. It must be a SET: at a page boundary
+/// several lanes are alive, each awaiting a different parent, so resuming from
+/// only the last emitted commit would silently drop every other branch.
+///
+/// Built incrementally rather than from the finished page, because the
+/// filtered walk visits far more commits than it returns and must not retain a
+/// `CommitInfo` for each one.
+struct FrontierBuilder {
+    /// Every oid the walk yielded — matches AND skipped commits.
+    visited: std::collections::HashSet<git2::Oid>,
+    cand_seen: std::collections::HashSet<git2::Oid>,
+    /// First-seen order, so the continuation is pushed newest-lane-first.
+    candidates: Vec<git2::Oid>,
+}
+
+impl FrontierBuilder {
+    fn new(cap: usize) -> Self {
+        Self {
+            visited: std::collections::HashSet::with_capacity(cap),
+            cand_seen: std::collections::HashSet::new(),
+            candidates: Vec::new(),
+        }
+    }
+
+    fn visit(&mut self, oid: git2::Oid, parents: impl Iterator<Item = git2::Oid>) {
+        self.visited.insert(oid);
+        for p in parents {
+            if self.cand_seen.insert(p) {
+                self.candidates.push(p);
+            }
+        }
+    }
+
+    /// `None` ⟺ end of history: any parent we saw but did not walk IS more
+    /// history, so an empty frontier means there is nothing left.
+    fn finish(self, repo: &Repository) -> Option<Vec<String>> {
+        let mut out = Vec::new();
+        for p in self.candidates {
+            if self.visited.contains(&p) {
+                continue;
+            }
+            // Absent in a shallow/grafted clone → not a resumable point.
+            if repo.find_commit(p).is_ok() {
+                out.push(p.to_string());
+            }
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+}
+
+/// Seed a revwalk for a page: from the cursor frontier when resuming,
+/// otherwise from `refspec`/HEAD. `Ok(false)` means "nothing to walk".
+///
+/// When a cursor is supplied `refspec` is deliberately ignored — the frontier
+/// already encodes which walk this continues.
+fn push_page_start(
+    repo: &Repository,
+    walk: &mut git2::Revwalk,
+    refspec: Option<&str>,
+    cursor: Option<&[String]>,
+) -> AppResult<bool> {
+    match cursor {
+        Some(frontier) if !frontier.is_empty() => {
+            let mut pushed = false;
+            for raw in frontier {
+                let oid =
+                    git2::Oid::from_str(raw).map_err(|_| AppError::InvalidRef(raw.clone()))?;
+                // A frontier oid can be missing in a shallow clone; skip it
+                // rather than failing the whole page.
+                if repo.find_commit(oid).is_ok() {
+                    walk.push(oid)?;
+                    pushed = true;
+                }
+            }
+            Ok(pushed)
+        }
+        _ => push_log_start(repo, walk, refspec),
+    }
+}
+
 /// Map git2's per-ref lookup by target OID. Scans once per log call.
 fn collect_ref_map(repo: &Repository) -> Vec<(git2::Oid, String)> {
     let mut out = Vec::new();
@@ -1155,16 +1243,31 @@ impl GitBackend for Libgit2Backend {
         refspec: Option<&str>,
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>> {
+        // One walk implementation: the legacy contract is page one (#68 G11).
+        Ok(self.log_page(repo_id, refspec, None, limit)?.commits)
+    }
+
+    fn log_page(
+        &self,
+        repo_id: &RepoId,
+        refspec: Option<&str>,
+        cursor: Option<&[String]>,
+        limit: usize,
+    ) -> AppResult<LogPage> {
         self.with_repo(repo_id, |repo| {
             let ref_map = collect_ref_map(repo);
             let mut walk = repo.revwalk()?;
             walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-            if !push_log_start(repo, &mut walk, refspec)? {
-                return Ok(Vec::new());
+            if !push_page_start(repo, &mut walk, refspec, cursor)? {
+                return Ok(LogPage {
+                    commits: Vec::new(),
+                    next_cursor: None,
+                });
             }
 
             let mut out = Vec::with_capacity(limit.min(4096));
-            for oid in walk.take(limit) {
+            let mut frontier = FrontierBuilder::new(limit.min(4096));
+            for oid in walk.by_ref().take(limit) {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
                 let refs: Vec<String> = ref_map
@@ -1174,9 +1277,14 @@ impl GitBackend for Libgit2Backend {
                     .collect();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
+                frontier.visit(oid, commit.parent_ids());
                 out.push(info);
             }
-            Ok(out)
+
+            Ok(LogPage {
+                next_cursor: frontier.finish(repo),
+                commits: out,
+            })
         })
     }
 
@@ -1187,9 +1295,23 @@ impl GitBackend for Libgit2Backend {
         refspec: Option<&str>,
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>> {
+        // One walk implementation: the legacy contract is page one (#68 G11).
+        Ok(self
+            .log_filtered_page(repo_id, filter, refspec, None, limit)?
+            .commits)
+    }
+
+    fn log_filtered_page(
+        &self,
+        repo_id: &RepoId,
+        filter: &LogFilter,
+        refspec: Option<&str>,
+        cursor: Option<&[String]>,
+        limit: usize,
+    ) -> AppResult<LogPage> {
         // No filter set → identical to a plain log walk.
         if filter.is_empty() {
-            return self.log(repo_id, refspec, limit);
+            return self.log_page(repo_id, refspec, cursor, limit);
         }
 
         // Normalize filter terms once.
@@ -1222,17 +1344,25 @@ impl GitBackend for Libgit2Backend {
             let ref_map = collect_ref_map(repo);
             let mut walk = repo.revwalk()?;
             walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-            if !push_log_start(repo, &mut walk, refspec)? {
-                return Ok(Vec::new());
+            if !push_page_start(repo, &mut walk, refspec, cursor)? {
+                return Ok(LogPage {
+                    commits: Vec::new(),
+                    next_cursor: None,
+                });
             }
 
             let mut out = Vec::new();
+            // The frontier tracks every VISITED commit, not just the matches:
+            // resuming from a match's parents would skip the non-matching
+            // commits between them and lose their ancestors entirely.
+            let mut frontier = FrontierBuilder::new(limit.min(4096));
             for oid in walk {
                 if out.len() >= limit {
                     break;
                 }
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
+                frontier.visit(oid, commit.parent_ids());
 
                 // sha prefix — cheap, check first.
                 if let Some(ref q) = sha_q {
@@ -1288,7 +1418,10 @@ impl GitBackend for Libgit2Backend {
                 info.refs = refs;
                 out.push(info);
             }
-            Ok(out)
+            Ok(LogPage {
+                next_cursor: frontier.finish(repo),
+                commits: out,
+            })
         })
     }
 

@@ -36,8 +36,8 @@ import {
   discardPaths,
   fetch as fetchRemote,
   fetchAll,
-  getLog,
-  getLogFiltered,
+  getLogFilteredPage,
+  getLogPage,
   getStatus,
   listAllFiles,
   listFilesAtRev as listFilesAtRevFn,
@@ -101,6 +101,13 @@ export interface RepoActivity {
   branch?: string;
 }
 
+/**
+ * Commits per log page (#68 G11). Was a `500` literal repeated at four call
+ * sites, which is what made history past it unreachable — it is now the page
+ * size, not the ceiling.
+ */
+const PAGE_SIZE = 500;
+
 interface RepoStoreState {
   current: RepoHandle | null;
   status: FileStatus[];
@@ -127,6 +134,19 @@ interface RepoStoreState {
   logRef: string | null;
   /** True while a backend search is in flight. */
   searching: boolean;
+  /**
+   * Resume points for the paginated log walk (#68 G11) — the frontier of every
+   * lane still awaiting a parent, NOT a single oid. null means that walk has
+   * reached the end of history.
+   *
+   * Two cursors, because clearing a search must restore the unfiltered walk's
+   * resume point: `searchCursor` belongs to `searchResults`, `commitCursor` to
+   * `commits`, and `loadMoreCommits` extends whichever list is active.
+   */
+  commitCursor: string[] | null;
+  searchCursor: string[] | null;
+  /** True while an additional page is being fetched. */
+  loadingMore: boolean;
   loading: boolean;
   error: AppError | null;
   repoState: GitRepoState;
@@ -147,6 +167,11 @@ interface RepoStoreState {
    * falls back to the full log. Sets `searchResults` + `commitFilter`.
    */
   searchCommits: (filter: LogFilter) => Promise<void>;
+  /**
+   * Append the next page to whichever log list is active (#68 G11). No-op at
+   * the end of history or while a page is already in flight.
+   */
+  loadMoreCommits: () => Promise<void>;
   /**
    * Scope the commit log to `refspec` (null = HEAD) and reload it. An active
    * search is re-run under the new scope. Errors (e.g. InvalidRef) are set on
@@ -279,6 +304,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   commitFilter: {},
   logRef: null,
   searching: false,
+  commitCursor: null,
+  searchCursor: null,
+  loadingMore: false,
   loading: false,
   error: null,
   repoState: "Clean",
@@ -304,6 +332,8 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         commitFilter: {},
         lastRebaseSummary: null,
         logRef: null,
+        commitCursor: null,
+        searchCursor: null,
       });
       await get().refreshAll();
     } catch (e) {
@@ -316,18 +346,67 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     // Empty filter → clear the search, fall back to full log.
     if (isFilterEmpty(filter)) {
-      set({ searchResults: null, commitFilter: {}, searching: false });
+      // Dropping the search hands the list back to `commits`, whose own cursor
+      // was never touched — so "load more" resumes the unfiltered walk.
+      set({
+        searchResults: null,
+        commitFilter: {},
+        searching: false,
+        searchCursor: null,
+      });
       return;
     }
     set({ commitFilter: filter, searching: true });
     const refspec = get().logRef;
     try {
-      const results = await getLogFiltered(repo.id, filter, 500, refspec);
+      const page = await getLogFilteredPage(repo.id, filter, null, PAGE_SIZE, refspec);
       // Guard against a stale response overwriting a newer filter or scope.
       if (get().commitFilter !== filter || get().logRef !== refspec) return;
-      set({ searchResults: results, searching: false });
+      set({
+        searchResults: page.commits,
+        searchCursor: page.nextCursor,
+        searching: false,
+      });
     } catch (e) {
       set({ searching: false, error: toAppError(e) });
+    }
+  },
+
+  async loadMoreCommits() {
+    const { current, searchResults, searchCursor, commitCursor, loadingMore } = get();
+    const searching = searchResults !== null;
+    const cursor = searching ? searchCursor : commitCursor;
+    // Re-entry guard: History's window can ask for more several times before
+    // the first page resolves.
+    if (!current || !cursor || loadingMore) return;
+
+    const refspec = get().logRef;
+    const filter = get().commitFilter;
+    set({ loadingMore: true });
+    try {
+      const page = searching
+        ? await getLogFilteredPage(current.id, filter, cursor, PAGE_SIZE, refspec)
+        : await getLogPage(current.id, cursor, PAGE_SIZE, refspec);
+      // The list may have been replaced while the page was in flight (repo
+      // switch, ref change, new search) — dropping a stale page is correct.
+      if (get().logRef !== refspec) return;
+      if (searching) {
+        if (get().commitFilter !== filter || get().searchResults === null) return;
+        set((s) => ({
+          searchResults: [...(s.searchResults ?? []), ...page.commits],
+          searchCursor: page.nextCursor,
+        }));
+      } else {
+        if (get().searchResults !== null) return;
+        set((s) => ({
+          commits: [...s.commits, ...page.commits],
+          commitCursor: page.nextCursor,
+        }));
+      }
+    } catch (e) {
+      set({ error: toAppError(e) });
+    } finally {
+      set({ loadingMore: false });
     }
   },
 
@@ -339,10 +418,10 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
     set({ logRef: refspec, loading: true, error: null });
     try {
-      const commits = await getLog(repo.id, 500, refspec);
+      const page = await getLogPage(repo.id, null, PAGE_SIZE, refspec);
       // Guard against a stale response overwriting a newer scope.
       if (get().logRef !== refspec) return;
-      set({ commits, loading: false });
+      set({ commits: page.commits, commitCursor: page.nextCursor, loading: false });
       // Re-run an active search under the new scope.
       const activeFilter = get().commitFilter;
       if (!isFilterEmpty(activeFilter)) {
@@ -360,20 +439,20 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     set({ loading: true, error: null });
     const logRef = get().logRef;
     try {
-      const [status, branches, tags, stashes, remotes, commits, repoState, rebaseStatus] =
+      const [status, branches, tags, stashes, remotes, commitPage, repoState, rebaseStatus] =
         await Promise.all([
           getStatus(repo.id),
           listBranches(repo.id),
           listTags(repo.id),
           listStashes(repo.id),
           listRemotes(repo.id),
-          getLog(repo.id, 500, logRef).catch((e) => {
+          getLogPage(repo.id, null, PAGE_SIZE, logRef).catch((e) => {
             // The browsed ref may have vanished since it was selected (e.g.
             // the branch was deleted) — fall back to HEAD instead of failing
             // the whole refresh.
             if (logRef === null) throw e;
             set({ logRef: null });
-            return getLog(repo.id, 500);
+            return getLogPage(repo.id, null, PAGE_SIZE);
           }),
           repoStateFn(repo.id),
           rebaseStatusFn(repo.id),
@@ -384,7 +463,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         tags,
         stashes,
         remotes,
-        commits,
+        commits: commitPage.commits,
+        // A refresh restarts the walk, so the old resume point is void.
+        commitCursor: commitPage.nextCursor,
         repoState,
         rebaseStatus,
         loading: false,

@@ -110,6 +110,8 @@ pub fn run() {
             commands::repo::open_in_editor,
             commands::commits::get_log,
             commands::commits::get_log_filtered,
+            commands::commits::get_log_page,
+            commands::commits::get_log_filtered_page,
             commands::commits::commits_since,
             commands::commits::commit,
             commands::commits::file_history,

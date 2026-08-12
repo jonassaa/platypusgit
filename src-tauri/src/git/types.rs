@@ -49,6 +49,20 @@ pub struct FileStatus {
     pub embedded: bool,
 }
 
+/// One page of a resumable log walk (#68 G11).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogPage {
+    pub commits: Vec<CommitInfo>,
+    /// Frontier oids to resume from — every parent still awaited when the page
+    /// ended. `None` means the walk reached the true end of history.
+    ///
+    /// A SET, not a single oid: at a page boundary several lanes are alive,
+    /// each awaiting a different parent, so resuming from just the last
+    /// emitted commit would silently drop every other branch.
+    pub next_cursor: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {

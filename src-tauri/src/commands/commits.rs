@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{AuthorOverride, CommitInfo, CommitOptions, LogFilter, RepoId},
+    git::types::{AuthorOverride, CommitInfo, CommitOptions, LogFilter, LogPage, RepoId},
     state::AppState,
 };
 
@@ -19,6 +19,55 @@ pub async fn get_log(
     tokio::task::spawn_blocking(move || backend.log(&repo_id, refspec.as_deref(), limit))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// One page of the log, resumable via `cursor` (#68 G11). `cursor` is the
+/// `nextCursor` of the previous page; omit it for the first page. When a
+/// cursor is given, `refspec` is ignored — the frontier already encodes the
+/// walk it continues.
+#[tauri::command]
+pub async fn get_log_page(
+    state: State<'_, AppState>,
+    repo_id: String,
+    cursor: Option<Vec<String>>,
+    limit: Option<usize>,
+    refspec: Option<String>,
+) -> AppResult<LogPage> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let limit = limit.unwrap_or(500);
+    tokio::task::spawn_blocking(move || {
+        backend.log_page(&repo_id, refspec.as_deref(), cursor.as_deref(), limit)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Like `get_log_page`, but only commits matching `filter` count toward
+/// `limit`.
+#[tauri::command]
+pub async fn get_log_filtered_page(
+    state: State<'_, AppState>,
+    repo_id: String,
+    filter: LogFilter,
+    cursor: Option<Vec<String>>,
+    limit: Option<usize>,
+    refspec: Option<String>,
+) -> AppResult<LogPage> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let limit = limit.unwrap_or(500);
+    tokio::task::spawn_blocking(move || {
+        backend.log_filtered_page(
+            &repo_id,
+            &filter,
+            refspec.as_deref(),
+            cursor.as_deref(),
+            limit,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]

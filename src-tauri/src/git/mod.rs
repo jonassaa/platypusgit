@@ -8,9 +8,11 @@ use std::path::{Path, PathBuf};
 use crate::error::AppResult;
 use types::{
     BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileContent,
-    FileDiff, FileStatus, LogFilter, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo, RepoHandle,
+    FileDiff, FileStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo,
+    RepoHandle,
     RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
 };
+
 
 pub trait GitBackend: Send + Sync {
     // === existing reads ===
@@ -47,6 +49,31 @@ pub trait GitBackend: Send + Sync {
         refspec: Option<&str>,
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>>;
+    /// One page of `log`, resumable via `cursor` (#68 G11).
+    ///
+    /// `cursor` is the frontier returned by the previous page — the set of
+    /// parents still awaited when it ended. When `cursor` is `Some`, `refspec`
+    /// is IGNORED: the frontier already encodes where this walk came from.
+    /// `next_cursor` is `None` at the true end of history.
+    fn log_page(
+        &self,
+        repo_id: &RepoId,
+        refspec: Option<&str>,
+        cursor: Option<&[String]>,
+        limit: usize,
+    ) -> AppResult<LogPage>;
+    /// Like `log_page`, but only counts commits matching `filter` toward
+    /// `limit`. The frontier comes from every commit VISITED, not just the
+    /// matches — resuming from the matches' parents would skip the
+    /// non-matching commits between them and lose their ancestors.
+    fn log_filtered_page(
+        &self,
+        repo_id: &RepoId,
+        filter: &LogFilter,
+        refspec: Option<&str>,
+        cursor: Option<&[String]>,
+        limit: usize,
+    ) -> AppResult<LogPage>;
     /// Commits reachable from HEAD but not from `base` (the `base..HEAD` range),
     /// newest-first. `base` is any revspec — branch, tag, short or full oid.
     /// Errors with `InvalidRef` if `base` can't be resolved or is not an
