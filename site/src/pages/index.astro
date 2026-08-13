@@ -6,11 +6,16 @@ import AppShowcase from '../components/AppShowcase.astro';
 import OsIcon from '../components/OsIcon.astro';
 import { site, downloads } from '../data/site.ts';
 import { heroFeatures } from '../data/features.ts';
+import { descriptions, softwareApplicationSchema, websiteSchema } from '../data/seo.ts';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const availableDownloads = downloads.filter((d) => d.available);
 const comingSoon = downloads.filter((d) => !d.available);
 ---
-<Layout title={site.name + ' — ' + site.tagline}>
+<Layout
+  title={site.name + ' — a free, open source git client for developers'}
+  description={descriptions.home}
+  schemas={[websiteSchema, softwareApplicationSchema]}
+>
   <!-- HERO — statement first -->
   <section class="hero">
     <div class="container hero-inner">
@@ -46,7 +51,7 @@ const comingSoon = downloads.filter((d) => !d.available);
         </p>
       )}
       <div class="hero-ctas">
-        <CTAButton href={base + '/download'} variant="secondary">All download options →</CTAButton>
+        <CTAButton href={base + '/download/'} variant="secondary">All download options →</CTAButton>
         <CTAButton href={site.repo} variant="secondary" external>View on GitHub ↗</CTAButton>
       </div>
 
@@ -99,7 +104,7 @@ const comingSoon = downloads.filter((d) => !d.available);
       {heroFeatures.map((f) => <FeatureCard title={f.title} blurb={f.blurb} />)}
     </div>
     <div class="section-cta">
-      <CTAButton href={base + '/features'} variant="secondary">See the full feature list →</CTAButton>
+      <CTAButton href={base + '/features/'} variant="secondary">See the full feature list →</CTAButton>
     </div>
   </section>
 </Layout>

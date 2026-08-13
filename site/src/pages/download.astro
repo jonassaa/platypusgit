@@ -4,6 +4,7 @@ import CTAButton from '../components/CTAButton.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 import OsIcon from '../components/OsIcon.astro';
 import { site, assets } from '../data/site.ts';
+import { descriptions, softwareApplicationSchema } from '../data/seo.ts';
 
 const buildSteps = `# Prerequisites: Node 22+, pnpm, Rust stable
 #   macOS:   xcode-select --install
@@ -15,7 +16,11 @@ cd platypusgit
 pnpm install
 pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 ---
-<Layout title={'Download — ' + site.name}>
+<Layout
+  title={'Download ' + site.name + ' for Mac, Windows & Linux'}
+  description={descriptions.download}
+  schemas={[softwareApplicationSchema]}
+>
   <section class="container page-head">
     <h1>Download</h1>
     <p class="lead">platypusgit runs on macOS, Windows, and Linux. Pick your platform below. Prebuilt binaries live on GitHub Releases.</p>

@@ -12,7 +12,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     </a>
     <nav class="nav-links">
       {nav.map((n) => <a href={n.href}>{n.label}</a>)}
-      <a href={base + '/support'}>Support</a>
+      <a href={base + '/support/'}>Support</a>
       <a class="chip" href={site.repo} target="_blank" rel="noopener">View on GitHub ↗</a>
       <ThemeToggle />
     </nav>

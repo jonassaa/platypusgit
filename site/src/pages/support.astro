@@ -2,9 +2,10 @@
 import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import { site } from '../data/site.ts';
+import { descriptions } from '../data/seo.ts';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
-<Layout title={'Support the project — ' + site.name}>
+<Layout title={'Support the project — ' + site.name} description={descriptions.support}>
   <section class="container page-head">
     <h1>Support the project</h1>
     <p class="lead">

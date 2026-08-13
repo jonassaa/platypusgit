@@ -1,0 +1,69 @@
+<!doctype html>
+<!--
+  Source for public/og.png — the 1200x630 social preview card.
+  Regenerate after editing (see site/README.md → "Social preview image"):
+    pnpm og
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: "Inter";
+        font-weight: 400 700;
+        src: url("../public/fonts/inter-var.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        font-weight: 400 700;
+        src: url("../public/fonts/jetbrains-mono-var.woff2") format("woff2");
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1200px; height: 630px; }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 30px;
+        background:
+          radial-gradient(900px 420px at 50% -12%, rgba(62, 155, 145, 0.28), transparent),
+          #0d1013;
+        color: #f2f3f5;
+        font-family: "Inter", system-ui, sans-serif;
+        text-align: center;
+        border-bottom: 8px solid #3e9b91;
+      }
+      .lockup { display: flex; align-items: center; gap: 26px; }
+      .lockup img { width: 108px; height: 108px; filter: drop-shadow(0 6px 24px rgba(62, 155, 145, 0.45)); }
+      .word { font-family: "JetBrains Mono", monospace; font-size: 82px; font-weight: 700; letter-spacing: -0.02em; }
+      h1 { font-size: 40px; font-weight: 700; line-height: 1.18; letter-spacing: -0.01em; }
+      h1 .hl { color: #3e9b91; }
+      p { font-size: 25px; color: #9aa1a8; }
+      ul { display: flex; gap: 34px; list-style: none; margin-top: 6px; }
+      li {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        color: #cfd4d8;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      li::before { content: "\2713"; color: #3e9b91; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <div class="lockup">
+      <img src="../public/logo.svg" alt="" />
+      <span class="word">platypusgit</span>
+    </div>
+    <h1>Free, <span class="hl">open source</span> git.<br />Built for developers.</h1>
+    <p>A native git client for macOS, Windows &amp; Linux</p>
+    <ul>
+      <li>No account</li>
+      <li>No paywall</li>
+      <li>No feature tiers</li>
+      <li>No telemetry</li>
+    </ul>
+  </body>
+</html>

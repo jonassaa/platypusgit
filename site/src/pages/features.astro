@@ -2,8 +2,9 @@
 import Layout from '../layouts/Layout.astro';
 import { site } from '../data/site.ts';
 import { featureGroups, roadmap } from '../data/features.ts';
+import { descriptions } from '../data/seo.ts';
 ---
-<Layout title={'Features — ' + site.name}>
+<Layout title={'Features — ' + site.name + ' git client'} description={descriptions.features}>
   <section class="container page-head">
     <h1>Features</h1>
     <p class="lead">Everything implemented end-to-end today. platypusgit is in active development — the list grows.</p>
