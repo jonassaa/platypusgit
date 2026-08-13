@@ -88,13 +88,15 @@
   --shadow-3: 0 12px 40px rgba(0,0,0,0.14);
 }
 
+/* Paths are site-root-absolute: the site is served from the root of
+   www.platypusgit.com, not from a /platypusgit/ project sub-path. */
 @font-face {
   font-family: "Inter"; font-style: normal; font-weight: 400 700; font-display: swap;
-  src: url("/platypusgit/fonts/inter-var.woff2") format("woff2");
+  src: url("/fonts/inter-var.woff2") format("woff2");
 }
 @font-face {
   font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 700; font-display: swap;
-  src: url("/platypusgit/fonts/jetbrains-mono-var.woff2") format("woff2");
+  src: url("/fonts/jetbrains-mono-var.woff2") format("woff2");
 }
 
 * { box-sizing: border-box; }

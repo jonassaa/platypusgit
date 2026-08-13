@@ -3,8 +3,9 @@ import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import { site } from '../data/site.ts';
 import { changelog } from '../data/features.ts';
+import { descriptions } from '../data/seo.ts';
 ---
-<Layout title={'Changelog — ' + site.name}>
+<Layout title={'Changelog — ' + site.name + ' releases'} description={descriptions.changelog}>
   <section class="container page-head">
     <h1>Changelog</h1>
     <p class="lead">Release notes. For the full commit history, see <a href={site.repo + '/commits/main'} target="_blank" rel="noopener">GitHub</a>.</p>

@@ -15,9 +15,9 @@ export const site = {
 // non-clickable "Coming soon" button. macOS, Windows, and Linux all ship
 // builds via the release workflow.
 export const downloads = [
-  { key: 'macos', label: 'macOS', anchor: '/download#macos', note: 'Apple Silicon & Intel · .dmg', available: true },
-  { key: 'windows', label: 'Windows', anchor: '/download#windows', note: 'Windows 10 & 11 · .msi', available: true },
-  { key: 'linux', label: 'Linux', anchor: '/download#linux', note: '.deb & AppImage', available: true },
+  { key: 'macos', label: 'macOS', anchor: '/download/#macos', note: 'Apple Silicon & Intel · .dmg', available: true },
+  { key: 'windows', label: 'Windows', anchor: '/download/#windows', note: 'Windows 10 & 11 · .msi', available: true },
+  { key: 'linux', label: 'Linux', anchor: '/download/#linux', note: '.deb & AppImage', available: true },
 ] as const;
 
 // Direct download links to the stable-named assets the release workflow
@@ -32,8 +32,9 @@ export const assets = {
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
+// Trailing slashes are deliberate — the bare form 301s on GitHub Pages.
 export const nav = [
-  { label: 'Features', href: `${base}/features` },
-  { label: 'Download', href: `${base}/download` },
-  { label: 'Changelog', href: `${base}/changelog` },
+  { label: 'Features', href: `${base}/features/` },
+  { label: 'Download', href: `${base}/download/` },
+  { label: 'Changelog', href: `${base}/changelog/` },
 ];
