@@ -17,6 +17,7 @@ import {
   PGToolbar,
   KV,
   fileMenuItems,
+  FILE_TREE_ROW_BASE_H,
   flattenFileTree,
   multiFileMenuItems,
   pgConfirm,
@@ -28,7 +29,8 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
+import { useWindowedList } from "@/lib/useWindowedList";
 import {
   currentBranch,
   isStaged,
@@ -268,6 +270,17 @@ export function RepoBrowserScreen() {
     [tree, expandedForRender],
   );
   const rowOrder = React.useMemo(() => flatRows.map((f) => f.key), [flatRows]);
+
+  // "All files" lists every file in the repo, so only the visible slice is
+  // mounted (#61 A8). This screen owns the window because it already owns both
+  // the scroll element and the flattened row order `usePaneList` indexes.
+  const treeScrollRef = React.useRef<HTMLDivElement>(null);
+  const treeRowH = FILE_TREE_ROW_BASE_H + useDensityStep();
+  const treeWin = useWindowedList({
+    count: flatRows.length,
+    rowHeight: treeRowH,
+    viewportRef: treeScrollRef,
+  });
   const selectedKeys = React.useMemo(() => new Set(sel.keys), [sel]);
   const selected = primarySelectedKey(sel);
 
@@ -458,6 +471,9 @@ export function RepoBrowserScreen() {
     paneId: "repo.tree",
     count: rowOrder.length,
     selectedIndex: cursorIdx,
+    // The tree is windowed, so the selected row is often unmounted and the
+    // hook's DOM-query fallback would find nothing (#61 A8).
+    scrollToIndex: treeWin.scrollToIndex,
     onSelect: (i) => moveTo(i, false),
     onExtendUp: () => moveTo(cursorIdx - 1, true),
     onExtendDown: () => moveTo(cursorIdx + 1, true),
@@ -741,7 +757,11 @@ export function RepoBrowserScreen() {
               )}
             </div>
           </div>
-          <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
+          <div
+            ref={treeScrollRef}
+            onScroll={treeWin.onScroll}
+            style={{ flex: 1, overflow: "auto", padding: "4px 0" }}
+          >
             {tree.length === 0 && !loading && !revLoading && (
               <div
                 style={{
@@ -783,6 +803,7 @@ export function RepoBrowserScreen() {
               onRowContextMenu={onTreeContextMenu}
               stageState={(k) => stageStates.get(k)}
               onStageToggle={onStageToggle}
+              window={treeWin}
             />
             {fileCtx.menu}
           </div>

@@ -4,7 +4,8 @@
 // FocusableScroll implements End as `scrollTop = scrollHeight` and PageUp/Dn
 // off clientHeight, so a scroll body shorter than the real list breaks both.
 import { describe, expect, it } from "vitest";
-import { windowRange } from "./useWindowedList";
+import { renderHook } from "@testing-library/react";
+import { useWindowedList, windowRange } from "./useWindowedList";
 
 describe("windowRange", () => {
   it("returns the visible slice plus overscan", () => {
@@ -58,5 +59,39 @@ describe("windowRange", () => {
     expect(r.end).toBe(0);
     expect(r.topPad).toBe(0);
     expect(r.bottomPad).toBe(0);
+  });
+});
+
+describe("useWindowedList viewport ownership (#61 A8)", () => {
+  it("uses a caller-supplied viewport instead of creating one", () => {
+    // RepoBrowser already owns its scroll div (the empty state and spinner are
+    // siblings of the tree inside it), so the hook must observe that element
+    // rather than demanding ownership of one.
+    const external = { current: document.createElement("div") };
+    const { result } = renderHook(() =>
+      useWindowedList({ count: 100, rowHeight: 10, viewportRef: external }),
+    );
+    expect(result.current.viewportRef).toBe(external);
+  });
+
+  it("still provides its own viewport when the caller supplies none", () => {
+    const { result } = renderHook(() =>
+      useWindowedList({ count: 100, rowHeight: 10 }),
+    );
+    expect(result.current.viewportRef).toBeTruthy();
+    expect(result.current.viewportRef.current).toBeNull();
+  });
+
+  it("reads the caller's element when scrolling to an index", () => {
+    const el = document.createElement("div");
+    Object.defineProperty(el, "clientHeight", { value: 100, configurable: true });
+    const external = { current: el };
+    const { result } = renderHook(() =>
+      useWindowedList({ count: 100, rowHeight: 10, viewportRef: external }),
+    );
+
+    // Row 50 sits at 500..510, far below a 100px viewport at scrollTop 0.
+    result.current.scrollToIndex(50);
+    expect(el.scrollTop).toBe(510 - 100);
   });
 });

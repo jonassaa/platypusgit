@@ -14,6 +14,7 @@ import {
 import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
 import { commitRowGrid, laneX } from "./graph-geometry";
+import type { WindowRange } from "@/lib/useWindowedList";
 
 // ═════════════════════════════════════════════════════════
 // FILE TREE
@@ -193,6 +194,16 @@ export interface PGFileTreeProps {
    */
   stageState?: (key: string, node: PGFileTreeNode) => PGStageState | undefined;
   onStageToggle?: (key: string, node: PGFileTreeNode, next: boolean) => void;
+  /**
+   * Render only rows `[start, end)`, with spacers standing in for the rest
+   * (#61 A8). Omit to render every row — every caller that does behaves
+   * exactly as before.
+   *
+   * The caller owns the range because it also owns the scroll element and the
+   * `flattenFileTree` result that drives `usePaneList`; indices therefore mean
+   * the same row on both sides.
+   */
+  window?: WindowRange;
 }
 
 export interface PGFileTreeFlatNode {
@@ -227,6 +238,14 @@ export function flattenFileTree(
   return out;
 }
 
+/**
+ * Base row height in px, matching `--row-h: calc(24px + var(--row-step))`
+ * (`index.css`). A windowing caller needs the pitch as a NUMBER and must add
+ * `useDensityStep()`; a literal would desync the window from the rows in
+ * comfortable density (#70). Keep in sync with the token.
+ */
+export const FILE_TREE_ROW_BASE_H = 24;
+
 export function PGFileTree({
   nodes,
   expanded = {},
@@ -238,12 +257,16 @@ export function PGFileTree({
   showStatus = true,
   stageState,
   onStageToggle,
+  window: win,
 }: PGFileTreeProps) {
   const flat = flattenFileTree(nodes, expanded);
   const rowStage = flat.map((f) => stageState?.(f.key, f.node));
   // Reserve the checkbox column for the whole tree as soon as one row uses it,
   // so a mixed tree (changed + unmodified files) keeps its names aligned.
+  // Computed over EVERY row, not the visible slice: deriving it from the
+  // window would make the column appear and disappear while scrolling.
   const stageSlot = rowStage.some((s) => s !== undefined);
+  const range = win ?? { start: 0, end: flat.length, topPad: 0, bottomPad: 0 };
 
   // Keyboard navigation lives with the owning screen, not here: it goes
   // through the keymap's `usePaneList` so the tree gets the same arrow keys,
@@ -257,7 +280,12 @@ export function PGFileTree({
       data-pg-focus-target=""
       className="focusable"
     >
-      {flat.map((f, i) => (
+      {range.topPad > 0 && (
+        <div data-tree-spacer="top" style={{ height: range.topPad }} />
+      )}
+      {flat.slice(range.start, range.end).map((f, sliceIndex) => {
+        const i = range.start + sliceIndex;
+        return (
         <PGFileTreeRow
           key={f.key}
           name={f.node.name}
@@ -285,7 +313,11 @@ export function PGFileTree({
           }
           extra={f.node.extra}
         />
-      ))}
+        );
+      })}
+      {range.bottomPad > 0 && (
+        <div data-tree-spacer="bottom" style={{ height: range.bottomPad }} />
+      )}
     </div>
   );
 }
