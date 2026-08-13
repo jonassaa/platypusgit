@@ -1357,6 +1357,9 @@ export function PGCommitDetail({
           alignItems: "center",
           gap: 8,
           marginBottom: 10,
+          // A 40-char sha is wider than a narrow detail column — wrap the row
+          // rather than force the whole panel to scroll sideways.
+          flexWrap: "wrap",
         }}
       >
         <span
@@ -1373,6 +1376,8 @@ export function PGCommitDetail({
             fontFamily: "var(--font-mono)",
             fontSize: "var(--fs-12)",
             color: "var(--accent)",
+            minWidth: 0,
+            wordBreak: "break-all",
           }}
         >
           {fullSha || sha}
@@ -1391,6 +1396,7 @@ export function PGCommitDetail({
           color: "var(--fg-0)",
           marginBottom: 6,
           lineHeight: 1.3,
+          overflowWrap: "anywhere",
         }}
       >
         {subject}
@@ -1401,6 +1407,9 @@ export function PGCommitDetail({
             color: "var(--fg-1)",
             fontSize: "var(--fs-12)",
             whiteSpace: "pre-wrap",
+            // Wrap unbreakable runs (URLs, long tokens) instead of forcing a
+            // horizontal scrollbar in a narrow column.
+            overflowWrap: "anywhere",
             marginBottom: 10,
             fontFamily: "var(--font-mono)",
             lineHeight: 1.5,

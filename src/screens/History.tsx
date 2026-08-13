@@ -137,6 +137,12 @@ export function HistoryScreen() {
     max: 800,
     storageKey: "pg-history-diff-h",
   });
+  // Width of the message column inside the below-layout detail panel.
+  const messagePane = usePaneWidth(340, {
+    min: 220,
+    max: 640,
+    storageKey: "pg-history-detail-msg-w",
+  });
   const [diffLayout, setDiffLayout] = React.useState<DiffLayout>(() => {
     try {
       return localStorage.getItem(DIFF_LAYOUT_KEY) === "beside" ? "beside" : "below";
@@ -588,39 +594,102 @@ export function HistoryScreen() {
       : `(root) → ${current.shortOid}`
     : "";
 
+  // Message + actions, sized by whoever mounts it. The message scrolls on its
+  // own and the action row is pinned below it, so an arbitrarily long commit
+  // body can never push the buttons — or the diff — out of the panel.
+  const messageBlock = current && (
+    <>
+      <FocusableScroll
+        ariaLabel="Commit message"
+        testId="history-detail-message"
+        style={{ flex: 1, minHeight: 0 }}
+      >
+        <PGCommitDetail
+          sha={current.shortOid}
+          fullSha={current.oid}
+          subject={current.summary}
+          body={current.body ?? undefined}
+          author={current.author || "unknown"}
+          email={current.email}
+          date={relativeTime(current.timestamp)}
+          parents={current.parents.map(shortSha)}
+        />
+      </FocusableScroll>
+      <CommitActionRow commit={current} />
+    </>
+  );
+
+  const diffBlock = (
+    <CommitDiffPanel
+      diffs={inlineDiffs}
+      loading={inlineLoading}
+      error={inlineError}
+      header={diffHeader}
+      paneIdPrefix="history.diff"
+    />
+  );
+
   const detailContent = multiSelected ? (
     <MultiCommitDetail oids={sel.keys} onCombinedDiff={activateSelection} />
   ) : current ? (
-    <>
-      <PGCommitDetail
-        sha={current.shortOid}
-        fullSha={current.oid}
-        subject={current.summary}
-        body={current.body ?? undefined}
-        author={current.author || "unknown"}
-        email={current.email}
-        date={relativeTime(current.timestamp)}
-        parents={current.parents.map(shortSha)}
-      />
-      <CommitActionRow commit={current} />
-      <div
-        style={{
-          borderTop: "1px solid var(--border-0)",
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <CommitDiffPanel
-          diffs={inlineDiffs}
-          loading={inlineLoading}
-          error={inlineError}
-          header={diffHeader}
-          paneIdPrefix="history.diff"
-        />
+    diffLayout === "below" ? (
+      // Bottom panel is wide and short: message beside the diff, each with its
+      // own scroll, so neither one starves the other vertically.
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex" }}>
+        <div
+          style={{
+            width: messagePane.width,
+            flexShrink: 0,
+            minWidth: 0,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {messageBlock}
+        </div>
+        <PGResizeHandle side="right" onDrag={(d) => messagePane.resize(d)} />
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            borderLeft: "1px solid var(--border-0)",
+          }}
+        >
+          {diffBlock}
+        </div>
       </div>
-    </>
+    ) : (
+      // Side panel is narrow and tall: keep the stack, but cap the message at
+      // half the height and let it scroll rather than overflow.
+      <>
+        <div
+          style={{
+            flexShrink: 0,
+            maxHeight: "50%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {messageBlock}
+        </div>
+        <div
+          style={{
+            borderTop: "1px solid var(--border-0)",
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {diffBlock}
+        </div>
+      </>
+    )
   ) : null;
 
   const showDetail = multiSelected || !!current;
@@ -906,9 +975,12 @@ function CommitActionRow({ commit }: { commit: CommitInfo }) {
     store.getState().revert(commit.oid);
   }, [commit, store]);
   return (
+    // Pinned below the scrolling message, never scrolled out of reach.
     <div
       style={{
-        padding: "0 12px 10px",
+        padding: "8px 12px 10px",
+        borderTop: "1px solid var(--border-0)",
+        flexShrink: 0,
         display: "flex",
         gap: 4,
         flexWrap: "wrap",
