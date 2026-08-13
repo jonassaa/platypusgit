@@ -15,7 +15,8 @@ import type {
   TagInfo,
 } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
-import { isAppError } from "@/lib/errors";
+import { dubiousOwnershipPath, isAppError, isDubiousOwnershipError } from "@/lib/errors";
+import { confirmTrust } from "@/features/repo/ownership";
 import {
   abortOperation,
   acceptOurs,
@@ -49,6 +50,7 @@ import {
   markResolved,
   mergeBranch as mergeBranchFn,
   openRepo,
+  trustRepoPath,
   pruneRemote,
   pull as pullRemote,
   push as pushRemote,
@@ -291,6 +293,28 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       return { activity: next };
     });
   };
+  /** Open `path` and reset every per-repo slice. Throws on failure. */
+  const applyOpenedRepo = async (path: string) => {
+    const handle = await openRepo(path);
+    useRecentsStore.getState().addRecent(handle.path);
+    set({
+      current: handle,
+      status: [],
+      allFiles: [],
+      branches: [],
+      tags: [],
+      stashes: [],
+      remotes: [],
+      commits: [],
+      searchResults: null,
+      commitFilter: {},
+      lastRebaseSummary: null,
+      logRef: null,
+      commitCursor: null,
+      searchCursor: null,
+    });
+    await get().refreshAll();
+  };
   return ({
   current: null,
   status: [],
@@ -317,26 +341,29 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async openRepo(path) {
     set({ loading: true, error: null });
     try {
-      const handle = await openRepo(path);
-      useRecentsStore.getState().addRecent(handle.path);
-      set({
-        current: handle,
-        status: [],
-        allFiles: [],
-        branches: [],
-        tags: [],
-        stashes: [],
-        remotes: [],
-        commits: [],
-        searchResults: null,
-        commitFilter: {},
-        lastRebaseSummary: null,
-        logRef: null,
-        commitCursor: null,
-        searchCursor: null,
-      });
-      await get().refreshAll();
+      await applyOpenedRepo(path);
     } catch (e) {
+      // git refuses a repository owned by another user, which a Windows drive
+      // mounted under WSL routinely looks like. That refusal is remediable,
+      // and handling it here rather than per-screen covers Welcome, recents,
+      // the CLI launch and the palette at once.
+      if (isDubiousOwnershipError(e)) {
+        // Trust what the backend named — it canonicalised the path, and
+        // safe.directory matching is exact.
+        const target = dubiousOwnershipPath(e) ?? path;
+        if (await confirmTrust(target)) {
+          try {
+            await trustRepoPath(target);
+            // Deliberately not recursive: one retry. If the exception did not
+            // help, show the error rather than asking again forever.
+            await applyOpenedRepo(path);
+            return;
+          } catch (retryError) {
+            set({ loading: false, error: toAppError(retryError) });
+            return;
+          }
+        }
+      }
       set({ loading: false, error: toAppError(e) });
     }
   },

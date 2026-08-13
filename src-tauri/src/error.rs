@@ -50,6 +50,13 @@ pub enum AppError {
 
     #[error("embedded repository: {0}")]
     EmbeddedRepo(String),
+
+    /// libgit2 refused to open a repository because its working directory is
+    /// owned by a different user (`GIT_EOWNER`, git's CVE-2022-24765 check).
+    /// Carries the canonicalised path, which is the exact string a
+    /// `safe.directory` exception has to contain.
+    #[error("repository is owned by another user: {0}")]
+    DubiousOwnership(String),
 }
 
 impl From<git2::Error> for AppError {

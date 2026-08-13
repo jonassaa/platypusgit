@@ -212,10 +212,15 @@ git/
 │                ConflictSides, CommitOptions, StashSaveOptions, TagTarget, ResetMode, etc.
 ├── libgit2.rs   Libgit2Backend — active impl, most ops real
 ├── cli.rs       CliBackend — stub for ops libgit2 handles poorly (LFS, creds, complex merges)
+├── ownership.rs libgit2's dubious-ownership refusal (GIT_EOWNER, git's
+│                CVE-2022-24765 check — the WSL `/mnt/c` case): error mapping,
+│                RepoPresence probe (Present/Absent/Refused — NEVER infer
+│                "no repo" from a failed open), non-opening repo_root_for
+│                walk, and the global `safe.directory` writer
 └── signature.rs Author/committer signature helpers
 commands/        Thin Tauri handlers, one file per area:
-├── repo.rs        open_repo, get_status, list_all_files, read_file_content,
-│                  append_gitignore, open_in_editor
+├── repo.rs        open_repo, trust_repo_path, get_status, list_all_files,
+│                  read_file_content, append_gitignore, open_in_editor
 ├── cli.rs         take_launch_intent, cli_shim_status, install_cli_shim
 ├── commits.rs     get_log, commit, file_history
 ├── diff.rs        get_diff, stage/unstage/discard_paths, stage/unstage/discard_hunk,

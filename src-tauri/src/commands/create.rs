@@ -114,15 +114,29 @@ pub fn validate_clone_target(parent: &Path, name: &str) -> AppResult<PathBuf> {
     // this app already detects that as data — see commit 1dddff3 and
     // `embedded_repo.rs` — with dedicated UI (`embeddedRepoMenuItems` in
     // `context-menu.tsx`) rather than a dead end.
-    if let Ok(repo) = git2::Repository::open(parent) {
-        let enclosing = repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf();
-        // Lead with the remedy, same principle `embeddedRepoMenuItems`
-        // documents for embedded repos: name the repo, say what to do next,
-        // don't just refuse.
-        return Err(AppError::InvalidPath(format!(
-            "{} is already a git repository — choose a different folder to clone into",
-            enclosing.display()
-        )));
+    //
+    // An ownership-refused directory counts too: it is a repository, we just
+    // cannot read its workdir path back out for the message. Testing
+    // `open(...).is_ok()` would have skipped this guard on every `/mnt/c`
+    // repo under WSL.
+    match git2::Repository::open(parent) {
+        Ok(repo) => {
+            let enclosing = repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf();
+            // Lead with the remedy, same principle `embeddedRepoMenuItems`
+            // documents for embedded repos: name the repo, say what to do next,
+            // don't just refuse.
+            return Err(AppError::InvalidPath(format!(
+                "{} is already a git repository — choose a different folder to clone into",
+                enclosing.display()
+            )));
+        }
+        Err(e) if e.code() == git2::ErrorCode::Owner => {
+            return Err(AppError::InvalidPath(format!(
+                "{} is already a git repository — choose a different folder to clone into",
+                parent.display()
+            )));
+        }
+        Err(_) => {}
     }
 
     let target = parent.join(name);

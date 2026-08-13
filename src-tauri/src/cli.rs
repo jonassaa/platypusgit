@@ -87,6 +87,12 @@ pub fn resolve_repo_root(intent: LaunchIntent) -> LaunchIntent {
         git2::Repository::discover(&p)
             .ok()
             .and_then(|r| r.workdir().map(PathBuf::from))
+            // `discover` opens what it finds, so it fails outright on a
+            // repository refused for ownership. The walk opens nothing, which
+            // is what lets a `pgit` launch from a subdirectory of such a repo
+            // still name the root — and the root is the only path a
+            // `safe.directory` entry can match.
+            .or_else(|| crate::git::ownership::repo_root_for(&p))
             .unwrap_or(p)
     });
     LaunchIntent { path, ..intent }

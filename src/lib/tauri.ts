@@ -53,6 +53,15 @@ export async function openRepo(path: string): Promise<RepoHandle> {
   return invoke<RepoHandle>("open_repo", { path });
 }
 
+/**
+ * Add `path` to the user's global `safe.directory` list so git will open it
+ * despite an ownership mismatch. Only ever call this behind an explicit
+ * confirmation — it is a security exception, not a preference.
+ */
+export async function trustRepoPath(path: string): Promise<void> {
+  return invoke<void>("trust_repo_path", { path });
+}
+
 export async function getStatus(repoId: string): Promise<FileStatus[]> {
   return invoke<FileStatus[]>("get_status", { repoId });
 }
