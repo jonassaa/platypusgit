@@ -407,24 +407,11 @@ export function HistoryScreen() {
     />
   ) : null;
 
-  if (!commits.length) {
-    return (
-      <>
-        <PGToolbar left={toolbarLeft} right={toolbarRight} />
-        {advancedPanel}
-        {loading ? (
-          <PGEmpty icon="history" title={<PGSpinner size={18} />}>
-            Loading commits…
-          </PGEmpty>
-        ) : (
-          <PGEmpty icon="history" title="No commits yet">
-            This repository doesn&apos;t have any commits on HEAD.
-          </PGEmpty>
-        )}
-      </>
-    );
-  }
-
+  // Everything below stays ABOVE the empty-log early return: opening a repo
+  // renders this screen once with no commits and again once the log lands, and
+  // a hook that only runs on the second render aborts the whole React root
+  // ("rendered more hooks than during the previous render"), which showed up
+  // as a window with nothing in it at all.
   const primaryOid = primarySelectedKey(sel);
   const current =
     visible.find((c) => c.oid === primaryOid) ?? visible[cursorIdx] ?? visible[0];
@@ -478,6 +465,24 @@ export function HistoryScreen() {
     },
     [byOid, multiSelected, selectedSet, sel, order, onCommitMulti, onCommitContext],
   );
+
+  if (!commits.length) {
+    return (
+      <>
+        <PGToolbar left={toolbarLeft} right={toolbarRight} />
+        {advancedPanel}
+        {loading ? (
+          <PGEmpty icon="history" title={<PGSpinner size={18} />}>
+            Loading commits…
+          </PGEmpty>
+        ) : (
+          <PGEmpty icon="history" title="No commits yet">
+            This repository doesn&apos;t have any commits on HEAD.
+          </PGEmpty>
+        )}
+      </>
+    );
+  }
 
   const listPane = (
     <PGPane
