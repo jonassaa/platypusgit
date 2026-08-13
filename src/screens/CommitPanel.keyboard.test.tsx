@@ -153,7 +153,7 @@ describe("CommitPanel keyboard navigation", () => {
     });
 
     const typeSubject = (text: string) => {
-      fireEvent.change(screen.getByTestId("commit-subject"), {
+      fireEvent.change(screen.getByTestId("commit-message"), {
         target: { value: text },
       });
     };

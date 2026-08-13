@@ -17,7 +17,7 @@ import {
 } from "../support/app";
 
 const CHEAT_SHEET = "h2*=Keyboard shortcuts";
-const commitSubject = '[data-testid="commit-subject"]';
+const commitMessage = '[data-testid="commit-message"]';
 const historySelectedRow =
   '[data-pg-pane="history.list"] [data-pg-row][data-selected]';
 
@@ -100,12 +100,12 @@ describe("keymap — rider preset (default)", () => {
     repo = dirtyRepo();
     await openRepo(repo.path);
     await jsChord("Mod+K");
-    await waitScreen(commitSubject, "Commit");
+    await waitScreen(commitMessage, "Commit");
     // Bare "?" aimed at a text input must be swallowed by the input policy.
     // The cheat sheet is a TOGGLE: if this dispatch wrongly went through, the
     // window-level "?" below would toggle it back CLOSED and the wait fails —
     // the negative case is observable without a blind sleep.
-    await jsChord("?", { target: commitSubject });
+    await jsChord("?", { target: commitMessage });
     await jsChord("?");
     await $(CHEAT_SHEET).waitForDisplayed({
       timeout: 10_000,
@@ -121,8 +121,8 @@ describe("keymap — rider preset (default)", () => {
     repo = dirtyRepo();
     await openRepo(repo.path);
     await jsChord("Mod+K");
-    await waitScreen(commitSubject, "Commit");
-    await jsChord("Mod+9", { target: commitSubject });
+    await waitScreen(commitMessage, "Commit");
+    await jsChord("Mod+9", { target: commitMessage });
     await waitScreen('[data-pg-pane="history.list"]', "History (⌘9 from input)");
   });
 
@@ -130,8 +130,8 @@ describe("keymap — rider preset (default)", () => {
     repo = dirtyRepo();
     await openRepo(repo.path);
     await jsChord("Mod+K");
-    await waitScreen(commitSubject, "Commit");
-    await jsDoubleShift({ target: commitSubject });
+    await waitScreen(commitMessage, "Commit");
+    await jsDoubleShift({ target: commitMessage });
     await $(paletteDialog).waitForDisplayed({
       timeout: 10_000,
       timeoutMsg: "palette did not open on double-Shift from inside an input",
@@ -357,8 +357,8 @@ describe("keymap — rider preset (default)", () => {
     repo = dirtyRepo(); // staged.txt is already staged
     await openRepo(repo.path);
     await jsChord("Mod+K");
-    await waitScreen(commitSubject, "Commit");
-    await $(commitSubject).setValue("feat: committed via chord");
+    await waitScreen(commitMessage, "Commit");
+    await $(commitMessage).setValue("feat: committed via chord");
     await jsChord("Mod+Enter");
     // UI signal: the committed file leaves the staged list.
     await browser.waitUntil(
@@ -376,8 +376,8 @@ describe("keymap — rider preset (default)", () => {
     pair.repo.git("add", "chord.txt");
     await openRepo(pair.repo.path);
     await jsChord("Mod+K");
-    await waitScreen(commitSubject, "Commit");
-    await $(commitSubject).setValue("feat: commit and push chord");
+    await waitScreen(commitMessage, "Commit");
+    await $(commitMessage).setValue("feat: commit and push chord");
     await jsChord("Mod+Shift+Enter");
     // No single UI element spans commit→push completion — the bare remote's
     // log is the only end-to-end signal, so wait on repo truth.
@@ -392,19 +392,29 @@ describe("keymap — rider preset (default)", () => {
     );
   });
 
-  it("⌘⇧M toggles amend", async () => {
-    repo = dirtyRepo();
+  it("⌘⇧M toggles amend, swapping the draft for HEAD's message", async () => {
+    repo = dirtyRepo(); // HEAD is "fix: update a.txt"
     await openRepo(repo.path);
     await jsChord("Mod+K");
     await waitScreen('[data-testid="commit-button"]', "Commit");
+    await $(commitMessage).setValue("wip: draft");
     await jsChord("Mod+Shift+M");
     await $('[data-testid="commit-button"]*=Amend').waitForDisplayed({
       timeout: 10_000, timeoutMsg: "commit button never relabeled to Amend",
     });
+    await browser.waitUntil(
+      async () => (await $(commitMessage).getValue()) === "fix: update a.txt",
+      { timeout: 10_000, timeoutMsg: "amend never prefilled HEAD's message" },
+    );
     await jsChord("Mod+Shift+M");
     await $('[data-testid="commit-button"]*=Commit').waitForDisplayed({
       timeout: 10_000, timeoutMsg: "commit button never relabeled back to Commit",
     });
+    // The draft amend displaced comes back rather than being lost.
+    await browser.waitUntil(
+      async () => (await $(commitMessage).getValue()) === "wip: draft",
+      { timeout: 10_000, timeoutMsg: "draft never came back after unchecking amend" },
+    );
   });
 
   it("⌘N opens the create-branch step and creates the branch", async () => {
