@@ -106,6 +106,22 @@ pub async fn rename_branch(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+#[tauri::command]
+pub async fn set_upstream(
+    state: State<'_, AppState>,
+    repo_id: String,
+    branch: String,
+    upstream: Option<String>,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || {
+        backend.set_upstream(&repo_id, &branch, upstream.as_deref())
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 /// Helper: resolve the working-directory path for an open repo.
 async fn get_repo_path(state: &AppState, repo_id: &RepoId) -> AppResult<std::path::PathBuf> {
     let backend = state.backend.clone();
@@ -194,6 +210,24 @@ pub async fn pull(
     run_git(&path, &["pull", mode_flag, remote.as_str(), branch.as_str()]).await
 }
 
+/// Build `git push` args. `set_upstream` adds `-u`, which the caller passes
+/// only when the branch has no upstream yet — re-sending `-u` on every push
+/// would rewrite tracking the user may have deliberately pointed elsewhere.
+fn push_args(remote: &str, branch: &str, force: PushForce, set_upstream: bool) -> Vec<String> {
+    let mut args: Vec<String> = vec!["push".to_string()];
+    if set_upstream {
+        args.push("-u".to_string());
+    }
+    args.push(remote.to_string());
+    args.push(branch.to_string());
+    match force {
+        PushForce::None => {}
+        PushForce::WithLease => args.push("--force-with-lease".to_string()),
+        PushForce::Force => args.push("--force".to_string()),
+    }
+    args
+}
+
 #[tauri::command]
 pub async fn push(
     state: State<'_, AppState>,
@@ -202,19 +236,59 @@ pub async fn push(
     branch: String,
     force: PushForce,
 ) -> AppResult<()> {
-    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    let mut args: Vec<String> = vec![
-        "push".to_string(),
-        remote,
-        branch,
-    ];
-    match force {
-        PushForce::None => {}
-        PushForce::WithLease => args.push("--force-with-lease".to_string()),
-        PushForce::Force => args.push("--force".to_string()),
-    }
+    let repo_id = RepoId(repo_id);
+    let path = get_repo_path(&state, &repo_id).await?;
+
+    // -u only for a branch with no upstream yet, so the first push establishes
+    // tracking without later pushes rewriting it.
+    let needs_upstream = {
+        let backend = state.backend.clone();
+        let id = repo_id.clone();
+        let branch_name = branch.clone();
+        tokio::task::spawn_blocking(move || backend.branches(&id))
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .map(|bs| {
+                bs.iter()
+                    .any(|b| !b.is_remote && b.name == branch_name && b.upstream.is_none())
+            })
+            // Failing to read branches must not block the push: fall back to a
+            // plain push rather than guessing -u.
+            .unwrap_or(false)
+    };
+
+    let args = push_args(&remote, &branch, force, needs_upstream);
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     run_git(&path, &arg_refs).await
+}
+
+#[cfg(test)]
+mod push_args_tests {
+    use super::*;
+
+    #[test]
+    fn adds_u_only_when_requested() {
+        assert_eq!(
+            push_args("origin", "main", PushForce::None, true),
+            vec!["push", "-u", "origin", "main"]
+        );
+        assert_eq!(
+            push_args("origin", "main", PushForce::None, false),
+            vec!["push", "origin", "main"]
+        );
+    }
+
+    #[test]
+    fn force_flag_comes_last() {
+        assert_eq!(
+            push_args("origin", "main", PushForce::WithLease, false),
+            vec!["push", "origin", "main", "--force-with-lease"]
+        );
+        assert_eq!(
+            push_args("origin", "feat/x", PushForce::Force, true),
+            vec!["push", "-u", "origin", "feat/x", "--force"]
+        );
+    }
 }
 
 #[tauri::command]

@@ -12,7 +12,7 @@ import {
   PGPanel,
   PGResizeHandle,
   PGSearchInput,
-  PGSpinner,
+  PGSkeleton,
   PGStatusMark,
   PGToolbar,
   KV,
@@ -784,13 +784,11 @@ export function RepoBrowserScreen() {
             )}
             {(loading || revLoading) && tree.length === 0 && (
               <div
-                style={{
-                  padding: 14,
-                  textAlign: "center",
-                  color: "var(--fg-2)",
-                }}
+                style={{ padding: "4px 8px" }}
+                aria-busy="true"
+                aria-label="Loading files"
               >
-                <PGSpinner size={14} />
+                <PGSkeleton count={10} rowStep />
               </div>
             )}
             <PGFileTree
@@ -924,14 +922,14 @@ export function RepoBrowserScreen() {
               </PGEmpty>
             )}
             {selectedFile && diffLoading && (
+              // Code lines, not list rows: --lh-code owns diff/preview
+              // geometry, so this deliberately does NOT use rowStep (#61 B6).
               <div
-                style={{
-                  padding: 20,
-                  textAlign: "center",
-                  color: "var(--fg-2)",
-                }}
+                style={{ padding: 12 }}
+                aria-busy="true"
+                aria-label="Loading file"
               >
-                <PGSpinner size={14} />
+                <PGSkeleton count={14} height={10} gap={5} />
               </div>
             )}
             {selectedFile && selectedIsEmbedded && (

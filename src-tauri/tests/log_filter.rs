@@ -403,3 +403,121 @@ fn unborn_head_returns_empty() {
         .unwrap();
     assert!(out.is_empty());
 }
+
+// ─────────────────────────────────────────────────────────────
+// Content search — git's `-G` semantics (#61 D10)
+// ─────────────────────────────────────────────────────────────
+
+/// Repo where one commit adds a needle line and a later one removes it.
+fn needle_repo() -> TempRepo {
+    let tr = TempRepo::fresh();
+    commit_as(&tr, "a.txt", "alpha\n", "first", "Alice", "alice@example.com", 1000);
+    commit_as(
+        &tr,
+        "a.txt",
+        "alpha\nNEEDLE here\n",
+        "add needle",
+        "Alice",
+        "alice@example.com",
+        2000,
+    );
+    commit_as(&tr, "a.txt", "alpha\n", "drop needle", "Bob", "bob@example.com", 3000);
+    commit_as(&tr, "b.txt", "unrelated\n", "unrelated", "Bob", "bob@example.com", 4000);
+    tr
+}
+
+#[test]
+fn content_filter_finds_adding_and_removing_commits() {
+    let tr = needle_repo();
+    let (backend, handle) = tr.open_with_backend();
+
+    let filter = LogFilter {
+        content: Some("NEEDLE".into()),
+        ..Default::default()
+    };
+    let found = backend.log_filtered(&handle.id, &filter, None, 50).unwrap();
+
+    let subjects: Vec<&str> = found.iter().map(|c| c.summary.as_str()).collect();
+    assert!(subjects.contains(&"add needle"), "got {subjects:?}");
+    assert!(
+        subjects.contains(&"drop needle"),
+        "a removal counts too: {subjects:?}"
+    );
+    assert!(!subjects.contains(&"unrelated"), "got {subjects:?}");
+    assert!(!subjects.contains(&"first"), "got {subjects:?}");
+}
+
+#[test]
+fn content_filter_regex_mode_matches() {
+    let tr = needle_repo();
+    let (backend, handle) = tr.open_with_backend();
+
+    let filter = LogFilter {
+        content: Some("NEE.LE".into()),
+        content_regex: true,
+        ..Default::default()
+    };
+    let found = backend.log_filtered(&handle.id, &filter, None, 50).unwrap();
+    assert_eq!(found.len(), 2, "regex should match both needle commits");
+}
+
+#[test]
+fn content_filter_substring_mode_does_not_treat_pattern_as_regex() {
+    let tr = needle_repo();
+    let (backend, handle) = tr.open_with_backend();
+
+    let filter = LogFilter {
+        content: Some("NEE.LE".into()),
+        ..Default::default()
+    };
+    let found = backend.log_filtered(&handle.id, &filter, None, 50).unwrap();
+    assert!(found.is_empty(), "substring mode must be literal");
+}
+
+#[test]
+fn content_filter_bad_regex_errors_before_walking() {
+    let tr = needle_repo();
+    let (backend, handle) = tr.open_with_backend();
+
+    let filter = LogFilter {
+        content: Some("([unclosed".into()),
+        content_regex: true,
+        ..Default::default()
+    };
+    let err = backend
+        .log_filtered(&handle.id, &filter, None, 50)
+        .expect_err("bad regex must error");
+    assert!(
+        matches!(err, platypusgit_lib::error::AppError::InvalidArgument(_)),
+        "expected InvalidArgument, got {err:?}"
+    );
+}
+
+#[test]
+fn content_filter_intersects_with_path_filter() {
+    let tr = needle_repo();
+    let (backend, handle) = tr.open_with_backend();
+
+    let filter = LogFilter {
+        content: Some("NEEDLE".into()),
+        path: Some("b.txt".into()),
+        ..Default::default()
+    };
+    let found = backend.log_filtered(&handle.id, &filter, None, 50).unwrap();
+    assert!(found.is_empty(), "needle is in a.txt, not b.txt");
+}
+
+#[test]
+fn content_regex_toggle_alone_is_not_a_filter() {
+    let tr = needle_repo();
+    let (backend, handle) = tr.open_with_backend();
+
+    // A regex toggle with no pattern must not make an empty filter look set —
+    // this walks as a plain log and returns everything.
+    let filter = LogFilter {
+        content_regex: true,
+        ..Default::default()
+    };
+    let found = backend.log_filtered(&handle.id, &filter, None, 50).unwrap();
+    assert_eq!(found.len(), 4, "every commit should come back");
+}

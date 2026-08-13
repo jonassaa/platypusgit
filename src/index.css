@@ -258,6 +258,13 @@ kbd {
   background-size: 200% 100%;
   animation: pg-shimmer 1.8s ease-in-out infinite;
 }
+/* A loading placeholder must not be a moving distraction for anyone who has
+   asked the OS for less motion; the block still reads as "pending". */
+@media (prefers-reduced-motion: reduce) {
+  .pg-shimmer {
+    animation: none;
+  }
+}
 
 .pg-row  { display: flex; align-items: center; gap: 8px; }
 .pg-col  { display: flex; flex-direction: column; }

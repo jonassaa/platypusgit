@@ -694,6 +694,28 @@ export function branchMenuItems(
       },
     },
     {
+      icon: "link",
+      label: "Set upstream…",
+      onClick: async () => {
+        if (!name) return;
+        // Empty submission clears tracking, dismissal does nothing — so
+        // requireValue stays off and null is checked explicitly (#61 D9).
+        const next = await pgPrompt({
+          title: `Upstream for ${name}`,
+          body: "Remote-tracking branch, e.g. origin/main. Leave empty to clear tracking.",
+          initialValue: upstream ?? "",
+          placeholder: "origin/main",
+          confirmLabel: "Set",
+          mono: true,
+        });
+        if (next === null) return;
+        const trimmed = next.trim();
+        useRepoStore
+          .getState()
+          .setUpstream(name, trimmed === "" ? null : trimmed);
+      },
+    },
+    {
       icon: "copy",
       label: "Copy name",
       onClick: () => {

@@ -63,7 +63,10 @@ describe("History screen when the log arrives after mount", () => {
     });
 
     render(<HistoryScreen />);
-    expect(screen.getByText(/Loading commits/i)).toBeInTheDocument();
+    // The loading state is skeleton rows rather than a text label since #61 B6,
+    // so this asserts the accessible name — same intent: the screen renders
+    // during the loading phase, before the log arrives.
+    expect(screen.getByLabelText(/Loading commits/i)).toBeInTheDocument();
 
     // The log lands — same component, second render, must use the same hooks.
     await act(async () => {

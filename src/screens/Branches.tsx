@@ -790,6 +790,16 @@ function BranchInspector({ branch }: { branch: BranchInfo }) {
 function BranchActions({ branch }: { branch: BranchInfo }) {
   return (
     <>
+      {!branch.isRemote && (
+        <PGButton
+          variant="outline"
+          icon="link"
+          title={`Set or clear the upstream for ${branch.name}`}
+          onClick={() => void promptUpstream(branch)}
+        >
+          Set upstream
+        </PGButton>
+      )}
       <PGButton
         variant="primary"
         icon="check"
@@ -855,6 +865,30 @@ function BranchActions({ branch }: { branch: BranchInfo }) {
       </PGButton>
     </>
   );
+}
+
+/**
+ * Prompt for a branch's upstream (#61 D9).
+ *
+ * An empty submitted string clears tracking; a dismissed prompt (null) does
+ * nothing. That empty-vs-null distinction is guaranteed by pgPrompt, and is
+ * what makes a prompt sufficient here instead of a bespoke picker — so
+ * `requireValue` must stay off.
+ */
+export async function promptUpstream(branch: BranchInfo) {
+  const next = await pgPrompt({
+    title: `Upstream for ${branch.name}`,
+    body: "Remote-tracking branch, e.g. origin/main. Leave empty to clear tracking.",
+    initialValue: branch.upstream ?? "",
+    placeholder: "origin/main",
+    confirmLabel: "Set",
+    mono: true,
+  });
+  if (next === null) return;
+  const trimmed = next.trim();
+  await useRepoStore
+    .getState()
+    .setUpstream(branch.name, trimmed === "" ? null : trimmed);
 }
 
 function TagInspector({ tag }: { tag: TagInfo }) {

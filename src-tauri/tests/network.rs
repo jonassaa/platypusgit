@@ -280,3 +280,35 @@ fn repo_path_returns_workdir() {
     // Should be a directory that exists.
     assert!(path.is_dir(), "repo_path should return an existing directory");
 }
+
+/// The behaviour `push` relies on for #61 D9: `git push -u` leaves an upstream
+/// that `branches()` then reports. The command's own decision of *when* to pass
+/// `-u` is covered by the `push_args` unit tests.
+#[test]
+fn push_with_u_leaves_an_upstream_branches_reports() {
+    let bare = BareTempRepo::new();
+    let tr = TempRepo::with_initial_commit("hello\n");
+    tr.repo
+        .remote("origin", bare.path.to_str().unwrap())
+        .unwrap();
+
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(tr.path())
+        .args(["push", "-u", "origin", "main"])
+        .output()
+        .expect("run git push");
+    assert!(
+        out.status.success(),
+        "push failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let (backend, handle) = tr.open_with_backend();
+    let branches = backend.branches(&handle.id).unwrap();
+    let main = branches
+        .iter()
+        .find(|b| b.name == "main" && !b.is_remote)
+        .expect("main branch");
+    assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+}

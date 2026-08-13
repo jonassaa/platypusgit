@@ -97,6 +97,13 @@ pub struct LogFilter {
     pub until: Option<i64>,
     /// Only commits that touched this path (relative to repo root).
     pub path: Option<String>,
+    /// Pattern that must appear in a line this commit added or removed —
+    /// git's `-G`, not `-S`: "the text was touched", not "the occurrence count
+    /// changed".
+    pub content: Option<String>,
+    /// Treat `content` as a regular expression rather than a literal substring.
+    #[serde(default)]
+    pub content_regex: bool,
 }
 
 impl LogFilter {
@@ -108,6 +115,9 @@ impl LogFilter {
             && self.since.is_none()
             && self.until.is_none()
             && self.path.as_deref().map(str::trim).unwrap_or("").is_empty()
+            // `content_regex` deliberately does NOT count: a regex toggle with
+            // no pattern is still no filter.
+            && self.content.as_deref().map(str::trim).unwrap_or("").is_empty()
     }
 }
 

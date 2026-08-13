@@ -13,6 +13,10 @@ export interface LogFilterInputs {
   sinceDate?: string;
   /** ISO date string `YYYY-MM-DD` (date input). */
   untilDate?: string;
+  /** Advanced-panel "changed lines contain" field. */
+  content?: string;
+  /** Advanced-panel regex toggle for `content`. */
+  contentRegex?: boolean;
 }
 
 /** A SHA-ish token: hex, length 4..40. */
@@ -43,6 +47,10 @@ export function parseQueryText(text: string): Partial<LogFilter> {
       case "path":
       case "file":
         if (value) out.path = value;
+        break;
+      case "content":
+      case "contains":
+        if (value) out.content = value;
         break;
       case "sha":
       case "commit":
@@ -133,6 +141,10 @@ export function buildLogFilter(inputs: LogFilterInputs): LogFilter {
     if (until != null) filter.until = until;
   }
 
+  const content = inputs.content?.trim();
+  if (content) filter.content = content;
+  if (inputs.contentRegex) filter.contentRegex = true;
+
   return normalizeFilter(filter);
 }
 
@@ -145,6 +157,12 @@ export function normalizeFilter(filter: LogFilter): LogFilter {
   if (filter.path?.trim()) out.path = filter.path.trim();
   if (typeof filter.since === "number") out.since = filter.since;
   if (typeof filter.until === "number") out.until = filter.until;
+  if (filter.content?.trim()) {
+    out.content = filter.content.trim();
+    // The toggle only means something with a pattern — a dangling regex flag
+    // would make an otherwise-empty filter look set.
+    if (filter.contentRegex) out.contentRegex = true;
+  }
   return out;
 }
 

@@ -81,6 +81,13 @@ export interface LogFilter {
   until?: number | null;
   /** Only commits that touched this path (relative to repo root). */
   path?: string | null;
+  /**
+   * Pattern appearing in a line the commit added or removed (git `-G`, not
+   * `-S`: "the text was touched", not "the occurrence count changed").
+   */
+  content?: string | null;
+  /** Treat `content` as a regular expression rather than a literal substring. */
+  contentRegex?: boolean;
 }
 
 export interface BranchInfo {

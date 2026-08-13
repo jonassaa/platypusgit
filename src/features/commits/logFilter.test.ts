@@ -112,3 +112,44 @@ describe("normalizeFilter / isFilterEmpty", () => {
     expect(isFilterEmpty({ since: 1000 })).toBe(false);
   });
 });
+
+// Content search (#61 D10). `-G` semantics: the pattern appears in a line the
+// commit added or removed.
+describe("content qualifier", () => {
+  it("parses content: into the content field", () => {
+    expect(parseQueryText("content:foo")).toEqual({ content: "foo" });
+  });
+
+  it("accepts contains: as an alias", () => {
+    expect(parseQueryText("contains:foo")).toEqual({ content: "foo" });
+  });
+
+  it("leaves other text as a message term", () => {
+    expect(parseQueryText("content:foo bar")).toEqual({
+      content: "foo",
+      message: "bar",
+    });
+  });
+
+  it("normalizeFilter drops a blank content and a dangling regex toggle", () => {
+    expect(normalizeFilter({ content: "   ", contentRegex: true })).toEqual({});
+  });
+
+  it("normalizeFilter keeps contentRegex only alongside a content term", () => {
+    expect(normalizeFilter({ content: "foo", contentRegex: true })).toEqual({
+      content: "foo",
+      contentRegex: true,
+    });
+  });
+
+  it("buildLogFilter carries the panel field and toggle", () => {
+    expect(buildLogFilter({ content: " needle ", contentRegex: true })).toEqual({
+      content: "needle",
+      contentRegex: true,
+    });
+  });
+
+  it("isFilterEmpty stays true for a regex toggle with no pattern", () => {
+    expect(isFilterEmpty({ contentRegex: true })).toBe(true);
+  });
+});

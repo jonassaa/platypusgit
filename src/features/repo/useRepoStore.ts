@@ -70,6 +70,7 @@ import {
   runMergetool as runMergetoolFn,
   restartConflict as restartConflictFn,
   setRemoteUrl,
+  setUpstream as setUpstreamFn,
   stageHunk,
   stagePaths,
   stashApply,
@@ -232,6 +233,8 @@ interface RepoStoreState {
   ) => Promise<boolean>;
   deleteBranch: (name: string, force?: boolean) => Promise<void>;
   renameBranch: (from: string, to: string) => Promise<void>;
+  /** Set (`"origin/main"`) or clear (`null`) a local branch's upstream. */
+  setUpstream: (branch: string, upstream: string | null) => Promise<void>;
   mergeBranch: (name: string) => Promise<void>;
   rebaseOnto: (upstream: string) => Promise<void>;
   createTag: (name: string, target: TagTarget) => Promise<void>;
@@ -809,6 +812,17 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await renameBranch(repo.id, from, to);
+      await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async setUpstream(branch, upstream) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await setUpstreamFn(repo.id, branch, upstream);
       await get().refreshAll();
     } catch (e) {
       set({ error: toAppError(e) });
