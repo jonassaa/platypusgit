@@ -41,13 +41,24 @@ export function windowRange(o: {
   };
 }
 
-export function useWindowedList(o: {
+export function useWindowedList<T extends HTMLElement = HTMLDivElement>(o: {
   count: number;
   rowHeight: number;
   overscan?: number;
+  /**
+   * Scroll element to observe. Omit and the hook provides its own ref for the
+   * caller to attach. Supply one when the caller already owns the scroller —
+   * RepoBrowser's tree scrolls in a div that also holds the empty state and
+   * spinner, so ownership cannot move into here without restructuring it.
+   *
+   * Generic over the element type so each caller keeps its concrete ref type
+   * (a `<div>` ref stays `RefObject<HTMLDivElement>`).
+   */
+  viewportRef?: React.RefObject<T | null>;
 }) {
   const { count, rowHeight, overscan = 8 } = o;
-  const viewportRef = React.useRef<HTMLDivElement>(null);
+  const ownRef = React.useRef<T>(null);
+  const viewportRef = o.viewportRef ?? ownRef;
   const [scrollTop, setScrollTop] = React.useState(0);
   const [viewportH, setViewportH] = React.useState(0);
 

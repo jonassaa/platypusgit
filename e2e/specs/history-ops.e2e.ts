@@ -95,8 +95,16 @@ describe("history danger ops", () => {
     await $("button*=View combined diff").click();
     // Oldest selected = "feat: add b.txt" (parent "feat: add a.txt"); newest =
     // "fix: update a.txt". The combined diff therefore introduces b.txt.
+    // 25s, not the 15s the rest of this file uses for UI waits: this is the
+    // only assertion here that spans BOTH a screen transition AND a backend
+    // diff_commits round-trip, and it is the suite's most frequent CI failure
+    // (three times across unrelated branches, always under parallel-spec load,
+    // never when the spec runs alone). The operation is genuinely slower than
+    // the old budget under contention — the deadline was wrong, not the app.
     await $('[data-pg-row]*=b.txt').waitForDisplayed({
-      timeout: 15_000, timeoutMsg: "combined diff did not list b.txt",
+      timeout: 25_000,
+      timeoutMsg:
+        "combined diff never listed b.txt (CommitDiff mounts before diff_commits resolves, so this waits on the fetch)",
     });
   });
 
