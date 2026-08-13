@@ -227,6 +227,7 @@ fn reset_hard_moves_head_and_cleans_worktree() {
                     amend: false,
                     author_override: None,
                     signoff: false,
+                    sign: None,
                 },
             )
             .unwrap();
@@ -258,6 +259,7 @@ fn reset_soft_keeps_worktree() {
                 amend: false,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .unwrap();

@@ -93,6 +93,13 @@ export function CommitPanelScreen() {
   const [amend, setAmend] = React.useState(false);
   // Sign-off toggle seeds from the persisted preference; toggling it writes back.
   const [signoff, setSignoff] = React.useState(addSignoff);
+  // Signing (#61 D6). null = follow the setting, which itself defaults to
+  // following commit.gpgsign; a per-commit toggle overrides just this commit.
+  const [signOverride, setSignOverride] = React.useState<boolean | null>(null);
+  const signSetting = useSettingsStore((s) => s.signCommits);
+  const signForCommit =
+    signOverride ??
+    (signSetting === "always" ? true : signSetting === "never" ? false : null);
   // Attribution (#61 D1). Blank author = repo config identity, the normal case.
   const [authorAs, setAuthorAs] = React.useState("");
   const [coAuthors, setCoAuthors] = React.useState("");
@@ -530,11 +537,20 @@ export function CommitPanelScreen() {
     committingRef.current = true;
     try {
       const full = buildMessage(message, body, coAuthorTrailers(coAuthors));
-      const oid = await commitAction(full, amend, signoff, authorIdentity);
+      const oid = await commitAction(
+        full,
+        amend,
+        signoff,
+        authorIdentity,
+        signForCommit,
+      );
       if (oid) {
         setMessage("");
         setBody("");
         setAmend(false);
+        // Per-commit signing override is not sticky: it is an override, and
+        // carrying it silently into the next commit would surprise.
+        setSignOverride(null);
         // Attribution is sticky: pairing usually spans several commits, so
         // clearing it after each one would mean retyping every time.
       }
@@ -1025,6 +1041,26 @@ export function CommitPanelScreen() {
                 setSetting("addSignoff", v);
               }}
               label="Add Signed-off-by trailer"
+            />
+            {/*
+              Signing (#61 D6), three states rather than two. Indeterminate is
+              "follow commit.gpgsign", which the frontend cannot read — showing
+              it as plain unchecked would claim the commit is unsigned in a repo
+              that has signing on. Checked/unchecked force it for this commit
+              only. A signing failure fails the commit; it never silently
+              produces an unsigned one.
+            */}
+            <PGCheckbox
+              checked={signForCommit === true}
+              indeterminate={signForCommit === null}
+              onChange={(v) => setSignOverride(v)}
+              label={
+                signForCommit === null
+                  ? "Sign this commit — following git config"
+                  : signForCommit
+                    ? "Sign this commit"
+                    : "Don't sign this commit"
+              }
             />
           </div>
 

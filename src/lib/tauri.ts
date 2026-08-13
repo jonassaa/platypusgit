@@ -22,6 +22,7 @@ import type {
   ReflogEntry,
   RemoteInfo,
   RepoHandle,
+  SignatureStatus,
   RepoState,
   StashInfo,
   TagInfo,
@@ -277,6 +278,11 @@ export async function commit(
   signoff = false,
   /** "Commit as" — omit to use the repo config identity. */
   authorOverride: AuthorOverride | null = null,
+  /**
+   * Sign this commit (#61 D6). `null`/omitted follows `commit.gpgsign` from git
+   * config; `true`/`false` overrides it for this commit.
+   */
+  sign: boolean | null = null,
 ): Promise<string> {
   return invoke<string>("commit", {
     repoId,
@@ -284,7 +290,22 @@ export async function commit(
     amend,
     signoff,
     authorOverride,
+    sign,
   });
+}
+
+/**
+ * Signature status of ONE commit (#61 D6).
+ *
+ * Lazy and per-selection by design: a badge on every log row would mean a
+ * gpg/ssh-keygen process per walked commit, which fights the paginated log and
+ * the windowed list.
+ */
+export async function verifyCommit(
+  repoId: string,
+  oid: string,
+): Promise<SignatureStatus> {
+  return invoke<SignatureStatus>("verify_commit", { repoId, oid });
 }
 
 export async function discardPaths(repoId: string, paths: string[]): Promise<void> {
@@ -521,17 +542,47 @@ export async function stashBranch(
 // ─── Network operations ──────────────────────────────────────────────────────
 
 /** Fetch a single remote, pruning deleted remote refs. */
+/**
+ * A credential supplied for ONE retry of a network op (#61 D5).
+ *
+ * `username` is absent for an SSH passphrase, which has none. Nothing is
+ * persisted by the app: "remember" hands the credential to git's own configured
+ * credential helper.
+ */
+export interface Credentials {
+  username?: string;
+  secret: string;
+}
+
+/**
+ * Store a credential with git's own configured credential helper. Called only
+ * after the credential has actually worked — storing on submit would persist a
+ * typo.
+ */
+export async function rememberCredential(
+  repoId: string,
+  host: string,
+  credentials: Credentials,
+): Promise<void> {
+  return invoke<void>("remember_credential", { repoId, host, credentials });
+}
+
 export async function fetch(
   repoId: string,
   remote: string,
   prune = true,
+  credentials?: Credentials,
 ): Promise<void> {
-  return invoke<void>("fetch", { repoId, remote, prune });
+  return invoke<void>("fetch", { repoId, remote, prune, credentials });
 }
 
 /** Fetch all remotes, pruning deleted remote refs. */
-export async function fetchAll(repoId: string, prune = true): Promise<void> {
-  return invoke<void>("fetch_all", { repoId, prune });
+export async function fetchAll(
+  repoId: string,
+  prune = true,
+  credentials?: Credentials,
+): Promise<void> {
+  return invoke<void>("fetch_all", { repoId, prune, credentials });
 }
 
 /**
@@ -545,8 +596,9 @@ export async function pull(
   remote: string,
   branch: string,
   mode: PullMode = "Merge",
+  credentials?: Credentials,
 ): Promise<void> {
-  return invoke<void>("pull", { repoId, remote, branch, mode });
+  return invoke<void>("pull", { repoId, remote, branch, mode, credentials });
 }
 
 /**
@@ -559,8 +611,9 @@ export async function push(
   remote: string,
   branch: string,
   force: PushForce = "None",
+  credentials?: Credentials,
 ): Promise<void> {
-  return invoke<void>("push", { repoId, remote, branch, force });
+  return invoke<void>("push", { repoId, remote, branch, force, credentials });
 }
 
 // ─── Remote management ───────────────────────────────────────────────────────
@@ -756,11 +809,13 @@ export async function cloneRepo(
   parentDir: string,
   name: string,
   recurseSubmodules: boolean,
+  credentials?: Credentials,
 ): Promise<string> {
   return invoke<string>("clone_repo", {
     url,
     parentDir,
     name,
     recurseSubmodules,
+    credentials,
   });
 }

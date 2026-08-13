@@ -51,6 +51,12 @@ pub enum AppError {
     #[error("network error: {0}")]
     Network(String),
 
+    /// The remote needs credentials we did not supply. Distinct from `Network`
+    /// so the UI can prompt and retry rather than just reporting a failure.
+    /// Never carries the credential itself, and never git's raw stderr (#61 D5).
+    #[error("authentication required")]
+    Auth(crate::git::auth::AuthChallenge),
+
     #[error("embedded repository: {0}")]
     EmbeddedRepo(String),
 

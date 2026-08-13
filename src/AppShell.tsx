@@ -45,6 +45,7 @@ import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { BranchChip } from "@/features/branches/BranchChip";
 import { CloneDialog } from "@/features/create/CloneDialog";
+import { CredentialDialog } from "@/features/auth/CredentialDialog";
 import { InitDialog } from "@/features/create/InitDialog";
 import { UpdateChip } from "@/features/update/UpdateChip";
 import { UpdatePanel } from "@/features/update/UpdatePanel";
@@ -261,6 +262,9 @@ export function AppShell() {
       {/* Styled confirm/prompt host — pgConfirm/pgPrompt resolve false/null
           unless one of these is mounted. */}
       <PGDialogHost />
+      {/* Credential prompt for a network op that failed to authenticate (#61 D5).
+          Renders nothing until an Auth error raises a challenge. */}
+      <CredentialDialog />
       <UpdatePanel />
       <CheatSheet />
       <CloneDialog />

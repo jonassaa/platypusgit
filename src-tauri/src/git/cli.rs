@@ -325,6 +325,13 @@ impl GitBackend for CliBackend {
     fn read_reflog(&self, _repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>> {
         Err(AppError::NotImplemented)
     }
+    fn verify_commit(
+        &self,
+        _repo_id: &RepoId,
+        _oid: &str,
+    ) -> AppResult<crate::git::signing::SignatureStatus> {
+        Err(AppError::NotImplemented)
+    }
     fn append_gitignore(&self, _repo_id: &RepoId, _pattern: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }

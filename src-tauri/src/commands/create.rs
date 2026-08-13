@@ -217,6 +217,7 @@ pub async fn run_clone(
     parent: &Path,
     name: &str,
     recurse_submodules: bool,
+    creds: Option<&crate::commands::net::Credentials>,
     mut on_progress: impl FnMut(CloneProgress),
 ) -> AppResult<PathBuf> {
     // Trimmed once, here, and reused for both validation and argv below.
@@ -243,12 +244,9 @@ pub async fn run_clone(
     let target = validate_clone_target(parent, name)?;
     let args = clone_args(url, name, recurse_submodules);
 
-    let mut child = Command::new("git")
-        .current_dir(parent)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(parent)
         .args(&args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_ASKPASS", "true")
-        .env("SSH_ASKPASS", "true")
         // Never let the child read from our stdin. Nothing in this codebase
         // feeds it anything, so an unexpected read would just block forever
         // — and a clone has no cancel button, so a hang here is force-quit
@@ -262,7 +260,14 @@ pub async fn run_clone(
         // this, git keeps running to completion in the background and
         // finishes populating the destination the frontend was told never
         // got created.
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    // Shared with fetch/pull/push so the env policy cannot drift (#61 D5).
+    // With credentials this points askpass at our own executable; without them
+    // it is the historical prompt-less policy. Applied after the builder chain
+    // so it cannot be silently overridden by one of the calls above.
+    crate::commands::net::apply_auth_env(&mut cmd, creds);
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| AppError::Io(format!("failed to run git clone: {e}")))?;
 
@@ -315,7 +320,13 @@ pub async fn run_clone(
         .await
         .map_err(|e| AppError::Io(format!("waiting for git clone: {e}")))?;
     if !status.success() {
-        return Err(AppError::Network(clone_failure_message(&tail, status.code())));
+        // Routed through the shared classifier so a private repo yields Auth
+        // (promptable + retryable) rather than a dead-end Network error, and so
+        // any credential embedded in an echoed URL is scrubbed (#61 D5).
+        return Err(crate::commands::net::map_git_failure(&clone_failure_message(
+            &tail,
+            status.code(),
+        )));
     }
     Ok(target)
 }
@@ -366,16 +377,24 @@ pub async fn clone_repo(
     parent_dir: String,
     name: String,
     recurse_submodules: bool,
+    credentials: Option<crate::commands::net::Credentials>,
 ) -> AppResult<String> {
     let url = url.trim().to_string();
     if url.is_empty() {
         return Err(AppError::InvalidPath("no repository URL given".into()));
     }
     let parent = PathBuf::from(parent_dir);
-    let dest = run_clone(&url, &parent, &name, recurse_submodules, |p| {
-        // A dropped event only costs a progress tick, never the clone.
-        let _ = app.emit("clone://progress", &p);
-    })
+    let dest = run_clone(
+        &url,
+        &parent,
+        &name,
+        recurse_submodules,
+        credentials.as_ref(),
+        |p| {
+            // A dropped event only costs a progress tick, never the clone.
+            let _ = app.emit("clone://progress", &p);
+        },
+    )
     .await?;
     Ok(dest.to_string_lossy().to_string())
 }

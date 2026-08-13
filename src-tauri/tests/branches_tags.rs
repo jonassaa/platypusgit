@@ -143,6 +143,7 @@ fn delete_unmerged_branch_is_refused_without_force() {
                 amend: false,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .unwrap();

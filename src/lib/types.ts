@@ -90,6 +90,22 @@ export interface LogFilter {
   contentRegex?: boolean;
 }
 
+/** Verification verdict for one commit's signature (#61 D6). */
+export type SigState =
+  | "Good"
+  | "Bad"
+  | "UnknownKey"
+  | "Expired"
+  | "Revoked"
+  | "None";
+
+export interface SignatureStatus {
+  state: SigState;
+  /** Who signed it, when git could tell. */
+  signer: string | null;
+  key: string | null;
+}
+
 export interface BranchInfo {
   name: string;
   isHead: boolean;

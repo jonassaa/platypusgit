@@ -112,6 +112,8 @@ pub async fn commit(
     // op was written; nothing sent it until #61 D1. Absent means "use the repo
     // config identity", which is the overwhelmingly common case.
     author_override: Option<AuthorOverride>,
+    // None = follow `commit.gpgsign`; Some overrides it for this commit (#61 D6).
+    sign: Option<bool>,
 ) -> AppResult<String> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
@@ -120,8 +122,24 @@ pub async fn commit(
         amend,
         author_override,
         signoff: signoff.unwrap_or(false),
+        sign,
     };
     tokio::task::spawn_blocking(move || backend.commit(&repo_id, opts))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Signature status of one commit (#61 D6). Called lazily for the selected
+/// commit, never per log row.
+#[tauri::command]
+pub async fn verify_commit(
+    state: State<'_, AppState>,
+    repo_id: String,
+    oid: String,
+) -> AppResult<crate::git::signing::SignatureStatus> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.verify_commit(&repo_id, &oid))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

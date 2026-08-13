@@ -18,6 +18,7 @@ import {
   type DirtyChoice,
 } from "@/features/reflog/DirtyTreeDialog";
 import { relativeTime } from "@/lib/derive";
+import { appErrorMessage } from "@/lib/errors";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { FileDiff, ReflogOp } from "@/lib/types";
 
@@ -191,7 +192,7 @@ export function ReflogScreen() {
           }}
         >
           <strong>{error.kind}:</strong>
-          <span style={{ flex: 1 }}>{error.message ?? error.kind}</span>
+          <span style={{ flex: 1 }}>{appErrorMessage(error)}</span>
           <button
             onClick={clearError}
             style={{

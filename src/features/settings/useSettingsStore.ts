@@ -499,9 +499,12 @@ export function applyDensity(density: UiDensity) {
 // STORE
 // ═════════════════════════════════════════════════════════════════════════════
 
-// Removed settings (persisted keys are dropped by load()'s known-key filter):
-// - signCommits: GPG/SSH signing needs real key plumbing; a toggle that only
-//   pretends to sign erodes trust. Re-add together with actual signing.
+// `signCommits` is back, and this time it signs. It was removed once because a
+// toggle that only pretended to sign erodes trust; the condition for re-adding
+// it was real key plumbing, which #61 D6 provides — commit_create_buffer →
+// gpg/ssh-keygen → commit_signed, with a signing failure failing the commit
+// rather than quietly producing an unsigned one. Default is "config", so the app
+// does not override a repository that already decided via commit.gpgsign.
 //
 // `ignoreWhitespaceInDiff` is the successor to the removed showWhitespaceInDiff.
 // The hunk-index desync that killed the first attempt is real (see the
@@ -519,6 +522,12 @@ interface PersistedState {
   confirmForcePush: boolean;
   autoStashBeforePull: boolean;
   addSignoff: boolean;
+  /**
+   * Whether new commits are signed (#61 D6). "config" follows commit.gpgsign
+   * from git config, which is the default so the app does not override a
+   * repository that has already made this decision.
+   */
+  signCommits: "config" | "always" | "never";
   diffContextLines: number;
   ignoreWhitespaceInDiff: boolean;
   /** Parent directory last used for Clone/Init, prefilled next time. */
@@ -551,6 +560,7 @@ const DEFAULTS: PersistedState = {
   confirmForcePush: true,
   autoStashBeforePull: true,
   addSignoff: false,
+  signCommits: "config",
   diffContextLines: 3,
   ignoreWhitespaceInDiff: false,
   lastCreateDir: "",
@@ -562,13 +572,20 @@ function load(): PersistedState {
     if (!raw) return { ...DEFAULTS };
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     // Only pick keys that still exist in the schema, so settings removed in
-    // newer versions (e.g. signCommits, showWhitespaceInDiff) don't leak
-    // stale properties into the store state.
+    // newer versions (e.g. showWhitespaceInDiff) don't leak stale properties
+    // into the store state.
     const out = { ...DEFAULTS };
     for (const key of Object.keys(DEFAULTS) as (keyof PersistedState)[]) {
       if (key in parsed) {
         (out as Record<string, unknown>)[key] = parsed[key];
       }
+    }
+    // `signCommits` was once a boolean no-op setting and is now a tri-state
+    // (#61 D6), so an old payload can carry `true`/`false` where a mode is
+    // expected. Anything that is not one of the three modes falls back to
+    // "config", which defers to the repository rather than forcing signing on.
+    if (!["config", "always", "never"].includes(out.signCommits as string)) {
+      out.signCommits = DEFAULTS.signCommits;
     }
     // Backfill logo colors for custom themes saved before the slots existed,
     // so the theme editor and CSS vars always have a value.
@@ -613,6 +630,7 @@ function snapshot(s: SettingsState): PersistedState {
     confirmForcePush: s.confirmForcePush,
     autoStashBeforePull: s.autoStashBeforePull,
     addSignoff: s.addSignoff,
+    signCommits: s.signCommits,
     diffContextLines: s.diffContextLines,
     ignoreWhitespaceInDiff: s.ignoreWhitespaceInDiff,
     lastCreateDir: s.lastCreateDir,

@@ -499,6 +499,131 @@ fn find_delta_index(diff: &git2::Diff, path: &Path) -> AppResult<usize> {
     Err(AppError::InvalidPath(path.display().to_string()))
 }
 
+/// Create a signed commit and move the branch to it (#61 D6).
+///
+/// **`repo.commit_signed` only writes the object.** Unlike
+/// `repo.commit(Some("HEAD"), …)` and `Commit::amend(Some("HEAD"), …)`, it moves
+/// no reference — so this function updates the branch and writes the reflog
+/// entry itself. A signed commit left on no branch is indistinguishable from
+/// lost work from the user's point of view.
+///
+/// A signing failure returns an error and leaves HEAD untouched: falling back to
+/// an unsigned commit would leave the user believing they had signed it.
+fn commit_signed(
+    repo: &Repository,
+    sig: &git2::Signature<'_>,
+    message: &str,
+    tree: &git2::Tree<'_>,
+    head: Option<&git2::Reference<'_>>,
+    amend: bool,
+) -> AppResult<String> {
+    use crate::git::signing::{resolve_signing, signing_args, SigFormat};
+
+    // Parents: an amend replaces HEAD, so it inherits HEAD's parents rather than
+    // chaining onto it.
+    let tip = match head {
+        Some(h) => Some(h.peel_to_commit()?),
+        None => None,
+    };
+    let parents: Vec<git2::Commit> = if amend {
+        let tip = tip.as_ref().ok_or(AppError::Unborn)?;
+        tip.parents().collect()
+    } else {
+        tip.iter().cloned().collect()
+    };
+    let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+
+    let buffer = repo.commit_create_buffer(sig, sig, message, tree, &parent_refs)?;
+    let buffer_str = std::str::from_utf8(&buffer)
+        .map_err(|e| AppError::Internal(format!("commit buffer is not utf-8: {e}")))?;
+
+    let cfg = resolve_signing(repo)?;
+    let key_file = match cfg.format {
+        SigFormat::Ssh => {
+            let key = cfg.key.as_deref().ok_or_else(|| {
+                AppError::InvalidArgument("ssh signing needs user.signingkey".to_string())
+            })?;
+            // Only a key PATH is supported. git also accepts a literal key
+            // (`key::ssh-ed25519 …`), which would have to be written to a temp
+            // file first; rejecting it clearly beats writing key material to
+            // disk behind the user's back.
+            if key.starts_with("key::") || key.starts_with("ssh-") {
+                return Err(AppError::InvalidArgument(
+                    "user.signingkey must be a path to a key file for ssh signing".to_string(),
+                ));
+            }
+            Some(std::path::PathBuf::from(key))
+        }
+        _ => None,
+    };
+    let args = signing_args(&cfg, key_file.as_deref())?;
+
+    let signature = run_signer(&cfg.program, &args, buffer_str)?;
+    let oid = repo.commit_signed(buffer_str, &signature, Some("gpgsig"))?;
+
+    // Move the branch ourselves — commit_signed did not.
+    let ref_name = match head {
+        Some(h) => h
+            .name()
+            .ok_or_else(|| AppError::Internal("HEAD has no reference name".into()))?
+            .to_string(),
+        // Unborn HEAD: create the branch it symbolically points at.
+        None => repo
+            .find_reference("HEAD")?
+            .symbolic_target()
+            .ok_or(AppError::Unborn)?
+            .to_string(),
+    };
+    let reflog_msg = if amend {
+        format!("commit (amend): {}", message.lines().next().unwrap_or(""))
+    } else {
+        format!("commit: {}", message.lines().next().unwrap_or(""))
+    };
+    repo.reference(&ref_name, oid, true, &reflog_msg)?;
+
+    Ok(oid.to_string())
+}
+
+/// Run the signing program over `payload`, returning its signature.
+///
+/// The payload goes on stdin and the signature comes back on stdout, which is
+/// how git itself drives gpg and ssh-keygen.
+fn run_signer(program: &str, args: &[String], payload: &str) -> AppResult<String> {
+    use std::io::Write as _;
+
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Git(format!("could not run {program}: {e}")))?;
+
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| AppError::Internal("signer has no stdin".into()))?
+        .write_all(payload.as_bytes())
+        .map_err(|e| AppError::Io(e.to_string()))?;
+
+    let out = child
+        .wait_with_output()
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    if !out.status.success() {
+        return Err(AppError::Git(format!(
+            "signing failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let signature = String::from_utf8_lossy(&out.stdout).to_string();
+    if signature.trim().is_empty() {
+        return Err(AppError::Git(format!(
+            "{program} produced an empty signature"
+        )));
+    }
+    Ok(signature)
+}
+
 /// Which way the synthesized patch will be applied. It decides which
 /// *unselected* changed lines become context: reversal flips the side each line
 /// lands on, so the rule for `+` and `-` swaps (#61 D7).
@@ -2344,6 +2469,15 @@ impl GitBackend for Libgit2Backend {
                 Err(e) => return Err(e.into()),
             };
 
+            // `None` follows commit.gpgsign; `Some` overrides it (#61 D6).
+            let wants_sign = opts
+                .sign
+                .unwrap_or_else(|| crate::git::signing::config_wants_signing(repo));
+
+            if wants_sign {
+                return commit_signed(repo, &sig, &message, &tree, head.as_ref(), opts.amend);
+            }
+
             if opts.amend {
                 let head_ref = head.ok_or(AppError::Unborn)?;
                 let tip = head_ref.peel_to_commit()?;
@@ -2984,6 +3118,44 @@ impl GitBackend for Libgit2Backend {
                 pause_reason: None,
             }),
         }
+    }
+
+    fn verify_commit(
+        &self,
+        repo_id: &RepoId,
+        oid: &str,
+    ) -> AppResult<crate::git::signing::SignatureStatus> {
+        // Validated before it reaches an argv: `git show` would read a value
+        // starting with '-' as an option rather than a revision. Every caller
+        // passes an oid from our own log walk, so a hex check costs nothing and
+        // removes the question.
+        if oid.is_empty()
+            || oid.len() > 40
+            || !oid.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(AppError::InvalidRef(oid.to_string()));
+        }
+
+        let repo_path = self.repo_path(repo_id)?;
+        // Shells out rather than reimplementing trust evaluation: %G? is git's
+        // own verdict, including keyring/allowed-signers lookup.
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo_path)
+            .args([
+                "show",
+                "--no-patch",
+                "--format=%G?%x00%GS%x00%GK",
+                oid,
+            ])
+            .output()
+            .map_err(|e| AppError::Io(e.to_string()))?;
+        if !out.status.success() {
+            return Err(AppError::InvalidRef(oid.to_string()));
+        }
+        Ok(crate::git::signing::parse_verify_output(
+            &String::from_utf8_lossy(&out.stdout),
+        ))
     }
 
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>> {

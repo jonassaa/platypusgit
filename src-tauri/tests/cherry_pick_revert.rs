@@ -23,6 +23,7 @@ fn cherry_pick_applies_commit_onto_head() {
                 amend: false,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .unwrap();
@@ -51,6 +52,7 @@ fn revert_undoes_commit() {
                 amend: false,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .unwrap();

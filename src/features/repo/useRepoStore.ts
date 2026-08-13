@@ -15,7 +15,13 @@ import type {
   TagInfo,
 } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
-import { dubiousOwnershipPath, isAppError, isDubiousOwnershipError } from "@/lib/errors";
+import {
+  dubiousOwnershipPath,
+  isAppError,
+  isAuthError,
+  isDubiousOwnershipError,
+} from "@/lib/errors";
+import { useAuthStore } from "@/features/auth/useAuthStore";
 import { confirmTrust } from "@/features/repo/ownership";
 import {
   abortOperation,
@@ -70,8 +76,10 @@ import {
   repoState as repoStateFn,
   runMergetool as runMergetoolFn,
   restartConflict as restartConflictFn,
+  rememberCredential,
   setRemoteUrl,
   setUpstream as setUpstreamFn,
+  type Credentials,
   stageHunk,
   stageLines as stageLinesFn,
   stagePaths,
@@ -227,6 +235,8 @@ interface RepoStoreState {
     signoff?: boolean,
     /** "Commit as" — null uses the repo config identity. */
     authorOverride?: AuthorOverride | null,
+    /** Sign this commit (#61 D6). null follows commit.gpgsign. */
+    sign?: boolean | null,
   ) => Promise<string | null>;
   reset: (target: string, mode: ResetMode) => Promise<void>;
   checkoutBranch: (name: string) => Promise<void>;
@@ -288,6 +298,50 @@ interface RepoStoreState {
 
 function toAppError(e: unknown): AppError {
   return isAppError(e) ? e : { kind: "Internal", message: String(e) };
+}
+
+/**
+ * Run a network op; on an authentication failure, raise a credential challenge
+ * whose retry re-runs the SAME op with credentials (#61 D5).
+ *
+ * The first attempt is always prompt-less, so the common case (a credential
+ * helper or ssh-agent already answers) behaves exactly as it did before. A
+ * cancelled dialog never calls `onError`, leaving the original error already
+ * reported by the caller's own catch.
+ */
+async function withAuthRetry(
+  repoId: string,
+  run: (creds?: Credentials) => Promise<void>,
+  onError: (e: unknown) => void | Promise<void>,
+): Promise<void> {
+  try {
+    await run();
+    return;
+  } catch (e) {
+    if (!isAuthError(e)) {
+      await onError(e);
+      return;
+    }
+    const { host, kind } = e.message;
+    useAuthStore.getState().raise({
+      host,
+      kind,
+      retry: async (creds, remember) => {
+        try {
+          await run(creds);
+          // Only after it worked: storing on submit would persist a typo.
+          if (remember && host) {
+            await rememberCredential(repoId, host, creds).catch(() => {
+              // No helper configured is not a failure the user needs to see —
+              // the operation they asked for still succeeded.
+            });
+          }
+        } catch (retryError) {
+          await onError(retryError);
+        }
+      },
+    });
+  }
 }
 
 const DEFAULT_REBASE_STATUS: RebaseStatus = {
@@ -721,11 +775,24 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
-  async commit(message, amend = false, signoff = false, authorOverride = null) {
+  async commit(
+    message,
+    amend = false,
+    signoff = false,
+    authorOverride = null,
+    sign = null,
+  ) {
     const repo = get().current;
     if (!repo) return null;
     try {
-      const oid = await commitFn(repo.id, message, amend, signoff, authorOverride);
+      const oid = await commitFn(
+        repo.id,
+        message,
+        amend,
+        signoff,
+        authorOverride,
+        sign,
+      );
       await get().refreshAll();
       return oid;
     } catch (e) {
@@ -1023,10 +1090,19 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     setActivity("fetch", `Fetching ${remote}…`);
     try {
-      await fetchRemote(repo.id, remote, useSettingsStore.getState().pruneOnFetch);
-      await get().refreshAll();
-    } catch (e) {
-      set({ error: toAppError(e) });
+      await withAuthRetry(
+        repo.id,
+        async (creds) => {
+          await fetchRemote(
+            repo.id,
+            remote,
+            useSettingsStore.getState().pruneOnFetch,
+            creds,
+          );
+          await get().refreshAll();
+        },
+        (e) => set({ error: toAppError(e) }),
+      );
     } finally {
       setActivity("fetch", null);
     }
@@ -1037,10 +1113,14 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     setActivity("fetch", "Fetching all remotes…");
     try {
-      await fetchAll(repo.id, useSettingsStore.getState().pruneOnFetch);
-      await get().refreshAll();
-    } catch (e) {
-      set({ error: toAppError(e) });
+      await withAuthRetry(
+        repo.id,
+        async (creds) => {
+          await fetchAll(repo.id, useSettingsStore.getState().pruneOnFetch, creds);
+          await get().refreshAll();
+        },
+        (e) => set({ error: toAppError(e) }),
+      );
     } finally {
       setActivity("fetch", null);
     }
@@ -1051,33 +1131,39 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     setActivity("pull", `Pulling ${remote}/${branch}…`);
     try {
-      // Carry over uncommitted work when the setting is on: stash → pull →
-      // pop, mirroring checkoutBranch's auto-stash. stashSave returns null
-      // when the tree is clean, so this is a no-op in the common case. If
-      // the pull fails, the stash is deliberately NOT popped — the work
-      // stays safe in the stash list rather than colliding with a conflicted
-      // worktree (same policy as checkoutBranch).
-      let stashed: string | null = null;
-      if (useSettingsStore.getState().autoStashBeforePull) {
-        setActivity("pull", "Stashing changes…");
-        stashed = await stashSave(repo.id, {
-          message: `auto: pull ${remote}/${branch}`,
-          includeUntracked: true,
-          keepIndex: false,
-        });
-        setActivity("pull", `Pulling ${remote}/${branch}…`);
-      }
-      await pullRemote(repo.id, remote, branch, mode);
-      if (stashed) {
-        setActivity("pull", "Restoring stashed changes…");
-        await stashPop(repo.id, 0);
-      }
-      await get().refreshAll();
-    } catch (e) {
-      // See mergeBranch's catch: refresh first, error last, so it isn't
-      // batched away by refreshAll's own `error: null` reset.
-      await get().refreshAll();
-      set({ error: toAppError(e) });
+      await withAuthRetry(
+        repo.id,
+        async (creds) => {
+          // Carry over uncommitted work when the setting is on: stash → pull →
+          // pop, mirroring checkoutBranch's auto-stash. stashSave returns null
+          // when the tree is clean, so this is a no-op in the common case. If
+          // the pull fails, the stash is deliberately NOT popped — the work
+          // stays safe in the stash list rather than colliding with a conflicted
+          // worktree (same policy as checkoutBranch).
+          let stashed: string | null = null;
+          if (useSettingsStore.getState().autoStashBeforePull) {
+            setActivity("pull", "Stashing changes…");
+            stashed = await stashSave(repo.id, {
+              message: `auto: pull ${remote}/${branch}`,
+              includeUntracked: true,
+              keepIndex: false,
+            });
+            setActivity("pull", `Pulling ${remote}/${branch}…`);
+          }
+          await pullRemote(repo.id, remote, branch, mode, creds);
+          if (stashed) {
+            setActivity("pull", "Restoring stashed changes…");
+            await stashPop(repo.id, 0);
+          }
+          await get().refreshAll();
+        },
+        async (e) => {
+          // See mergeBranch's catch: refresh first, error last, so it isn't
+          // batched away by refreshAll's own `error: null` reset.
+          await get().refreshAll();
+          set({ error: toAppError(e) });
+        },
+      );
     } finally {
       setActivity("pull", null);
     }
@@ -1088,10 +1174,14 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     setActivity("push", `Pushing ${remote}/${branch}…`);
     try {
-      await pushRemote(repo.id, remote, branch, force);
-      await get().refreshAll();
-    } catch (e) {
-      set({ error: toAppError(e) });
+      await withAuthRetry(
+        repo.id,
+        async (creds) => {
+          await pushRemote(repo.id, remote, branch, force, creds);
+          await get().refreshAll();
+        },
+        (e) => set({ error: toAppError(e) }),
+      );
     } finally {
       setActivity("push", null);
     }

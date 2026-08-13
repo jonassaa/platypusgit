@@ -15,8 +15,22 @@ export type AppError =
   | { kind: "NoSignature"; message?: string }
   | { kind: "Internal"; message: string }
   | { kind: "Network"; message: string }
+  /**
+   * The remote needs credentials (#61 D5). Distinct from `Network` so the UI can
+   * prompt and retry. Carries no secret and no raw git stderr.
+   */
+  | { kind: "Auth"; message: AuthChallenge }
   | { kind: "EmbeddedRepo"; message: string }
   | { kind: "DubiousOwnership"; message: string };
+
+/** Which credential the remote is asking for. */
+export type AuthKind = "Https" | "SshPassphrase" | "SshKey";
+
+export interface AuthChallenge {
+  /** Host the credential is for, when git's stderr named one. */
+  host: string | null;
+  kind: AuthKind;
+}
 
 export function isAppError(e: unknown): e is AppError {
   return (
@@ -29,10 +43,26 @@ export function isAppError(e: unknown): e is AppError {
 
 export function appErrorMessage(e: unknown): string {
   if (isAppError(e)) {
+    // Auth's payload is structured, not a sentence — render it here rather than
+    // letting an object reach the UI as "[object Object]".
+    if (e.kind === "Auth") return authChallengeMessage(e.message);
     return e.message ?? e.kind;
   }
   if (e instanceof Error) return e.message;
   return String(e);
+}
+
+/** One-line description of an auth challenge, for banners and fallbacks. */
+export function authChallengeMessage(c: AuthChallenge): string {
+  const where = c.host ? ` for ${c.host}` : "";
+  switch (c.kind) {
+    case "SshPassphrase":
+      return `SSH key passphrase required${where}.`;
+    case "SshKey":
+      return `The server rejected the SSH key${where}.`;
+    default:
+      return `Authentication required${where}.`;
+  }
 }
 
 export function isEmbeddedRepoError(e: unknown): boolean {
@@ -46,6 +76,13 @@ export function isEmbeddedRepoError(e: unknown): boolean {
  */
 export function isDubiousOwnershipError(e: unknown): boolean {
   return isAppError(e) && e.kind === "DubiousOwnership";
+}
+
+/** Narrow to an auth failure, so a caller can prompt and retry (#61 D5). */
+export function isAuthError(
+  e: unknown,
+): e is Extract<AppError, { kind: "Auth" }> {
+  return isAppError(e) && e.kind === "Auth";
 }
 
 /**

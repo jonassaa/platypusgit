@@ -97,6 +97,7 @@ fn commit_from_staged_changes_advances_head() {
                 amend: false,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .expect("commit");
@@ -124,6 +125,7 @@ fn amend_replaces_tip() {
                 amend: false,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .unwrap();
@@ -141,6 +143,7 @@ fn amend_replaces_tip() {
                 amend: true,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .unwrap();
@@ -167,6 +170,7 @@ fn commit_with_signoff_appends_trailer_from_repo_identity() {
                 amend: false,
                 author_override: None,
                 signoff: true,
+                sign: None,
             },
         )
         .expect("commit");
@@ -198,6 +202,7 @@ fn commit_signoff_does_not_duplicate_existing_trailer() {
                 amend: false,
                 author_override: None,
                 signoff: true,
+                sign: None,
             },
         )
         .expect("commit");
@@ -224,6 +229,7 @@ fn commit_without_signoff_leaves_message_untouched() {
                 amend: false,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .expect("commit");
@@ -249,6 +255,7 @@ fn commit_on_unborn_branch_creates_root() {
                 amend: false,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .unwrap();
