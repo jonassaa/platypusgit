@@ -5,6 +5,7 @@ pub mod conflict;
 pub mod create;
 pub mod diff;
 pub mod history;
+pub mod net;
 pub mod rebase;
 pub mod reflog;
 pub mod repo;

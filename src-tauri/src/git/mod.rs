@@ -1,7 +1,9 @@
+pub mod auth;
 pub mod cli;
 pub mod libgit2;
 pub mod ownership;
 pub mod signature;
+pub mod signing;
 pub mod types;
 
 use std::path::{Path, PathBuf};
@@ -96,6 +98,16 @@ pub trait GitBackend: Send + Sync {
     ) -> AppResult<Vec<CommitInfo>>;
     fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>>;
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
+    /// Signature status of ONE commit (#61 D6).
+    ///
+    /// Deliberately per-commit and called lazily for the selected commit: a
+    /// badge on every log row would mean a gpg/ssh-keygen process per walked
+    /// commit, which fights the paginated log walk and the windowed list.
+    fn verify_commit(
+        &self,
+        repo_id: &RepoId,
+        oid: &str,
+    ) -> AppResult<crate::git::signing::SignatureStatus>;
     /// Diff a single file. `context_lines` controls how many unchanged lines
     /// surround each hunk (git default: 3).
     ///

@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::{
+    commands::net::Credentials,
     error::{AppError, AppResult},
     git::types::{BranchInfo, PullMode, PushForce, RemoteInfo, RepoId, StashInfo, TagInfo, TagTarget},
     state::AppState,
@@ -131,32 +132,22 @@ async fn get_repo_path(state: &AppState, repo_id: &RepoId) -> AppResult<std::pat
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
-/// Run a git subprocess and map non-zero exit to `AppError::Network`.
+/// Run a git subprocess with no credentials — the historical prompt-less policy.
 ///
-/// Credential prompts are disabled (`GIT_TERMINAL_PROMPT=0` plus a no-op
-/// askpass): a subprocess has no terminal, so an auth-requiring remote would
-/// otherwise hang forever on an invisible prompt. With prompts off, git fails
-/// fast and the error surfaces through the normal `AppError::Network` path.
-async fn run_git(
+/// The env policy and failure classification now live in `commands::net`, shared
+/// with clone, so the two cannot drift (#61 D5). Callers that can prompt use
+/// `run_git_creds` instead.
+async fn run_git(cwd: &std::path::Path, args: &[&str]) -> AppResult<()> {
+    crate::commands::net::run_git_authenticated(cwd, args, None).await
+}
+
+/// Run a git subprocess with optional credentials from a retry.
+async fn run_git_creds(
     cwd: &std::path::Path,
     args: &[&str],
+    creds: Option<&Credentials>,
 ) -> AppResult<()> {
-    let output = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_ASKPASS", "true")
-        .env("SSH_ASKPASS", "true")
-        .output()
-        .await
-        .map_err(|e| AppError::Io(e.to_string()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(AppError::Network(stderr));
-    }
-    Ok(())
+    crate::commands::net::run_git_authenticated(cwd, args, creds).await
 }
 
 /// Build the argument list for `git fetch`. `remote = None` means all remotes.
@@ -178,9 +169,18 @@ pub async fn fetch(
     repo_id: String,
     remote: String,
     prune: bool,
+    // Optional so an existing caller that omits it behaves exactly as before:
+    // the first attempt is always prompt-less, and only a retry carries a
+    // credential (#61 D5).
+    credentials: Option<Credentials>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git(&path, &fetch_args(Some(remote.as_str()), prune)).await
+    run_git_creds(
+        &path,
+        &fetch_args(Some(remote.as_str()), prune),
+        credentials.as_ref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -188,9 +188,10 @@ pub async fn fetch_all(
     state: State<'_, AppState>,
     repo_id: String,
     prune: bool,
+    credentials: Option<Credentials>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git(&path, &fetch_args(None, prune)).await
+    run_git_creds(&path, &fetch_args(None, prune), credentials.as_ref()).await
 }
 
 #[tauri::command]
@@ -200,6 +201,7 @@ pub async fn pull(
     remote: String,
     branch: String,
     mode: PullMode,
+    credentials: Option<Credentials>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
     let mode_flag = match mode {
@@ -207,7 +209,12 @@ pub async fn pull(
         PullMode::Merge => "--no-rebase",
         PullMode::Rebase => "--rebase",
     };
-    run_git(&path, &["pull", mode_flag, remote.as_str(), branch.as_str()]).await
+    run_git_creds(
+        &path,
+        &["pull", mode_flag, remote.as_str(), branch.as_str()],
+        credentials.as_ref(),
+    )
+    .await
 }
 
 /// Build `git push` args. `set_upstream` adds `-u`, which the caller passes
@@ -235,6 +242,7 @@ pub async fn push(
     remote: String,
     branch: String,
     force: PushForce,
+    credentials: Option<Credentials>,
 ) -> AppResult<()> {
     let repo_id = RepoId(repo_id);
     let path = get_repo_path(&state, &repo_id).await?;
@@ -259,7 +267,7 @@ pub async fn push(
 
     let args = push_args(&remote, &branch, force, needs_upstream);
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    run_git(&path, &arg_refs).await
+    run_git_creds(&path, &arg_refs, credentials.as_ref()).await
 }
 
 #[cfg(test)]

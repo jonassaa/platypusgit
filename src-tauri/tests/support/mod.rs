@@ -125,6 +125,7 @@ pub fn with_conflicting_merge() -> TempRepo {
                     amend: false,
                     author_override: None,
                     signoff: false,
+                    sign: None,
                 },
             )
             .unwrap();
@@ -141,6 +142,7 @@ pub fn with_conflicting_merge() -> TempRepo {
                     amend: false,
                     author_override: None,
                     signoff: false,
+                    sign: None,
                 },
             )
             .unwrap();

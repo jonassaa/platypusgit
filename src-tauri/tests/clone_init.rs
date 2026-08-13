@@ -453,6 +453,7 @@ async fn clone_from_a_local_bare_repo_lands_the_files() {
         dest_parent.path(),
         "cloned",
         false,
+        None,
         |_| {},
     )
     .await
@@ -508,6 +509,7 @@ async fn clone_streams_progress_ticks_as_they_arrive() {
         dest_parent.path(),
         "cloned",
         false,
+        None,
         move |p| ticks_for_closure.lock().unwrap().push(p),
     )
     .await
@@ -552,6 +554,7 @@ async fn run_clone_trims_whitespace_from_the_name_and_matches_disk() {
         dest_parent.path(),
         "cloned ", // trailing space, exactly the reviewer's repro
         false,
+        None,
         |_| {},
     )
     .await
@@ -586,6 +589,7 @@ async fn run_clone_reports_a_missing_parent_directory_by_name() {
         &missing_parent,
         "cloned",
         false,
+        None,
         |_| {},
     )
     .await
@@ -617,6 +621,7 @@ async fn a_failed_clone_reports_git_stderr_and_leaves_nothing_behind() {
         dest_parent.path(),
         "cloned",
         false,
+        None,
         |_| {},
     )
     .await

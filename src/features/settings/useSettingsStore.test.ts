@@ -30,11 +30,10 @@ describe("useSettingsStore persistence", () => {
     expect(s.autoStashBeforePull).toBe(true);
   });
 
-  it("drops removed settings (signCommits, showWhitespaceInDiff) from old payloads", async () => {
+  it("drops removed settings (showWhitespaceInDiff) from old payloads", async () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
-        signCommits: true,
         showWhitespaceInDiff: true,
         pruneOnFetch: false,
       }),
@@ -44,15 +43,33 @@ describe("useSettingsStore persistence", () => {
     // Known key still honored…
     expect(s.pruneOnFetch).toBe(false);
     // …but stale keys don't leak into store state.
-    expect("signCommits" in s).toBe(false);
     expect("showWhitespaceInDiff" in s).toBe(false);
 
     // And the next persist writes a clean payload without them.
     useSettingsStore.getState().set("pruneOnFetch", true);
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
-    expect("signCommits" in raw).toBe(false);
     expect("showWhitespaceInDiff" in raw).toBe(false);
     expect(raw.pruneOnFetch).toBe(true);
+  });
+
+  // signCommits was a removed no-op setting and is now real (#61 D6), so a
+  // persisted value must be honored again rather than filtered out. An OLD
+  // payload holds a boolean, though, where the setting is now tri-state.
+  it("honors signCommits and defaults to following git config", async () => {
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().signCommits).toBe("config");
+
+    useSettingsStore.getState().set("signCommits", "always");
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(raw.signCommits).toBe("always");
+  });
+
+  it("falls back to following git config for a legacy boolean signCommits", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ signCommits: true }));
+    const { useSettingsStore } = await freshStore();
+    // A stale boolean is not one of the three valid modes; "config" is the safe
+    // reading, since it defers to the repository instead of forcing signing on.
+    expect(useSettingsStore.getState().signCommits).toBe("config");
   });
 
   it("set() persists the changed key", async () => {

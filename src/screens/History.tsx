@@ -650,6 +650,9 @@ export function HistoryScreen() {
       error={inlineError}
       header={diffHeader}
       paneIdPrefix="history.diff"
+      // The inline panel shows the selected commit's own diff; a multi-selection
+      // renders MultiCommitDetail instead, so this is always one commit (#61 D6).
+      verifyOid={current?.oid}
     />
   );
 

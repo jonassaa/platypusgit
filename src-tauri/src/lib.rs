@@ -14,11 +14,45 @@ use crate::{git::libgit2::Libgit2Backend, state::AppState};
 pub fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+    // Askpass shim (#61 D5). Handled FIRST — before the single-instance plugin
+    // and the Tauri builder — so it stays a fast plain process and never
+    // forwards itself into a running app instance.
+    //
+    // Two ways in: the ASKPASS_MODE_ENV flag (what git actually uses, because
+    // GIT_ASKPASS is exec'd directly and cannot carry arguments) and an explicit
+    // `--askpass` argument. Both end here.
+    //
+    // stdout is read by git AS THE CREDENTIAL, so nothing else may be printed:
+    // no logging, no diagnostics. An unrecognized prompt or a missing value
+    // exits non-zero with no output rather than printing an empty string, which
+    // git would treat as a real credential.
+    let askpass_prompt = if std::env::var_os(cli::ASKPASS_MODE_ENV).is_some() {
+        Some(args.first().cloned().unwrap_or_default())
+    } else {
+        match cli::parse_args(&args, &cwd) {
+            cli::Parsed::Askpass(prompt) => Some(prompt),
+            _ => None,
+        }
+    };
+    if let Some(prompt) = askpass_prompt {
+        let username = std::env::var(cli::ASKPASS_USERNAME_ENV).ok();
+        let secret = std::env::var(cli::ASKPASS_SECRET_ENV).ok();
+        match cli::askpass_answer(&prompt, username.as_deref(), secret.as_deref()) {
+            Some(value) => {
+                println!("{value}");
+                return;
+            }
+            None => std::process::exit(1),
+        }
+    }
+
     let initial_intent = match cli::parse_args(&args, &cwd) {
         cli::Parsed::Help => {
             print!("{}", cli::USAGE);
             return;
         }
+        // Already handled above; unreachable in practice.
+        cli::Parsed::Askpass(_) => return,
         cli::Parsed::Launch(intent) => intent.map(cli::resolve_repo_root),
     };
 
@@ -116,6 +150,7 @@ pub fn run() {
             commands::commits::commits_since,
             commands::commits::commit,
             commands::commits::file_history,
+            commands::commits::verify_commit,
             commands::create::init_repo,
             commands::create::default_init_branch,
             commands::create::clone_repo,
@@ -141,6 +176,7 @@ pub fn run() {
             commands::branches::delete_branch,
             commands::branches::rename_branch,
             commands::branches::set_upstream,
+            commands::net::remember_credential,
             commands::branches::fetch,
             commands::branches::fetch_all,
             commands::branches::pull,

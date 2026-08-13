@@ -225,6 +225,10 @@ pub struct CommitOptions {
     /// signature, matching `git commit -s` (deduped if already present).
     #[serde(default)]
     pub signoff: bool,
+    /// Cryptographically sign this commit (#61 D6). `None` follows
+    /// `commit.gpgsign` from git config; `Some` overrides it for this commit.
+    #[serde(default)]
+    pub sign: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

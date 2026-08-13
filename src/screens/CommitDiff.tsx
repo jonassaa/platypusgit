@@ -102,6 +102,9 @@ export function CommitDiffScreen() {
         emptyLabel={
           target.kind === "commit-self" ? "No changes in this commit." : "No changes."
         }
+        // Only a single commit has a signature — a range or a commit-vs-worktree
+        // comparison does not (#61 D6).
+        verifyOid={target.kind === "commit-self" ? target.oid : undefined}
       />
     </div>
   );

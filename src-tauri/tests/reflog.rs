@@ -88,6 +88,7 @@ fn read_reflog_classifies_amend_op() {
                 amend: true,
                 author_override: None,
                 signoff: false,
+                sign: None,
             },
         )
         .unwrap();

@@ -14,8 +14,68 @@ pub struct LaunchIntent {
 #[derive(Debug, PartialEq)]
 pub enum Parsed {
     Help,
+    /// Invoked as GIT_ASKPASS / SSH_ASKPASS with git's prompt string (#61 D5).
+    /// Internal contract between the app and its own subprocesses — deliberately
+    /// absent from USAGE.
+    Askpass(String),
     /// `None` = plain app launch (no CLI args at all).
     Launch(Option<LaunchIntent>),
+}
+
+/// Env vars the parent process sets so the askpass shim can answer without any
+/// IPC back to the app.
+///
+/// Values travel in the environment rather than argv: argv is world-readable
+/// via `ps` on macOS and Linux, a process's environment is not (#61 D5).
+pub const ASKPASS_USERNAME_ENV: &str = "PLATYPUSGIT_ASKPASS_USERNAME";
+pub const ASKPASS_SECRET_ENV: &str = "PLATYPUSGIT_ASKPASS_SECRET";
+
+/// Presence of this var puts the process into askpass-shim mode, with git's
+/// prompt as the first argument.
+///
+/// This exists because **`GIT_ASKPASS` is exec'd directly, not run through a
+/// shell**: verified experimentally, `GIT_ASKPASS="<exe> --askpass"` fails with
+/// `cannot exec '<exe> --askpass'`. The alternatives were writing a wrapper
+/// script to disk or installing an argv[0] symlink; both need a writable
+/// directory and would be one more thing an attacker could replace before we
+/// exec it. An env flag needs neither, so `GIT_ASKPASS` can point at the bare
+/// executable.
+pub const ASKPASS_MODE_ENV: &str = "PLATYPUSGIT_ASKPASS";
+
+/// Which answer a git/ssh askpass prompt is asking for.
+#[derive(Debug, PartialEq)]
+pub enum AskpassWant {
+    Username,
+    Secret,
+}
+
+/// Classify an askpass prompt. `None` for anything unrecognized — the shim must
+/// never guess at a prompt it does not understand.
+pub fn askpass_want(prompt: &str) -> Option<AskpassWant> {
+    let p = prompt.to_lowercase();
+    if p.contains("username") {
+        return Some(AskpassWant::Username);
+    }
+    if p.contains("password") || p.contains("passphrase") {
+        return Some(AskpassWant::Secret);
+    }
+    None
+}
+
+/// The value the shim should print, or `None` to print nothing and exit
+/// non-zero.
+///
+/// An absent value is never substituted with an empty string: git would take
+/// that as a real (wrong) credential and burn an authentication attempt.
+pub fn askpass_answer(
+    prompt: &str,
+    username: Option<&str>,
+    secret: Option<&str>,
+) -> Option<String> {
+    match askpass_want(prompt)? {
+        AskpassWant::Username => username.map(str::to_string),
+        AskpassWant::Secret => secret.map(str::to_string),
+    }
 }
 
 pub const USAGE: &str = "\
@@ -54,6 +114,12 @@ fn resolve_path(arg: &str, cwd: &Path) -> PathBuf {
 /// Parse CLI args (argv without the binary name). Pure — no filesystem
 /// access; relative paths resolve against `cwd`.
 pub fn parse_args(args: &[String], cwd: &Path) -> Parsed {
+    // Askpass first: the remaining argument is an arbitrary prompt string from
+    // git and must not be scanned for our own flags (a prompt could contain
+    // "-h" and would otherwise print USAGE to git as the credential).
+    if args.first().map(String::as_str) == Some("--askpass") {
+        return Parsed::Askpass(args.get(1).cloned().unwrap_or_default());
+    }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         return Parsed::Help;
     }
@@ -356,5 +422,98 @@ mod tests {
     fn shim_not_installed_when_missing() {
         let dir = tempfile::tempdir().unwrap();
         assert!(!shim_installed_at(dir.path(), Path::new("/x")));
+    }
+
+    // ─── askpass shim (#61 D5) ───────────────────────────────────────────────
+
+    #[test]
+    fn askpass_prompt_kinds_are_recognized() {
+        assert_eq!(
+            askpass_want("Username for 'https://github.com': "),
+            Some(AskpassWant::Username)
+        );
+        assert_eq!(
+            askpass_want("Password for 'https://u@github.com': "),
+            Some(AskpassWant::Secret)
+        );
+        assert_eq!(
+            askpass_want("Enter passphrase for key '/home/u/.ssh/id_ed25519': "),
+            Some(AskpassWant::Secret)
+        );
+        assert_eq!(
+            askpass_want("Are you sure you want to continue connecting?"),
+            None
+        );
+    }
+
+    #[test]
+    fn askpass_answers_from_the_matching_env_value() {
+        assert_eq!(
+            askpass_answer("Username for 'https://github.com': ", Some("ada"), Some("tok")),
+            Some("ada".to_string())
+        );
+        assert_eq!(
+            askpass_answer(
+                "Password for 'https://ada@github.com': ",
+                Some("ada"),
+                Some("tok")
+            ),
+            Some("tok".to_string())
+        );
+    }
+
+    #[test]
+    fn askpass_refuses_when_the_value_is_absent() {
+        // Never fall back to an empty string: git would take it as a real
+        // (wrong) credential and burn an authentication attempt.
+        assert_eq!(askpass_answer("Password for 'https://x': ", None, None), None);
+        assert_eq!(
+            askpass_answer("Username for 'https://x': ", None, Some("tok")),
+            None
+        );
+    }
+
+    #[test]
+    fn askpass_refuses_an_unrecognized_prompt() {
+        assert_eq!(
+            askpass_answer("Please confirm the fingerprint", Some("ada"), Some("tok")),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_args_recognizes_askpass() {
+        let cwd = Path::new("/tmp");
+        assert_eq!(
+            parse_args(
+                &["--askpass".to_string(), "Password for 'x': ".to_string()],
+                cwd
+            ),
+            Parsed::Askpass("Password for 'x': ".to_string())
+        );
+    }
+
+    #[test]
+    fn askpass_without_a_prompt_is_still_askpass_and_answers_nothing() {
+        let cwd = Path::new("/tmp");
+        assert_eq!(
+            parse_args(&["--askpass".to_string()], cwd),
+            Parsed::Askpass(String::new())
+        );
+        assert_eq!(askpass_answer("", Some("a"), Some("b")), None);
+    }
+
+    #[test]
+    fn a_prompt_containing_a_flag_is_not_read_as_that_flag() {
+        // A prompt is arbitrary text from git; it must not be able to make the
+        // shim print USAGE (which git would then use as the credential).
+        let cwd = Path::new("/tmp");
+        assert_eq!(
+            parse_args(
+                &["--askpass".to_string(), "Password -h for 'x': ".to_string()],
+                cwd
+            ),
+            Parsed::Askpass("Password -h for 'x': ".to_string())
+        );
     }
 }

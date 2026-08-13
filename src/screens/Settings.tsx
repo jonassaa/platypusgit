@@ -186,6 +186,23 @@ export function SettingsScreen() {
               />
             }
           />
+          <Row
+            label="Sign commits"
+            hint="Uses gpg.format, user.signingkey and gpg.program. Following git config respects commit.gpgsign per repository; a signing failure fails the commit rather than producing an unsigned one."
+            control={
+              <PGSelect
+                value={s.signCommits}
+                onChange={(v) =>
+                  s.set("signCommits", v as "config" | "always" | "never")
+                }
+                options={[
+                  { value: "config", label: "Follow git config" },
+                  { value: "always", label: "Always" },
+                  { value: "never", label: "Never" },
+                ]}
+              />
+            }
+          />
         </Section>
 
         <Section title="Diff" subtitle="How diffs are rendered across the app.">

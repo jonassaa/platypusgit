@@ -3,6 +3,7 @@ import { PGIcon, PGSkeleton } from "@/design";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
+import { SignatureBadge } from "@/features/signing/SignatureBadge";
 import type { FileDiff } from "@/lib/types";
 
 export interface CommitDiffPanelProps {
@@ -19,6 +20,12 @@ export interface CommitDiffPanelProps {
   paneIdPrefix: string;
   /** Shown when the diff is empty (no changed files). */
   emptyLabel?: string;
+  /**
+   * Commit whose signature to show in the header (#61 D6). Omitted for
+   * comparisons that are not a single commit, e.g. a combined multi-select diff
+   * or commit-vs-worktree, where "the" signature has no meaning.
+   */
+  verifyOid?: string;
 }
 
 /**
@@ -34,6 +41,7 @@ export function CommitDiffPanel({
   header,
   paneIdPrefix,
   emptyLabel = "No changes in this commit.",
+  verifyOid,
 }: CommitDiffPanelProps) {
   const filesPaneId = `${paneIdPrefix}.files`;
   const viewPaneId = `${paneIdPrefix}.view`;
@@ -106,6 +114,8 @@ export function CommitDiffPanel({
             >
               {header}
             </span>
+            {/* Signature status for THIS commit only, verified lazily (#61 D6). */}
+            {verifyOid && <SignatureBadge oid={verifyOid} />}
             {/* Read-only surface: no hunk staging to gate here. */}
             <WhitespaceToggle />
           </div>
