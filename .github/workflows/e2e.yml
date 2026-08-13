@@ -12,7 +12,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  e2e-linux:
+  # Decides whether the suite is worth running for this PR. Site- and docs-only
+  # changes cannot affect the app binary, so they skip a ~10 minute build.
+  #
+  # The filter runs for pull_request events only. On push and workflow_dispatch
+  # there is no reliable diff base, so `app` falls back to 'true' (a skipped
+  # step has no outputs, and the `||` picks up the empty string) and the full
+  # suite runs — main is never left untested.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app || 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD)
+          echo "Changed files:"
+          echo "$changed" | sed 's/^/  /'
+          if echo "$changed" | grep -qE '^(src/|src-tauri/|e2e/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$|\.github/workflows/e2e\.yml$)'; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "-> app code touched, running the E2E suite"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "-> no app code touched, skipping the E2E suite"
+          fi
+
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -53,3 +87,23 @@ jobs:
 
       - name: Run E2E
         run: xvfb-run --auto-servernum pnpm test:e2e:run
+
+  # The required status check on main. It always runs and always reports, so a
+  # PR that skipped the suite is not left waiting forever on a check that never
+  # arrives — the trap that makes a path-filtered required check block a PR
+  # permanently. Keep this job's name in sync with the branch ruleset.
+  e2e-linux:
+    needs: [changes, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the E2E result
+        env:
+          RESULT: ${{ needs.e2e.result }}
+        run: |
+          echo "E2E job result: $RESULT"
+          case "$RESULT" in
+            success) echo "E2E suite passed." ;;
+            skipped) echo "No app code touched — E2E suite not required for this change." ;;
+            *)       echo "E2E suite did not pass."; exit 1 ;;
+          esac
