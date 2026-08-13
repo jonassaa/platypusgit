@@ -48,7 +48,7 @@ import {
   pruneSelection,
   type Selection,
 } from "@/lib/selection";
-import { getDiff } from "@/lib/tauri";
+import { getDiff, getLogPage } from "@/lib/tauri";
 import {
   WhitespaceToggle,
   useHunkActionsDisabledReason,
@@ -88,9 +88,15 @@ export function CommitPanelScreen() {
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const ignoreWhitespace = useIgnoreWhitespace();
   const hunkActionsDisabled = useHunkActionsDisabledReason();
+  // One box for the whole commit message: first line is the subject, the rest
+  // is the body — the same shape git itself stores, so nothing is re-joined on
+  // the way out.
   const [message, setMessage] = React.useState("");
-  const [body, setBody] = React.useState("");
   const [amend, setAmend] = React.useState(false);
+  // The draft that amend's prefill displaced, restored when amend is unchecked.
+  const draftRef = React.useRef<string | null>(null);
+  // Generation counter for in-flight amend prefills (see toggleAmend).
+  const amendReqRef = React.useRef(0);
   // Sign-off toggle seeds from the persisted preference; toggling it writes back.
   const [signoff, setSignoff] = React.useState(addSignoff);
   // Signing (#61 D6). null = follow the setting, which itself defaults to
@@ -217,8 +223,7 @@ export function CommitPanelScreen() {
   ]);
 
   const applyRecent = React.useCallback((r: RecentMessage) => {
-    setMessage(r.subject);
-    setBody(r.body);
+    setMessage(r.body ? `${r.subject}\n\n${r.body}` : r.subject);
   }, []);
 
   const recentsMenu = useContextMenu<void>(() =>
@@ -525,6 +530,9 @@ export function CommitPanelScreen() {
     () => coAuthorTrailers(coAuthors).length,
     [coAuthors],
   );
+  // Only the first line counts against the 50-char subject budget; everything
+  // below it is body text nobody truncates.
+  const subjectLength = message.split("\n", 1)[0].length;
   const canCommit =
     (amend || staged.length > 0) && !!message.trim() && !authorInvalid;
   const canCommitAndPush = canCommit && !!headBranch && !!defaultRemote;
@@ -536,7 +544,7 @@ export function CommitPanelScreen() {
     if (committingRef.current) return null;
     committingRef.current = true;
     try {
-      const full = buildMessage(message, body, coAuthorTrailers(coAuthors));
+      const full = buildMessage(message, coAuthorTrailers(coAuthors));
       const oid = await commitAction(
         full,
         amend,
@@ -546,8 +554,8 @@ export function CommitPanelScreen() {
       );
       if (oid) {
         setMessage("");
-        setBody("");
         setAmend(false);
+        draftRef.current = null;
         // Per-commit signing override is not sticky: it is an override, and
         // carrying it silently into the next commit would surprise.
         setSignOverride(null);
@@ -572,7 +580,7 @@ export function CommitPanelScreen() {
       void doCommit();
       return true;
     },
-    [canCommit, message, body, amend, signoff, authorIdentity, coAuthors],
+    [canCommit, message, amend, signoff, authorIdentity, coAuthors],
   );
   useAction(
     "commit.commitAndPush",
@@ -584,7 +592,6 @@ export function CommitPanelScreen() {
     [
       canCommitAndPush,
       message,
-      body,
       amend,
       signoff,
       authorIdentity,
@@ -593,19 +600,71 @@ export function CommitPanelScreen() {
       defaultRemote,
     ],
   );
+  // Checking amend pulls HEAD's message into the box (that's the message being
+  // rewritten), stashing whatever draft was there so unchecking gives it back.
+  const toggleAmend = React.useCallback(
+    async (next: boolean) => {
+      // Every toggle voids the one before it: unchecking while the HEAD read is
+      // still in flight must not have the message replaced out from under it.
+      const req = (amendReqRef.current += 1);
+      if (!next) {
+        setAmend(false);
+        if (draftRef.current !== null) {
+          setMessage(draftRef.current);
+          draftRef.current = null;
+        }
+        return;
+      }
+      if (!repo) return;
+      setAmend(true);
+      try {
+        // HEAD, never the browsed log ref — History may be scoped to another
+        // branch, but amend always rewrites the commit this repo is sitting on.
+        const page = await getLogPage(repo.id, null, 1);
+        if (amendReqRef.current !== req) return;
+        const head = page.commits[0];
+        if (!head) {
+          setAmend(false);
+          pgFlash("No commit to amend yet");
+          return;
+        }
+        draftRef.current = message;
+        setMessage(headMessage(head));
+      } catch (e) {
+        if (amendReqRef.current !== req) return;
+        setAmend(false);
+        pgFlash(appErrorMessage(e));
+      }
+    },
+    [repo, message],
+  );
   useAction(
     "commit.toggleAmend",
     () => {
-      setAmend((a) => !a);
+      void toggleAmend(!amend);
       return true;
     },
-    [],
+    [amend, toggleAmend],
   );
 
-  if (!loading && staged.length === 0 && unstaged.length === 0) {
+  // A clean tree still has one thing worth doing: fixing the message of the
+  // commit that just landed. Checking amend brings the composer back.
+  if (!loading && staged.length === 0 && unstaged.length === 0 && !amend) {
     return (
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <PGEmpty icon="check" title="Working tree clean">
+        <PGEmpty
+          icon="check"
+          title="Working tree clean"
+          action={
+            <PGButton
+              icon="commit"
+              onClick={() => void toggleAmend(true)}
+              data-testid="amend-last-commit"
+            >
+              Amend last commit
+            </PGButton>
+          }
+        >
           No changes to commit.
         </PGEmpty>
       </div>
@@ -965,26 +1024,6 @@ export function CommitPanelScreen() {
             flex: 1,
           }}
         >
-          <div>
-            <LabelRow
-              label="Subject"
-              right={
-                <span
-                  style={{
-                    fontSize: "var(--fs-10)",
-                    color:
-                      message.length > 50
-                        ? "var(--git-modified)"
-                        : "var(--fg-3)",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {message.length}/50
-                </span>
-              }
-            />
-            <PGInput value={message} onChange={setMessage} mono size="lg" data-testid="commit-subject" />
-          </div>
           <div
             style={{
               flex: 1,
@@ -994,25 +1033,39 @@ export function CommitPanelScreen() {
             }}
           >
             <LabelRow
-              label="Body"
+              label="Message"
               right={
                 <span
                   style={{
+                    display: "flex",
+                    gap: 6,
                     fontSize: "var(--fs-10)",
-                    color: "var(--fg-3)",
                     fontFamily: "var(--font-mono)",
+                    color: "var(--fg-3)",
                   }}
                 >
-                  wrap at 72
+                  <span
+                    data-testid="commit-subject-count"
+                    style={{
+                      color:
+                        subjectLength > 50
+                          ? "var(--git-modified)"
+                          : "var(--fg-3)",
+                    }}
+                  >
+                    {subjectLength}/50
+                  </span>
+                  <span>wrap at 72</span>
                 </span>
               }
             />
             <PGTextarea
-              value={body}
-              onChange={setBody}
-              rows={8}
+              value={message}
+              onChange={setMessage}
+              rows={10}
               mono
-              data-testid="commit-body"
+              placeholder="Subject line, blank line, then body"
+              data-testid="commit-message"
               data-pg-focus-target=""
               className="focusable"
               style={{ flex: 1 }}
@@ -1031,7 +1084,7 @@ export function CommitPanelScreen() {
           >
             <PGCheckbox
               checked={amend}
-              onChange={setAmend}
+              onChange={(v) => void toggleAmend(v)}
               label="Amend previous commit"
             />
             <PGCheckbox
@@ -1352,18 +1405,25 @@ export function coAuthorTrailers(raw: string): string[] {
   return out;
 }
 
-function buildMessage(subject: string, body: string, coAuthors: string[] = []): string {
-  const parts: string[] = [subject];
-  const trimmedBody = body.trim();
-  if (trimmedBody) parts.push("", trimmedBody);
+function buildMessage(message: string, coAuthors: string[] = []): string {
+  const trimmed = message.trimEnd();
   // Trailers go in their own block after one blank line — that separation is
-  // what `git interpret-trailers` (and GitHub) key on. Skip any the body
+  // what `git interpret-trailers` (and GitHub) key on. Skip any the message
   // already spells out, so hand-written and generated trailers can't double up.
   const fresh = coAuthors.filter(
-    (t) => !trimmedBody.toLowerCase().includes(t.toLowerCase()),
+    (t) => !trimmed.toLowerCase().includes(t.toLowerCase()),
   );
-  if (fresh.length) parts.push("", fresh.join("\n"));
-  return parts.join("\n");
+  return fresh.length ? `${trimmed}\n\n${fresh.join("\n")}` : trimmed;
+}
+
+/**
+ * HEAD's message as the composer holds it: subject line, blank line, body.
+ * `summary` + `body` round-trip the raw message for any commit whose subject
+ * is a single line — which is every commit written to convention.
+ */
+function headMessage(c: CommitInfo): string {
+  const body = (c.body ?? "").trim();
+  return body ? `${c.summary}\n\n${body}` : c.summary;
 }
 
 export interface RecentMessage {

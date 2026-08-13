@@ -213,9 +213,9 @@ describe("settings", () => {
     // the Settings PGToggle rows — see clickSettingsToggleRow above).
     await $("span*=Add Signed-off-by trailer").click();
     // Type message + commit, using the exact testids from commit.e2e.ts
-    // (the brief's "commit-message" was a guess; the real attribute is
-    // "commit-subject" — verified in src/screens/CommitPanel.tsx).
-    await $('[data-testid="commit-subject"]').setValue("feat: signed commit");
+    // ("commit-message" — one box holds subject and body, verified in
+    // src/screens/CommitPanel.tsx).
+    await $('[data-testid="commit-message"]').setValue("feat: signed commit");
     await $('[data-testid="commit-button"]').click();
     await browser.waitUntil(
       async () => repo!.git("log", "-1", "--pretty=%s").trim() === "feat: signed commit",

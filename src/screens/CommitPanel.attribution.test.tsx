@@ -90,7 +90,7 @@ describe("CommitPanel attribution", () => {
   });
 
   it("sends no authorOverride by default", async () => {
-    type("commit-subject", "feat: plain");
+    type("commit-message", "feat: plain");
     fireEvent.click(screen.getByTestId("commit-button"));
 
     await waitFor(() => expect(commitCall()).toBeDefined());
@@ -99,7 +99,7 @@ describe("CommitPanel attribution", () => {
   });
 
   it("sends the parsed author override", async () => {
-    type("commit-subject", "feat: as ada");
+    type("commit-message", "feat: as ada");
     type("commit-author", "Ada Lovelace <ada@example.com>");
     fireEvent.click(screen.getByTestId("commit-button"));
 
@@ -111,7 +111,7 @@ describe("CommitPanel attribution", () => {
   });
 
   it("blocks the commit while the author is half-typed", async () => {
-    type("commit-subject", "feat: blocked");
+    type("commit-message", "feat: blocked");
     type("commit-author", "Ada Lovelace");
 
     expect(screen.getByTestId("commit-button")).toBeDisabled();
@@ -125,7 +125,7 @@ describe("CommitPanel attribution", () => {
   });
 
   it("appends Co-Authored-By trailers after a blank line", async () => {
-    type("commit-subject", "feat: pairing");
+    type("commit-message", "feat: pairing");
     type("commit-coauthors", "Ada <ada@x.com>, Grace <grace@x.com>");
     fireEvent.click(screen.getByTestId("commit-button"));
 
@@ -136,8 +136,7 @@ describe("CommitPanel attribution", () => {
   });
 
   it("keeps the trailer block separate from a body", async () => {
-    type("commit-subject", "feat: pairing");
-    type("commit-body", "Why: because.");
+    type("commit-message", "feat: pairing\n\nWhy: because.");
     type("commit-coauthors", "Ada <ada@x.com>");
     fireEvent.click(screen.getByTestId("commit-button"));
 
@@ -148,8 +147,7 @@ describe("CommitPanel attribution", () => {
   });
 
   it("does not duplicate a trailer the body already spells out", async () => {
-    type("commit-subject", "feat: pairing");
-    type("commit-body", "Co-Authored-By: Ada <ada@x.com>");
+    type("commit-message", "feat: pairing\n\nCo-Authored-By: Ada <ada@x.com>");
     type("commit-coauthors", "Ada <ada@x.com>");
     fireEvent.click(screen.getByTestId("commit-button"));
 
@@ -160,14 +158,14 @@ describe("CommitPanel attribution", () => {
   });
 
   it("keeps attribution after a commit — pairing spans several commits", async () => {
-    type("commit-subject", "feat: one");
+    type("commit-message", "feat: one");
     type("commit-author", "Ada Lovelace <ada@example.com>");
     type("commit-coauthors", "Grace <grace@x.com>");
     fireEvent.click(screen.getByTestId("commit-button"));
 
     await waitFor(() => expect(commitCall()).toBeDefined());
     await waitFor(() =>
-      expect(screen.getByTestId<HTMLInputElement>("commit-subject").value).toBe(""),
+      expect(screen.getByTestId<HTMLTextAreaElement>("commit-message").value).toBe(""),
     );
     expect(screen.getByTestId<HTMLInputElement>("commit-author").value).toBe(
       "Ada Lovelace <ada@example.com>",

@@ -234,7 +234,7 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "repo.stageAll": { id: "repo.stageAll", title: "Stage all changes", category: "Repository", scope: "global", run: stageAllOp },
   "repo.unstageAll": { id: "repo.unstageAll", title: "Unstage all changes", category: "Repository", scope: "global", run: unstageAllOp },
 
-  // commit.* carry no default runners: the message/body/amend state is
+  // commit.* carry no default runners: the message/amend state is
   // CommitPanel component state, so the panel registers handlers while
   // mounted; on other screens the chords fall through.
   "commit.commit": { id: "commit.commit", title: "Commit staged changes", category: "Repository", scope: "global" },

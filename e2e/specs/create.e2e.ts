@@ -46,7 +46,7 @@ describe("clone & init", () => {
     await $('[data-testid="init-branch"]').setValue("trunk");
 
     // These are controlled React inputs (PGInput's onChange yields a plain
-    // string from a native <input>, same shape as the commit-subject and
+    // string from a native <input>, same shape as the commit-message and
     // branch-search fields other specs already drive with setValue) — but
     // the resolved-path preview only renders once the typed value actually
     // reached useState, so waiting for it here is the real proof setValue's

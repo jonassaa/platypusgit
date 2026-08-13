@@ -24,7 +24,7 @@ describe("action catalog", () => {
   });
 
   it("global app actions all have default runners (or are component-handled)", () => {
-    // commit.* act on CommitPanel component state (message/body/amend), so
+    // commit.* act on CommitPanel component state (message/amend), so
     // the panel registers their handlers while mounted; elsewhere the chords
     // deliberately fall through. Every OTHER global action must have a
     // runner, or its chord is dead.
