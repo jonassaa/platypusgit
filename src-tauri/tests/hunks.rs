@@ -398,3 +398,147 @@ fn stage_hunk_with_wide_context_stages_merged_hunk() {
         "staging the merged hunk should leave nothing unstaged"
     );
 }
+
+// ─── line-level staging (#61 D7) ──────────────────────────────────────────────
+//
+// `selected` holds indices among the hunk's CHANGED (+/-) lines, counted in
+// hunk order from 0 — NOT indices into DiffHunk::lines, which also carries
+// header and context entries. These tests assert the resulting index and
+// worktree CONTENTS rather than patch text: a malformed partial patch could
+// otherwise look plausible while staging the wrong lines.
+
+/// The staged (index) content of `path`, as a string.
+fn staged_content(tr: &TempRepo, path: &str) -> String {
+    let repo = git2::Repository::open(tr.path()).unwrap();
+    let index = repo.index().unwrap();
+    let entry = index
+        .get_path(std::path::Path::new(path), 0)
+        .expect("path is in the index");
+    let blob = repo.find_blob(entry.id).unwrap();
+    String::from_utf8(blob.content().to_vec()).unwrap()
+}
+
+/// Repo whose worktree adds three lines after a one-line base, so the single
+/// hunk has three '+' changed lines at indices 0, 1, 2.
+fn repo_with_three_additions() -> (TempRepo, platypusgit_lib::git::libgit2::Libgit2Backend, platypusgit_lib::git::types::RepoHandle) {
+    let tr = TempRepo::with_initial_commit("base\n");
+    write_file(tr.path(), "README.md", "base\nadd1\nadd2\nadd3\n");
+    let (backend, handle) = tr.open_with_backend();
+    (tr, backend, handle)
+}
+
+#[test]
+fn stage_lines_stages_only_the_selected_addition() {
+    let (tr, backend, handle) = repo_with_three_additions();
+
+    backend
+        .stage_lines(&handle.id, &PathBuf::from("README.md"), 0, &[1], 3)
+        .expect("stage_lines");
+
+    assert_eq!(
+        staged_content(&tr, "README.md"),
+        "base\nadd2\n",
+        "only the selected line should be staged"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tr.path().join("README.md")).unwrap(),
+        "base\nadd1\nadd2\nadd3\n",
+        "worktree must be untouched by staging"
+    );
+}
+
+#[test]
+fn stage_lines_turns_unselected_removals_into_context() {
+    // Base has three lines and the worktree deletes all three. Staging only
+    // the first deletion must leave the other two lines in the index — that is
+    // only true if unselected '-' lines became context rather than applying.
+    let tr = TempRepo::with_initial_commit("one\ntwo\nthree\n");
+    write_file(tr.path(), "README.md", "");
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .stage_lines(&handle.id, &PathBuf::from("README.md"), 0, &[0], 3)
+        .expect("stage_lines");
+
+    assert_eq!(
+        staged_content(&tr, "README.md"),
+        "two\nthree\n",
+        "unselected deletions must have become context, not been applied"
+    );
+}
+
+#[test]
+fn stage_lines_with_every_index_matches_staging_the_hunk() {
+    let (tr, backend, handle) = repo_with_three_additions();
+
+    backend
+        .stage_lines(&handle.id, &PathBuf::from("README.md"), 0, &[0, 1, 2], 3)
+        .expect("stage_lines");
+
+    assert_eq!(
+        staged_content(&tr, "README.md"),
+        "base\nadd1\nadd2\nadd3\n",
+        "selecting every changed line equals staging the whole hunk"
+    );
+}
+
+#[test]
+fn stage_lines_empty_selection_is_invalid_argument() {
+    let (_tr, backend, handle) = repo_with_three_additions();
+
+    let err = backend
+        .stage_lines(&handle.id, &PathBuf::from("README.md"), 0, &[], 3)
+        .expect_err("an empty selection must be rejected, not silently succeed");
+    assert!(
+        matches!(err, platypusgit_lib::error::AppError::InvalidArgument(_)),
+        "expected InvalidArgument, got {err:?}"
+    );
+}
+
+#[test]
+fn stage_lines_out_of_range_index_is_invalid_argument() {
+    let (_tr, backend, handle) = repo_with_three_additions();
+
+    let err = backend
+        .stage_lines(&handle.id, &PathBuf::from("README.md"), 0, &[99], 3)
+        .expect_err("an out-of-range index must be rejected");
+    assert!(
+        matches!(err, platypusgit_lib::error::AppError::InvalidArgument(_)),
+        "expected InvalidArgument, got {err:?}"
+    );
+}
+
+#[test]
+fn discard_lines_reverts_only_the_selected_line() {
+    let (tr, backend, handle) = repo_with_three_additions();
+
+    backend
+        .discard_lines(&handle.id, &PathBuf::from("README.md"), 0, &[0], 3)
+        .expect("discard_lines");
+
+    assert_eq!(
+        std::fs::read_to_string(tr.path().join("README.md")).unwrap(),
+        "base\nadd2\nadd3\n",
+        "only the selected added line should be discarded"
+    );
+}
+
+#[test]
+fn unstage_lines_removes_only_the_selected_line_from_the_index() {
+    let (tr, backend, handle) = repo_with_three_additions();
+    // Stage the whole hunk first, so there is something to unstage.
+    backend
+        .stage_hunk(&handle.id, &std::path::Path::new("README.md"), 0, 3)
+        .expect("stage_hunk");
+    assert_eq!(staged_content(&tr, "README.md"), "base\nadd1\nadd2\nadd3\n");
+
+    backend
+        .unstage_lines(&handle.id, &PathBuf::from("README.md"), 0, &[0], 3)
+        .expect("unstage_lines");
+
+    assert_eq!(
+        staged_content(&tr, "README.md"),
+        "base\nadd2\nadd3\n",
+        "only the selected line should be unstaged"
+    );
+}

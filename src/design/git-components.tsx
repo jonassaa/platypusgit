@@ -1,4 +1,5 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { wordDiff, type WordSpan } from "@/lib/wordDiff";
 import { PGIcon, type IconName } from "./icons";
 import {
   PGBadge,
@@ -493,6 +494,17 @@ export interface DiffLineData {
   lnR?: number | string;
   ln?: number | string;
   text?: string;
+  /**
+   * Intra-line word spans, present when this line is half of a matched rem/add
+   * pair (#61 D8). Set by the renderer's pairing pass, not by callers.
+   */
+  spans?: WordSpan[];
+  /**
+   * Index among the hunk's changed (`+`/`-`) lines, counted from 0; undefined
+   * for context rows. This is the index space the line-staging backend ops use
+   * (#61 D7) — assigned by `PGHunk`, not by callers.
+   */
+  changedIndex?: number;
 }
 
 export function PGDiffLine({ kind = "ctx", lnL, lnR, text }: DiffLineData) {
@@ -631,7 +643,95 @@ function chunkDiffLines(lines: DiffLineData[]): DiffChunk[] {
   return chunks;
 }
 
-function PGDiffChunk({ chunk }: { chunk: DiffChunk }) {
+/**
+ * Number the changed (`+`/`-`) lines of a hunk from 0, leaving context rows
+ * unnumbered (#61 D7).
+ *
+ * This must count exactly the add/rem rows and nothing else: it is the wire
+ * contract shared with the backend, whose `Patch::line_in_hunk` counts `+`/`-`
+ * origins the same way. `hunk.lines` also carries context and header rows, so
+ * a plain array index would address the wrong line.
+ */
+function withChangedIndices(lines: DiffLineData[]): DiffLineData[] {
+  let n = 0;
+  return lines.map((l) =>
+    l.kind === "add" || l.kind === "rem"
+      ? { ...l, changedIndex: n++ }
+      : l,
+  );
+}
+
+/**
+ * Attach intra-line word spans to adjacent rem/add chunk pairs (#61 D8).
+ *
+ * `chunkDiffLines` groups **by kind**, so a removed run and the added run that
+ * follows it are two ADJACENT chunks — pairing crosses that pair rather than
+ * happening inside one chunk. The i-th removed line pairs with the i-th added
+ * line for the first `min(rem, add)` lines; `wordDiff` itself returns null for
+ * a pair too dissimilar to be the same line edited, and those get no spans.
+ */
+function withWordSpans(chunks: DiffChunk[]): DiffChunk[] {
+  const out = chunks.map((c) => ({ ...c, lines: c.lines.map((l) => ({ ...l })) }));
+  for (let i = 0; i + 1 < out.length; i++) {
+    const rem = out[i];
+    const add = out[i + 1];
+    if (rem.kind !== "rem" || add.kind !== "add") continue;
+    const n = Math.min(rem.lines.length, add.lines.length);
+    for (let k = 0; k < n; k++) {
+      const r = wordDiff(rem.lines[k].text ?? "", add.lines[k].text ?? "");
+      if (!r) continue;
+      rem.lines[k].spans = r.old;
+      add.lines[k].spans = r.new;
+    }
+  }
+  return out;
+}
+
+/** Render line text, tinting the changed spans when a word diff produced any. */
+function DiffText({
+  text,
+  spans,
+  kind,
+}: {
+  text: string;
+  spans?: WordSpan[];
+  kind: DiffLineKind;
+}) {
+  if (!spans || spans.length === 0) return <>{text}</>;
+  // Relative colour off the existing tokens, so custom and light themes carry
+  // through instead of a hardcoded tint.
+  const tint =
+    kind === "add"
+      ? "oklch(from var(--git-added) l c h / 0.28)"
+      : "oklch(from var(--git-removed) l c h / 0.28)";
+  return (
+    <>
+      {spans.map((s, i) =>
+        s.changed ? (
+          <span
+            key={i}
+            data-testid="word-change"
+            style={{ background: tint, borderRadius: 2 }}
+          >
+            {text.slice(s.start, s.end)}
+          </span>
+        ) : (
+          <React.Fragment key={i}>{text.slice(s.start, s.end)}</React.Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
+function PGDiffChunk({
+  chunk,
+  selectedLines,
+  onLineClick,
+}: {
+  chunk: DiffChunk;
+  selectedLines?: number[];
+  onLineClick?: (changedIndex: number, range: boolean) => void;
+}) {
   const { kind, lines } = chunk;
   const bg: Partial<Record<DiffLineKind, string>> = {
     add: "var(--git-added-bg)",
@@ -680,15 +780,31 @@ function PGDiffChunk({ chunk }: { chunk: DiffChunk }) {
             : "2px solid transparent",
       }}
     >
-      {lines.map((ln, i) => (
+      {lines.map((ln, i) => {
+        const selectable = onLineClick != null && ln.changedIndex != null;
+        const isSelected =
+          ln.changedIndex != null &&
+          (selectedLines?.includes(ln.changedIndex) ?? false);
+        return (
         <div
           key={i}
+          data-testid={selectable ? "diff-line-changed" : undefined}
+          data-selected={isSelected || undefined}
+          onClick={
+            selectable
+              ? (e) => onLineClick!(ln.changedIndex!, e.shiftKey)
+              : undefined
+          }
           style={{
             display: "flex",
             fontFamily: "var(--font-mono)",
             fontSize: "var(--fs-12)",
             lineHeight: "var(--lh-code)",
             minHeight: 18,
+            cursor: selectable ? "pointer" : undefined,
+            background: isSelected
+              ? "oklch(from var(--accent) l c h / 0.18)"
+              : undefined,
           }}
         >
           <span
@@ -738,10 +854,11 @@ function PGDiffChunk({ chunk }: { chunk: DiffChunk }) {
               paddingRight: 10,
             }}
           >
-            {ln.text}
+            <DiffText text={ln.text ?? ""} spans={ln.spans} kind={kind} />
           </span>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -757,9 +874,19 @@ export interface PGHunkProps {
   /**
    * Disable Stage/Discard and explain why on hover. Set while the diff is
    * whitespace-ignoring: those hunks are a rewritten view, so their indices
-   * don't address the hunks git would apply (#61 D2).
+   * don't address the hunks git would apply (#61 D2). It also suppresses line
+   * selection, for the same reason (#61 D7).
    */
   actionsDisabledReason?: string;
+  /**
+   * Selected changed-line indices within this hunk (#61 D7). Selection STATE
+   * belongs to the owning screen, not here — a primitive owning it plus the
+   * global key dispatcher would both answer the same input and the selection
+   * would move twice.
+   */
+  selectedLines?: number[];
+  /** Called with a changed-line index; `range` is true for a shift-click. */
+  onLineClick?: (changedIndex: number, range: boolean) => void;
 }
 
 export function PGHunk({
@@ -771,7 +898,19 @@ export function PGHunk({
   expanded = true,
   onToggle,
   actionsDisabledReason,
+  selectedLines,
+  onLineClick,
 }: PGHunkProps) {
+  // Memoized: word diffing every rem/add pair on each render would repeat over
+  // lists that are long and windowed.
+  const chunks = React.useMemo(
+    () => withWordSpans(chunkDiffLines(withChangedIndices(lines))),
+    [lines],
+  );
+  // Line selection is meaningless when the hunk's own indices don't address
+  // what git would apply — the same condition that disables Stage/Discard.
+  const lineClick = actionsDisabledReason ? undefined : onLineClick;
+  const selCount = selectedLines?.length ?? 0;
   return (
     <div style={{ borderBottom: "1px solid var(--border-0)" }}>
       <div
@@ -813,13 +952,22 @@ export function PGHunk({
           disabled={!!actionsDisabledReason}
           title={actionsDisabledReason}
         >
-          {staged ? "Staged" : "Stage hunk"}
+          {selCount > 0
+            ? `${staged ? "Unstage" : "Stage"} ${selCount} lines`
+            : staged
+              ? "Staged"
+              : "Stage hunk"}
         </PGButton>
       </div>
       {expanded && (
         <div>
-          {chunkDiffLines(lines).map((c, i) => (
-            <PGDiffChunk key={i} chunk={c} />
+          {chunks.map((c, i) => (
+            <PGDiffChunk
+              key={i}
+              chunk={c}
+              selectedLines={selectedLines}
+              onLineClick={lineClick}
+            />
           ))}
         </div>
       )}

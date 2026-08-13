@@ -386,6 +386,41 @@ export function CommitPanelScreen() {
     );
   }, [primaryKey, staged, unstaged]);
 
+  // Line-level staging selection, keyed by hunk index (#61 D7).
+  //
+  // It lives here rather than in PGHunk: a primitive owning its own selection
+  // plus the global key dispatcher would both answer the same input and the
+  // selection would move twice — the same rule that keeps tree keyboard
+  // handling in the screen instead of PGFileTree.
+  const [lineSel, setLineSel] = React.useState<Record<number, number[]>>({});
+  const [lineAnchor, setLineAnchor] = React.useState<number | null>(null);
+
+  const clearLineSel = React.useCallback(() => {
+    setLineSel({});
+    setLineAnchor(null);
+  }, []);
+
+  const onLineClick = React.useCallback(
+    (hunkIndex: number, changedIndex: number, range: boolean) => {
+      setLineSel((prev) => {
+        const cur = prev[hunkIndex] ?? [];
+        if (range && lineAnchor != null) {
+          const lo = Math.min(lineAnchor, changedIndex);
+          const hi = Math.max(lineAnchor, changedIndex);
+          const span: number[] = [];
+          for (let k = lo; k <= hi; k++) span.push(k);
+          return { ...prev, [hunkIndex]: span };
+        }
+        const next = cur.includes(changedIndex)
+          ? cur.filter((x) => x !== changedIndex)
+          : [...cur, changedIndex].sort((a, b) => a - b);
+        return { ...prev, [hunkIndex]: next };
+      });
+      if (!range) setLineAnchor(changedIndex);
+    },
+    [lineAnchor],
+  );
+
   // Row highlight: explicit selection when present, else the derived primary
   // (first unstaged file) so the keyboard always has a visible anchor.
   const effectiveKeys = React.useMemo(() => {
@@ -425,6 +460,12 @@ export function CommitPanelScreen() {
       cancelled = true;
     };
   }, [selected?.path, selected?.side, selected?.status.embedded, repo, diffContextLines, ignoreWhitespace]);
+
+  // A line selection stops meaning the same thing once the file, the side, or
+  // the diff shape changes — the indices would then address different lines.
+  React.useEffect(() => {
+    clearLineSel();
+  }, [selected?.path, selected?.side, diff, clearLineSel]);
 
   const headBranch = currentBranch(branches);
   const defaultRemote = remotes[0] ?? null;
@@ -817,25 +858,40 @@ export function CommitPanelScreen() {
                 expanded={true}
                 staged={selected?.side === "staged"}
                 actionsDisabledReason={hunkActionsDisabled}
+                selectedLines={lineSel[i] ?? []}
+                onLineClick={(changedIndex, range) =>
+                  onLineClick(i, changedIndex, range)
+                }
                 onStage={() => {
                   if (!selected) return;
+                  const sel = lineSel[i] ?? [];
+                  const store = useRepoStore.getState();
                   if (selected.side === "staged") {
-                    useRepoStore.getState().unstageHunk(selected.path, i);
+                    if (sel.length) store.unstageLines(selected.path, i, sel);
+                    else store.unstageHunk(selected.path, i);
                   } else {
-                    useRepoStore.getState().stageHunk(selected.path, i);
+                    if (sel.length) store.stageLines(selected.path, i, sel);
+                    else store.stageHunk(selected.path, i);
                   }
+                  clearLineSel();
                 }}
                 onDiscard={async () => {
                   if (!selected) return;
+                  const sel = lineSel[i] ?? [];
                   if (
                     await pgConfirm({
-                      title: "Discard this hunk?",
+                      title: sel.length
+                        ? `Discard ${sel.length} selected line${sel.length === 1 ? "" : "s"}?`
+                        : "Discard this hunk?",
                       body: `The change to ${selected.path} will be lost.`,
                       danger: true,
-                      confirmLabel: "Discard hunk",
+                      confirmLabel: sel.length ? "Discard lines" : "Discard hunk",
                     })
                   ) {
-                    useRepoStore.getState().discardHunk(selected.path, i);
+                    const store = useRepoStore.getState();
+                    if (sel.length) store.discardLines(selected.path, i, sel);
+                    else store.discardHunk(selected.path, i);
+                    clearLineSel();
                   }
                 }}
               />

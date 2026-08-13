@@ -170,6 +170,36 @@ impl GitBackend for CliBackend {
     ) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn stage_lines(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _hunk_index: usize,
+        _selected: &[usize],
+        _context_lines: u32,
+    ) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn unstage_lines(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _hunk_index: usize,
+        _selected: &[usize],
+        _context_lines: u32,
+    ) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn discard_lines(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _hunk_index: usize,
+        _selected: &[usize],
+        _context_lines: u32,
+    ) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<String> {
         Err(AppError::NotImplemented)
     }

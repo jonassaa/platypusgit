@@ -34,6 +34,7 @@ import {
   deleteBranch,
   deleteTag,
   discardHunk,
+  discardLines as discardLinesFn,
   discardPaths,
   fetch as fetchRemote,
   fetchAll,
@@ -72,6 +73,7 @@ import {
   setRemoteUrl,
   setUpstream as setUpstreamFn,
   stageHunk,
+  stageLines as stageLinesFn,
   stagePaths,
   stashApply,
   stashBranch as stashBranchFn,
@@ -79,6 +81,7 @@ import {
   stashPop,
   stashSave,
   unstageHunk,
+  unstageLines as unstageLinesFn,
   unstagePaths,
   type PullMode,
   type PushForce,
@@ -211,6 +214,13 @@ interface RepoStoreState {
   stageHunk: (path: string, hunkIndex: number) => Promise<void>;
   unstageHunk: (path: string, hunkIndex: number) => Promise<void>;
   discardHunk: (path: string, hunkIndex: number) => Promise<void>;
+  /**
+   * Line-level staging (#61 D7). `selected` holds indices among the hunk's
+   * changed (`+`/`-`) lines counted from 0, not indices into `hunk.lines`.
+   */
+  stageLines: (path: string, hunkIndex: number, selected: number[]) => Promise<void>;
+  unstageLines: (path: string, hunkIndex: number, selected: number[]) => Promise<void>;
+  discardLines: (path: string, hunkIndex: number, selected: number[]) => Promise<void>;
   commit: (
     message: string,
     amend?: boolean,
@@ -643,6 +653,57 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await discardHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
+      await get().refreshStatus();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async stageLines(path, hunkIndex, selected) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stageLinesFn(
+        repo.id,
+        path,
+        hunkIndex,
+        selected,
+        useSettingsStore.getState().diffContextLines,
+      );
+      await get().refreshStatus();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async unstageLines(path, hunkIndex, selected) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await unstageLinesFn(
+        repo.id,
+        path,
+        hunkIndex,
+        selected,
+        useSettingsStore.getState().diffContextLines,
+      );
+      await get().refreshStatus();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async discardLines(path, hunkIndex, selected) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await discardLinesFn(
+        repo.id,
+        path,
+        hunkIndex,
+        selected,
+        useSettingsStore.getState().diffContextLines,
+      );
       await get().refreshStatus();
     } catch (e) {
       set({ error: toAppError(e) });

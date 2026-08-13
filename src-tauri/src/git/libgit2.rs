@@ -499,8 +499,55 @@ fn find_delta_index(diff: &git2::Diff, path: &Path) -> AppResult<usize> {
     Err(AppError::InvalidPath(path.display().to_string()))
 }
 
-/// Build a minimal unified-diff patch string for a single hunk within a diff.
-fn patch_text_for_hunk(diff: &git2::Diff, delta_index: usize, hunk_index: usize) -> AppResult<String> {
+/// Which way the synthesized patch will be applied. It decides which
+/// *unselected* changed lines become context: reversal flips the side each line
+/// lands on, so the rule for `+` and `-` swaps (#61 D7).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PatchDirection {
+    Apply,
+    Reverse,
+}
+
+/// How many `+`/`-` lines a hunk has — the size of the selection index space.
+fn changed_line_count(
+    diff: &git2::Diff,
+    delta_index: usize,
+    hunk_index: usize,
+) -> AppResult<usize> {
+    let patch = git2::Patch::from_diff(diff, delta_index)
+        .map_err(AppError::from)?
+        .ok_or_else(|| AppError::Internal("no patch for delta".into()))?;
+    let line_count = patch.num_lines_in_hunk(hunk_index).map_err(AppError::from)?;
+    let mut n = 0;
+    for i in 0..line_count {
+        let line = patch.line_in_hunk(hunk_index, i).map_err(AppError::from)?;
+        if matches!(line.origin(), '+' | '-') {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// Build a unified-diff patch containing only the selected changed lines of one
+/// hunk (#61 D7).
+///
+/// `selected` holds indices among the hunk's CHANGED (`+`/`-`) lines, counted
+/// in hunk order from 0 — NOT indices into `DiffHunk::lines`, which is built by
+/// `diff.print` and also carries header and context entries. The two index
+/// spaces differ, so callers must count only changed lines.
+///
+/// The transformation is the one `git add -p` performs when you hand-edit a
+/// hunk. For `Apply`: a selected `-`/`+` is kept, an **unselected `-` becomes
+/// context** (we are not removing it, so it exists on both sides), and an
+/// **unselected `+` is dropped** (it exists on neither side of this partial
+/// patch). For `Reverse` those two rules swap.
+fn patch_text_for_lines(
+    diff: &git2::Diff,
+    delta_index: usize,
+    hunk_index: usize,
+    selected: &[usize],
+    direction: PatchDirection,
+) -> AppResult<String> {
     let patch = git2::Patch::from_diff(diff, delta_index)
         .map_err(AppError::from)?
         .ok_or_else(|| AppError::Internal("no patch for delta".into()))?;
@@ -513,11 +560,13 @@ fn patch_text_for_hunk(diff: &git2::Diff, delta_index: usize, hunk_index: usize)
         )));
     }
 
+    if selected.is_empty() {
+        return Err(AppError::InvalidArgument("no lines selected".to_string()));
+    }
+
     let delta = diff
         .get_delta(delta_index)
         .ok_or_else(|| AppError::Internal(format!("delta {} missing", delta_index)))?;
-
-    // Use new_file path preferentially; fall back to old_file for deletions.
     let path_str = delta
         .new_file()
         .path()
@@ -526,39 +575,100 @@ fn patch_text_for_hunk(diff: &git2::Diff, delta_index: usize, hunk_index: usize)
         .to_string_lossy()
         .to_string();
 
-    let (hunk_header, _line_count) = patch.hunk(hunk_index).map_err(AppError::from)?;
-    let header_str = std::str::from_utf8(hunk_header.header())
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let (hunk_header, _) = patch.hunk(hunk_index).map_err(AppError::from)?;
+    let old_start = hunk_header.old_start();
+    let new_start = hunk_header.new_start();
 
-    let mut out = String::new();
-    out.push_str(&format!("diff --git a/{p} b/{p}\n", p = path_str));
-    out.push_str(&format!("--- a/{}\n", path_str));
-    out.push_str(&format!("+++ b/{}\n", path_str));
-    // hunk header may or may not end with \n
-    out.push_str(header_str);
-    if !header_str.ends_with('\n') {
-        out.push('\n');
-    }
+    let chosen: std::collections::HashSet<usize> = selected.iter().copied().collect();
+    // The unselected side that must survive becomes context; the other is
+    // dropped entirely.
+    let context_side = match direction {
+        PatchDirection::Apply => '-',
+        PatchDirection::Reverse => '+',
+    };
+
+    let mut body = String::new();
+    let mut old_count: u32 = 0;
+    let mut new_count: u32 = 0;
+    let mut changed_seen: usize = 0;
 
     let line_count = patch.num_lines_in_hunk(hunk_index).map_err(AppError::from)?;
     for line_i in 0..line_count {
         let line = patch.line_in_hunk(hunk_index, line_i).map_err(AppError::from)?;
         let origin = line.origin();
-        // Skip git-internal pseudo-lines (file headers etc.)
         if !matches!(origin, '+' | '-' | ' ') {
             continue;
         }
-        out.push(origin);
         let content = std::str::from_utf8(line.content())
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        out.push_str(content);
-        // Ensure each line ends with newline (some diffs omit trailing \n).
+
+        let marker = if origin == ' ' {
+            // Context is on both sides regardless of direction or selection.
+            Some(' ')
+        } else {
+            let idx = changed_seen;
+            changed_seen += 1;
+            if chosen.contains(&idx) {
+                Some(origin)
+            } else if origin == context_side {
+                Some(' ')
+            } else {
+                None
+            }
+        };
+
+        let Some(marker) = marker else { continue };
+        match marker {
+            ' ' => {
+                old_count += 1;
+                new_count += 1;
+            }
+            '-' => old_count += 1,
+            '+' => new_count += 1,
+            _ => {}
+        }
+        body.push(marker);
+        body.push_str(content);
         if !content.ends_with('\n') {
-            out.push('\n');
+            body.push('\n');
         }
     }
 
+    if changed_seen == 0 {
+        return Err(AppError::InvalidArgument(
+            "hunk has no changed lines".to_string(),
+        ));
+    }
+    if let Some(&max) = chosen.iter().max() {
+        if max >= changed_seen {
+            return Err(AppError::InvalidArgument(format!(
+                "line index {} out of range (hunk has {} changed lines)",
+                max, changed_seen
+            )));
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("diff --git a/{p} b/{p}\n", p = path_str));
+    out.push_str(&format!("--- a/{}\n", path_str));
+    out.push_str(&format!("+++ b/{}\n", path_str));
+    // Counts are recomputed from the emitted body. Copying the source hunk's
+    // header is the classic way to produce a patch `git apply` rejects.
+    out.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        old_start, old_count, new_start, new_count
+    ));
+    out.push_str(&body);
     Ok(out)
+}
+
+/// Build a minimal unified-diff patch string for a single hunk within a diff.
+///
+/// Implemented as "every changed line selected" over `patch_text_for_lines`, so
+/// whole-hunk and partial staging share one synthesizer and cannot drift apart.
+fn patch_text_for_hunk(diff: &git2::Diff, delta_index: usize, hunk_index: usize) -> AppResult<String> {
+    let all: Vec<usize> = (0..changed_line_count(diff, delta_index, hunk_index)?).collect();
+    patch_text_for_lines(diff, delta_index, hunk_index, &all, PatchDirection::Apply)
 }
 
 /// Per-file added/removed line counts for the working tree vs HEAD, index
@@ -2108,6 +2218,96 @@ impl GitBackend for Libgit2Backend {
             let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
             let delta_index = find_delta_index(&diff, path)?;
             patch_text_for_hunk(&diff, delta_index, hunk_index)
+        })?;
+
+        let repo_path = self.repo_path(repo_id)?;
+        git_apply(&repo_path, &["--reverse"], &patch_text)
+    }
+
+    fn stage_lines(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        selected: &[usize],
+        context_lines: u32,
+    ) -> AppResult<()> {
+        // Unlike stage_hunk, this cannot use libgit2's ApplyOptions
+        // hunk_callback: a callback can accept or reject a whole hunk but not a
+        // subset of its lines. So it synthesizes a partial patch and pipes it
+        // through the same `git apply` path unstage/discard already use.
+        let patch_text = self.with_repo(repo_id, |repo| {
+            let mut opts = DiffOptions::new();
+            opts.pathspec(path);
+            opts.context_lines(context_lines);
+            let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
+            let delta_index = find_delta_index(&diff, path)?;
+            patch_text_for_lines(
+                &diff,
+                delta_index,
+                hunk_index,
+                selected,
+                PatchDirection::Apply,
+            )
+        })?;
+
+        let repo_path = self.repo_path(repo_id)?;
+        git_apply(&repo_path, &["--cached"], &patch_text)
+    }
+
+    fn unstage_lines(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        selected: &[usize],
+        context_lines: u32,
+    ) -> AppResult<()> {
+        let patch_text = self.with_repo(repo_id, |repo| {
+            let mut opts = DiffOptions::new();
+            opts.pathspec(path);
+            opts.context_lines(context_lines);
+            let head_tree = match repo.head() {
+                Ok(h) => Some(h.peel_to_tree()?),
+                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+                Err(e) => return Err(e.into()),
+            };
+            let diff = repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?;
+            let delta_index = find_delta_index(&diff, path)?;
+            patch_text_for_lines(
+                &diff,
+                delta_index,
+                hunk_index,
+                selected,
+                PatchDirection::Reverse,
+            )
+        })?;
+
+        let repo_path = self.repo_path(repo_id)?;
+        git_apply(&repo_path, &["--cached", "--reverse"], &patch_text)
+    }
+
+    fn discard_lines(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        selected: &[usize],
+        context_lines: u32,
+    ) -> AppResult<()> {
+        let patch_text = self.with_repo(repo_id, |repo| {
+            let mut opts = DiffOptions::new();
+            opts.pathspec(path);
+            opts.context_lines(context_lines);
+            let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
+            let delta_index = find_delta_index(&diff, path)?;
+            patch_text_for_lines(
+                &diff,
+                delta_index,
+                hunk_index,
+                selected,
+                PatchDirection::Reverse,
+            )
         })?;
 
         let repo_path = self.repo_path(repo_id)?;

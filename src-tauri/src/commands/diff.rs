@@ -62,6 +62,66 @@ pub async fn discard_hunk(
     .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+// Line-level staging (#61 D7). `selected` holds indices among the hunk's
+// CHANGED (+/-) lines, counted in hunk order from 0 — see GitBackend's docs.
+
+#[tauri::command]
+pub async fn stage_lines(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: usize,
+    selected: Vec<usize>,
+    context_lines: u32,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || {
+        backend.stage_lines(&repo_id, &path, hunk_index, &selected, context_lines)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn unstage_lines(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: usize,
+    selected: Vec<usize>,
+    context_lines: u32,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || {
+        backend.unstage_lines(&repo_id, &path, hunk_index, &selected, context_lines)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn discard_lines(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: usize,
+    selected: Vec<usize>,
+    context_lines: u32,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || {
+        backend.discard_lines(&repo_id, &path, hunk_index, &selected, context_lines)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 #[tauri::command]
 pub async fn get_diff(
     state: State<'_, AppState>,
