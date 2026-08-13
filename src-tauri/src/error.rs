@@ -30,6 +30,9 @@ pub enum AppError {
     #[error("invalid reference: {0}")]
     InvalidRef(String),
 
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+
     #[error("worktree is dirty: {0}")]
     DirtyWorktree(String),
 

@@ -227,3 +227,89 @@ fn create_tag_from_abbreviated_sha() {
         .collect();
     assert!(names.iter().any(|n| n == "v0.1.0-short"));
 }
+
+/// Create a second repo as `origin`, fetch it, so remote-tracking refs exist.
+fn with_origin() -> (TempRepo, TempRepo) {
+    let upstream = TempRepo::with_initial_commit("hello\n");
+    let local = TempRepo::with_initial_commit("hello\n");
+    local
+        .repo
+        .remote("origin", upstream.path().to_str().unwrap())
+        .unwrap();
+    // Scoped: the Remote borrows local.repo, and its Drop must run before
+    // `local` is moved into the return value.
+    {
+        let mut remote = local.repo.find_remote("origin").unwrap();
+        remote
+            .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
+            .unwrap();
+    }
+    (local, upstream)
+}
+
+#[test]
+fn set_upstream_sets_tracking_branch() {
+    let (tr, _up) = with_origin();
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .set_upstream(&handle.id, "main", Some("origin/main"))
+        .expect("set upstream");
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let main = branches
+        .iter()
+        .find(|b| b.name == "main" && !b.is_remote)
+        .expect("main branch");
+    assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+}
+
+#[test]
+fn set_upstream_none_clears_tracking() {
+    let (tr, _up) = with_origin();
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .set_upstream(&handle.id, "main", Some("origin/main"))
+        .unwrap();
+
+    backend
+        .set_upstream(&handle.id, "main", None)
+        .expect("clear upstream");
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let main = branches
+        .iter()
+        .find(|b| b.name == "main" && !b.is_remote)
+        .unwrap();
+    assert!(main.upstream.is_none(), "tracking should be cleared");
+}
+
+#[test]
+fn set_upstream_unknown_remote_branch_is_invalid_ref() {
+    let (tr, _up) = with_origin();
+    let (backend, handle) = tr.open_with_backend();
+
+    let err = backend
+        .set_upstream(&handle.id, "main", Some("origin/nope"))
+        .expect_err("should reject unknown remote branch");
+
+    assert!(
+        matches!(err, platypusgit_lib::error::AppError::InvalidRef(_)),
+        "expected InvalidRef, got {err:?}"
+    );
+}
+
+#[test]
+fn set_upstream_unknown_local_branch_is_invalid_ref() {
+    let (tr, _up) = with_origin();
+    let (backend, handle) = tr.open_with_backend();
+
+    let err = backend
+        .set_upstream(&handle.id, "nope", Some("origin/main"))
+        .expect_err("should reject unknown local branch");
+
+    assert!(
+        matches!(err, platypusgit_lib::error::AppError::InvalidRef(_)),
+        "expected InvalidRef, got {err:?}"
+    );
+}

@@ -47,6 +47,8 @@ url = "2"
 # Ditto — update discovery must use the SAME semver implementation
 # tauri-plugin-updater compares with, so the two can never disagree.
 semver = "1"
+# Content log search (#61 D10) compiles the user's pattern once per walk.
+regex = "1"
 
 [features]
 # Compile + wire the WebDriver plugin. Set only by the e2e debug build.

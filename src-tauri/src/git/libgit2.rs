@@ -1360,6 +1360,22 @@ impl GitBackend for Libgit2Backend {
             .filter(|s| !s.is_empty())
             .map(std::path::PathBuf::from);
 
+        // Compiled once, before any walking: a malformed pattern must fail
+        // immediately, not per commit.
+        let content_m = match filter
+            .content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => None,
+            Some(pat) if filter.content_regex => Some(ContentMatcher::Regex(
+                regex::Regex::new(pat)
+                    .map_err(|e| AppError::InvalidArgument(format!("invalid regex: {e}")))?,
+            )),
+            Some(pat) => Some(ContentMatcher::Literal(pat.to_string())),
+        };
+
         self.with_repo(repo_id, |repo| {
             let ref_map = collect_ref_map(repo);
             let mut walk = repo.revwalk()?;
@@ -1422,9 +1438,18 @@ impl GitBackend for Libgit2Backend {
                     }
                 }
 
-                // path — most expensive, check last.
+                // path — expensive, check late.
                 if let Some(ref p) = path_q {
                     if !commit_touches_path(repo, &commit, p)? {
+                        continue;
+                    }
+                }
+
+                // content — the only filter that costs a full diff scan per
+                // commit, so it runs LAST: an author- or path-scoped search
+                // only diffs the commits every cheaper filter already accepted.
+                if let Some(ref m) = content_m {
+                    if !commit_diff_matches_content(repo, &commit, m, path_q.as_deref())? {
                         continue;
                     }
                 }
@@ -2357,6 +2382,26 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
+    fn set_upstream(
+        &self,
+        repo_id: &RepoId,
+        branch: &str,
+        upstream: Option<&str>,
+    ) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            // Validate the remote-tracking branch BEFORE touching config, so a
+            // typo is a clean InvalidRef instead of a stringified libgit2 error.
+            if let Some(up) = upstream {
+                repo.find_branch(up, BranchType::Remote)
+                    .map_err(|_| AppError::InvalidRef(up.to_string()))?;
+            }
+            let mut local = repo
+                .find_branch(branch, BranchType::Local)
+                .map_err(|_| AppError::InvalidRef(branch.to_string()))?;
+            local.set_upstream(upstream)?;
+            Ok(())
+        })
+    }
     fn create_tag(&self, repo_id: &RepoId, name: &str, target: TagTarget) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
             let obj = repo
@@ -3124,6 +3169,68 @@ fn commit_to_info(commit: &git2::Commit<'_>) -> CommitInfo {
 /// first-parent simplification: a merge commit matches when it changed the path
 /// relative to any of its parents, not just the first. Intentional for a GUI —
 /// "did this commit touch the path" is the more useful question here.
+/// Compiled content predicate: literal substring or regex (#61 D10).
+enum ContentMatcher {
+    Literal(String),
+    Regex(regex::Regex),
+}
+
+impl ContentMatcher {
+    fn is_match(&self, line: &str) -> bool {
+        match self {
+            ContentMatcher::Literal(s) => line.contains(s.as_str()),
+            ContentMatcher::Regex(re) => re.is_match(line),
+        }
+    }
+}
+
+/// True when `commit` added or removed a line matching `matcher` — git's `-G`.
+///
+/// Compared against the FIRST parent only, matching git's default `-G`
+/// behaviour on merges; a root commit is compared against an empty tree.
+/// `path` restricts the diff via pathspec when a path filter is active, so
+/// content and path intersect rather than union.
+fn commit_diff_matches_content(
+    repo: &git2::Repository,
+    commit: &git2::Commit<'_>,
+    matcher: &ContentMatcher,
+    path: Option<&std::path::Path>,
+) -> AppResult<bool> {
+    let commit_tree = commit.tree()?;
+    let parent_tree = match commit.parent(0) {
+        Ok(p) => Some(p.tree()?),
+        Err(_) => None,
+    };
+
+    let mut opts = git2::DiffOptions::new();
+    if let Some(p) = path {
+        opts.pathspec(p);
+    }
+    let diff =
+        repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), Some(&mut opts))?;
+
+    let mut hit = false;
+    diff.foreach(
+        &mut |_, _| true,
+        None,
+        None,
+        Some(&mut |_delta, _hunk, line| {
+            // Added / removed lines only — a context line was not touched.
+            if matches!(line.origin(), '+' | '-') {
+                if let Ok(text) = std::str::from_utf8(line.content()) {
+                    if matcher.is_match(text) {
+                        hit = true;
+                    }
+                }
+            }
+            // Keep walking: `foreach` has no early exit, and returning false
+            // aborts the whole diff as an error rather than short-circuiting.
+            true
+        }),
+    )?;
+    Ok(hit)
+}
+
 fn commit_touches_path(
     repo: &git2::Repository,
     commit: &git2::Commit<'_>,

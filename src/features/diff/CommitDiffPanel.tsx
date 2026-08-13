@@ -1,5 +1,5 @@
 import React from "react";
-import { PGIcon, PGSpinner } from "@/design";
+import { PGIcon, PGSkeleton } from "@/design";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
@@ -111,7 +111,7 @@ export function CommitDiffPanel({
           </div>
           {loading && (
             <div style={{ padding: 12 }}>
-              <PGSpinner />
+              <PGSkeleton count={6} rowStep />
             </div>
           )}
           {error && (

@@ -367,6 +367,18 @@ export async function renameBranch(
   return invoke<void>("rename_branch", { repoId, from, to });
 }
 
+/**
+ * Set or clear a branch's upstream. `null` clears tracking; a remote-tracking
+ * shorthand such as `"origin/main"` sets it.
+ */
+export async function setUpstream(
+  repoId: string,
+  branch: string,
+  upstream: string | null,
+): Promise<void> {
+  return invoke<void>("set_upstream", { repoId, branch, upstream });
+}
+
 export interface TagTarget {
   oid: string;
   annotation: string | null;

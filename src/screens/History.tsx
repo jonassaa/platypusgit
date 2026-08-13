@@ -10,7 +10,7 @@ import {
   PGResizeHandle,
   PGSearchInput,
   PGSelect,
-  PGSpinner,
+  PGSkeleton,
   PGToolbar,
   commitMenuItems,
   commitMultiMenuItems,
@@ -93,6 +93,9 @@ export function HistoryScreen() {
   const [pathQ, setPathQ] = React.useState("");
   const [sinceDate, setSinceDate] = React.useState("");
   const [untilDate, setUntilDate] = React.useState("");
+  // Content search (#61 D10) — git `-G`: matches lines the commit touched.
+  const [contentQ, setContentQ] = React.useState("");
+  const [contentRegex, setContentRegex] = React.useState(false);
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const [filterKind, setFilterKind] = React.useState<HistoryFilterKind>("all");
   const [refFilter, setRefFilter] = React.useState<RefFilter>("all");
@@ -107,8 +110,10 @@ export function HistoryScreen() {
         path: pathQ,
         sinceDate,
         untilDate,
+        content: contentQ,
+        contentRegex,
       }),
-    [filter, authorQ, pathQ, sinceDate, untilDate],
+    [filter, authorQ, pathQ, sinceDate, untilDate, contentQ, contentRegex],
   );
   const filterKey = JSON.stringify(logFilter);
   React.useEffect(() => {
@@ -370,6 +375,9 @@ export function HistoryScreen() {
     setPathQ("");
     setSinceDate("");
     setUntilDate("");
+    // Content too, or Clear leaves a live filter behind (#61 D10).
+    setContentQ("");
+    setContentRegex(false);
   }, []);
 
   const toolbarLeft = (
@@ -404,6 +412,10 @@ export function HistoryScreen() {
       onSinceDate={setSinceDate}
       untilDate={untilDate}
       onUntilDate={setUntilDate}
+      contentQ={contentQ}
+      onContentQ={setContentQ}
+      contentRegex={contentRegex}
+      onContentRegex={setContentRegex}
     />
   ) : null;
 
@@ -472,9 +484,16 @@ export function HistoryScreen() {
         <PGToolbar left={toolbarLeft} right={toolbarRight} />
         {advancedPanel}
         {loading ? (
-          <PGEmpty icon="history" title={<PGSpinner size={18} />}>
-            Loading commits…
-          </PGEmpty>
+          // Initial load only — this branch is reached solely when no commits
+          // are on screen yet. A page-append must never blank the list the
+          // user is already reading (#61 B6).
+          <div
+            style={{ padding: "6px 12px" }}
+            aria-busy="true"
+            aria-label="Loading commits"
+          >
+            <PGSkeleton count={12} rowStep />
+          </div>
         ) : (
           <PGEmpty icon="history" title="No commits yet">
             This repository doesn&apos;t have any commits on HEAD.
@@ -1146,6 +1165,10 @@ function AdvancedSearchPanel(props: {
   onSinceDate: (v: string) => void;
   untilDate: string;
   onUntilDate: (v: string) => void;
+  contentQ: string;
+  onContentQ: (v: string) => void;
+  contentRegex: boolean;
+  onContentRegex: (v: boolean) => void;
 }) {
   const {
     authorQ,
@@ -1156,6 +1179,10 @@ function AdvancedSearchPanel(props: {
     onSinceDate,
     untilDate,
     onUntilDate,
+    contentQ,
+    onContentQ,
+    contentRegex,
+    onContentRegex,
   } = props;
   return (
     <div
@@ -1190,6 +1217,35 @@ function AdvancedSearchPanel(props: {
           mono
           style={{ width: 220 }}
         />
+      </SearchField>
+      {/*
+        Labelled "Changed lines contain", not "pickaxe": this is git's -G
+        (the text was touched), not -S (the occurrence count changed), and the
+        UI must not oversell it (#61 D10).
+      */}
+      <SearchField label="Changed lines contain">
+        <PGInput
+          value={contentQ}
+          onChange={onContentQ}
+          placeholder="needle"
+          icon="search"
+          size="sm"
+          mono
+          style={{ width: 220 }}
+          data-testid="history-content-q"
+        />
+      </SearchField>
+      <SearchField label="Regex">
+        <PGButton
+          size="sm"
+          variant={contentRegex ? "outline" : "ghost"}
+          aria-pressed={contentRegex}
+          title="Treat the content pattern as a regular expression"
+          onClick={() => onContentRegex(!contentRegex)}
+          style={contentRegex ? { color: "var(--accent)" } : undefined}
+        >
+          .*
+        </PGButton>
       </SearchField>
       <SearchField label="Since">
         <PGInput

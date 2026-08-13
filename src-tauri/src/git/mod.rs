@@ -208,6 +208,19 @@ pub trait GitBackend: Send + Sync {
     fn create_branch(&self, repo_id: &RepoId, name: &str, from: Option<&str>) -> AppResult<()>;
     fn delete_branch(&self, repo_id: &RepoId, name: &str, force: bool) -> AppResult<()>;
     fn rename_branch(&self, repo_id: &RepoId, from: &str, to: &str) -> AppResult<()>;
+    /// Set or clear a local branch's upstream (tracking) branch.
+    ///
+    /// `upstream` is a remote-tracking branch shorthand such as `"origin/main"`;
+    /// `None` clears tracking. Both the local branch and the remote-tracking
+    /// branch must exist — either missing is `InvalidRef`, which is why this
+    /// validates before mutating rather than letting libgit2 fail deep inside
+    /// with a stringified message.
+    fn set_upstream(
+        &self,
+        repo_id: &RepoId,
+        branch: &str,
+        upstream: Option<&str>,
+    ) -> AppResult<()>;
     fn create_tag(&self, repo_id: &RepoId, name: &str, target: TagTarget) -> AppResult<()>;
     fn delete_tag(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
 

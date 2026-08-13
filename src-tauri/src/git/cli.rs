@@ -197,6 +197,14 @@ impl GitBackend for CliBackend {
     fn rename_branch(&self, _repo_id: &RepoId, _from: &str, _to: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn set_upstream(
+        &self,
+        _repo_id: &RepoId,
+        _branch: &str,
+        _upstream: Option<&str>,
+    ) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn create_tag(&self, _repo_id: &RepoId, _name: &str, _target: TagTarget) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }

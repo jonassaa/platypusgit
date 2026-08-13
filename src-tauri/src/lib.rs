@@ -137,6 +137,7 @@ pub fn run() {
             commands::branches::create_branch,
             commands::branches::delete_branch,
             commands::branches::rename_branch,
+            commands::branches::set_upstream,
             commands::branches::fetch,
             commands::branches::fetch_all,
             commands::branches::pull,
