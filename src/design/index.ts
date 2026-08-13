@@ -8,6 +8,7 @@ export * from "./context-menu";
 export * from "./dialog";
 export * from "./ui-helpers";
 export * from "./empty-state";
+export * from "./error-boundary";
 export * from "./modal";
 export * from "./use-prevent-browser-context-menu";
 export * from "./resizable";

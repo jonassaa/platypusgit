@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { attachConsole } from "@tauri-apps/plugin-log";
 import App from "./App";
+import { PGErrorBoundary } from "./design/error-boundary";
 import { MergeWindow } from "./features/merge/MergeWindow";
 import "./index.css";
 
@@ -18,6 +19,10 @@ const isMergeWindow =
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {isMergeWindow ? <MergeWindow /> : <App />}
+    {/* Outermost, so a throw anywhere still leaves a window that says what
+        happened instead of an empty one. */}
+    <PGErrorBoundary>
+      {isMergeWindow ? <MergeWindow /> : <App />}
+    </PGErrorBoundary>
   </React.StrictMode>,
 );
