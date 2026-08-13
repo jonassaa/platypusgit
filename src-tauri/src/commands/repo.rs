@@ -20,6 +20,18 @@ pub async fn open_repo(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Add `path` to the user's global `safe.directory` list, so libgit2 stops
+/// refusing it. Reached only from the confirmation an `AppError::DubiousOwnership`
+/// raises in the UI — never call it without asking first.
+#[tauri::command]
+pub async fn trust_repo_path(state: State<'_, AppState>, path: String) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let path_buf = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.trust_path(&path_buf))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 #[tauri::command]
 pub async fn get_status(
     state: State<'_, AppState>,

@@ -10,6 +10,7 @@ use git2::{
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+use crate::git::ownership;
 use crate::opener::safe_workdir_path;
 
 use super::{
@@ -386,7 +387,14 @@ fn is_embedded_repo(repo: &Repository, path: &Path) -> bool {
     // `Repository::open` does not search parent directories, so a plain
     // subdirectory of the outer repo fails here — only a real nested `.git`
     // (directory or gitfile) succeeds.
-    if Repository::open(&full).is_err() {
+    //
+    // A repository libgit2 refuses on ownership grounds is still a
+    // repository. Reading that refusal as "ordinary directory" would retire
+    // this guard on any filesystem that trips the ownership check — a nested
+    // repo on a `/mnt/c` mount under WSL — and staging would then write an
+    // unresolvable `160000` gitlink, the corruption `embedded_repo.rs` exists
+    // to prevent.
+    if !ownership::repo_presence(&full).exists() {
         return false;
     }
     !is_registered_submodule(repo, &rel)
@@ -1025,13 +1033,7 @@ impl GitBackend for Libgit2Backend {
         if !path.exists() {
             return Err(AppError::InvalidPath(path.display().to_string()));
         }
-        let repo = Repository::open(path).map_err(|e| {
-            if e.code() == git2::ErrorCode::NotFound {
-                AppError::NotARepo(path.display().to_string())
-            } else {
-                AppError::from(e)
-            }
-        })?;
+        let repo = Repository::open(path).map_err(|e| ownership::map_open_error(path, &e))?;
 
         let head = match repo.head() {
             Ok(r) => r.shorthand().map(|s| s.to_string()),
@@ -1061,6 +1063,10 @@ impl GitBackend for Libgit2Backend {
             path: workdir,
             head,
         })
+    }
+
+    fn trust_path(&self, path: &Path) -> AppResult<()> {
+        ownership::trust_path(path)
     }
 
     fn init(&self, path: &Path, initial_branch: Option<&str>) -> AppResult<RepoHandle> {
@@ -1097,11 +1103,20 @@ impl GitBackend for Libgit2Backend {
 
         // `Repository::init` on an existing repo silently reopens it. That
         // reads as success while creating nothing, so refuse up front.
-        if Repository::open(path).is_ok() {
-            return Err(AppError::InvalidPath(format!(
-                "{} is already a git repository",
-                path.display()
-            )));
+        match ownership::repo_presence(path) {
+            ownership::RepoPresence::Present => {
+                return Err(AppError::InvalidPath(format!(
+                    "{} is already a git repository",
+                    path.display()
+                )));
+            }
+            // Being unable to open it is not permission to initialise over the
+            // top of it — the old `is_ok()` test read this as "no repo yet".
+            // Say what is actually wrong so the user can trust it and retry.
+            ownership::RepoPresence::Refused => {
+                return Err(AppError::DubiousOwnership(ownership::canonical_string(path)));
+            }
+            ownership::RepoPresence::Absent => {}
         }
         // A file (not a directory) at `path` would otherwise surface as a
         // confusing "File exists (os error 17)" out of `create_dir_all` below.
@@ -1167,7 +1182,12 @@ impl GitBackend for Libgit2Backend {
         // concurrent calls so the guard → write → cleanup window is atomic
         // across the entire operation.
         let result = Repository::init_opts(path, &opts)
-            .map_err(AppError::from)
+            // `git_repository_init_ext` opens what it just created, so it can
+            // refuse on ownership grounds too — report that as the actionable
+            // variant rather than a raw git string. Only that arm: an init
+            // failing with NotFound has not learned the path "is not a git
+            // repository".
+            .map_err(|e| ownership::map_ownership_error(path, e))
             // Go through `open` so the repo lands in the backend's map with a
             // real RepoId — a handle that isn't registered 404s on the next call.
             .and_then(|_| self.open(path));

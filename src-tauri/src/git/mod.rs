@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod libgit2;
+pub mod ownership;
 pub mod signature;
 pub mod types;
 
@@ -23,6 +24,13 @@ pub trait GitBackend: Send + Sync {
     /// repository to address yet. `initial_branch` overrides the configured
     /// default; `None` resolves `init.defaultBranch`, falling back to `main`.
     fn init(&self, path: &Path, initial_branch: Option<&str>) -> AppResult<RepoHandle>;
+    /// Record `path` in the user's global `safe.directory` list so libgit2
+    /// will open it despite an ownership mismatch (`AppError::DubiousOwnership`).
+    ///
+    /// A security exception, so call it only after the user has explicitly
+    /// confirmed. Shaped like `open` rather than the `repo_id` methods: by
+    /// definition there is no open repository to address.
+    fn trust_path(&self, path: &Path) -> AppResult<()>;
     fn status(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     /// Like `status`, but also includes tracked-but-unmodified files so UIs
     /// can browse the whole worktree (ignored files are still excluded).

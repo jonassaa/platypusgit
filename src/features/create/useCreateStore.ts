@@ -1,10 +1,11 @@
 import { create } from "zustand";
 
+import { confirmTrust } from "@/features/repo/ownership";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { cloneRepo, initRepo } from "@/lib/tauri";
-import type { CloneProgress } from "@/lib/types";
-import { appErrorMessage } from "@/lib/errors";
+import { cloneRepo, initRepo, trustRepoPath } from "@/lib/tauri";
+import type { CloneProgress, RepoHandle } from "@/lib/types";
+import { appErrorMessage, dubiousOwnershipPath, isDubiousOwnershipError } from "@/lib/errors";
 
 type OpenDialog = "none" | "clone" | "init";
 
@@ -75,13 +76,33 @@ export const useCreateStore = create<CreateState>((set, get) => ({
 
   async runInit({ parentDir, name, branch }) {
     set({ busy: true, error: null });
-    try {
-      const path = `${parentDir}/${name}`;
-      const handle = await initRepo(path, branch);
+    const path = `${parentDir}/${name}`;
+    const finish = async (handle: RepoHandle) => {
       useSettingsStore.getState().set("lastCreateDir", parentDir);
       set({ busy: false, open: "none" });
       await useRepoStore.getState().openRepo(handle.path);
+    };
+    try {
+      await finish(await initRepo(path, branch));
     } catch (e) {
+      // Initialising on a Windows drive under WSL trips the same ownership
+      // check as opening one — libgit2 opens what it just created. Offer the
+      // same remedy here, or the Init dialog is a dead end for exactly the
+      // users issue #83 is about.
+      if (isDubiousOwnershipError(e)) {
+        const target = dubiousOwnershipPath(e) ?? path;
+        if (await confirmTrust(target)) {
+          try {
+            await trustRepoPath(target);
+            await finish(await initRepo(path, branch));
+            return;
+          } catch (retryError) {
+            set({ busy: false, error: appErrorMessage(retryError) });
+            return;
+          }
+        }
+      }
+      // Error stays in the dialog so the form keeps its values.
       set({ busy: false, error: appErrorMessage(e) });
     }
   },

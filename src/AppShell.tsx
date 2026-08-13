@@ -50,7 +50,12 @@ import { UpdateChip } from "@/features/update/UpdateChip";
 import { UpdatePanel } from "@/features/update/UpdatePanel";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { BranchPicker } from "@/features/branches/BranchPicker";
-import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
+import {
+  DUBIOUS_OWNERSHIP_HELP,
+  EMBEDDED_REPO_HELP,
+  appErrorMessage,
+  dubiousOwnershipPath,
+} from "@/lib/errors";
 import {
   currentBranch,
   isStaged,
@@ -275,15 +280,24 @@ export function AppShell() {
             gap: 8,
           }}
         >
-          {/* The backend keeps EmbeddedRepo terse like the rest of the enum;
-              the actionable half of the story lives in the UI. */}
+          {/* The backend keeps EmbeddedRepo and DubiousOwnership terse like
+              the rest of the enum; the actionable half of the story lives in
+              the UI. A dismissed trust prompt must not leave the user staring
+              at libgit2's sentence with nothing to do about it. */}
           <strong>
-            {error.kind === "EmbeddedRepo" ? "Embedded repository" : error.kind}:
+            {error.kind === "EmbeddedRepo"
+              ? "Embedded repository"
+              : error.kind === "DubiousOwnership"
+                ? "Repository owned by another user"
+                : error.kind}
+            :
           </strong>
           <span style={{ flex: 1 }}>
             {error.kind === "EmbeddedRepo"
               ? `${appErrorMessage(error).replace(/^embedded repository: /, "")} — ${EMBEDDED_REPO_HELP}`
-              : appErrorMessage(error)}
+              : error.kind === "DubiousOwnership"
+                ? `${dubiousOwnershipPath(error)} — ${DUBIOUS_OWNERSHIP_HELP}`
+                : appErrorMessage(error)}
           </span>
           <button
             onClick={clearError}
