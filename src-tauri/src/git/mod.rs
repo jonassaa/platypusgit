@@ -200,6 +200,43 @@ pub trait GitBackend: Send + Sync {
         context_lines: u32,
     ) -> AppResult<()>;
 
+    // === line-level staging (#61 D7) ===
+    // `selected` holds indices among the hunk's CHANGED (`+`/`-`) lines,
+    // counted in hunk order from 0 — NOT indices into `DiffHunk::lines`, which
+    // also carries header and context entries. The two index spaces differ, so
+    // a caller must count only changed lines.
+    //
+    // The `context_lines` and no-`ignore_whitespace` rules above apply
+    // identically: that flag rewrites hunk boundaries, so line indices derived
+    // from a whitespace-ignoring diff do not address what git would apply.
+    /// Stage only the selected changed lines of one hunk of `path`.
+    fn stage_lines(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        selected: &[usize],
+        context_lines: u32,
+    ) -> AppResult<()>;
+    /// Unstage only the selected changed lines of one hunk of `path`.
+    fn unstage_lines(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        selected: &[usize],
+        context_lines: u32,
+    ) -> AppResult<()>;
+    /// Discard only the selected changed lines of one hunk of `path`.
+    fn discard_lines(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        hunk_index: usize,
+        selected: &[usize],
+        context_lines: u32,
+    ) -> AppResult<()>;
+
     // === commit ===
     fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String>;
 

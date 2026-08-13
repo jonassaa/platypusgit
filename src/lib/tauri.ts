@@ -321,6 +321,61 @@ export async function discardHunk(
   return invoke<void>("discard_hunk", { repoId, path, hunkIndex, contextLines });
 }
 
+/**
+ * Line-level staging (#61 D7). `selected` holds indices among the hunk's
+ * CHANGED (`+`/`-`) lines counted from 0 — NOT indices into `hunk.lines`, which
+ * also contains header and context rows.
+ */
+export async function stageLines(
+  repoId: string,
+  path: string,
+  hunkIndex: number,
+  selected: number[],
+  contextLines = 3,
+): Promise<void> {
+  return invoke<void>("stage_lines", {
+    repoId,
+    path,
+    hunkIndex,
+    selected,
+    contextLines,
+  });
+}
+
+/** Unstage only the selected changed lines of a hunk (see `stageLines`). */
+export async function unstageLines(
+  repoId: string,
+  path: string,
+  hunkIndex: number,
+  selected: number[],
+  contextLines = 3,
+): Promise<void> {
+  return invoke<void>("unstage_lines", {
+    repoId,
+    path,
+    hunkIndex,
+    selected,
+    contextLines,
+  });
+}
+
+/** Discard only the selected changed lines of a hunk (see `stageLines`). */
+export async function discardLines(
+  repoId: string,
+  path: string,
+  hunkIndex: number,
+  selected: number[],
+  contextLines = 3,
+): Promise<void> {
+  return invoke<void>("discard_lines", {
+    repoId,
+    path,
+    hunkIndex,
+    selected,
+    contextLines,
+  });
+}
+
 export type ResetMode = "Soft" | "Mixed" | "Hard";
 
 export async function reset(
