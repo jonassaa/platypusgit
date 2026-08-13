@@ -10,10 +10,13 @@ export function PGResizeHandle({
   onActiveChange,
   side = "right",
   orientation = "horizontal",
+  testId,
 }: {
   onDrag: (deltaPx: number) => void;
   /** Called when the drag starts/stops. Useful to suspend CSS transitions. */
   onActiveChange?: (active: boolean) => void;
+  /** `data-testid` for the handle — the drag target has no text to query by. */
+  testId?: string;
   /** Which side of the owning pane the handle sits on. Affects cursor only. */
   side?: "left" | "right" | "top" | "bottom";
   /**
@@ -53,6 +56,7 @@ export function PGResizeHandle({
 
   return (
     <div
+      data-testid={testId}
       onMouseDown={(e) => {
         e.preventDefault();
         start.current = vertical ? e.clientY : e.clientX;
