@@ -332,6 +332,10 @@ pub enum RebaseAction {
     Squash,
     Fixup,
     Drop,
+    /// A merge commit applied as its diff against its **first** parent — one
+    /// ordinary commit, keeping the merge's message (`git cherry-pick -m 1`).
+    /// On a non-merge commit it is identical to `Pick`.
+    MainlinePick,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

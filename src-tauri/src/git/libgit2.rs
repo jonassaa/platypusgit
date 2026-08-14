@@ -126,13 +126,20 @@ impl Libgit2Backend {
     /// committing. Returns `Ok(false)` when the merge left conflicts (caller
     /// pauses for the user), `Ok(true)` when it applied cleanly and the tree is
     /// staged ready for `finish_pick`.
-    fn start_pick(&self, repo_id: &RepoId, oid: &str) -> AppResult<bool> {
+    /// `mainline` is 0 for an ordinary commit and 1 for a merge commit being
+    /// flattened into one commit — libgit2 refuses a merge without one
+    /// ("mainline branch is not specified"), which is exactly the error a plan
+    /// containing an unhandled merge used to hit mid-replay, and it equally
+    /// refuses a mainline on a single-parent commit.
+    fn start_pick(&self, repo_id: &RepoId, oid: &str, mainline: u32) -> AppResult<bool> {
         self.with_repo(repo_id, |repo| {
             let target = repo
                 .revparse_single(oid)
                 .map_err(|_| AppError::InvalidRef(oid.to_string()))?
                 .peel_to_commit()?;
-            repo.cherrypick(&target, None)?;
+            let mut opts = git2::CherrypickOptions::new();
+            opts.mainline(mainline);
+            repo.cherrypick(&target, Some(&mut opts))?;
             let statuses = repo.statuses(None)?;
             Ok(!statuses.iter().any(|s| s.status().is_conflicted()))
         })
@@ -380,9 +387,28 @@ impl Libgit2Backend {
                 continue;
             }
 
+            // A merge commit being kept as one commit needs a mainline; every
+            // other step must not get one.
+            let mainline = if step.action == RebaseAction::MainlinePick {
+                let parents = self.with_repo(repo_id, |repo| {
+                    Ok(repo
+                        .revparse_single(&step.oid)
+                        .map_err(|_| AppError::InvalidRef(step.oid.clone()))?
+                        .peel_to_commit()?
+                        .parent_count())
+                })?;
+                if parents > 1 {
+                    1
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
             // Stage the step's changes. On resume the resolved tree is already
             // staged, so skip the (re-)cherry-pick that would re-conflict.
-            if !resuming && !self.start_pick(repo_id, &step.oid)? {
+            if !resuming && !self.start_pick(repo_id, &step.oid, mainline)? {
                 // Conflict: stash the step out of the plan (so continue commits
                 // the resolution rather than re-picking) and pause.
                 let mut rebases = self
@@ -407,7 +433,7 @@ impl Libgit2Backend {
                     self.bump_completed(repo_id)?;
                 }
 
-                RebaseAction::Pick => {
+                RebaseAction::Pick | RebaseAction::MainlinePick => {
                     self.bump_completed(repo_id)?;
                 }
 
