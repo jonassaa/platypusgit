@@ -1,42 +1,40 @@
 import React from "react";
-import { PGIcon, PGResizeHandle, PGSkeleton, usePaneWidth } from "@/design";
+import {
+  PGIcon,
+  PGResizeHandle,
+  PGSkeleton,
+  usePaneWidth,
+  type DiffLineData,
+} from "@/design";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
 import { SignatureBadge } from "@/features/signing/SignatureBadge";
-import { useDiffSyntax, type DiffSyntax, type SideSource } from "@/lib/syntax";
+import { useDiffSyntax, type SideSource } from "@/lib/syntax";
+import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
-import { pairChangedLines } from "@/lib/pairChangedLines";
-import type { WordSpan } from "@/lib/wordDiff";
-import type { DiffLine, FileDiff } from "@/lib/types";
+import type { FileDiff } from "@/lib/types";
 
 /**
  * One diff row's text: syntax classes plus intra-line change marks, through the
  * same tiling builder the design-system rows use.
  *
- * Side rule matches everywhere else: a removal reads the old file, an addition or
- * context row the new one.
+ * Both inputs already sit on the row: `flattenDiffRows` attaches the word spans
+ * (via the shared pairing rule) and resolves each row's syntax from the correct
+ * side, so this only has to render.
  */
-function CommitDiffText({
-  line,
-  syntax,
-  spans,
-}: {
-  line: DiffLine;
-  syntax: DiffSyntax;
-  spans?: WordSpan[];
-}) {
-  const isRem = line.kind.kind === "Deletion";
-  const sideLines = isRem ? syntax.old : syntax.new;
-  const lineNo = isRem ? line.oldLineno : (line.newLineno ?? line.oldLineno);
-  const tokens = sideLines && lineNo ? (sideLines[lineNo - 1] ?? null) : null;
-  const rendered = buildLineSpans(line.content, tokens, spans);
+function CommitDiffRowText({ line }: { line: DiffLineData }) {
+  const text = line.text ?? "";
+  const rendered = buildLineSpans(text, line.syntax ?? null, line.spans);
+  if (rendered.length === 0) return <>{text}</>;
   if (rendered.length === 1 && !rendered[0].cls && !rendered[0].changed) {
-    return <>{line.content}</>;
+    return <>{text}</>;
   }
-  const tint = isRem
-    ? "oklch(from var(--git-removed) l c h / 0.28)"
-    : "oklch(from var(--git-added) l c h / 0.28)";
+  const tint =
+    line.kind === "rem"
+      ? "oklch(from var(--git-removed) l c h / 0.28)"
+      : "oklch(from var(--git-added) l c h / 0.28)";
   return (
     <>
       {rendered.map((s, k) => (
@@ -46,7 +44,7 @@ function CommitDiffText({
           data-testid={s.changed ? "word-change" : undefined}
           style={s.changed ? { background: tint, borderRadius: 2 } : undefined}
         >
-          {line.content.slice(s.start, s.end)}
+          {text.slice(s.start, s.end)}
         </span>
       ))}
     </>
@@ -149,41 +147,38 @@ export function CommitDiffPanel({
     new: syntaxSides?.new ?? { kind: "none" },
   });
 
-  /**
-   * Word spans for the selected file, keyed hunk index → line index within that
-   * hunk. Runs of removals and additions pair positionally through the shared
-   * rule; a run with no counterpart gets nothing.
-   */
-  const wordSpansByHunk = React.useMemo(() => {
-    return (current?.hunks ?? []).map((h) => {
-      const spans = new Map<number, WordSpan[]>();
-      let remIdx: number[] = [];
-      let addIdx: number[] = [];
-      const flush = () => {
-        if (remIdx.length && addIdx.length) {
-          const paired = pairChangedLines(
-            remIdx.map((i) => h.lines[i].content),
-            addIdx.map((i) => h.lines[i].content),
-          );
-          paired.forEach((p, k) => {
-            if (!p) return;
-            spans.set(remIdx[k], p.old);
-            spans.set(addIdx[k], p.new);
-          });
-        }
-        remIdx = [];
-        addIdx = [];
-      };
-      h.lines.forEach((ln, i) => {
-        const k = ln.kind.kind;
-        if (k === "Deletion") remIdx.push(i);
-        else if (k === "Addition") addIdx.push(i);
-        else flush();
-      });
-      flush();
-      return spans;
-    });
-  }, [current]);
+  // Flat rows + an exact window, from the SAME helpers the other diff surfaces
+  // use. The panel keeps its own lighter markup, but not its own row model:
+  // flattenDiffRows already pairs the word spans and resolves each row's syntax
+  // side, which this panel used to do by hand.
+  const rowH = useDiffRowHeight();
+  const rows = React.useMemo(
+    () =>
+      flattenDiffRows(current && !current.binary ? current.hunks : [], {
+        // This panel's hunk header is a plain text line rather than chrome with
+        // buttons, so it is one code row tall, not density-sized.
+        headerH: rowH,
+        rowH,
+        syntax,
+      }),
+    [current, rowH, syntax],
+  );
+  const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = React.useState(0);
+  const [viewportH, setViewportH] = React.useState(0);
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    setViewportH(el.clientHeight);
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const win = React.useMemo(
+    () => windowVariable(heights, { scrollTop, viewportH, overscan: 8 }),
+    [heights, scrollTop, viewportH],
+  );
 
   // Per mount site: History's bottom panel is wide and short, the full-screen
   // commit diff is not, so one shared width would fit neither.
@@ -333,58 +328,59 @@ export function CommitDiffPanel({
         id={viewPaneId}
         style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}
       >
-        <FocusableScroll style={{ flex: 1, padding: 12 }} ariaLabel="Diff">
+        <FocusableScroll
+          style={{ flex: 1, padding: 12 }}
+          ariaLabel="Diff"
+          innerRef={scrollRef}
+          onScroll={() => setScrollTop(scrollRef.current?.scrollTop ?? 0)}
+        >
           {current?.binary && (
             <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-12)" }}>
               Binary file — no textual diff.
             </div>
           )}
-          {current &&
-            current.hunks.map((h, i) => (
+          {win.topPad > 0 && (
+            <div data-pg-spacer="top" style={{ height: `${win.topPad}px` }} />
+          )}
+          {rows.slice(win.start, win.end).map((row, k) =>
+            row.kind === "header" ? (
               <div
-                key={i}
-                data-hunk-index={i}
-                data-hunk-active={hunkCursor === i ? "" : undefined}
-                style={{ marginBottom: 16 }}
+                key={`h${row.hunkIndex}`}
+                data-hunk-index={row.hunkIndex}
+                data-hunk-active={hunkCursor === row.hunkIndex ? "" : undefined}
+                style={{
+                  height: `var(--diff-row-h)`,
+                  color: "var(--fg-3)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--fs-12)",
+                }}
               >
-                <div
-                  style={{
-                    color: "var(--fg-3)",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: "var(--fs-12)",
-                  }}
-                >
-                  {h.header}
-                </div>
-                {h.lines.map((ln, j) => (
-                  <div
-                    key={j}
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: "var(--fs-12)",
-                      whiteSpace: "pre",
-                      color:
-                        ln.kind.kind === "Addition"
-                          ? "var(--git-added)"
-                          : ln.kind.kind === "Deletion"
-                            ? "var(--git-removed)"
-                            : "var(--fg-0)",
-                    }}
-                  >
-                    {ln.kind.kind === "Addition"
-                      ? "+"
-                      : ln.kind.kind === "Deletion"
-                        ? "-"
-                        : " "}
-                    <CommitDiffText
-                      line={ln}
-                      syntax={syntax}
-                      spans={wordSpansByHunk[i]?.get(j)}
-                    />
-                  </div>
-                ))}
+                {row.header}
               </div>
-            ))}
+            ) : (
+              <div
+                key={`l${win.start + k}`}
+                style={{
+                  height: `var(--diff-row-h)`,
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--fs-12)",
+                  whiteSpace: "pre",
+                  color:
+                    row.line.kind === "add"
+                      ? "var(--git-added)"
+                      : row.line.kind === "rem"
+                        ? "var(--git-removed)"
+                        : "var(--fg-0)",
+                }}
+              >
+                {row.line.kind === "add" ? "+" : row.line.kind === "rem" ? "-" : " "}
+                <CommitDiffRowText line={row.line} />
+              </div>
+            ),
+          )}
+          {win.bottomPad > 0 && (
+            <div data-pg-spacer="bottom" style={{ height: `${win.bottomPad}px` }} />
+          )}
         </FocusableScroll>
       </PGPane>
     </div>
