@@ -89,6 +89,22 @@ describe("PGWindowedDiff", () => {
     expect(onStage).toHaveBeenCalled();
   });
 
+  it("suppresses line selection when the hunk's actions are disabled", () => {
+    // Whitespace-ignoring diffs are a rewritten view, so their indices do not
+    // address the lines git would apply (#61 D2) — selecting must be off.
+    const onLineClick = vi.fn();
+    render(
+      <PGWindowedDiff
+        rows={rows}
+        onLineClick={onLineClick}
+        hunkActions={() => ({ actionsDisabledReason: "whitespace ignored" })}
+      />,
+    );
+    expect(document.querySelectorAll('[data-testid="diff-line-changed"]')).toHaveLength(0);
+    fireEvent.click(screen.getByText("line 0"));
+    expect(onLineClick).not.toHaveBeenCalled();
+  });
+
   it("renders no spacer when the window covers everything", () => {
     render(
       <PGWindowedDiff

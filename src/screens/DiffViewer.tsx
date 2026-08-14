@@ -3,7 +3,7 @@ import {
   PGBadge,
   PGButtonGroup,
   PGEmpty,
-  PGHunk,
+  PGWindowedDiff,
   PGIconButton,
   PGResizeHandle,
   PGSearchInput,
@@ -13,7 +13,6 @@ import {
   PGToggle,
   PGToolbar,
   usePaneWidth,
-  type DiffLineData,
   type SideLine,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -27,6 +26,9 @@ import { statusMark } from "@/lib/derive";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
+import { flattenDiffRows, rowOffset, windowVariable } from "@/lib/diffRows";
+import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
+import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { pairChangedLines } from "@/lib/pairChangedLines";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
@@ -177,6 +179,66 @@ export function DiffViewerScreen() {
     resetKey: selectedPath,
   });
 
+  // ── Windowed rows ────────────────────────────────────────────────────────
+  const rowH = useDiffRowHeight();
+  const headerH = 26 + useDensityStep();
+  const [collapsed, setCollapsed] = React.useState<ReadonlySet<number>>(new Set());
+  const toggleHunk = React.useCallback((i: number) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }, []);
+  React.useEffect(() => setCollapsed(new Set()), [selectedPath]);
+
+  const rows = React.useMemo(
+    () =>
+      flattenDiffRows(findFiltered?.hunks ?? [], {
+        headerH,
+        rowH,
+        collapsed,
+        syntax,
+      }),
+    [findFiltered, headerH, rowH, collapsed, syntax],
+  );
+  const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
+
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = React.useState(0);
+  const [viewportH, setViewportH] = React.useState(0);
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    setViewportH(el.clientHeight);
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mode]);
+
+  // Wrap makes row heights genuinely unknown — pre-wrap rows are as tall as they
+  // need to be — so windowing is off and every row renders. A very large wrapped
+  // diff stays slow; that combination is rare and this keeps the toggle.
+  const win = React.useMemo(
+    () =>
+      wrap ? undefined : windowVariable(heights, { scrollTop, viewportH, overscan: 8 }),
+    [wrap, heights, scrollTop, viewportH],
+  );
+
+  // Scroll F7's target hunk into view BY OFFSET. A querySelector would find
+  // nothing whenever the target row is outside the window.
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || hunkCursor == null) return;
+    const idx = rows.findIndex((r) => r.kind === "header" && r.hunkIndex === hunkCursor);
+    if (idx < 0) return;
+    const top = rowOffset(heights, idx);
+    if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - headerH) {
+      el.scrollTop = top;
+    }
+  }, [hunkCursor, rows, heights, headerH]);
+
   if (status.length === 0) {
     return (
       <PGEmpty icon="fileCode" title="Nothing to diff">
@@ -236,7 +298,12 @@ export function DiffViewerScreen() {
                 { value: "split", label: "Split" },
               ]}
             />
-            <PGToggle checked={wrap} onChange={setWrap} label="Wrap" />
+            <PGToggle
+              checked={wrap}
+              onChange={setWrap}
+              label="Wrap"
+              testId="diff-wrap-toggle"
+            />
             <PGIconButton
               icon="search"
               size="md"
@@ -376,24 +443,22 @@ export function DiffViewerScreen() {
             <PGEmpty icon="file" title="Binary file" />
           )}
           {!diffLoading && findFiltered && !findFiltered.binary && mode === "unified" && (
-            <FocusableScroll style={{ flex: 1 }} ariaLabel="Diff">
+            <FocusableScroll
+              style={{ flex: 1 }}
+              ariaLabel="Diff"
+              innerRef={scrollRef}
+              onScroll={() => setScrollTop(scrollRef.current?.scrollTop ?? 0)}
+            >
               {findFiltered.hunks.length === 0 && findQuery.trim() && (
                 <PGEmpty icon="search" title="No matches" />
               )}
-              {findFiltered.hunks.map((h, i) => (
-                <div
-                  key={i}
-                  data-hunk-index={i}
-                  data-hunk-active={hunkCursor === i ? "" : undefined}
-                >
-                  <PGHunk
-                    header={h.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
-                    lines={h.lines.map(toUiLine)}
-                    expanded={true}
-                    syntax={syntax}
-                  />
-                </div>
-              ))}
+              <PGWindowedDiff
+                rows={rows}
+                window={win}
+                activeHunk={hunkCursor ?? undefined}
+                collapsed={collapsed}
+                onToggleHunk={toggleHunk}
+              />
             </FocusableScroll>
           )}
           {!diffLoading && findFiltered && !findFiltered.binary && mode === "split" && (
@@ -408,24 +473,6 @@ export function DiffViewerScreen() {
   );
 }
 
-function toUiLine(l: {
-  kind: { kind: string };
-  oldLineno: number | null;
-  newLineno: number | null;
-  content: string;
-}): DiffLineData {
-  const k = l.kind.kind;
-  if (k === "Addition")
-    return { kind: "add", lnR: l.newLineno ?? undefined, text: l.content };
-  if (k === "Deletion")
-    return { kind: "rem", lnL: l.oldLineno ?? undefined, text: l.content };
-  return {
-    kind: "ctx",
-    lnL: l.oldLineno ?? undefined,
-    lnR: l.newLineno ?? undefined,
-    text: l.content,
-  };
-}
 
 /**
  * Flatten hunks into aligned left/right columns.

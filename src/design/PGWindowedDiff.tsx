@@ -69,6 +69,10 @@ export function PGWindowedDiff({
           );
         }
         const sel = selectedLines?.(row.hunkIndex) ?? [];
+        // Line selection is meaningless when the hunk's own indices don't address
+        // what git would apply — the same condition that disables Stage/Discard
+        // (#61 D2). PGHunk enforced this internally; the rule lives here now.
+        const disabled = !!hunkActions?.(row.hunkIndex).actionsDisabledReason;
         return (
           <PGDiffRow
             // Keyed by ABSOLUTE row index: a slice-relative key would make React
@@ -79,7 +83,7 @@ export function PGWindowedDiff({
               row.line.changedIndex != null && sel.includes(row.line.changedIndex)
             }
             onLineClick={
-              onLineClick
+              onLineClick && !disabled
                 ? (changedIndex, range) => onLineClick(row.hunkIndex, changedIndex, range)
                 : undefined
             }
