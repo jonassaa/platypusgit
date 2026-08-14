@@ -347,10 +347,8 @@ export function RebaseScreen() {
                         index={i + 1}
                         sha={row.shortOid}
                         subject={row.subject}
-                        action={row.action.toLowerCase()}
-                        onActionChange={(v) =>
-                          updateRow(i, { action: (v.charAt(0).toUpperCase() + v.slice(1)) as RebaseAction })
-                        }
+                        action={row.action}
+                        onActionChange={(v) => updateRow(i, { action: v })}
                       />
                     </div>
                     <div
