@@ -98,12 +98,15 @@ chore: bump tauri to 2.x
 
 ## Branching & merge workflow
 
-We use **feature branches + rebase and merge**. `main` stays linear with no merge commits.
+We use **feature branches + squash and merge**. The `main` ruleset requires
+linear history and allows squash merges only, so `main` is one commit per PR
+with no merge commits.
 
 1. Branch off `main` — `feat/...`, `fix/...`, `chore/...`, `docs/...`. Never commit to `main` directly.
-2. Build the change as a series of small, focused commits (Conventional Commits throughout).
-3. Keep the branch current by **rebasing onto `main`** (`git rebase main`), not by merging `main` in. Force-push with `--force-with-lease` after a rebase.
-4. PRs are integrated with GitHub's **Rebase and merge** — your commits are replayed onto `main` as-is. Avoid squash and merge-commit. Keep each commit meaningful and buildable, since they all land on `main`.
+2. Build the change as a series of small, focused commits (Conventional Commits throughout). They collapse into a single commit on merge, so each one need not be individually buildable.
+3. If the branch needs updating, **rebase onto `main`** (`git rebase main`), never merge `main` in. Force-push with `--force-with-lease` after a rebase.
+4. PRs are integrated with GitHub's **Squash and merge** — the branch becomes one commit on `main`, and the PR title + description become its message, so write them Conventional-Commit style. Merge-commit and rebase-merge are blocked.
+5. A branch that is only *behind* `main` still merges — the squash commit lands on the current tip, which keeps history linear on its own. No rebase-before-merge dance: merge once GitHub reports the PR mergeable. Rebase only if GitHub reports conflicts, or you want CI to run against something that just landed on `main`.
 
 ## Pull requests
 
