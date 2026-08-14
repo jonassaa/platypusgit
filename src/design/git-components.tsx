@@ -941,6 +941,16 @@ export interface PGHunkProps {
   syntax?: { old: SyntaxLine[] | null; new: SyntaxLine[] | null };
 }
 
+/**
+ * One hunk, header plus all its rows, unwindowed.
+ *
+ * No screen renders this any more — they all go through `PGWindowedDiff`, which
+ * reuses the same `PGHunkHeader` and `PGDiffRow`. It survives as the single-hunk
+ * primitive and as the behavioural guard for row rendering (see
+ * wordDiffRender.test.tsx and syntaxRender.test.tsx, which pin word spans and
+ * syntax spans through this public API). Delete it only together with those
+ * tests, and only once something else pins the same behaviour.
+ */
 export function PGHunk({
   header,
   lines = [],
