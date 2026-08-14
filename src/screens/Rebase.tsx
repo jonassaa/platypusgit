@@ -3,7 +3,7 @@ import { PGRebaseRow } from "@/design/git-components";
 import { PGButton } from "@/design/primitives";
 import { PGEmpty, PGIcon } from "@/design";
 import type { CommitInfo } from "@/lib/types";
-import type { RebaseAction, RebaseStep } from "@/lib/types";
+import type { RebaseAction, RebaseStep, RebaseSummary } from "@/lib/types";
 import { commitsSince } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -177,10 +177,10 @@ export function RebaseScreen() {
     current,
     commits,
     rebaseStatus,
-    lastRebaseSummary,
     rebaseStart,
     rebaseContinue,
     rebaseAbort,
+    rebaseAcknowledge,
   } = useRepoStore();
 
   const [plan, setPlan] = useState<PlanRow[]>([]);
@@ -195,6 +195,27 @@ export function RebaseScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerNotice, setPickerNotice] = useState<string | null>(null);
   const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
+
+  // The completed-rebase notice reads STRAIGHT off the backend's retained
+  // summary — no local copy. That is the whole point of the backend keeping it
+  // (#47): a frontend cache had to be cleared by hand on every start and abort
+  // path, and forgetting one left a stale "N steps completed" standing. Now the
+  // engine drops the summary when a rebase starts or aborts, so both cases
+  // clear themselves on the next status read.
+  const doneSummary: RebaseSummary | null = rebaseStatus.lastCompleted ?? null;
+
+  // Acknowledge on the way out: the summary is retained "until shown", and this
+  // screen is what shows it. Done at unmount rather than on render so a refresh
+  // cycle mid-visit can't blank the notice the user is still reading — and via a
+  // ref so the cleanup sees the latest value without re-running per poll.
+  const doneRef = React.useRef(doneSummary);
+  doneRef.current = doneSummary;
+  React.useEffect(
+    () => () => {
+      if (doneRef.current) void rebaseAcknowledge();
+    },
+    [rebaseAcknowledge],
+  );
 
   // Resolve the base through the backend so any revspec works — branch, tag,
   // full or short hash, even commits outside the loaded log window. The backend
@@ -617,10 +638,10 @@ export function RebaseScreen() {
         </div>
       )}
 
-      {/* Done state when a rebase finished — rebase_status reports total: 0
-          after the backend sweeps its state, so the summary comes from the
-          store's frontend-held lastRebaseSummary instead. */}
-      {!rebaseStatus.inProgress && lastRebaseSummary && plan.length === 0 && (
+      {/* Done state when a rebase finished. `rebase_status` reports total: 0
+          once the engine sweeps its state, so the numbers come from the
+          summary the BACKEND retains for exactly this purpose (#47). */}
+      {!rebaseStatus.inProgress && doneSummary && plan.length === 0 && (
         <div
           data-testid="rebase-last-summary"
           style={{
@@ -631,7 +652,7 @@ export function RebaseScreen() {
             color: "var(--fg-2)",
           }}
         >
-          Last rebase: {lastRebaseSummary.total} steps completed.
+          Last rebase: {doneSummary.total} steps completed.
         </div>
       )}
 

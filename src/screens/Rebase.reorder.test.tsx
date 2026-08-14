@@ -55,7 +55,6 @@ function seed(): void {
     error: null,
     repoState: "Clean",
     rebaseStatus: IDLE,
-    lastRebaseSummary: null,
     activity: {},
   });
   useNavStore.setState({

@@ -257,11 +257,33 @@ export interface RebaseStep {
   mergeParents?: string[];
 }
 
+/**
+ * What a rebase that ran to completion did, retained by the BACKEND after the
+ * rebase state itself is swept.
+ *
+ * The frontend used to cache the final status for the "N steps completed" line,
+ * which made every abort and start path responsible for clearing that cache
+ * (#47). Now `rebase_status` keeps reporting it until `rebaseAcknowledge`, and
+ * starting or aborting a rebase drops it in the engine.
+ */
+export interface RebaseSummary {
+  /** Steps the completed plan contained. */
+  total: number;
+  /** Steps that ran, drops included. Equal to `total` for a finished plan. */
+  completed: number;
+}
+
 export interface RebaseStatus {
   inProgress: boolean;
   nextIndex: number;
   total: number;
   pauseReason: string | null;
+  /**
+   * The most recently completed rebase, until acknowledged. Always absent while
+   * `inProgress` is true. Optional only so the many `RebaseStatus` fixtures in
+   * tests need not restate it; `rebase_status` always sends it.
+   */
+  lastCompleted?: RebaseSummary | null;
 }
 
 export type ReflogOp =

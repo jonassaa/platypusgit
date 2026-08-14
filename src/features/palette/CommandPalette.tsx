@@ -5,10 +5,9 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "./usePaletteStore";
 import { chordFor, useKeymapStore } from "@/features/keymap";
-import { buildCommands } from "./commands";
+import { branchItems, buildCommands, commitItems, fileItems } from "./commands";
 import { fuzzyMatch } from "./fuzzyMatch";
 import { frecencyScore, bumpFrecency, loadFrecency, recentIds } from "./frecency";
-import { relativeTime } from "@/lib/derive";
 import type { PaletteItem, ResultType } from "./types";
 
 function highlight(text: string, indices: number[]): React.ReactNode {
@@ -92,45 +91,36 @@ export function CommandPalette() {
   const dialogRef = React.useRef<HTMLDivElement | null>(null);
 
   // Root-step candidate set: commands (catalog) + live branch/file/commit rows.
-  const candidates = React.useMemo<PaletteItem[]>(() => {
-    if (step.kind !== "root") return [];
-    const items: PaletteItem[] = buildCommands();
-    for (const b of branches) {
-      items.push({
-        type: "branch",
-        id: `branch:${b.isRemote ? "r" : "l"}:${b.name}`,
-        search: b.name,
-        label: b.name,
-        detail: b.isRemote ? "remote" : (b.upstream ?? undefined),
-        icon: "branch",
-        run: () => { closePalette(); void useRepoStore.getState().checkoutBranch(b.name); },
-      });
-    }
-    for (const f of allFiles) {
-      const slash = f.path.lastIndexOf("/");
-      items.push({
-        type: "file",
-        id: `file:${f.path}`,
-        search: f.path,
-        label: slash >= 0 ? f.path.slice(slash + 1) : f.path,
-        detail: slash >= 0 ? f.path.slice(0, slash) : undefined,
-        icon: "file",
-        run: () => { closePalette(); setIntent({ kind: "diff-file", path: f.path }); },
-      });
-    }
-    for (const c of commits) {
-      items.push({
-        type: "commit",
-        id: `commit:${c.oid}`,
-        search: `${c.summary} ${c.shortOid} ${c.author}`,
-        label: c.summary,
-        detail: `${c.shortOid} · ${relativeTime(c.timestamp)}`,
-        icon: "commit",
-        run: () => { closePalette(); setIntent({ kind: "commit-vs-wt", oid: c.oid }); },
-      });
-    }
-    return items;
-  }, [step.kind, branches, allFiles, commits, closePalette, setIntent]);
+  // The row shapes come from commands.ts — same builders the pick steps use, so
+  // a row kind cannot drift between the root step and a pick step. Only the id
+  // namespace differs (root rows have their own frecency keys).
+  const candidates = React.useMemo<PaletteItem[]>(
+    () =>
+      step.kind !== "root"
+        ? []
+        : [
+            ...buildCommands(),
+            ...branchItems({
+              branches,
+              idPrefix: "branch",
+              icon: "branch",
+              onPick: (name) => void useRepoStore.getState().checkoutBranch(name),
+            }),
+            ...fileItems({
+              files: allFiles,
+              idPrefix: "file",
+              icon: "file",
+              onPick: (path) => setIntent({ kind: "diff-file", path }),
+            }),
+            ...commitItems({
+              commits,
+              idPrefix: "commit",
+              icon: "commit",
+              onPick: (oid) => setIntent({ kind: "commit-vs-wt", oid }),
+            }),
+          ],
+    [step.kind, branches, allFiles, commits, setIntent],
+  );
 
   // Source list for the active step: root → candidates; pick → step.items.
   const source: PaletteItem[] =

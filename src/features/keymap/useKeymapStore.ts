@@ -3,7 +3,8 @@
 // AppShell) calls `dispatch`, which resolves the chord to an action and invokes
 // the right handler:
 //
-//   pane-scoped actions  → innermost handler registered for the FOCUSED pane
+//   pane-scoped actions  → innermost handler whose scope covers the FOCUSED
+//                          pane (a handler may name several panes)
 //   global actions       → innermost mounted handler, else the catalog's
 //                          default runner (actions.ts)
 //
@@ -57,12 +58,21 @@ export type ActionHandler = () => boolean | void;
 
 interface HandlerEntry {
   fn: ActionHandler;
-  /** For pane-scoped actions: only runs while this pane holds focus. */
-  paneId?: string;
+  /** For pane-scoped actions: only runs while one of these panes holds focus.
+   *  Absent = unscoped (answers wherever focus sits); an empty list can never
+   *  match, so the handler never runs. */
+  paneIds?: readonly string[];
 }
 
 export interface RegisterOpts {
-  paneId?: string;
+  /** One pane, or several — a screen whose chord answers from any of the panes
+   *  it owns (F7 hunk nav from either the file list or the diff view) needs ONE
+   *  registration covering them all, not one registration per pane. */
+  paneId?: string | readonly string[];
+}
+
+function inScope(paneIds: readonly string[], focused: string | null): boolean {
+  return focused !== null && paneIds.includes(focused);
 }
 
 interface KeymapState {
@@ -158,7 +168,14 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
     },
 
     register(id, handler, opts) {
-      const entry: HandlerEntry = { fn: handler, paneId: opts?.paneId };
+      const scope = opts?.paneId;
+      const paneIds =
+        scope === undefined
+          ? undefined
+          : typeof scope === "string"
+            ? [scope]
+            : scope;
+      const entry: HandlerEntry = { fn: handler, paneIds };
       const arr = get().handlers.get(id) ?? [];
       arr.push(entry);
       get().handlers.set(id, arr);
@@ -197,7 +214,7 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
         let handled = false;
         for (let i = hs.length - 1; i >= 0; i--) {
           const h = hs[i];
-          if (def.scope === "pane" && h.paneId && h.paneId !== focusedPane) {
+          if (def.scope === "pane" && h.paneIds && !inScope(h.paneIds, focusedPane)) {
             continue;
           }
           if (h.fn() !== false) {

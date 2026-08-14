@@ -228,10 +228,13 @@ git/
 │                worktree untouched — that is the whole point of the module
 ├── rebase_state.rs  On-disk mirror of an in-progress rebase
 │                (`.git/platypusgit-rebase.json` + `ORIG_HEAD`) so Continue and
-│                Abort survive an app restart. Deliberately NOT git's own
-│                `.git/rebase-merge/` dir — a half-compatible one would let
-│                `git status` / `git rebase --continue` claim a rebase they
-│                cannot drive
+│                Abort survive an app restart, PLUS the last completed rebase's
+│                summary in a SECOND file (`platypusgit-rebase-last.json`) —
+│                separate because everything that asks "is a rebase in
+│                progress?" answers by the first file's existence. Deliberately
+│                NOT git's own `.git/rebase-merge/` dir — a half-compatible one
+│                would let `git status` / `git rebase --continue` claim a rebase
+│                they cannot drive
 └── signature.rs Author/committer signature helpers
 commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs        open_repo, trust_repo_path, get_status, list_all_files,
@@ -257,7 +260,7 @@ commands/        Thin Tauri handlers, one file per area:
 ├── conflict.rs    repo_state, conflict_sides, accept_ours/theirs, mark_resolved,
 │                  save_resolution, abort/continue_operation, run_mergetool,
 │                  restart_conflict
-├── rebase.rs      rebase_start/continue/abort/status (interactive)
+├── rebase.rs      rebase_start/continue/abort/status/acknowledge (interactive)
 ├── reflog.rs      get_reflog, checkout_detached
 └── create.rs      init_repo, default_init_branch, clone_repo (streaming
                    git clone → clone://progress events)
@@ -371,6 +374,14 @@ lib/
 ├── useViewportH.ts  Scroll-container height WITHOUT depending on ResizeObserver
 ├── useWindowedList.ts  Fixed-pitch windowing for the plain lists
 ├── fileIcon.ts      path → file-type glyph + themeable tint (tested)
+├── selection.ts     Multi-select click/range/prune model AND
+│                    `splitFileSelection` — the one place a multi-selection is
+│                    bucketed into staged/unstaged/untracked/embedded paths for
+│                    `multiFileMenuItems`. Each surface supplies only its own
+│                    key→row lookup (`sidedSelectionSource` for the commit
+│                    panel's `side:path` keys, `treeSelectionSource` for the
+│                    repo browser's `/a/b` tree keys); folder expansion and
+│                    embedded-repo bucketing live in the shared splitter
 ├── tree.ts          buildStatusTree / buildStatusList — SAME row keys, which is
 │                    what makes the tree⇄flat toggle free of per-mode branches
 ├── useTreeViewMode.ts  Persisted tree|flat preference, one key per surface
@@ -504,6 +515,15 @@ lib/
   the rebase. `repo_state` gives the file precedence over libgit2's
   `repo.state()`, which only sees the `CHERRY_PICK_HEAD` a paused step leaves
   behind.
+- **A finished rebase leaves a summary the BACKEND retains until acknowledged**
+  (`RebaseStatus.last_completed`, `.git/platypusgit-rebase-last.json`). The
+  engine sweeps `RebaseState` the instant a plan completes, so the next
+  `rebase_status` poll reports `total: 0`; the frontend used to cache the final
+  status for its "N steps completed" line and therefore had to clear that cache
+  on every abort and start path (#47). Now `rebase_start` and `rebase_abort`
+  drop the summary in the engine and `rebase_acknowledge` spends it — the
+  Rebase screen renders straight from `rebaseStatus.lastCompleted` and
+  acknowledges on unmount, holding no copy of its own.
 - **`continue_operation` / `abort_operation` delegate** to `rebase_continue` /
   `rebase_abort` whenever a rebase is in progress. The Conflict screen and the
   Rebase banner must stay two entry points to one engine: committing the

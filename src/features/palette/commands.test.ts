@@ -1,13 +1,31 @@
 // src/features/palette/commands.test.ts
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { buildCommands } from "./commands";
+import { branchItems, buildCommands, commitItems, fileItems } from "./commands";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { paletteInitial, usePaletteStore } from "./usePaletteStore";
-import type { BranchInfo, StashInfo } from "@/lib/types";
+import type { BranchInfo, CommitInfo, FileStatus, StashInfo } from "@/lib/types";
 
 const mkBranch = (name: string, isHead = false, upstream: string | null = null): BranchInfo => ({
   name, isHead, isRemote: false, upstream, ahead: 0, behind: 0, tip: "deadbeef",
+});
+
+const mkRemoteBranch = (name: string): BranchInfo => ({
+  name, isHead: false, isRemote: true, upstream: null, ahead: 0, behind: 0, tip: "deadbeef",
+});
+
+const mkCommit = (oid: string, summary: string): CommitInfo => ({
+  oid, shortOid: oid.slice(0, 7), summary, body: null, author: "Dev", email: "",
+  timestamp: 0, parents: [], refs: [],
+});
+
+const mkFile = (path: string): FileStatus => ({
+  path,
+  worktree: { kind: "Unmodified" },
+  index: { kind: "Unmodified" },
+  additions: 0,
+  deletions: 0,
+  embedded: false,
 });
 
 function setRepo(partial: Record<string, unknown>) {
@@ -28,12 +46,20 @@ const ids = () => buildCommands().map((i) => i.id);
 // the store's real action for good, so capture it once and restore it per test
 // — `paletteInitial()` deliberately covers state fields, not actions.
 const realPushStep = usePaletteStore.getState().pushStep;
+const realClosePalette = usePaletteStore.getState().closePalette;
+
+function resetStores() {
+  setRepo({});
+  usePaletteStore.setState({
+    ...paletteInitial(),
+    open: true,
+    pushStep: realPushStep,
+    closePalette: realClosePalette,
+  });
+}
 
 describe("buildCommands", () => {
-  beforeEach(() => {
-    setRepo({});
-    usePaletteStore.setState({ ...paletteInitial(), open: true, pushStep: realPushStep });
-  });
+  beforeEach(resetStores);
 
   it("always includes screen nav + fetch/refresh", () => {
     expect(ids()).toEqual(expect.arrayContaining([
@@ -160,5 +186,132 @@ describe("buildCommands", () => {
     const labels = step.items.map((i) => i.label);
     expect(labels).toContain("v1.0.0");
     expect(labels).toContain("origin/feature");
+  });
+});
+
+// The three row builders below are shared: the palette's ROOT step and the
+// pick steps both build their branch/file/commit rows through them, so these
+// tests pin the row shape (id, search, label, detail, icon) once for both.
+describe("branchItems", () => {
+  beforeEach(resetStores);
+
+  it("builds a row per branch from the live store, pick-step ids by default", () => {
+    setRepo({ branches: [mkBranch("main", true, "origin/main"), mkRemoteBranch("origin/feature")] });
+    const items = branchItems({ icon: "branch", onPick: () => {} });
+    expect(items.map((i) => i.id)).toEqual([
+      "pick-branch:l:main", "pick-branch:r:origin/feature",
+    ]);
+    expect(items.map((i) => i.type)).toEqual(["branch", "branch"]);
+    // search + label are the plain branch name; detail is the upstream, or
+    // "remote" for a remote-tracking branch.
+    expect(items.map((i) => i.search)).toEqual(["main", "origin/feature"]);
+    expect(items.map((i) => i.label)).toEqual(["main", "origin/feature"]);
+    expect(items.map((i) => i.detail)).toEqual(["origin/main", "remote"]);
+    expect(items.every((i) => i.icon === "branch")).toBe(true);
+  });
+
+  it("leaves detail undefined for a local branch with no upstream", () => {
+    setRepo({ branches: [mkBranch("wip")] });
+    expect(branchItems({ icon: "branch", onPick: () => {} })[0].detail).toBeUndefined();
+  });
+
+  it("honours an explicit branch list, filter and id namespace", () => {
+    // The root step passes its own list + `branch:` namespace; ids must not
+    // collide with the pick-step rows (they are separate frecency keys).
+    const items = branchItems({
+      branches: [mkBranch("main", true), mkBranch("feat/x")],
+      filter: (b) => !b.isHead,
+      idPrefix: "branch",
+      icon: "merge",
+      onPick: () => {},
+    });
+    expect(items.map((i) => i.id)).toEqual(["branch:l:feat/x"]);
+    expect(items[0].icon).toBe("merge");
+  });
+
+  it("run() closes the palette, then calls onPick with the branch name", () => {
+    setRepo({ branches: [mkBranch("feat/x")] });
+    const order: string[] = [];
+    usePaletteStore.setState({
+      closePalette: () => { order.push("close"); },
+    } as never);
+    branchItems({ icon: "branch", onPick: (n) => order.push(`pick:${n}`) })[0].run();
+    expect(order).toEqual(["close", "pick:feat/x"]);
+  });
+});
+
+describe("commitItems", () => {
+  beforeEach(resetStores);
+
+  it("builds a row per commit; search covers summary, short oid and author", () => {
+    setRepo({ commits: [mkCommit("abcdef1234", "Fix the bug")] });
+    const [item] = commitItems({ icon: "commit", onPick: () => {} });
+    expect(item.id).toBe("pick-commit:abcdef1234");
+    expect(item.type).toBe("commit");
+    expect(item.search).toBe("Fix the bug abcdef1 Dev");
+    expect(item.label).toBe("Fix the bug");
+    // detail is "<shortOid> · <relative time>" — pin the prefix, not the clock.
+    expect(item.detail?.startsWith("abcdef1 · ")).toBe(true);
+    expect(item.icon).toBe("commit");
+  });
+
+  it("honours an explicit commit list and id namespace", () => {
+    const items = commitItems({
+      commits: [mkCommit("abcdef1234", "Fix the bug")],
+      idPrefix: "commit",
+      icon: "history",
+      onPick: () => {},
+    });
+    expect(items.map((i) => i.id)).toEqual(["commit:abcdef1234"]);
+    expect(items[0].icon).toBe("history");
+  });
+
+  it("run() closes the palette, then calls onPick with the full oid", () => {
+    setRepo({ commits: [mkCommit("abcdef1234", "Fix the bug")] });
+    const order: string[] = [];
+    usePaletteStore.setState({ closePalette: () => { order.push("close"); } } as never);
+    commitItems({ icon: "commit", onPick: (oid) => order.push(`pick:${oid}`) })[0].run();
+    expect(order).toEqual(["close", "pick:abcdef1234"]);
+  });
+});
+
+describe("fileItems", () => {
+  beforeEach(resetStores);
+
+  it("splits the path into basename label + directory detail", () => {
+    setRepo({ allFiles: [mkFile("src/features/palette/commands.ts")] });
+    const [item] = fileItems({ icon: "file", onPick: () => {} });
+    expect(item.id).toBe("pick-file:src/features/palette/commands.ts");
+    expect(item.type).toBe("file");
+    // The whole path is searchable, not just the basename.
+    expect(item.search).toBe("src/features/palette/commands.ts");
+    expect(item.label).toBe("commands.ts");
+    expect(item.detail).toBe("src/features/palette");
+    expect(item.icon).toBe("file");
+  });
+
+  it("leaves detail undefined for a repo-root file", () => {
+    setRepo({ allFiles: [mkFile("README.md")] });
+    const [item] = fileItems({ icon: "file", onPick: () => {} });
+    expect(item.label).toBe("README.md");
+    expect(item.detail).toBeUndefined();
+  });
+
+  it("honours an explicit file list and id namespace", () => {
+    const items = fileItems({
+      files: [mkFile("a.txt")],
+      idPrefix: "file",
+      icon: "file",
+      onPick: () => {},
+    });
+    expect(items.map((i) => i.id)).toEqual(["file:a.txt"]);
+  });
+
+  it("run() closes the palette, then calls onPick with the full path", () => {
+    setRepo({ allFiles: [mkFile("src/a.txt")] });
+    const order: string[] = [];
+    usePaletteStore.setState({ closePalette: () => { order.push("close"); } } as never);
+    fileItems({ icon: "file", onPick: (p) => order.push(`pick:${p}`) })[0].run();
+    expect(order).toEqual(["close", "pick:src/a.txt"]);
   });
 });
