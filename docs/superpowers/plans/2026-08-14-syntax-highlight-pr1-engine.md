@@ -10,6 +10,20 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-14-syntax-highlighting-diff-virtualization-design.md`
 
+**Status: executed in #106.** Four corrections came out of running it, recorded so the
+later plans inherit them rather than rediscovering them:
+
+1. Task 2 needs the `shiki` dependency from Task 3 Step 1 — `langs.ts` references
+   `shiki/langs/*`, so install first or the suite cannot resolve the imports.
+2. A `vi.mock` factory is hoisted above the module body. A plain `const` it returns is
+   still uninitialised when the factory runs; use `vi.hoisted(...)` (Task 5).
+3. Mock `@/lib/syntax/tokenize`, not the `@/lib/syntax` barrel — the barrel does not
+   intercept `useSyntax`'s own `./tokenize` import, so the real grammar runs and the
+   fake does nothing (Task 9).
+4. Two behaviours the plan omitted and the spec promised: a rename's old side reads its
+   **old** path from `FileDiff.oldPath`, and the preview needs the old
+   trailing-newline/empty-file line rule, now `splitCodeLines` in `src/lib/codeLines.ts`.
+
 ## Global Constraints
 
 - Node 22 + pnpm. Prepend `export PATH="$HOME/Library/pnpm:$HOME/.cargo/bin:$PATH"` to any `pnpm`/`cargo` command.

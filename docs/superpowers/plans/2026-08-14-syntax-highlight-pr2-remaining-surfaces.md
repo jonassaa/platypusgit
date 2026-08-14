@@ -10,7 +10,19 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-14-syntax-highlighting-diff-virtualization-design.md`
 
-**Depends on:** PR1 (`src/lib/syntax/`, `buildLineSpans`, `--syn-*`, the `DiffText` rewrite).
+**Depends on:** PR1 (`src/lib/syntax/`, `buildLineSpans`, `--syn-*`, the `DiffText` rewrite) — shipped in #106.
+
+**Carried over from executing PR1** (apply these here, they are not hypothetical):
+
+- Mock `@/lib/syntax/tokenize`, never the `@/lib/syntax` barrel — see the note in Task 4.
+- A `vi.mock` factory is hoisted above the module body, so a `const` it dereferences
+  must come from `vi.hoisted(...)` or it is still uninitialised when the factory runs.
+- `useDiffSyntax`'s old-side read takes the **old** path for a rename
+  (`diff?.oldPath ?? path`); HEAD has no blob at the new one. PR1 does this in both
+  screens already, so the extraction must preserve it.
+- `CommitPanel` and the two diff screens approximate the index with HEAD + worktree,
+  because there is no `read_file_content_at_index`. Keep that comment when the
+  fetching moves into `useDiffSyntax`.
 
 ## Global Constraints
 
@@ -497,8 +509,12 @@ import { mockInvoke } from "@/test/invokeMock";
 import { CommitDiffPanel } from "./CommitDiffPanel";
 import type { FileDiff } from "@/lib/types";
 
-vi.mock("@/lib/syntax", async (orig) => ({
-  ...(await orig<typeof import("@/lib/syntax")>()),
+// Mock the module useSyntax itself imports, NOT the @/lib/syntax barrel.
+// Mocking the barrel leaves the hook's own `./tokenize` import untouched, so the
+// REAL grammar runs and the fake silently does nothing — this cost a debugging
+// round during PR1.
+vi.mock("@/lib/syntax/tokenize", async (orig) => ({
+  ...(await orig<typeof import("@/lib/syntax/tokenize")>()),
   tokenizeFile: async (_p: string, text: string) =>
     text.split("\n").map(() => [{ start: 0, end: 3, cls: "syn-keyword" }]),
 }));
