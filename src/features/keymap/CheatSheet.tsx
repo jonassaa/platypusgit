@@ -19,6 +19,15 @@ const CATEGORY_ORDER: ActionCategory[] = [
   "App",
 ];
 
+/** A whole family of chords (Alt+1…Alt+9 for `tab.select`) reads as a range, not
+ *  as nine slash-separated entries that swamp the row it belongs to. */
+function formatBindings(chords: string[]): string {
+  if (chords.length > 3) {
+    return `${formatChord(chords[0])}–${formatChord(chords[chords.length - 1])}`;
+  }
+  return chords.map((c) => formatChord(c)).join(" / ");
+}
+
 export function CheatSheet() {
   const open = useOverlayStore((s) => s.cheatSheetOpen);
   const close = useOverlayStore((s) => s.closeCheatSheet);
@@ -100,9 +109,7 @@ export function CheatSheet() {
                       fontFamily: "var(--font-mono, monospace)",
                     }}
                   >
-                    {(preset.bindings[id] ?? [])
-                      .map((c) => formatChord(c))
-                      .join(" / ")}
+                    {formatBindings(preset.bindings[id] ?? [])}
                   </span>
                 </div>
               ))}

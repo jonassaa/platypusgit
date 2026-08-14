@@ -140,6 +140,7 @@ pub fn run() {
         .manage(commands::cli::CliLaunchState(Mutex::new(initial_intent)))
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
+            commands::repo::close_repo,
             commands::repo::trust_repo_path,
             commands::repo::get_status,
             commands::repo::list_all_files,

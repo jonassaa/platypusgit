@@ -17,6 +17,7 @@ import {
   worktreeRemove,
   worktreeUnlock,
 } from "@/lib/tauri";
+import { useTabsStore } from "@/features/repo/useTabsStore";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 
 function toAppError(e: unknown): AppError {
@@ -204,6 +205,6 @@ export const useWorktreesStore = create<WorktreesState>((set, get) => ({
   },
 
   async openAsRepo(path) {
-    await useRepoStore.getState().openRepo(path);
+    await useTabsStore.getState().openRepo(path);
   },
 }));

@@ -11,6 +11,7 @@ import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { currentBranch, isConflicted, isStaged, isUnstaged } from "@/lib/derive";
 import type { FileStatus } from "@/lib/types";
 import { useRepoStore } from "./useRepoStore";
+import { useTabsStore } from "./useTabsStore";
 
 /** Derive the [remote, branch] pair from the HEAD branch's upstream tracking ref. */
 export function headUpstream(
@@ -32,7 +33,7 @@ export async function openRepoDialog(): Promise<void> {
     title: "Open repository",
   });
   if (typeof selected === "string") {
-    await useRepoStore.getState().openRepo(selected);
+    await useTabsStore.getState().openRepo(selected);
   }
 }
 

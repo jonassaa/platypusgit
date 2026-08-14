@@ -180,13 +180,124 @@ export async function reopenRepo(repoPath: string): Promise<void> {
   await browser.refresh();
   await armDriverBridge();
   const row = $(`[data-testid="recent-repo"][data-path="${repoPath}"]`);
-  await row.waitForDisplayed({
-    timeout: 20_000,
-    timeoutMsg: "recent-repo row missing after reload — recents not persisted?",
-  });
+  const chip = $('[data-testid="branch-chip"]');
+  // Since #90 the OPEN SET persists too (`pg-open-repos`), and this helper
+  // deliberately keeps localStorage — so the reload may reopen the repository by
+  // itself and never render a Welcome row at all. Waiting for the row
+  // unconditionally would hang every persistence spec.
+  await browser.waitUntil(
+    async () => (await chip.isExisting()) || (await row.isExisting()),
+    {
+      timeout: 20_000,
+      timeoutMsg:
+        "after reload neither the restored repo (branch chip) nor its " +
+        "recent-repo row appeared — recents/open-set not persisted?",
+    },
+  );
   await armDriverBridge();
-  await row.click();
+  if (!(await chip.isExisting())) {
+    await row.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "recent-repo row missing after reload — recents not persisted?",
+    });
+    await armDriverBridge();
+    await row.click();
+  }
   await waitRepoLoaded();
+}
+
+/** Seed the persisted open set (#90) and reload, so the app restores `paths` as
+ *  tabs with `active` opened. The only way to get TWO repositories open in e2e:
+ *  the `+` button and ⌘O go through the real OS folder picker, which WebDriver
+ *  cannot drive.
+ *
+ *  Recents are seeded alongside, because that is the state a real session that
+ *  opened both would have left behind — and the palette's repository switcher
+ *  reads them. */
+export async function seedOpenRepos(
+  paths: string[],
+  active: string,
+): Promise<void> {
+  // executeOnce, not bare execute: this WRITES, and a driver script-timeout
+  // (routine under xvfb) makes WebdriverIO retry the command. A retried
+  // `localStorage.clear()` landing after the setItem pair would wipe the seed
+  // and leave the app booting with no open set — which looks like a render bug
+  // in the strip rather than a lost write.
+  await executeOnce(
+    (ps: string[], act: string) => {
+      localStorage.clear();
+      localStorage.setItem(
+        "pg-recent-repos",
+        JSON.stringify(ps.map((p, i) => ({ path: p, openedAt: ps.length - i }))),
+      );
+      localStorage.setItem(
+        "pg-open-repos",
+        JSON.stringify({ paths: ps, active: act }),
+      );
+    },
+    paths,
+    active,
+  );
+  // Read the key back on BOTH sides of the reload rather than trusting the
+  // write. "Repository opens but no tab appears" has two very different causes
+  // — a clobbered seed and a strip that failed to render — and they are
+  // indistinguishable from the spec's own assertion. Naming which one happened
+  // is worth two read-only round trips.
+  const afterWrite = await browser.execute(() =>
+    localStorage.getItem("pg-open-repos"),
+  );
+  if (!afterWrite) {
+    throw new Error(
+      "seedOpenRepos: pg-open-repos is empty immediately after the write — " +
+        "the seed never landed on this document",
+    );
+  }
+  await browser.refresh();
+  await armDriverBridge();
+  const afterBoot = await browser.execute(() =>
+    localStorage.getItem("pg-open-repos"),
+  );
+  if (!afterBoot) {
+    throw new Error(
+      "seedOpenRepos: pg-open-repos was present before the reload and is gone " +
+        "after it — the seed was clobbered during boot, not mis-rendered",
+    );
+  }
+  await waitRepoLoaded();
+}
+
+/** A tab row, matched on the tail of its path.
+ *
+ *  Not the full path: `open_repo` returns the canonicalised workdir, which on
+ *  macOS turns `/var/folders/…` (what `tmpdir()` hands out) into
+ *  `/private/var/folders/…`. The temp-repo basename is unique per fixture, so
+ *  the suffix is an exact identity match without depending on symlink
+ *  resolution. */
+export function repoTab(repoPath: string) {
+  const name = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
+  return $(`[data-testid="repo-tab"][data-path$="${name}"]`);
+}
+
+export function repoTabClose(repoPath: string) {
+  const name = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
+  return $(`[data-testid="repo-tab-close"][data-path$="${name}"]`);
+}
+
+/** Number of open repository tabs. */
+export function repoTabCount(): Promise<number> {
+  return browser.execute(
+    () => document.querySelectorAll('[data-testid="repo-tab"]').length,
+  );
+}
+
+/** Path of the active tab, straight from the DOM. */
+export function activeRepoTabPath(): Promise<string | null> {
+  return browser.execute(
+    () =>
+      document
+        .querySelector('[data-testid="repo-tab"][data-active="true"]')
+        ?.getAttribute("data-path") ?? null,
+  );
 }
 
 /** Serial for executeOnce tokens — unique per logical call within a runner

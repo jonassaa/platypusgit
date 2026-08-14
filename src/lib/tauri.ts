@@ -70,6 +70,18 @@ export async function openRepo(path: string): Promise<RepoHandle> {
 }
 
 /**
+ * Forget an opened repository backend-side (a closed repository tab).
+ *
+ * `open_repo` mints a fresh id every time and the backend never evicts on its
+ * own, so a session that opens N repositories holds N `git2::Repository` values
+ * — with their file handles — until it exits. Closing an already-closed or never
+ * -opened id is a silent success by contract.
+ */
+export async function closeRepo(repoId: string): Promise<void> {
+  return invoke<void>("close_repo", { repoId });
+}
+
+/**
  * Add `path` to the user's global `safe.directory` list so git will open it
  * despite an ownership mismatch. Only ever call this behind an explicit
  * confirmation — it is a security exception, not a preference.

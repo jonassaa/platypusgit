@@ -59,3 +59,42 @@ fn rejects_missing_path() {
         other => panic!("expected InvalidPath error, got {:?}", other),
     }
 }
+
+/// `Repository::workdir()` returns a path WITH a trailing separator, so the
+/// handle used to carry `/repo/` while every caller that asked for the repo
+/// said `/repo`. Anything keying on the handle's path then saw two different
+/// repositories: repository tabs (#90) dedupe by path, recents store it, and a
+/// `pgit <path>` launch forwards the slashless form — so the same repository
+/// could open twice under two spellings, and an e2e selector matching on the
+/// path's tail could not match at all.
+#[test]
+fn open_returns_a_workdir_without_a_trailing_separator() {
+    let backend = Libgit2Backend::new();
+    let root = repo_root();
+
+    let handle = backend.open(&root).expect("open failed");
+
+    let as_string = handle.path.to_string_lossy().into_owned();
+    assert!(
+        !as_string.ends_with('/') && !as_string.ends_with('\\'),
+        "handle path should carry no trailing separator, got {as_string:?}",
+    );
+    assert_eq!(handle.path, root, "handle path should equal the opened dir");
+}
+
+/// The dedupe property that normalization exists for: asking with a trailing
+/// separator and without must produce the same key.
+#[test]
+fn open_with_and_without_a_trailing_separator_agree() {
+    let backend = Libgit2Backend::new();
+    let root = repo_root();
+    let slashed = PathBuf::from(format!("{}/", root.display()));
+
+    let bare = backend.open(&root).expect("open(bare) failed");
+    let with_slash = backend.open(&slashed).expect("open(slashed) failed");
+
+    assert_eq!(
+        bare.path, with_slash.path,
+        "both spellings should resolve to one path",
+    );
+}

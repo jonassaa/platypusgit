@@ -161,3 +161,42 @@ describe("platypusgit preset", () => {
     expect(PLATYPUSGIT_PRESET.bindings["palette.open"]).not.toContain("Ctrl+V");
   });
 });
+
+describe("repository tabs (#90)", () => {
+  // Every preset binds them (the catalog-coverage test above enforces that);
+  // these pin the SHAPE of the chords, which is what makes them work on every
+  // platform and stay clear of AltGr.
+  for (const preset of BUILTIN_PRESETS) {
+    it(`${preset.id}: next/prev/close carry both the literal-Ctrl and Mod forms`, () => {
+      // macOS delivers ⌃Tab/⌃W (⌘Tab is the OS app switcher, ⌘W may be Tauri's
+      // window menu); Windows/Linux normalize physical Ctrl to Mod, so only the
+      // Mod spelling is ever produced there. Both = one table, every platform.
+      expect(preset.bindings["tab.next"]).toEqual(["Ctrl+Tab", "Mod+Tab"]);
+      expect(preset.bindings["tab.prev"]).toEqual([
+        "Ctrl+Shift+Tab",
+        "Mod+Shift+Tab",
+      ]);
+      expect(preset.bindings["tab.close"]).toEqual(["Ctrl+W", "Mod+W"]);
+    });
+
+    it(`${preset.id}: tab.select is Alt+1..Alt+9, never Mod+Alt+<digit>`, () => {
+      const chords = preset.bindings["tab.select"] ?? [];
+      expect(chords).toHaveLength(9);
+      chords.forEach((c, i) => expect(c).toBe(`Alt+${i + 1}`));
+      // Ctrl+Alt is AltGr on Windows, and AltGr+2 / AltGr+4 type characters on
+      // Nordic layouts — the same hazard the Mod+Alt+<letter> rule polices.
+      for (const c of chords) expect(c).not.toMatch(/^Mod\+Alt\+/);
+    });
+
+    it(`${preset.id}: the screen numbers keep Mod+<digit> to themselves`, () => {
+      const rev = buildReverseMap(preset);
+      for (let n = 1; n <= 9; n++) {
+        expect(rev.get(`Mod+${n}`) ?? []).not.toContain("tab.select");
+      }
+    });
+
+    it(`${preset.id}: tab.switch is Rider's recent-files chord`, () => {
+      expect(preset.bindings["tab.switch"]).toEqual(["Mod+E"]);
+    });
+  }
+});

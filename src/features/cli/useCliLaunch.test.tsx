@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mockInvoke } from "@/test/invokeMock";
 import { emitMockEvent } from "@/test/eventMock";
-import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useCliLaunch } from "./useCliLaunch";
 
@@ -13,17 +13,18 @@ function Probe() {
 }
 
 // Zustand stores are module singletons: stub openRepo per test, restore after.
-const realOpenRepo = useRepoStore.getState().openRepo;
+// It lives on the TABS store since #90 — a forwarded launch opens a tab.
+const realOpenRepo = useTabsStore.getState().openRepo;
 let openRepo: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   openRepo = vi.fn().mockResolvedValue(undefined);
-  useRepoStore.setState({ openRepo: openRepo as never });
+  useTabsStore.setState({ openRepo: openRepo as never });
   useNavStore.getState().clearIntent();
 });
 
 afterEach(() => {
-  useRepoStore.setState({ openRepo: realOpenRepo });
+  useTabsStore.setState({ openRepo: realOpenRepo });
 });
 
 describe("useCliLaunch", () => {

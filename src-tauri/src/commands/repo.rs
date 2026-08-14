@@ -20,6 +20,19 @@ pub async fn open_repo(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Forget an opened repository (a closed repository tab).
+///
+/// Best-effort by contract: an unknown id succeeds, so the frontend can close a
+/// tab whose open never completed without showing an error.
+#[tauri::command]
+pub async fn close_repo(state: State<'_, AppState>, repo_id: String) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.close(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 /// Add `path` to the user's global `safe.directory` list, so libgit2 stops
 /// refusing it. Reached only from the confirmation an `AppError::DubiousOwnership`
 /// raises in the UI — never call it without asking first.

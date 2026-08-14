@@ -40,6 +40,9 @@ impl GitBackend for CliBackend {
     fn trust_path(&self, _path: &Path) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
+    fn close(&self, _repo_id: &RepoId) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn status(&self, _repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
         Err(AppError::NotImplemented)
     }

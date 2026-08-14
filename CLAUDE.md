@@ -23,6 +23,8 @@ Recent specs/plans (for context on current direction):
 - `2026-08-14-forge-integration-*` — PR/MR integration for GitHub + GitLab (#92 / #61 D11):
   remote→forge detection, per-host API token under its OWN credential key, list /
   open / checkout / create, `pulls` screen.
+- `2026-08-14-multi-repo-tabs-*` — N repositories open in tabs; `useRepoStore`
+  holds only the ACTIVE tab's slice, `useTabsStore` owns the open set (#90).
 - `2026-08-14-conflict-flow-*` — no Conflicts screen; `repoState`-driven operation bar; resolver window owns the conflicted-file list (#108).
 - `2026-08-10-clone-init-*` — clone (streaming progress) + init repository (#61 D3/D4).
 - `2026-07-07-merge-resolver-window-*` — Rider-style separate merge window (#25 pt 2); per-conflict keyboard side selection, editable CM6 result pane.
@@ -185,6 +187,15 @@ Four layers, each run independently:
     project skill** (`.claude/skills/e2e-testing/SKILL.md`) — selector
     conventions and traps, driver-bridge/5s-penalty rules, native-dialog
     stubbing, fixture geometry gotchas, rebuild discipline, debugging flow.
+  - Opening a SECOND repository in e2e goes through `seedOpenRepos()`
+    (`pg-open-repos` + a reload), never the `+` button or ⌘O: those raise the
+    real OS folder picker, which WebDriver cannot drive. Match a tab with
+    `repoTab(path)`, which keys on the path's TAIL — `open_repo` returns the
+    canonicalised workdir, and on macOS `tmpdir()`'s `/var/folders/…` comes back
+    as `/private/var/folders/…`.
+  - `reopenRepo()` reloads WITHOUT clearing localStorage, so the session restore
+    may already have the repository open; it waits for the branch chip OR the
+    recent-repo row and only clicks the row when there is one.
   - `stubNativeDialogs()` keeps its name and options but no longer stubs
     natives: since #61 C3 confirms/prompts are real in-page modals
     (`[data-pg-dialog]`, `data-pg-dialog-kind`), so it installs an observer
@@ -316,8 +327,9 @@ git/
 │                they cannot drive
 └── signature.rs Author/committer signature helpers
 commands/        Thin Tauri handlers, one file per area:
-├── repo.rs        open_repo, trust_repo_path, get_status, list_all_files,
-│                  read_file_content, append_gitignore, open_in_editor
+├── repo.rs        open_repo, close_repo, trust_repo_path, get_status,
+│                  list_all_files, read_file_content, append_gitignore,
+│                  open_in_editor
 ├── cli.rs         take_launch_intent, cli_shim_status, install_cli_shim
 ├── commits.rs     get_log, commit, file_history. The `refspec` arg takes the
 │                  `REFSPEC_ALL` sentinel ("--all", git's own spelling) meaning
@@ -362,12 +374,16 @@ commands/        Thin Tauri handlers, one file per area:
 main.tsx             Entry point
 App.tsx              Thin wrapper around <AppShell />
 AppShell.tsx         Primary shell: titlebar (branch chip + picker, remote buttons),
-                     activity bar (screen switcher), status bar, error banner, settings
+                     repository tab strip, activity bar (screen switcher), status
+                     bar, error banner, settings. Also owns the per-tab screen
+                     (restore on switch) and keys the screen subtree by the
+                     active repository so a switch REMOUNTS it
 store.ts             Re-export hub (keep thin — no global Zustand composition)
 
 design/              In-house design system (NOT components/ui/). Exports via design/index.ts.
 ├── primitives.tsx       PGButton, PGIconButton, etc.
-├── chrome.tsx           PGTitlebar, PGActivityBar, PGStatusBar, PGStatusItem
+├── chrome.tsx           PGTitlebar, PGTabStrip (repository tabs), PGActivityBar,
+│                        PGStatusBar, PGStatusItem
 ├── git-components.tsx   Git-specific UI bits
 ├── icons.tsx            Icon set (name-based <PGIcon>), incl. file-type glyphs
 ├── context-menu.tsx     Context menu primitive
@@ -385,14 +401,24 @@ screens/             One screen per activity-bar item + modal-ish deep views:
   Worktrees, Settings
                      There is deliberately NO Conflict screen (#108): conflicts
                      are announced by OperationBar and resolved in the merge
-                     window. A retired screen id must also be dropped from
-                     AppShell's RESTORABLE set, or `pg-screen` restores it.
+                     window. Nothing restores a screen from localStorage any
+                     more, so retiring an id is just deleting it — but each TAB
+                     remembers its screen for the session (see the navigation
+                     model).
 
 features/            Per-feature: components + Zustand store colocated
-├── repo/            useRepoStore (the big one), useRecentsStore, ops (shared
-│                    keymap/palette/titlebar runners), OperationBar (the
-│                    `repoState !== "Clean"` bar under the titlebar: what
-│                    operation is open, conflicts left, Resolve/Finish/Abort)
+├── repo/            useRepoStore (the big one — but only ever ONE repository's
+│                    state: the active tab's), repoSlice (RepoSlice /
+│                    REPO_SLICE_KEYS / emptySlice — the multi-repo anti-leak
+│                    contract), repoActivity (RepoActivity, split out so
+│                    repoSlice needn't import the store), tabs.ts (pure tab-list
+│                    reducers, `labelTabs`, `pg-open-repos` persistence),
+│                    useTabsStore (the open set + activate/close/cycle + lazy
+│                    session restore), RepoTabs (the strip's wiring + its context
+│                    menu), useRecentsStore, ops (shared keymap/palette/titlebar
+│                    runners), OperationBar (the `repoState !== "Clean"` bar under
+│                    the titlebar: what operation is open, conflicts left,
+│                    Resolve/Finish/Abort)
 ├── nav/             useNavStore — cross-screen intents (diff-file, commit-vs-wt,
 │                    file-history, blame, rebase-plan, stash-diff)
 ├── branches/        BranchChip (titlebar), BranchPicker (popover)
@@ -482,8 +508,9 @@ features/            Per-feature: components + Zustand store colocated
 │                    LfsDiffNotice (what all four diff surfaces render instead of
 │                    pointer text) (#93)
 └── cli/             useCliLaunch — takes the stashed first-launch intent +
-                     listens for forwarded `cli-launch` events, drives
-                     openRepo + nav screen-switch intent
+                     listens for forwarded `cli-launch` events, opens/focuses a
+                     TAB (`useTabsStore.openRepo`, so a forwarded `pgit <path>`
+                     no longer evicts the current repo) + nav screen-switch intent
 
 lib/
 ├── tauri.ts         Typed invoke() wrappers — frontend NEVER calls invoke() directly
@@ -516,7 +543,9 @@ lib/
 ├── tree.ts          buildStatusTree / buildStatusList — SAME row keys, which is
 │                    what makes the tree⇄flat toggle free of per-mode branches
 ├── useTreeViewMode.ts  Persisted tree|flat preference, one key per surface
-└── recents.ts       Recent-repo persistence
+└── recents.ts       Recent-repo persistence (`pg-recent-repos`). The OPEN set is
+                     a separate key, `pg-open-repos`, in features/repo/tabs.ts —
+                     recents are where you have been, the open set where you are
 ```
 
 ### Diff rendering
@@ -579,7 +608,33 @@ lib/
 
 - Activity bar = primary screen switcher, History first. **Launch always lands
   on History** — there is no screen restore (the old `localStorage["pg-screen"]`
-  read AND write are gone; nothing else uses the key).
+  read AND write are gone; nothing else uses the key). A tab restored from
+  `pg-open-repos` is created on History too, so the open set persisting does not
+  resurrect screen restore.
+- **Repositories are tabs (#90).** The strip is its own row below the titlebar
+  (`PGTabStrip`, wired by `features/repo/RepoTabs`), rendered only when a
+  repository is open. Opening a repository ANYWHERE — ⌘O, a recents row, a clone,
+  an init, a forwarded `pgit …` — goes through `useTabsStore.openRepo`, which
+  focuses the existing tab for that path or adds one. `useRepoStore.openRepo` no
+  longer exists; the low-level half is `openRepoAt`.
+- **Each tab remembers its own screen, within the session only.** `enterScreen`
+  writes it (`useTabsStore.rememberScreen`); an effect on `activePath` restores
+  it, skipping first mount. Selections and scroll are NOT preserved: the screen
+  container is keyed by the active repository, so a switch remounts it. That is
+  deliberate — a retained selected-oid or selected-path from another repository
+  would render the wrong thing, or diff it.
+- **Tab chords** (`features/keymap`): `tab.next`/`tab.prev` (`Ctrl+Tab` /
+  `Mod+Tab`, both spellings so one table works on every platform),
+  `tab.close` (`Ctrl+W` / `Mod+W`), `tab.select` (`Alt+1`…`Alt+9` — one action
+  bound to nine chords, reading its digit from the chord the dispatcher passes to
+  `run`), `tab.switch` (`Mod+E`, the palette's repository switcher). The strip is
+  chrome, not a `PGPane` — it stays out of the `Alt+Arrow` spatial graph, like the
+  titlebar and status bar.
+- **`tab.select` carries `suppressInInput`, and must keep it.** `hasRealModifier`
+  makes every `Alt+…` chord dispatch while typing, but ⌥+digit IS a character on
+  macOS — and on Nordic layouts one people type — so claiming it would silently
+  eat keystrokes in the commit box. Same opt-out `pane.focus*` uses for ⌥←/⌥→.
+  Any future bare-`Alt`+printable binding needs the same flag.
 - **Screen entry focuses the screen's primary pane.** One `<PGPane primary>` per
   screen (History's commit list, Files' tree, …) declares it; `useFocusStore`
   holds it as `primaryId`, and it outranks both mount order and geometry for two
@@ -677,6 +732,43 @@ lib/
 
 ### State management
 - **Zustand per-feature**, not one big global store. `useRepoStore` lives in `features/repo/` because that's who owns the state.
+- **`useRepoStore` holds exactly ONE repository's live state: the active tab's**
+  (#90). `useTabsStore` owns the open set and freezes each inactive tab's slice;
+  switching is snapshot → hydrate → `refreshAll`. Screens keep reading
+  `s.status` / `s.commits` / `s.branches` and calling the same actions — they
+  never learn there is more than one repository open. Consequence: a background
+  tab's data is frozen at the moment you left it (no N-way log walks); its badge
+  is re-read on window focus by `refreshBadges`.
+- **Hydration is a TOTAL write, and `REPO_SLICE_KEYS` is what makes it one.**
+  `features/repo/repoSlice.ts` declares every non-function field of the store;
+  `repoSlice.test.ts` derives the live keys at runtime and fails if they diverge.
+  **A new per-repo store field must be added to `RepoSlice`/`emptySlice`** or
+  hydration silently degrades to a patch and the previous repository's value
+  survives into the next tab. `emptySlice()` is also the store's initial state and
+  what `closeRepo()` resets to — one definition, not three.
+- **Every fetch/error write in `useRepoStore` goes through `setFor(repoId, …)` /
+  `setErrorFor(repoId, …)`.** A switch is atomic but the requests in flight are
+  not: an unguarded `refreshAll` for repo A can resolve after the user moved to B
+  and write A's status, log and branches into B's slice. Same idea as the existing
+  `logRef`/`commitFilter` staleness guards, on repo identity. `useTabsStore`
+  carries the matching `activationSeq` guard for its own awaits.
+- **The dependency runs one way: `useTabsStore` → `useRepoStore`.** Don't import
+  the tab store from the repo store; the pure halves (`tabs.ts`, `repoSlice.ts`)
+  exist so neither needs to.
+- **Closing a tab evicts the repository backend-side** (`close_repo`). `open`
+  mints a fresh `RepoId` per call and nothing else removes an entry, so without
+  it every open leaks a `git2::Repository` and its file handles for the process
+  lifetime. Closing an unknown or already-closed id is a silent success by
+  contract; `close` deliberately leaves the `rebases` map alone (rehydratable
+  from `.git/platypusgit-rebase.json`).
+- **Closing a tab the merge resolver is using confirms first, then closes the
+  resolver, then evicts.** The resolver is a separate window driving IPC with that
+  `RepoId`, so evicting underneath it would fail its next call with `UnknownRepo`
+  mid-resolution. `mergeWindowHoldsRepo` / `closeMergeWindow`
+  (`features/merge/openMergeWindow.ts`) own that handshake — the latter waits for
+  the window label to disappear, because `close()` resolves when the request is
+  delivered, not when the window is gone. A live resolver this page instance
+  cannot attribute (main reloaded under it) counts as a match on purpose.
 - **Danger-op error paths refresh first, set error last.** In `useRepoStore` catch arms (see `mergeBranch`), call `refreshAll()` BEFORE `set({ error })`: `refreshAll` starts with `set({ error: null })`, and React 18 batches same-tick sets, so the opposite order silently wipes the banner. `refreshAll` never rethrows, so the error always wins when set last. A failed git op must still refresh — the UI reflects disk truth even on error.
 - `useNavStore` handles cross-screen navigation intents — add new `NavIntent` kinds there, route in `AppShell`.
 - Cross-feature state is rare; compose in `src/store.ts` if needed — don't hoist prematurely.
@@ -829,7 +921,7 @@ lib/
   the first bad commit rather than let the user read a sha off the titlebar.
 
 ### Async / threading (Rust)
-- `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Mutex<Repository>` inside a `Mutex<HashMap<RepoId, ...>>`.
+- `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Mutex<Repository>` inside a `Mutex<HashMap<RepoId, ...>>`. Several repositories are genuinely open at once (multi-repo tabs); `close` is the only thing that removes an entry.
 - Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block async runtime.
 
 ### Styling

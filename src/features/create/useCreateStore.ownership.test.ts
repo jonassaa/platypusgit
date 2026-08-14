@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useCreateStore } from "@/features/create/useCreateStore";
-import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
 import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
 
 const confirmTrust = vi.hoisted(() => vi.fn());
@@ -32,8 +32,8 @@ const ARGS = { parentDir: "/mnt/c/dev", name: "fresh", branch: "main" };
 describe("useCreateStore.runInit — dubious ownership", () => {
   beforeEach(() => {
     useCreateStore.setState({ open: "init", busy: false, progress: null, error: null });
-    // The follow-up open is the repo store's business, not this test's.
-    useRepoStore.setState({ openRepo: async () => {} });
+    // The follow-up open is the tab store's business, not this test's.
+    useTabsStore.setState({ openRepo: async () => {} });
     confirmTrust.mockReset();
     mockInvoke("trust_repo_path", () => null);
   });

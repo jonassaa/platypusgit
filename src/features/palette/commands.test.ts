@@ -2,6 +2,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { branchItems, buildCommands, commitItems, fileItems } from "./commands";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useRecentsStore } from "@/features/repo/useRecentsStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
+import { newTab } from "@/features/repo/tabs";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { paletteInitial, usePaletteStore } from "./usePaletteStore";
 import type { BranchInfo, CommitInfo, FileStatus, StashInfo } from "@/lib/types";
@@ -163,6 +166,64 @@ describe("buildCommands", () => {
     expect(step.kind).toBe("pick");
     // only non-head branches offered as merge sources
     expect(step.items.map((i) => i.label)).toEqual(["feat/x"]);
+  });
+
+  describe("repository tabs (#90)", () => {
+    beforeEach(() => {
+      useTabsStore.setState({ tabs: [], activePath: null, activationSeq: 0 });
+      useRecentsStore.setState({ recents: [] });
+    });
+
+    it("always offers the switcher — it is the only keyboard route to a recent repo", () => {
+      const byId = new Map(buildCommands().map((i) => [i.id, i]));
+      expect(byId.get("action:switch-repo")?.actionId).toBe("tab.switch");
+    });
+
+    it("offers close-tab only with a repository open", () => {
+      expect(ids()).not.toContain("action:close-repo-tab");
+      useTabsStore.setState({
+        tabs: [newTab("/dev/api", { status: "open", repoId: "r1" })],
+        activePath: "/dev/api",
+      });
+      const byId = new Map(buildCommands().map((i) => [i.id, i]));
+      expect(byId.get("action:close-repo-tab")?.actionId).toBe("tab.close");
+      // A row that only ever says "nothing to close" would be permanent noise.
+      expect(ids()).not.toContain("action:close-other-repo-tabs");
+    });
+
+    it("offers close-others only with two or more tabs", () => {
+      useTabsStore.setState({
+        tabs: [
+          newTab("/dev/api", { status: "open", repoId: "r1" }),
+          newTab("/dev/web", { status: "open", repoId: "r2" }),
+        ],
+        activePath: "/dev/api",
+      });
+      expect(ids()).toContain("action:close-other-repo-tabs");
+    });
+
+    it("the switcher lists open tabs first, then unopened recents", () => {
+      useTabsStore.setState({
+        tabs: [newTab("/dev/api", { status: "open", repoId: "r1" })],
+        activePath: "/dev/api",
+      });
+      useRecentsStore.setState({
+        recents: [
+          { path: "/dev/api", openedAt: 2 },
+          { path: "/dev/old", openedAt: 1 },
+        ],
+      });
+      const pushed: unknown[] = [];
+      usePaletteStore.setState({ pushStep: (st: import("./types").PaletteStep) => pushed.push(st) } as never);
+      buildCommands().find((i) => i.id === "action:switch-repo")!.run();
+      const step = pushed[0] as { items: { id: string; label: string; detail?: string }[] };
+      // The already-open recent is not listed twice.
+      expect(step.items.map((i) => i.id)).toEqual([
+        "repo-tab:/dev/api",
+        "repo-recent:/dev/old",
+      ]);
+      expect(step.items[0].detail).toBe("current");
+    });
   });
 
   it("action:checkout-ref is always in the catalog", () => {

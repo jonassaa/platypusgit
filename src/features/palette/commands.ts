@@ -9,8 +9,9 @@ import { useForgeStore } from "@/features/forge/useForgeStore";
 import { prNoun, prNumberLabel } from "@/features/forge/forgeLabels";
 import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
 import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
 import { usePaletteStore } from "./usePaletteStore";
-import { createBranchInputStep } from "./steps";
+import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
 import { headUpstream, resolveConflictsOp } from "@/features/repo/ops";
 import type { ActionId } from "@/features/keymap";
@@ -263,6 +264,52 @@ export function buildCommands(): PaletteItem[] {
       run: direct(() => useCreateStore.getState().openInit()),
     },
   );
+
+  // -- repository tabs (#90) --
+  // Always listed: with one repository open it is still how you reach a recent
+  // one without the native folder dialog (the only keyboard route to it).
+  items.push({
+    type: "command", id: "action:switch-repo",
+    search: "Switch repository tab open recent",
+    label: "Switch repository…", icon: "repo", actionId: "tab.switch",
+    run: step(() => switchRepoStep()),
+  });
+  const tabs = useTabsStore.getState();
+  if (tabs.activePath) {
+    items.push({
+      type: "command", id: "action:close-repo-tab",
+      search: "Close repository tab", label: "Close repository tab",
+      icon: "x", actionId: "tab.close",
+      run: direct(() => {
+        const path = useTabsStore.getState().activePath;
+        if (path) void useTabsStore.getState().close(path);
+      }),
+    });
+  }
+  if (tabs.tabs.length > 1) {
+    const keep = tabs.activePath;
+    items.push({
+      type: "command", id: "action:close-other-repo-tabs",
+      search: "Close other repository tabs",
+      label: "Close other repository tabs", danger: true, icon: "trash",
+      run: direct(() => {
+        void (async () => {
+          if (
+            keep &&
+            (await pgConfirm({
+              title: `Close ${tabs.tabs.length - 1} other repositor${
+                tabs.tabs.length - 1 === 1 ? "y" : "ies"
+              }?`,
+              body: "Only closes the tabs — nothing on disk changes.",
+              confirmLabel: "Close others",
+            }))
+          ) {
+            await useTabsStore.getState().closeOthers(keep);
+          }
+        })();
+      }),
+    });
+  }
 
   // -- smart push / pull / force-push (need a current branch) --
   if (headName) {
