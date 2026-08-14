@@ -174,6 +174,97 @@ impl Libgit2Backend {
         })
     }
 
+    /// Resolve a merge step's original parents through the rewritten map. A
+    /// parent that was not replayed (it lives below the range) keeps its own
+    /// oid.
+    fn resolved_merge_parents(
+        &self,
+        repo_id: &RepoId,
+        step: &RebaseStep,
+    ) -> AppResult<Vec<String>> {
+        let rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let rewritten = rebases.get(repo_id).map(|s| &s.rewritten);
+        Ok(step
+            .merge_parents
+            .iter()
+            .map(|old| {
+                rewritten
+                    .and_then(|m| m.get(old).cloned())
+                    .unwrap_or_else(|| old.clone())
+            })
+            .collect())
+    }
+
+    /// Re-merge a recreated merge's other parents into the current HEAD.
+    /// Returns `Ok(false)` when the merge conflicts — the worktree keeps the
+    /// conflicted index, so the Conflict screen and the merge resolver window
+    /// work exactly as they do for a conflicting pick.
+    ///
+    /// A worktree merge, not `merge_commits`: the conflicted index with its
+    /// stages is what every conflict surface in the app reads.
+    fn apply_merge(&self, repo_id: &RepoId, step: &RebaseStep) -> AppResult<bool> {
+        let parents = self.resolved_merge_parents(repo_id, step)?;
+        self.with_repo(repo_id, |repo| {
+            let annotated: Vec<git2::AnnotatedCommit> = parents
+                .iter()
+                .map(|oid| {
+                    let commit = repo
+                        .revparse_single(oid)
+                        .map_err(|_| AppError::InvalidRef(oid.clone()))?
+                        .peel_to_commit()?;
+                    Ok(repo.find_annotated_commit(commit.id())?)
+                })
+                .collect::<AppResult<Vec<_>>>()?;
+            let refs: Vec<&git2::AnnotatedCommit> = annotated.iter().collect();
+            repo.merge(&refs, None, None)?;
+            let index = repo.index()?;
+            Ok(!index.has_conflicts())
+        })
+    }
+
+    /// Commit the staged tree as the recreated merge — original message and
+    /// author, parents = current HEAD plus the rewritten other parents.
+    fn finish_merge(&self, repo_id: &RepoId, step: &RebaseStep) -> AppResult<()> {
+        let parents = self.resolved_merge_parents(repo_id, step)?;
+        self.with_repo(repo_id, |repo| {
+            let original = repo
+                .revparse_single(&step.oid)
+                .map_err(|_| AppError::InvalidRef(step.oid.clone()))?
+                .peel_to_commit()?;
+            let sig = crate::git::signature::default_signature(repo)?;
+            let mut index = repo.index()?;
+            let tree_oid = index.write_tree()?;
+            let tree = repo.find_tree(tree_oid)?;
+            let head = repo.head()?.peel_to_commit()?;
+
+            let others: Vec<git2::Commit> = parents
+                .iter()
+                .map(|oid| {
+                    Ok(repo
+                        .revparse_single(oid)
+                        .map_err(|_| AppError::InvalidRef(oid.clone()))?
+                        .peel_to_commit()?)
+                })
+                .collect::<AppResult<Vec<_>>>()?;
+            let mut parent_refs: Vec<&git2::Commit> = vec![&head];
+            parent_refs.extend(others.iter());
+
+            repo.commit(
+                Some("HEAD"),
+                &original.author(),
+                &sig,
+                original.message().unwrap_or(""),
+                &tree,
+                &parent_refs,
+            )?;
+            repo.cleanup_state()?;
+            Ok(())
+        })
+    }
+
     fn bump_completed(&self, repo_id: &RepoId) -> AppResult<()> {
         let mut rebases = self
             .rebases
@@ -237,7 +328,15 @@ impl Libgit2Backend {
         };
 
         self.with_repo(repo_id, |repo| match &snapshot {
-            Some(state) => crate::git::rebase_state::save(repo, state),
+            Some(state) => {
+                // Re-assert ORIG_HEAD on every transition, not just at start: a
+                // hard reset writes its own ORIG_HEAD, so the resets this engine
+                // performs mid-replay (moving to a step's base, collapsing a
+                // squash) would otherwise leave a mid-rebase commit there and
+                // break `git reset --hard ORIG_HEAD` as an escape hatch.
+                crate::git::rebase_state::write_orig_head(repo, &state.orig_head)?;
+                crate::git::rebase_state::save(repo, state)
+            }
             None => crate::git::rebase_state::clear(repo),
         })
     }
@@ -287,6 +386,36 @@ impl Libgit2Backend {
         Ok(self
             .with_repo(repo_id, crate::git::rebase_state::load)?
             .is_some())
+    }
+
+    /// Put the detached HEAD on the commit a step wants to be applied onto.
+    /// `original_oid` is the pre-rebase oid; the rewritten map translates it to
+    /// this run's copy, falling back to the original when the commit was not
+    /// rewritten (it sits below the range).
+    fn move_to_base(&self, repo_id: &RepoId, original_oid: &str) -> AppResult<()> {
+        let resolved = {
+            let rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases
+                .get(repo_id)
+                .and_then(|s| s.rewritten.get(original_oid).cloned())
+                .unwrap_or_else(|| original_oid.to_string())
+        };
+
+        self.with_repo(repo_id, |repo| {
+            let target = repo
+                .revparse_single(&resolved)
+                .map_err(|_| AppError::InvalidRef(resolved.clone()))?
+                .peel_to_commit()?;
+            if repo.head()?.peel_to_commit()?.id() == target.id() {
+                return Ok(()); // already there — nothing to reset
+            }
+            repo.set_head_detached(target.id())?;
+            repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
+            Ok(())
+        })
     }
 
     /// Point the original branch at the replayed history and reattach HEAD to
@@ -387,6 +516,38 @@ impl Libgit2Backend {
                 continue;
             }
 
+            // Topology: a step that names an `onto` is replayed there rather
+            // than on the previous step's result. Skipped while resuming — the
+            // worktree already holds the user's resolution for this step.
+            if !resuming {
+                if let Some(onto) = step.onto.clone() {
+                    self.move_to_base(repo_id, &onto)?;
+                }
+            }
+
+            // A recreated merge is not a cherry-pick: it re-merges its rewritten
+            // parents. A resumed one skips the merge (the worktree already holds
+            // the user's resolution) and goes straight to committing it with
+            // both parents — which is why only `apply_merge` is guarded here.
+            if step.action == RebaseAction::Merge {
+                if !resuming && !self.apply_merge(repo_id, &step)? {
+                    let mut rebases = self
+                        .rebases
+                        .lock()
+                        .map_err(|e| AppError::Internal(e.to_string()))?;
+                    if let Some(state) = rebases.get_mut(repo_id) {
+                        state.conflict_step = Some(step);
+                    }
+                    drop(rebases);
+                    return self.mark_paused(repo_id, "conflict");
+                }
+                self.finish_merge(repo_id, &step)?;
+                self.bump_completed(repo_id)?;
+                self.record_rewritten(repo_id, &step.oid)?;
+                self.persist_rebase(repo_id)?;
+                continue;
+            }
+
             // A merge commit being kept as one commit needs a mainline; every
             // other step must not get one.
             let mainline = if step.action == RebaseAction::MainlinePick {
@@ -435,6 +596,15 @@ impl Libgit2Backend {
 
                 RebaseAction::Pick | RebaseAction::MainlinePick => {
                     self.bump_completed(repo_id)?;
+                }
+
+                RebaseAction::Merge => {
+                    // Unreachable: a Merge step is handled and `continue`d above,
+                    // because it re-merges rather than cherry-picks. Kept as an
+                    // explicit arm so adding an action forces a decision here.
+                    return Err(AppError::Internal(
+                        "merge step reached the cherry-pick path".into(),
+                    ));
                 }
 
                 RebaseAction::Reword => {
@@ -3483,6 +3653,7 @@ impl GitBackend for Libgit2Backend {
                 AppError::InvalidRebasePlan("the plan drops every commit".into())
             })?;
         let first_oid_str = first_step.oid.clone();
+        let first_step_onto = first_step.onto.clone();
 
         // Verify worktree is clean, remember the branch and its pre-rebase tip
         // (so an abort can put both back), then DETACH at the base and replay
@@ -3516,22 +3687,32 @@ impl GitBackend for Libgit2Backend {
             // `git reset --hard ORIG_HEAD` undoes this rebase from the CLI.
             crate::git::rebase_state::write_orig_head(repo, &orig_head)?;
 
-            let first_commit = repo
-                .revparse_single(&first_oid_str)
-                .map_err(|_| AppError::InvalidRef(first_oid_str.clone()))?
-                .peel_to_commit()?;
-            let parent = first_commit.parent(0).map_err(|_| {
-                AppError::InvalidRebasePlan(format!(
-                    "{} has no parent to rebase onto",
-                    crate::git::rebase_plan::short(&first_oid_str)
-                ))
-            })?;
+            // The run's base: what the first step says it sits on, else that
+            // commit's first parent.
+            let base = match &first_step_onto {
+                Some(onto) => repo
+                    .revparse_single(onto)
+                    .map_err(|_| AppError::InvalidRef(onto.clone()))?
+                    .peel_to_commit()?,
+                None => {
+                    let first_commit = repo
+                        .revparse_single(&first_oid_str)
+                        .map_err(|_| AppError::InvalidRef(first_oid_str.clone()))?
+                        .peel_to_commit()?;
+                    first_commit.parent(0).map_err(|_| {
+                        AppError::InvalidRebasePlan(format!(
+                            "{} has no parent to rebase onto",
+                            crate::git::rebase_plan::short(&first_oid_str)
+                        ))
+                    })?
+                }
+            };
 
             // Detach first, then hard-reset: with HEAD attached, the reset
             // would drag the branch ref along.
-            repo.set_head_detached(parent.id())?;
-            repo.reset(parent.as_object(), git2::ResetType::Hard, None)?;
-            Ok((orig_head, head_name, parent.id().to_string()))
+            repo.set_head_detached(base.id())?;
+            repo.reset(base.as_object(), git2::ResetType::Hard, None)?;
+            Ok((orig_head, head_name, base.id().to_string()))
         })?;
 
         let total = plan.len();

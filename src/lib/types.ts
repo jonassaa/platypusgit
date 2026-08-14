@@ -232,12 +232,22 @@ export type RebaseAction =
   | "Fixup"
   | "Drop"
   /** A merge commit kept as one ordinary commit — `git cherry-pick -m 1`. */
-  | "MainlinePick";
+  | "MainlinePick"
+  /** A merge commit recreated from its rewritten parents (`--rebase-merges`). */
+  | "Merge";
 
 export interface RebaseStep {
   oid: string;
   action: RebaseAction;
   message: string | null;
+  /**
+   * Original oid this step is applied onto; omitted/null = onto the previous
+   * step's result (the linear default). How a plan expresses topology without
+   * git's label/reset todo language.
+   */
+  onto?: string | null;
+  /** A merge step's original parents beyond the first. */
+  mergeParents?: string[];
 }
 
 export interface RebaseStatus {

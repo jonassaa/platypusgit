@@ -17,6 +17,8 @@ fn step(oid: &str, action: RebaseAction) -> RebaseStep {
         oid: oid.to_string(),
         action,
         message: None,
+        onto: None,
+        merge_parents: Vec::new(),
     }
 }
 

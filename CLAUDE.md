@@ -283,6 +283,8 @@ features/            Per-feature: components + Zustand store colocated
 │                    file-history, blame, rebase-plan, stash-diff)
 ├── branches/        BranchChip (titlebar), BranchPicker (popover)
 ├── commits/         graphLayout + buildRebasePlan (both tested)
+├── rebase/          RebaseBasePicker + useRebaseMergeMode (persisted
+│                    flatten ⇄ preserve for merge commits in a plan)
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
 ├── settings/        useSettingsStore (autoFetch, defaultPullMode, etc.)
 ├── palette/         usePaletteStore (step stack + chips), commands (catalog),
@@ -377,12 +379,32 @@ lib/
 - **`RebaseState.rewritten` maps original oid → replayed oid** for every step
   that ran, recorded *after* the action's post-commit rewrite (reword amends,
   squash/fixup collapse), and a dropped step maps to the HEAD it left behind.
-- **Merge commits in a plan take one of two actions**: `Drop` (flatten — git's
-  own default: the merge disappears and its commits are replayed individually)
-  or `MainlinePick` (keep the merge as one ordinary commit — `git cherry-pick
-  -m 1`, so `start_pick` passes mainline 1). `rebase_plan::merge_legal` is the
-  single source of truth; `MERGE_ACTIONS` in `src/screens/Rebase.tsx` mirrors it,
-  and the two must stay in sync or the UI offers an action the backend refuses.
+- **Merge commits in a plan take one of three actions**: `Drop` (flatten — git's
+  own default: the merge disappears and its commits are replayed individually),
+  `MainlinePick` (keep the merge as one ordinary commit — `git cherry-pick -m 1`,
+  so `start_pick` passes mainline 1), or `Merge` (recreate it from its rewritten
+  parents — the `--rebase-merges` equivalent). `rebase_plan::merge_legal` is the
+  single source of truth; `MERGE_ACTIONS_FLATTEN` / `MERGE_ACTIONS_PRESERVE` in
+  `src/screens/Rebase.tsx` mirror it per mode, and they must stay in sync or the
+  UI offers an action the backend refuses.
+- **Plans carry topology structurally, not as git's todo language.** A
+  `RebaseStep` may name the original commit it is applied `onto` (resolved
+  through the engine's rewritten map, so every commit is implicitly its own
+  label), and a `Merge` step carries its original parents beyond the first. A
+  plan whose steps all leave `onto: null` is the linear default. There are no
+  `label` / `reset` / `exec` steps and no `rebase-cousins` mode — a generated
+  plan does not need the naming layer.
+- **A recreated merge runs in the worktree** (`repo.merge`, not
+  `merge_commits`), so a conflict lands in the index with stages and
+  `conflict_sides`, the Conflict screen, and the merge resolver window all work
+  unchanged; `rebase_continue` then commits the resolution with both parents.
+  Conflict resolutions inside the ORIGINAL merge are not reused — neither does
+  git. Octopus merges cannot be recreated; they can be dropped or kept as one
+  commit.
+- **Preserve mode disables reordering** (git documents its own reorder bugs
+  under `--rebase-merges`), and it rebuilds a whole-range plan in place while
+  deliberately leaving a targeted plan (squash/fixup/reword) alone — rebuilding
+  one would discard the message the user typed.
 - **`PGRebaseRow` speaks exact `RebaseAction` strings** (`"Pick"`, `"Drop"`,
   `"MainlinePick"`), not lowercased ones — a two-word action cannot survive a
   lowercase/re-capitalise round trip. E2E specs that drive the row's `<select>`

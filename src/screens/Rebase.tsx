@@ -9,6 +9,11 @@ import { appErrorMessage } from "@/lib/errors";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { RebaseBasePicker } from "@/features/rebase/RebaseBasePicker";
+import {
+  useRebaseMergeMode,
+  type RebaseMergeMode,
+} from "@/features/rebase/useRebaseMergeMode";
+import { buildPreservePlan } from "@/features/commits/buildPreservePlan";
 import { PGPane, FocusableScroll } from "@/features/keymap";
 
 // ─── Plan row state ───────────────────────────────────────────────────────────
@@ -21,6 +26,10 @@ interface PlanRow {
   message: string;
   /** More than one parent — actions are restricted and the row is badged. */
   isMerge: boolean;
+  /** Original oid this step is replayed onto; null = onto the previous step. */
+  onto: string | null;
+  /** A merge row's original parents beyond the first. */
+  mergeParents: string[];
 }
 
 /**
@@ -28,23 +37,57 @@ interface PlanRow {
  * on the backend. Keep the two in sync or the UI offers an action the backend
  * refuses on submit.
  */
-const MERGE_ACTIONS: RebaseAction[] = ["Drop", "MainlinePick"];
+const MERGE_ACTIONS_FLATTEN: RebaseAction[] = ["Drop", "MainlinePick"];
+const MERGE_ACTIONS_PRESERVE: RebaseAction[] = ["Merge", "Drop"];
 
-function commitsToPlan(commits: CommitInfo[]): PlanRow[] {
-  // Present commits oldest-first (log is newest-first).
-  return [...commits].reverse().map((c) => {
-    const isMerge = c.parents.length > 1;
+function mergeActionsFor(mode: RebaseMergeMode): RebaseAction[] {
+  return mode === "preserve" ? MERGE_ACTIONS_PRESERVE : MERGE_ACTIONS_FLATTEN;
+}
+
+/**
+ * Rows for a whole range, honouring the merge mode. Flatten drops merges (git's
+ * own behaviour, so the branch comes out linear); preserve emits a
+ * topology-aware plan where each step names the base it must sit on.
+ */
+function commitsToPlan(commits: CommitInfo[], mode: RebaseMergeMode): PlanRow[] {
+  const byOid = new Map(commits.map((c) => [c.oid, c]));
+  const steps: RebaseStep[] =
+    mode === "preserve"
+      ? buildPreservePlan(commits)
+      : // Flatten: oldest-first, merges dropped.
+        [...commits].reverse().map((c) => ({
+          oid: c.oid,
+          action: (c.parents.length > 1 ? "Drop" : "Pick") as RebaseAction,
+          message: null,
+          onto: null,
+          mergeParents: [],
+        }));
+
+  return steps.map((step) => {
+    const c = byOid.get(step.oid);
     return {
-      oid: c.oid,
-      shortOid: c.shortOid,
-      subject: c.summary,
-      // A merge defaults to Drop: git's own flattening behaviour, and the only
-      // other action the backend accepts on one is MainlinePick.
-      action: (isMerge ? "Drop" : "Pick") as RebaseAction,
-      message: "",
-      isMerge,
+      oid: step.oid,
+      shortOid: c?.shortOid ?? step.oid.slice(0, 7),
+      subject: c?.summary ?? "",
+      action: step.action,
+      message: step.message ?? "",
+      isMerge: (c?.parents.length ?? 0) > 1,
+      onto: step.onto ?? null,
+      mergeParents: step.mergeParents ?? [],
     };
   });
+}
+
+/**
+ * True when every step is a plain pick/drop with no message — the shape a whole
+ * range produces. A targeted plan (squash/fixup/reword, or one carrying a
+ * message) is NOT rebuilt when the merge mode changes: doing so would silently
+ * throw away the message the user just typed.
+ */
+function isPlainPlan(steps: RebaseStep[]): boolean {
+  return steps.every(
+    (s) => (s.action === "Pick" || s.action === "Drop") && !s.message,
+  );
 }
 
 // ─── Progress banner ─────────────────────────────────────────────────────────
@@ -140,6 +183,11 @@ export function RebaseScreen() {
   } = useRepoStore();
 
   const [plan, setPlan] = useState<PlanRow[]>([]);
+  const [mergeMode, setMergeMode] = useRebaseMergeMode();
+  // The range the plan was built from, newest-first, kept so flipping the merge
+  // mode can rebuild without asking the backend again. Empty for a targeted plan
+  // (squash/fixup/reword), which the mode must not rebuild — see isPlainPlan.
+  const [range, setRange] = useState<CommitInfo[]>([]);
   const [baseLabel, setBaseLabel] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerNotice, setPickerNotice] = useState<string | null>(null);
@@ -158,7 +206,8 @@ export function RebaseScreen() {
           setPickerNotice(`No commits between HEAD and ${baseName}.`);
           return;
         }
-        setPlan(commitsToPlan(range));
+        setRange(range);
+        setPlan(commitsToPlan(range, mergeMode));
         setBaseLabel(label);
         setPickerNotice(null);
         setPickerOpen(false);
@@ -175,20 +224,35 @@ export function RebaseScreen() {
   React.useEffect(() => {
     if (intent?.kind !== "rebase-plan") return;
     const byOid = new Map(commits.map((c) => [c.oid, c]));
-    const rows: PlanRow[] = intent.plan.map((step) => {
-      const c = byOid.get(step.oid);
-      const isMerge = (c?.parents.length ?? 0) > 1;
-      return {
-        oid: step.oid,
-        shortOid: c?.shortOid ?? step.oid.slice(0, 7),
-        subject: c?.summary ?? "",
-        // A caller that hands us something the backend refuses on a merge (an
-        // older plan, a hand-built intent) gets the flattening default instead.
-        action: isMerge && !MERGE_ACTIONS.includes(step.action) ? "Drop" : step.action,
-        message: step.message ?? "",
-        isMerge,
-      };
-    });
+    const inRange = intent.plan
+      .map((s) => byOid.get(s.oid))
+      .filter((c): c is CommitInfo => c != null);
+    // A plain whole-range plan is rebuilt from the range when the merge mode
+    // flips; a targeted one (squash/fixup/reword) is kept exactly as handed over.
+    const rebuildable = isPlainPlan(intent.plan) && inRange.length === intent.plan.length;
+    setRange(rebuildable ? [...inRange].reverse() : []);
+
+    const rows: PlanRow[] = rebuildable
+      ? commitsToPlan([...inRange].reverse(), mergeMode)
+      : intent.plan.map((step) => {
+          const c = byOid.get(step.oid);
+          const isMerge = (c?.parents.length ?? 0) > 1;
+          return {
+            oid: step.oid,
+            shortOid: c?.shortOid ?? step.oid.slice(0, 7),
+            subject: c?.summary ?? "",
+            // A caller that hands us something the backend refuses on a merge
+            // (an older plan, a hand-built intent) gets the flattening default.
+            action:
+              isMerge && !mergeActionsFor(mergeMode).includes(step.action)
+                ? "Drop"
+                : step.action,
+            message: step.message ?? "",
+            isMerge,
+            onto: step.onto ?? null,
+            mergeParents: step.mergeParents ?? [],
+          };
+        });
     setPlan(rows);
     // The base of a context-menu plan is the parent of the oldest step.
     const oldest = rows[0];
@@ -203,7 +267,13 @@ export function RebaseScreen() {
           : "selected commit",
     );
     clearIntent();
-  }, [intent, commits, clearIntent]);
+  }, [intent, commits, clearIntent, mergeMode]);
+
+  // Flipping the mode rebuilds a whole-range plan in place.
+  React.useEffect(() => {
+    if (range.length === 0) return;
+    setPlan(commitsToPlan(range, mergeMode));
+  }, [mergeMode, range]);
 
   const updateRow = useCallback(
     (index: number, patch: Partial<PlanRow>) => {
@@ -229,6 +299,8 @@ export function RebaseScreen() {
       oid: r.oid,
       action: r.action,
       message: r.action === "Reword" || r.action === "Squash" ? (r.message || null) : null,
+      onto: r.onto,
+      mergeParents: r.mergeParents,
     }));
     const status = await rebaseStart(steps);
     // The rebase consumed the plan — clear it so the completion summary (or
@@ -242,6 +314,7 @@ export function RebaseScreen() {
 
   const handleClear = () => {
     setPlan([]);
+    setRange([]);
     setBaseLabel(null);
   };
 
@@ -309,6 +382,25 @@ export function RebaseScreen() {
                 base: {baseLabel}
               </span>
             )}
+            <div style={{ display: "flex", gap: 2 }}>
+              {(["flatten", "preserve"] as const).map((m) => (
+                <PGButton
+                  key={m}
+                  size="sm"
+                  variant={mergeMode === m ? "primary" : "ghost"}
+                  aria-pressed={mergeMode === m}
+                  data-testid={`rebase-merge-mode-${m}`}
+                  onClick={() => setMergeMode(m)}
+                  title={
+                    m === "flatten"
+                      ? "Drop merge commits and replay their commits individually (git's default)"
+                      : "Recreate merge commits, keeping the branch structure"
+                  }
+                >
+                  {m === "flatten" ? "Flatten merges" : "Preserve merges"}
+                </PGButton>
+              ))}
+            </div>
             <PGButton
               size="sm"
               variant={baseLabel ? "outline" : "primary"}
@@ -363,19 +455,30 @@ export function RebaseScreen() {
               <span>
                 {mergeCount === 1 ? "1 merge commit" : `${mergeCount} merge commits`} in
                 this range.{" "}
-                {flattenedCount > 0 && (
+                {mergeMode === "flatten" ? (
                   <>
-                    {flattenedCount === mergeCount
-                      ? mergeCount === 1
-                        ? "It will be"
-                        : "They will be"
-                      : `${flattenedCount} will be`}{" "}
-                    dropped and the merged commits replayed individually — the branch
-                    becomes linear.{" "}
+                    {flattenedCount > 0 && (
+                      <>
+                        {flattenedCount === mergeCount
+                          ? mergeCount === 1
+                            ? "It will be"
+                            : "They will be"
+                          : `${flattenedCount} will be`}{" "}
+                        dropped and the merged commits replayed individually — the
+                        branch becomes linear.{" "}
+                      </>
+                    )}
+                    Choose <strong>keep as one</strong> on a merge row to keep it as a
+                    single commit instead.
+                  </>
+                ) : (
+                  <>
+                    They will be recreated by re-merging their new parents. Conflict
+                    resolutions and manual edits inside the original merges are{" "}
+                    <strong>not preserved</strong> and may need redoing. Reordering is
+                    disabled in this mode.
                   </>
                 )}
-                Choose <strong>keep as one</strong> on a merge row to keep it as a
-                single commit instead.
               </span>
             </div>
           )}
@@ -413,33 +516,41 @@ export function RebaseScreen() {
                         subject={row.subject}
                         action={row.action}
                         badge={row.isMerge ? "merge" : undefined}
-                        options={row.isMerge ? MERGE_ACTIONS : undefined}
+                        options={row.isMerge ? mergeActionsFor(mergeMode) : undefined}
                         onActionChange={(v) => updateRow(i, { action: v })}
                       />
                     </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 2,
-                        flexShrink: 0,
-                      }}
-                    >
-                      <PGButton
-                        size="xs"
-                        variant="ghost"
-                        icon="chevronUp"
-                        onClick={() => moveRow(i, -1)}
-                        style={{ opacity: i === 0 ? 0.3 : 1, pointerEvents: i === 0 ? "none" : undefined }}
-                      />
-                      <PGButton
-                        size="xs"
-                        variant="ghost"
-                        icon="chevronDown"
-                        onClick={() => moveRow(i, 1)}
-                        style={{ opacity: i === plan.length - 1 ? 0.3 : 1, pointerEvents: i === plan.length - 1 ? "none" : undefined }}
-                      />
-                    </div>
+                    {/* Reordering is not offered while preserving merges: git
+                        documents its own reorder bugs under --rebase-merges, and
+                        a reorder that silently produces the wrong topology is
+                        worse than no reorder. */}
+                    {mergeMode === "flatten" && (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 2,
+                          flexShrink: 0,
+                        }}
+                      >
+                        <PGButton
+                          size="xs"
+                          variant="ghost"
+                          icon="chevronUp"
+                          data-testid="rebase-move-up"
+                          onClick={() => moveRow(i, -1)}
+                          style={{ opacity: i === 0 ? 0.3 : 1, pointerEvents: i === 0 ? "none" : undefined }}
+                        />
+                        <PGButton
+                          size="xs"
+                          variant="ghost"
+                          icon="chevronDown"
+                          data-testid="rebase-move-down"
+                          onClick={() => moveRow(i, 1)}
+                          style={{ opacity: i === plan.length - 1 ? 0.3 : 1, pointerEvents: i === plan.length - 1 ? "none" : undefined }}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* Message textarea for reword / squash */}

@@ -11,11 +11,20 @@ use support::{linear_history, TempRepo};
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 fn step(oid: &str, action: RebaseAction) -> RebaseStep {
-    RebaseStep { oid: oid.to_string(), action, message: None }
+    RebaseStep {
+        oid: oid.to_string(),
+        action,
+        message: None,
+        onto: None,
+        merge_parents: Vec::new(),
+    }
 }
 
 fn step_msg(oid: &str, action: RebaseAction, msg: &str) -> RebaseStep {
-    RebaseStep { oid: oid.to_string(), action, message: Some(msg.to_string()) }
+    RebaseStep {
+        message: Some(msg.to_string()),
+        ..step(oid, action)
+    }
 }
 
 // ─── 1. drop ─────────────────────────────────────────────────────────────────
@@ -213,8 +222,8 @@ fn rebase_conflict_pauses() {
 
     // Plan: pick B (so base is root), then pick A on top → conflict.
     let plan = vec![
-        RebaseStep { oid: oid_b.clone(), action: RebaseAction::Pick, message: None },
-        RebaseStep { oid: oid_a.clone(), action: RebaseAction::Pick, message: None },
+        step(&oid_b, RebaseAction::Pick),
+        step(&oid_a, RebaseAction::Pick),
     ];
 
     let status = backend.rebase_start(&handle.id, plan).unwrap();
@@ -305,8 +314,8 @@ fn abort_operation_clears_rebase_state_and_restores_pre_rebase_head() {
     let head_before = backend.log(&handle.id, None, 1).unwrap()[0].oid.clone();
 
     let plan = vec![
-        RebaseStep { oid: oid_b.clone(), action: RebaseAction::Pick, message: None },
-        RebaseStep { oid: oid_a.clone(), action: RebaseAction::Pick, message: None },
+        step(&oid_b, RebaseAction::Pick),
+        step(&oid_a, RebaseAction::Pick),
     ];
     let status = backend.rebase_start(&handle.id, plan).unwrap();
     assert!(status.in_progress, "should be paused after conflict");
