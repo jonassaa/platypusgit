@@ -62,6 +62,12 @@ pub struct FileStatus {
     pub embedded: bool,
 }
 
+/// Refspec sentinel meaning "walk every branch we know of", not one ref —
+/// git's own spelling, and a token `revparse` could never resolve, so it cannot
+/// collide with a real revspec. History's "All" scope sends it; the frontend
+/// mirrors it as `LOG_REF_ALL` in `src/lib/types.ts`.
+pub const REFSPEC_ALL: &str = "--all";
+
 /// One page of a resumable log walk (#68 G11).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -25,6 +25,7 @@ import {
   unstageAllOp,
 } from "@/features/repo/ops";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { createBranchInputStep } from "@/features/palette/steps";
 import { useFocusStore } from "./useFocusStore";
@@ -52,6 +53,9 @@ export type ActionId =
   | "nav.settings"
   | "palette.open"
   | "app.cheatSheet"
+  | "view.zoomIn"
+  | "view.zoomOut"
+  | "view.zoomReset"
   | "app.closeOverlay"
   | "pane.focusLeft"
   | "pane.focusRight"
@@ -159,6 +163,42 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
       if (!usePaletteStore.getState().open) {
         usePaletteStore.getState().openPalette();
       }
+      return true;
+    },
+  },
+
+  // Zoom the whole UI, editor-style. allowInInput: an editor zooms while you
+  // type, and the chords are pure modifier chords the caret has no use for.
+  "view.zoomIn": {
+    id: "view.zoomIn",
+    title: "Zoom in",
+    category: "App",
+    scope: "global",
+    allowInInput: true,
+    run: () => {
+      useSettingsStore.getState().stepZoom(1);
+      return true;
+    },
+  },
+  "view.zoomOut": {
+    id: "view.zoomOut",
+    title: "Zoom out",
+    category: "App",
+    scope: "global",
+    allowInInput: true,
+    run: () => {
+      useSettingsStore.getState().stepZoom(-1);
+      return true;
+    },
+  },
+  "view.zoomReset": {
+    id: "view.zoomReset",
+    title: "Reset zoom",
+    category: "App",
+    scope: "global",
+    allowInInput: true,
+    run: () => {
+      useSettingsStore.getState().set("uiZoom", 1);
       return true;
     },
   },

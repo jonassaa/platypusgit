@@ -5,6 +5,7 @@ import { cleanup } from "@testing-library/react";
 import { resetInvokeMock } from "./invokeMock";
 import { resetDialogMock } from "./dialogMock";
 import { resetEventMock } from "./eventMock";
+import { resetWebviewMock } from "./webviewMock";
 
 vi.mock("@tauri-apps/api/core", async () => {
   const { invoke } = await import("./invokeMock");
@@ -43,6 +44,11 @@ vi.mock("@tauri-apps/api/window", () => {
     setTitle: vi.fn().mockResolvedValue(undefined),
   };
   return { getCurrentWindow: () => win };
+});
+
+// applyZoom (useSettingsStore) drives the real webview's zoom; record it.
+vi.mock("@tauri-apps/api/webview", async () => {
+  return await import("./webviewMock");
 });
 
 vi.mock("@tauri-apps/api/webviewWindow", () => {
@@ -89,5 +95,6 @@ afterEach(() => {
   resetInvokeMock();
   resetDialogMock();
   resetEventMock();
+  resetWebviewMock();
   vi.clearAllMocks();
 });

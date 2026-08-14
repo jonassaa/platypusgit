@@ -13,7 +13,10 @@ import {
   PGCheckbox,
   PGSelect,
 } from "./primitives";
-import { useDensityStep } from "@/features/settings/useSettingsStore";
+import {
+  useDensityStep,
+  type HeadIndicator,
+} from "@/features/settings/useSettingsStore";
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
 import { commitRowGrid, laneX } from "./graph-geometry";
 import type { WindowRange } from "@/lib/useWindowedList";
@@ -1275,6 +1278,13 @@ export interface PGCommitRowProps {
   graphW: number;
   /** Forwarded to PGGraphRow — fade the gutter's right edge. */
   clamped?: boolean;
+  /** This row is the commit HEAD points at ("you are here"). */
+  isHead?: boolean;
+  /**
+   * How to mark that row — the user's `headIndicator` setting. Defaults to
+   * "none" so surfaces with no notion of HEAD (Reflog, Rebase) stay unchanged.
+   */
+  headStyle?: HeadIndicator;
 }
 
 export const COMMIT_ROW_BASE_H = 26;
@@ -1295,16 +1305,30 @@ export const PGCommitRow = React.memo(function PGCommitRow({
   rowHeight,
   graphW,
   clamped,
+  isHead,
+  headStyle = "none",
 }: PGCommitRowProps) {
   const [hover, setHover] = React.useState(false);
   const step = useDensityStep();
   const h = rowHeight ?? COMMIT_ROW_BASE_H + step;
+  const headBar = !!isHead && (headStyle === "bar" || headStyle === "both");
+  const headTint = !!isHead && (headStyle === "tint" || headStyle === "both");
+  // Selection outranks the HEAD tint — the selected row must stay obvious even
+  // when it IS head, and two accent washes stacked read as neither.
+  const background = selected
+    ? undefined
+    : headTint
+      ? "oklch(from var(--accent) l c h / 0.16)"
+      : hover
+        ? "var(--bg-2)"
+        : undefined;
   return (
     <div
       data-testid="commit-row"
       data-sha={sha}
       data-pg-row=""
       data-selected={selected ? "true" : undefined}
+      data-head={isHead ? "true" : undefined}
       onClick={
         onRowClick && oid !== undefined ? (e) => onRowClick(oid, e) : undefined
       }
@@ -1318,7 +1342,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
         gridTemplateColumns: commitRowGrid(graphW),
         alignItems: "center",
         height: h,
-        background: !selected && hover ? "var(--bg-2)" : undefined,
+        background,
         fontFamily: "var(--font-mono)",
         fontSize: "var(--fs-12)",
         cursor: "pointer",
@@ -1326,6 +1350,22 @@ export const PGCommitRow = React.memo(function PGCommitRow({
         borderBottom: "1px solid oklch(from var(--border-0) l c h / 0.5)",
       }}
     >
+      {/* HEAD's bar sits first so a selected HEAD row shows the selection bar
+          on top of it — same edge, selection wins the 2px. */}
+      {headBar && (
+        <span
+          data-testid="commit-head-bar"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 3,
+            background: "var(--accent)",
+            boxShadow: "0 0 6px oklch(from var(--accent) l c h / 0.6)",
+          }}
+        />
+      )}
       {selected && (
         <span
           style={{

@@ -192,6 +192,17 @@
 
 html, body, #root { height: 100%; }
 
+/* The app shell is a fixed frame, never a scrolling document: panes own their
+   own scrolling. Without this a too-wide row (a long diff line, a wide commit
+   subject) makes the whole window scroll sideways — titlebar, activity bar and
+   status bar sliding along with it — and a trackpad swipe rubber-bands the
+   entire UI. overscroll-behavior kills the swipe chaining too. */
+html, body, #root {
+  overflow: hidden;
+  overscroll-behavior: none;
+  max-width: 100%;
+}
+
 body {
   margin: 0;
   padding: 0;

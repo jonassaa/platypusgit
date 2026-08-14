@@ -1,15 +1,15 @@
-// Opening a repo lands on whatever screen was persisted from last session, not
-// necessarily Files. That path renders the screen once with empty state and
-// again when the data arrives; a hook that only runs on the second render
-// aborts the whole React root and the window goes blank.
+// Launch lands on History (no screen restore), so opening a repo renders
+// History once with empty state and again when the log arrives; a hook that
+// only runs on the second render aborts the whole React root and the window
+// goes blank.
 //
-// The rest of the suite always opens a repo onto Files and switches screens
-// afterwards, so the log is already loaded by the time History first renders —
-// which is exactly why this went unnoticed.
+// The rest of the suite switches screens after the repo is loaded, so the log
+// is already there by the time History first renders — which is exactly why
+// this went unnoticed.
 import { branchyRepo, TempRepo } from "../support/tempRepo";
 import { armDriverBridge, resetApp, waitRepoLoaded } from "../support/app";
 
-describe("opening a repo onto a persisted screen", () => {
+describe("opening a repo onto the History landing screen", () => {
   let repo: TempRepo;
 
   before(() => {
@@ -20,7 +20,7 @@ describe("opening a repo onto a persisted screen", () => {
     repo.dispose();
   });
 
-  it("keeps the shell mounted when History is the restored screen", async () => {
+  it("keeps the shell mounted when History is the landing screen", async () => {
     await resetApp();
 
     await browser.execute((p: string) => {
@@ -28,7 +28,6 @@ describe("opening a repo onto a persisted screen", () => {
         "pg-recent-repos",
         JSON.stringify([{ path: p, openedAt: 1 }]),
       );
-      localStorage.setItem("pg-screen", "history");
     }, repo.path);
 
     await browser.refresh();

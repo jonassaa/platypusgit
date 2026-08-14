@@ -6,6 +6,10 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 import { planCommitSelection } from "@/features/commits/planCommitSelection";
+import { headAncestryOf } from "@/features/commits/headAncestry";
+import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
+import { combinedSquashMessage } from "@/features/commits/squashMessage";
+import type { CommitInfo } from "@/lib/types";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { chordFor } from "@/features/keymap";
 
@@ -350,9 +354,14 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
   // side-branch commit (see planCommitSelection). A merge commit is a legal
   // start point (base = its mainline parent), but folding one into its parent
   // is not: "squash a merge into its parent" has no coherent meaning.
-  const self = commit?.sha
-    ? (useRepoStore.getState().commits.find((c) => c.oid === commit.sha) ?? null)
-    : null;
+  //
+  // The lookup runs over HEAD's ANCESTRY, not the raw log: History walks every
+  // branch, so a commit in the list may not be on the current branch at all —
+  // and a rebase plan built around one replays a foreign branch onto this one
+  // (see headAncestry.ts). Not finding it here is what disables these entries.
+  const commits = ancestryLog();
+  const self = commit?.sha ? (commits.find((c) => c.oid === commit.sha) ?? null) : null;
+  const onBranch = !!self;
   const isMerge = (self?.parents.length ?? 0) > 1;
   const baseOid = self?.parents[0] ?? null;
   return [
@@ -426,15 +435,16 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     },
     {
       icon: "rebase",
-      label: baseOid
-        ? "Interactive rebase from here"
-        : "Interactive rebase from here — root commit",
-      disabled: !baseOid,
+      label: !onBranch
+        ? "Interactive rebase from here — not on this branch"
+        : baseOid
+          ? "Interactive rebase from here"
+          : "Interactive rebase from here — root commit",
+      disabled: !onBranch || !baseOid,
       onClick: () => {
         if (!commit?.sha || !baseOid) return;
         // "Rebase -i from here" means: replay everything newer than this
         // commit's parent, this commit included.
-        const commits = useRepoStore.getState().commits;
         const plan = buildRebasePlan(commits, baseOid, { kind: "edit-from" });
         if (!plan || plan.length === 0) return;
         useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
@@ -465,45 +475,54 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     },
     {
       icon: "fix",
-      label: isMerge
-        ? "Fixup into parent — merge commit"
-        : "Fixup this commit into its parent",
-      disabled: isMerge || !baseOid,
-      onClick: () => {
+      label: !onBranch
+        ? "Fixup into parent — not on this branch"
+        : isMerge
+          ? "Fixup into parent — merge commit"
+          : "Fixup this commit into its parent",
+      disabled: !onBranch || isMerge || !baseOid,
+      onClick: async () => {
         if (!commit?.sha || isMerge || !baseOid) return;
-        const commits = useRepoStore.getState().commits;
         const plan = buildRebasePlan(commits, baseOid, {
           kind: "fixup",
           targetOid: commit.sha,
         });
         if (!plan) return;
-        useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
+        const outcome = await runRebasePlanNow(plan);
+        if (outcome === "done") pgFlash("fixed up into parent");
+        else if (outcome === "paused") pgFlash("fixup paused — see the Conflicts screen");
       },
     },
     {
       icon: "squash",
-      label: isMerge
-        ? "Squash into parent — merge commit"
-        : "Squash this commit into its parent",
-      disabled: isMerge || !baseOid,
+      label: !onBranch
+        ? "Squash into parent — not on this branch"
+        : isMerge
+          ? "Squash into parent — merge commit"
+          : "Squash this commit into its parent",
+      disabled: !onBranch || isMerge || !baseOid,
       onClick: async () => {
         if (!commit?.sha || isMerge || !baseOid) return;
+        const target = commit.sha;
         const msg = await pgPrompt({
           title: "Squash into parent",
-          body: "Message for the combined commit.",
-          initialValue: commit.subject ?? "",
+          body: "Message for the combined commit — the parent's, then this one's.",
+          // The parent is the older of the two, so its message leads.
+          initialValue: combinedSquashMessage([baseOid, target], byOid(commits)),
           confirmLabel: "Squash",
           requireValue: true,
+          multiline: 8,
         });
         if (!msg) return;
-        const commits = useRepoStore.getState().commits;
         const plan = buildRebasePlan(commits, baseOid, {
           kind: "squash",
-          targetOid: commit.sha,
+          targetOid: target,
           message: msg,
         });
         if (!plan) return;
-        useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
+        const outcome = await runRebasePlanNow(plan);
+        if (outcome === "done") pgFlash("squashed into parent");
+        else if (outcome === "paused") pgFlash("squash paused — see the Conflicts screen");
       },
     },
     { divider: true },
@@ -541,21 +560,46 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
  * `planCommitSelection`, so contiguity/base reflect real history rather than
  * the filtered view.
  */
+/** Oid → commit, for the squash prompts' prefilled messages. */
+function byOid(commits: CommitInfo[]): Map<string, CommitInfo> {
+  return new Map(commits.map((c) => [c.oid, c]));
+}
+
+/**
+ * The log restricted to HEAD's ancestry — what every rebase op is defined over.
+ * History's walk covers all branches, so the raw store list can hold commits
+ * HEAD cannot reach; see headAncestry.ts.
+ */
+function ancestryLog(): CommitInfo[] {
+  const { commits, branches } = useRepoStore.getState();
+  return headAncestryOf(commits, branches);
+}
+
+
 export function commitMultiMenuItems(oids: string[]): ContextMenuItem[] {
   const commits = useRepoStore.getState().commits;
   const plan = planCommitSelection(commits, oids);
   if (!plan) return [{ __menuTitle: "no commits" }];
   const n = plan.oids.length;
 
+  // Combined diff and cherry-pick work on any commit in the log — which, with
+  // the all-branches default, includes commits HEAD cannot reach. Squash
+  // rewrites the current branch, so it is gated on HEAD's ancestry instead.
+  const ancestry = ancestryLog();
+  const squashPlan = planCommitSelection(ancestry, oids);
+
   // Squash needs a contiguous, merge-free run with a loaded parent to rebase
   // onto. Surface the blocking reason in the (disabled) label.
-  const squashBlock = !plan.contiguous
-    ? "non-contiguous"
-    : plan.hasMerge
-      ? "contains a merge"
-      : !plan.baseOid
-        ? "oldest is root"
-        : null;
+  const squashBlock =
+    !squashPlan || squashPlan.oids.length !== n
+      ? "not all on this branch"
+      : !squashPlan.contiguous
+        ? "non-contiguous"
+        : squashPlan.hasMerge
+          ? "contains a merge"
+          : !squashPlan.baseOid
+            ? "oldest is root"
+            : null;
 
   return [
     { __menuTitle: `${n} commits` },
@@ -590,21 +634,25 @@ export function commitMultiMenuItems(oids: string[]): ContextMenuItem[] {
       label: squashBlock ? `Squash ${n} — ${squashBlock}` : `Squash ${n} into one…`,
       disabled: !!squashBlock,
       onClick: async () => {
-        if (squashBlock || !plan.baseOid) return;
+        if (squashBlock || !squashPlan?.baseOid) return;
         const msg = await pgPrompt({
           title: `Squash ${n} commits into one`,
-          body: "Message for the combined commit.",
+          body: "Message for the combined commit — every squashed message, oldest first.",
           confirmLabel: "Squash",
           requireValue: true,
+          initialValue: combinedSquashMessage(squashPlan.oids, byOid(ancestry)),
+          multiline: 8,
         });
         if (!msg) return;
-        const rebasePlan = buildRebasePlan(commits, plan.baseOid, {
+        const rebasePlan = buildRebasePlan(ancestry, squashPlan.baseOid, {
           kind: "squash-range",
-          oids: plan.oids,
+          oids: squashPlan.oids,
           message: msg,
         });
         if (!rebasePlan) return;
-        useNavStore.getState().setIntent({ kind: "rebase-plan", plan: rebasePlan });
+        const outcome = await runRebasePlanNow(rebasePlan);
+        if (outcome === "done") pgFlash(`squashed ${n} commits`);
+        else if (outcome === "paused") pgFlash("squash paused — see the Conflicts screen");
       },
     },
     { divider: true },

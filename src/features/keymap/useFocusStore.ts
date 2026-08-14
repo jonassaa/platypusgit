@@ -12,6 +12,7 @@ import { pickNeighbor, topLeftmost, type Dir, type Rect } from "./spatial";
 interface RegisterOpts {
   autoFocus?: boolean;
   isBar?: boolean;
+  isPrimary?: boolean;
 }
 
 interface PaneEntry {
@@ -24,6 +25,14 @@ interface FocusState {
   panes: Map<string, PaneEntry>;
   order: string[];
   barId: string | null;
+  /**
+   * The current screen's main pane — the commit list in History, the tree in
+   * Files. Entering a screen focuses it, and Alt+Right off the activity bar
+   * lands on it, instead of whatever geometry or mount order happened to win
+   * (from the full-height bar, a bottom detail panel can be the nearest pane
+   * to the right, which is never what "go into this screen" means).
+   */
+  primaryId: string | null;
   pendingContentFocus: boolean;
   register: (
     id: string,
@@ -57,6 +66,9 @@ function contentPanes(s: FocusState): { id: string; rect: Rect }[] {
 }
 
 function firstContentId(s: FocusState): string | null {
+  // The screen said which pane it considers its main one — that outranks both
+  // geometry and mount order.
+  if (s.primaryId && s.panes.get(s.primaryId)?.isBar === false) return s.primaryId;
   const withRects = contentPanes(s);
   const spatial = topLeftmost(withRects);
   if (spatial) return spatial;
@@ -69,6 +81,7 @@ export const useFocusStore = create<FocusState>((set, get) => ({
   panes: new Map(),
   order: [],
   barId: null,
+  primaryId: null,
   pendingContentFocus: false,
 
   register(id, el, opts) {
@@ -77,6 +90,7 @@ export const useFocusStore = create<FocusState>((set, get) => ({
     get().panes.set(id, { el, isBar });
     if (!get().order.includes(id)) set({ order: [...get().order, id] });
     if (isBar) set({ barId: id });
+    if (opts?.isPrimary) set({ primaryId: id });
 
     if (
       autoFocus &&
@@ -85,11 +99,16 @@ export const useFocusStore = create<FocusState>((set, get) => ({
     ) {
       set({ focused: id, pendingContentFocus: false });
     }
+    // No reclaim branch here on purpose: the pane that registers first may not
+    // be the primary one, but every screen entry ends with AppShell calling
+    // requestContentFocus() — child effects run before the parent's, so the
+    // primary is registered by then and firstContentId prefers it.
 
     return () => {
       get().panes.delete(id);
       set({ order: get().order.filter((x) => x !== id) });
       if (get().barId === id) set({ barId: null });
+      if (get().primaryId === id) set({ primaryId: null });
       if (get().focused === id) {
         const next = firstContentId(get()) ?? get().barId ?? null;
         set({ focused: next });
@@ -107,6 +126,14 @@ export const useFocusStore = create<FocusState>((set, get) => ({
     if (!cur) {
       // Nothing focused yet → enter the first content pane.
       s.requestContentFocus();
+      return;
+    }
+    // Leaving the activity bar means "go into this screen", so it lands on the
+    // screen's primary pane. Geometry would answer differently: the bar spans
+    // the full height, so a bottom detail panel is often the nearest pane to
+    // its right — History would open on the commit-detail panel, not the log.
+    if (dir === "right" && cur === s.barId && s.primaryId && s.panes.has(s.primaryId)) {
+      set({ focused: s.primaryId });
       return;
     }
     const curEl = s.panes.get(cur)?.el ?? null;

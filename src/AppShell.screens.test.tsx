@@ -6,7 +6,7 @@
 // only ever exercise the second render. This one starts empty on purpose.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 
 import App from "./App";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -106,8 +106,10 @@ function wireAll(): void {
   mockInvoke("default_init_branch", () => "main");
 }
 
-/** Every screen reachable from the activity bar, i.e. every value `pg-screen`
- *  can legitimately hold when the app restores a session. */
+/** Every screen reachable from the activity bar. Launch lands on History, so
+ *  each of these is entered by clicking its activity-bar slot — the click
+ *  happens while the store is still empty, which is the render pair under
+ *  test. */
 const SCREENS = [
   "repo",
   "commit",
@@ -133,7 +135,6 @@ describe("restoring a screen while a repo's data is still loading", () => {
 
   for (const s of SCREENS) {
     it(`keeps the shell mounted on "${s}" when data arrives after mount`, async () => {
-      localStorage.setItem("pg-screen", s);
       // The store as it is the instant `openRepo` resolves: repo set, every
       // per-repo slice still empty.
       useRepoStore.setState({
@@ -164,6 +165,16 @@ describe("restoring a screen while a repo's data is still loading", () => {
 
       const { container } = render(<App />);
 
+      // Switch to the screen under test while every slice is still empty, so
+      // it mounts on empty state exactly as a restored session used to.
+      if (s !== "history") {
+        const slot = container.querySelector<HTMLElement>(`[data-activity="${s}"]`);
+        expect(slot, `no activity-bar slot for "${s}"`).not.toBeNull();
+        await act(async () => {
+          fireEvent.click(slot!);
+        });
+      }
+
       // …and now the data lands, re-rendering the same screen.
       await act(async () => {
         useRepoStore.setState({
@@ -182,9 +193,11 @@ describe("restoring a screen while a repo's data is still loading", () => {
     });
   }
 
-  // An install upgrading across #108 has "conflict" in localStorage and there
-  // is no such screen any more — restoring it would render `undefined`.
-  it("falls back to Files when the saved screen no longer exists", async () => {
+  // Screen restore is gone: launch always lands on History. That also retires
+  // the hazard this case was written for — an install upgrading across #108 has
+  // "conflict" in localStorage, and restoring that id would render `undefined`.
+  // The stale value is now simply never read, and never rewritten either.
+  it("ignores a saved screen — including a retired id — and lands on History", async () => {
     localStorage.setItem("pg-screen", "conflict");
     useRepoStore.setState({
       current: handle,
@@ -209,11 +222,10 @@ describe("restoring a screen while a repo's data is still loading", () => {
 
     const { container } = await act(async () => render(<App />));
 
-    // Files is what mounted, and the key is rewritten so the dead value does
-    // not survive the next launch either.
-    expect(localStorage.getItem("pg-screen")).toBe("repo");
-    expect(
-      container.querySelector('input[placeholder="Find in tree…"]'),
-    ).not.toBeNull();
+    // History mounted (its commit rows are there), and the dead key was left
+    // exactly as it was — nothing writes it any more.
+    expect(container.querySelectorAll('[data-testid="commit-row"]').length).toBeGreaterThan(0);
+    expect(localStorage.getItem("pg-screen")).toBe("conflict");
+    expect(container.querySelector('input[placeholder="Find in tree…"]')).toBeNull();
   });
 });

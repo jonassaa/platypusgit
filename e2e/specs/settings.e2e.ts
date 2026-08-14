@@ -148,15 +148,10 @@ describe("settings", () => {
       async () => (await $('button[aria-pressed="true"]*=FF-only').isExisting()),
       { timeout: 10_000, timeoutMsg: "FF-only never became active" },
     );
-    // Leave Settings BEFORE reloading. AppShell's gate is
-    // `repo || screen === "settings"` (src/AppShell.tsx) and the screen id
-    // persists to localStorage["pg-screen"] outside pg-settings-v2 entirely.
-    // A reload with pg-screen still "settings" renders SettingsScreen
-    // directly on the freshly-booted (repo-less) store, bypassing
-    // WelcomeScreen's recent-repo list altogether — reopenRepo's row-click
-    // would then have nothing to find. Verified via
-    // `browser.execute(() => document.body.innerHTML)`: without this step
-    // the reload lands back on Settings with an empty recents DOM query.
+    // Leave Settings before reloading. A reload now always lands on History
+    // (AppShell no longer restores a screen), so this is no longer load-bearing
+    // — it keeps the titlebar context normal for the steps below, as the other
+    // cases in this file do.
     await switchScreen("repo");
     // Reload WITHOUT clearing localStorage (openRepo would wipe pg-settings-v2).
     await reopenRepo(pair.repo.path);

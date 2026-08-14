@@ -19,7 +19,7 @@ use super::{
         DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LogFilter, LogPage,
         RebaseAction,
         RebaseStatus, RebaseStep, ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState,
-        ResetMode,
+        ResetMode, REFSPEC_ALL,
         StashInfo, StashSaveOptions, StatusFlag, TagInfo, TagTarget,
     },
     GitBackend,
@@ -1594,6 +1594,38 @@ fn push_log_start(
             // history for a broken repo.
             Err(e) => Err(e.into()),
         },
+        // "All branches we know of" — local heads, remote-tracking heads, and
+        // HEAD itself (a detached HEAD is under no branch, and dropping it
+        // would hide the commits the user is actually sitting on). Tags are
+        // deliberately out: this scope is about branches.
+        Some(spec) if spec == REFSPEC_ALL => {
+            let mut starts = Vec::new();
+            let mut push = |oid: git2::Oid, walk: &mut git2::Revwalk| -> AppResult<()> {
+                if starts.contains(&oid) {
+                    return Ok(());
+                }
+                walk.push(oid)?;
+                starts.push(oid);
+                Ok(())
+            };
+            if let Ok(head) = repo.head() {
+                if let Ok(commit) = head.peel_to_commit() {
+                    push(commit.id(), walk)?;
+                }
+            }
+            for glob in ["refs/heads/*", "refs/remotes/*/*"] {
+                if let Ok(refs) = repo.references_glob(glob) {
+                    for r in refs.flatten() {
+                        // A remote's symbolic HEAD (refs/remotes/origin/HEAD)
+                        // peels to a tip already pushed — dedup handles it.
+                        if let Ok(commit) = r.peel_to_commit() {
+                            push(commit.id(), walk)?;
+                        }
+                    }
+                }
+            }
+            Ok(starts)
+        }
         Some(spec) => {
             let commit = resolve_commit(repo, spec)?;
             walk.push(commit.id())?;
@@ -3229,10 +3261,13 @@ impl GitBackend for Libgit2Backend {
                 let is_remote = matches!(btype, BranchType::Remote);
                 let is_head = !is_remote && head_name.as_deref() == Some(name.as_str());
 
-                let tip = branch
-                    .get()
-                    .target()
-                    .map(|o| o.to_string()[..7].to_string());
+                // FULL oid, not a 7-char prefix. Consumers compare it against
+                // CommitInfo.oid (History's HEAD marker, the graph's HEAD ring,
+                // the HEAD-ancestry walk that rebase plans are built from) and a
+                // truncated value silently never matches — no error, just a
+                // feature that quietly does nothing. Display sites shorten it
+                // themselves via `shortSha`.
+                let tip = branch.get().target().map(|o| o.to_string());
 
                 let (upstream, ahead, behind) = if !is_remote {
                     match branch.upstream() {

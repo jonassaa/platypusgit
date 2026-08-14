@@ -223,6 +223,7 @@ export function ReflogScreen() {
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <PGPane
           id="reflog.list"
+          primary
           style={{
             width: "35%",
             minWidth: 280,

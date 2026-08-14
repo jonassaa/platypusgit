@@ -97,6 +97,7 @@ export function RemoteScreen() {
       >
         <PGPane
           id="remote.detail"
+          primary
           style={{
             padding: 14,
             border: "1px solid var(--border-0)",

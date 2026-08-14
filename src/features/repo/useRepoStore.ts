@@ -14,6 +14,7 @@ import type {
   StashInfo,
   TagInfo,
 } from "@/lib/types";
+import { LOG_REF_ALL } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
 import {
   dubiousOwnershipPath,
@@ -141,9 +142,10 @@ interface RepoStoreState {
   /** The active backend log filter (empty object when none). */
   commitFilter: LogFilter;
   /**
-   * Revspec the log walk starts from, or null for HEAD. Scoping applies to
+   * Revspec the log walk starts from: `LOG_REF_ALL` (the default — every branch
+   * in one graph), null for HEAD only, or any revspec. Scoping applies to
    * `commits` AND backend searches, so every consumer of the log (History,
-   * palette pickers, context menus) sees the browsed ref's commits.
+   * palette pickers, context menus) sees the browsed scope's commits.
    */
   logRef: string | null;
   /** True while a backend search is in flight. */
@@ -380,7 +382,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       searchResults: null,
       commitFilter: {},
       lastRebaseSummary: null,
-      logRef: null,
+      logRef: LOG_REF_ALL,
       commitCursor: null,
       searchCursor: null,
     });
@@ -397,7 +399,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   commits: [],
   searchResults: null,
   commitFilter: {},
-  logRef: null,
+  logRef: LOG_REF_ALL,
   searching: false,
   commitCursor: null,
   searchCursor: null,
@@ -609,7 +611,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       commits: [],
       searchResults: null,
       commitFilter: {},
-      logRef: null,
+      logRef: LOG_REF_ALL,
       searching: false,
       lastRebaseSummary: null,
       error: null,

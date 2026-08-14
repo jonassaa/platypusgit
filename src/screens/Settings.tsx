@@ -4,6 +4,7 @@ import {
   PGButton,
   PGButtonGroup,
   PGIcon,
+  PGIconButton,
   PGInput,
   PGSelect,
   PGToggle,
@@ -13,7 +14,12 @@ import {
 import {
   BUILTIN_THEMES,
   DENSITY_STEP_PX,
+  HEAD_INDICATORS,
+  HEAD_INDICATOR_LABELS,
   THEME_COLOR_FIELDS,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  type HeadIndicator,
   applyTheme,
   useSettingsStore,
   type ThemeColors,
@@ -596,6 +602,66 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
               { value: "comfortable", label: "Comfortable" },
             ]}
           />
+        }
+      />
+
+      <Row
+        label="Current position (HEAD)"
+        hint="How History marks the commit you are on. The graph's HEAD ring is always drawn; this is the row treatment on top of it."
+        control={
+          <PGSelect
+            size="sm"
+            value={s.headIndicator}
+            onChange={(v) => s.set("headIndicator", v as HeadIndicator)}
+            data-testid="settings-head-indicator"
+            options={HEAD_INDICATORS.map((k) => ({
+              value: k,
+              label: HEAD_INDICATOR_LABELS[k],
+            }))}
+          />
+        }
+      />
+
+      <Row
+        label="Zoom"
+        hint={`Scales the whole window — ${Math.round(ZOOM_MIN * 100)}% to ${Math.round(
+          ZOOM_MAX * 100,
+        )}%. Also on ⌘/Ctrl with + and −, reset with ⌘/Ctrl 0.`}
+        control={
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <PGIconButton
+              icon="minus"
+              size="md"
+              title="Zoom out"
+              onClick={() => s.stepZoom(-1)}
+            />
+            <span
+              data-testid="settings-zoom-value"
+              style={{
+                minWidth: 48,
+                textAlign: "center",
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--fs-12)",
+                color: "var(--fg-1)",
+              }}
+            >
+              {Math.round(s.uiZoom * 100)}%
+            </span>
+            <PGIconButton
+              icon="plus"
+              size="md"
+              title="Zoom in"
+              onClick={() => s.stepZoom(1)}
+            />
+            <PGButton
+              size="sm"
+              variant="ghost"
+              disabled={s.uiZoom === 1}
+              onClick={() => s.set("uiZoom", 1)}
+            >
+              Reset
+            </PGButton>
+          </div>
         }
       />
 

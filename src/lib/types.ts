@@ -1,5 +1,12 @@
 export type RepoId = string;
 
+/**
+ * Log refspec meaning "walk every branch we know of" rather than one ref —
+ * local heads, remote-tracking heads and a detached HEAD, in one graph. Mirrors
+ * `REFSPEC_ALL` in `src-tauri/src/git/types.rs`; keep the two in step.
+ */
+export const LOG_REF_ALL = "--all";
+
 export interface RepoHandle {
   id: RepoId;
   path: string;

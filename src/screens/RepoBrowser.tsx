@@ -741,6 +741,7 @@ export function RepoBrowserScreen() {
         {/* File tree */}
         <PGPane
           id="repo.tree"
+          primary
           style={{
             width: treePane.width,
             flexShrink: 0,

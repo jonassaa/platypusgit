@@ -292,16 +292,25 @@ export async function stubNativeDialogs(
           w.__pgConfirmCalls++;
         }
 
-        const input = testId(root, "dialog-input") as HTMLInputElement | null;
+        const input = testId(root, "dialog-input") as
+          | HTMLInputElement
+          | HTMLTextAreaElement
+          | null;
         if (confirm && input) {
           // React tracks the previous value on the DOM node, so assigning
           // `.value` directly is swallowed as a no-op change. Go through the
           // prototype setter, then dispatch the event React listens for.
+          //
+          // The prototype has to match the element: a multi-line prompt (the
+          // squash message) renders a <textarea>, and HTMLInputElement's setter
+          // does nothing for it — the dialog would then be answered with its
+          // prefilled text instead of the test's, or not at all.
           const value = q.length ? q.shift()! : (promptText ?? "");
-          const setter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype,
-            "value",
-          )?.set;
+          const proto =
+            input.tagName === "TEXTAREA"
+              ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
           setter?.call(input, value);
           input.dispatchEvent(new Event("input", { bubbles: true }));
         }

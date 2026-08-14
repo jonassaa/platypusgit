@@ -14,6 +14,7 @@ import {
   type RebaseMergeMode,
 } from "@/features/rebase/useRebaseMergeMode";
 import { buildPreservePlan } from "@/features/commits/buildPreservePlan";
+import { useRowReorder } from "@/features/rebase/useRowReorder";
 import { PGPane, FocusableScroll } from "@/features/keymap";
 
 // ─── Plan row state ───────────────────────────────────────────────────────────
@@ -188,6 +189,8 @@ export function RebaseScreen() {
   // mode can rebuild without asking the backend again. Empty for a targeted plan
   // (squash/fixup/reword), which the mode must not rebuild — see isPlainPlan.
   const [range, setRange] = useState<CommitInfo[]>([]);
+  // The drag needs the scroll element to auto-scroll near the edges.
+  const planScrollRef = React.useRef<HTMLDivElement>(null);
   const [baseLabel, setBaseLabel] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerNotice, setPickerNotice] = useState<string | null>(null);
@@ -284,15 +287,29 @@ export function RebaseScreen() {
     [],
   );
 
-  const moveRow = useCallback((index: number, direction: -1 | 1) => {
+  // Splice, not swap: a drag can travel several rows, and for the adjacent case
+  // the buttons use, splice and swap are the same move.
+  const moveRowTo = useCallback((from: number, to: number) => {
     setPlan((rows) => {
+      if (to < 0 || to >= rows.length || from === to) return rows;
       const next = [...rows];
-      const target = index + direction;
-      if (target < 0 || target >= next.length) return next;
-      [next[index], next[target]] = [next[target], next[index]];
+      const [row] = next.splice(from, 1);
+      next.splice(to, 0, row);
       return next;
     });
   }, []);
+
+  const moveRow = useCallback(
+    (index: number, direction: -1 | 1) => moveRowTo(index, index + direction),
+    [moveRowTo],
+  );
+
+  const planKeys = React.useMemo(() => plan.map((r) => r.oid), [plan]);
+  const { registerRow, onRowPointerDown, draggingKey } = useRowReorder(
+    planKeys,
+    moveRowTo,
+    planScrollRef,
+  );
 
   const handleStart = async () => {
     const steps: RebaseStep[] = plan.map((r) => ({
@@ -486,6 +503,7 @@ export function RebaseScreen() {
           {/* Rows */}
           <PGPane
             id="rebase.steps"
+            primary
             style={{
               flex: 1,
               minHeight: 0,
@@ -495,6 +513,7 @@ export function RebaseScreen() {
           >
           <FocusableScroll
             ariaLabel="Rebase plan"
+            innerRef={planScrollRef}
             style={{
               flex: 1,
               padding: "10px 12px",
@@ -507,7 +526,16 @@ export function RebaseScreen() {
               </PGEmpty>
             ) : (
               plan.map((row, i) => (
-                <div key={row.oid}>
+                <div
+                  key={row.oid}
+                  ref={registerRow(row.oid)}
+                  data-pg-plan-row={row.oid}
+                  onPointerDown={(e) => onRowPointerDown(row.oid, e)}
+                  style={{
+                    cursor: draggingKey === row.oid ? "grabbing" : "grab",
+                    touchAction: "none",
+                  }}
+                >
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <div style={{ flex: 1 }}>
                       <PGRebaseRow
@@ -517,6 +545,7 @@ export function RebaseScreen() {
                         action={row.action}
                         badge={row.isMerge ? "merge" : undefined}
                         options={row.isMerge ? mergeActionsFor(mergeMode) : undefined}
+                        dragging={draggingKey === row.oid}
                         onActionChange={(v) => updateRow(i, { action: v })}
                       />
                     </div>

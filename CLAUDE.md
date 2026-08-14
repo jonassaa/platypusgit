@@ -237,7 +237,15 @@ commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs        open_repo, trust_repo_path, get_status, list_all_files,
 │                  read_file_content, append_gitignore, open_in_editor
 ├── cli.rs         take_launch_intent, cli_shim_status, install_cli_shim
-├── commits.rs     get_log, commit, file_history
+├── commits.rs     get_log, commit, file_history. The `refspec` arg takes the
+│                  `REFSPEC_ALL` sentinel ("--all", git's own spelling) meaning
+│                  "walk every branch we know of" — local + remote-tracking heads
+│                  plus a detached HEAD, one graph. History's default scope; the
+│                  frontend mirrors it as `LOG_REF_ALL` in lib/types.ts.
+│                  CONSEQUENCE: the loaded log is NOT HEAD's ancestry, so any
+│                  rebase op must run it through `headAncestryOf` first (see
+│                  features/commits/headAncestry.ts) — a plan built from the raw
+│                  log replays another branch's commits onto the current one.
 ├── diff.rs        get_diff, stage/unstage/discard_paths, stage/unstage/discard_hunk,
 │                  diff_commits, blame_file
 ├── branches.rs    list_branches/tags/stashes/remotes, checkout/create/delete/rename_branch,
@@ -353,10 +361,24 @@ lib/
 
 ### Navigation model
 
-- Activity bar = primary screen switcher, persisted to `localStorage["pg-screen"]`.
+- Activity bar = primary screen switcher, History first. **Launch always lands
+  on History** — there is no screen restore (the old `localStorage["pg-screen"]`
+  read AND write are gone; nothing else uses the key).
+- **Screen entry focuses the screen's primary pane.** One `<PGPane primary>` per
+  screen (History's commit list, Files' tree, …) declares it; `useFocusStore`
+  holds it as `primaryId`, and it outranks both mount order and geometry for two
+  moments: entering a screen, and Alt+Right off the activity bar (from a
+  full-height bar the geometrically nearest pane to the right is often a bottom
+  detail panel — never what "go into this screen" means). Ordinary Alt+Arrow
+  moves stay geometric. Screen entry is counted by `entryTick` so re-picking the
+  CURRENT screen re-enters it: an activity-bar click moves DOM focus to that
+  button, and with a `[screen]`-only effect focus stayed stranded on the bar and
+  every list chord went nowhere.
 - Keyboard: everything routes through `features/keymap` (action catalog +
   preset bindings; rider preset default). Modifier chords work while typing;
-  bare keys don't. `?` opens the cheat-sheet.
+  bare keys don't. `?` opens the cheat-sheet. `view.zoom*` (Mod+= / Mod+- /
+  Mod+0) scales the UI through the WEBVIEW's own zoom (`applyZoom`, persisted as
+  `uiZoom`), not a CSS transform — needs `core:webview:allow-set-webview-zoom`.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
 - Settings is a screen too, reached via titlebar gear or activity-bar settings slot.
 - Conflicts are NOT a destination: `OperationBar` (driven by `repoState`), the
@@ -444,6 +466,11 @@ lib/
 
 ### Styling
 - Tailwind v4 (CSS-first config). Theme tokens are declared on plain `:root` in `src/index.css` (there is no `@theme {}` block). Use CSS vars (`var(--accent)`, `var(--bg-0)`, `var(--fg-0)`, `var(--git-*)`) or Tailwind arbitrary-value syntax.
+- **The shell is a fixed frame: `html, body, #root` are `overflow: hidden` +
+  `overscroll-behavior: none`.** Panes own their scrolling (`FocusableScroll`).
+  Without it a too-wide row or an off-viewport portal made the whole window
+  scroll sideways, titlebar and activity bar sliding along. A new surface that
+  can overflow needs its own scroll container — the document will not provide one.
 - No `tailwind.config.js` — v4 doesn't need one.
 - **`:root` is only the pre-hydration default for the themeable tokens.**
   `applyTheme()` (`features/settings/useSettingsStore.ts`) is the source of
@@ -457,6 +484,11 @@ lib/
   `oklch(from var(--accent) l c h / <alpha>)` so custom themes carry through.
 - Fonts are vendored (`@fontsource-variable/*`), not assumed present.
 - Inline `style={{…}}` with CSS vars is fine and used widely in chrome components.
+- `BranchInfo.tip` is a **full** oid. It was once truncated to 7 chars, and every
+  comparison against `CommitInfo.oid` then failed silently — History's HEAD
+  indicator (`headIndicator`: bar / row tint / both / graph-marker-only) never
+  drew, the graph's HEAD ring never drew, and `headAncestryOf` degraded to "the
+  whole log". Shorten with `shortSha` at display sites, never at the source.
 - **Any new list-row surface must opt into UI density**, or the Settings toggle
   silently skips it (that's how it rotted the first time — issue #70). Write
   `height: "calc(<base>px + var(--row-step))"`, or
@@ -485,6 +517,10 @@ lib/
 - `PGConfirmOptions` carries `body`, `danger`, and `requireText` (type-the-name
   gate) — use them for destructive ops instead of cramming everything into one
   sentence.
+- `PGPromptOptions.multiline: <rows>` renders a textarea instead of an input
+  (the squash message prompt); Enter then inserts a newline and ⌘/Ctrl+Enter
+  submits. e2e's `stubNativeDialogs` fills it by picking the value setter off the
+  matching prototype — HTMLInputElement's does nothing to a textarea.
 - A `<PGDialogHost />` must be mounted in each window (`AppShell`, `MergeWindow`);
   with none mounted the calls resolve `false`/`null` rather than hanging.
 - Component tests that render a screen in isolation need `WithDialogs` from
