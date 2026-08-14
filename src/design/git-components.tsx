@@ -13,12 +13,13 @@ import {
   PGCheckbox,
   PGSelect,
 } from "./primitives";
+import { useDensityStep } from "@/features/settings/useSettingsStore";
 import {
-  useDensityStep,
-  type HeadIndicator,
-} from "@/features/settings/useSettingsStore";
+  NO_HEAD_DECOR,
+  type HeadDecor,
+} from "@/features/settings/headMarks";
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
-import { commitRowGrid, laneX } from "./graph-geometry";
+import { GRAPH_PAD, commitRowGrid, laneX } from "./graph-geometry";
 import type { WindowRange } from "@/lib/useWindowedList";
 import type { RebaseAction } from "@/lib/types";
 
@@ -1074,6 +1075,9 @@ export interface GraphNode {
   head?: boolean;
 }
 
+/** Radius of the HEAD ring — outside the 4px dot, so dot styles stay readable. */
+const HEAD_RING_R = 6.5;
+
 /**
  * `height` is REQUIRED and must be the caller's actual row pitch in px.
  *
@@ -1094,6 +1098,8 @@ export const PGGraphRow = React.memo(function PGGraphRow({
   width,
   height,
   clamped,
+  ringStroke = 1,
+  ringGlow = 0,
 }: {
   lanes?: GraphLane[];
   node?: GraphNode;
@@ -1101,7 +1107,27 @@ export const PGGraphRow = React.memo(function PGGraphRow({
   height: number;
   /** Lane count exceeds what the clamped width can show — fade the right edge. */
   clamped?: boolean;
+  /**
+   * Weight of the HEAD ring, from the user's head marks. `0` drops the ring
+   * entirely — the graph ring is opt-out now, not unconditional. The default is
+   * the hairline circle the graph has always drawn, so a caller with no notion
+   * of the HEAD settings renders exactly as before.
+   *
+   * Two scalars rather than one object on purpose: this component is memoized,
+   * and a `{stroke, glow}` literal built per row would be a fresh reference
+   * every render and skip the memo every time.
+   */
+  ringStroke?: number;
+  /** Width of the translucent halo under the ring. `0` for none. */
+  ringGlow?: number;
 }) {
+  // The halo is a wider stroke on the SAME circle, so its outer edge must stay
+  // inside the gutter's left pad — otherwise column 0's ring is clipped by the
+  // SVG viewport with no overflow and no warning (the #68 G1 failure mode).
+  const ringGlowW =
+    ringGlow > 0
+      ? Math.min(ringStroke + ringGlow * 1.5, (GRAPH_PAD - HEAD_RING_R - 0.5) * 2)
+      : 0;
   return (
     <svg
       width={width}
@@ -1161,17 +1187,34 @@ export const PGGraphRow = React.memo(function PGGraphRow({
       {node && (
         <>
           {/* HEAD: a double ring. The outer circle sits outside the dot rather
-              than replacing it, so hollow / solid / merge stay readable. */}
-          {node.head && (
-            <circle
-              data-graph-head="true"
-              cx={laneX(node.col)}
-              cy={height / 2}
-              r="6.5"
-              fill="none"
-              stroke={node.color}
-              strokeWidth="1"
-            />
+              than replacing it, so hollow / solid / merge stay readable. The
+              halo is a second, wider, translucent circle — not a CSS filter,
+              which is the expensive way to glow one node per row in a
+              virtualized list. */}
+          {node.head && ringStroke > 0 && (
+            <>
+              {ringGlowW > 0 && (
+                <circle
+                  data-graph-head-glow="true"
+                  cx={laneX(node.col)}
+                  cy={height / 2}
+                  r={HEAD_RING_R}
+                  fill="none"
+                  stroke={node.color}
+                  strokeWidth={ringGlowW}
+                  opacity={0.25}
+                />
+              )}
+              <circle
+                data-graph-head="true"
+                cx={laneX(node.col)}
+                cy={height / 2}
+                r={HEAD_RING_R}
+                fill="none"
+                stroke={node.color}
+                strokeWidth={ringStroke}
+              />
+            </>
           )}
           <circle
             cx={laneX(node.col)}
@@ -1281,11 +1324,19 @@ export interface PGCommitRowProps {
   /** This row is the commit HEAD points at ("you are here"). */
   isHead?: boolean;
   /**
-   * How to mark that row — the user's `headIndicator` setting. Defaults to
-   * "none" so surfaces with no notion of HEAD (Reflog, Rebase) stay unchanged.
+   * How to mark that row — the user's head marks and weight, already resolved
+   * to draw numbers by `resolveHeadDecor`. Resolve it ONCE per list render and
+   * hand every row the same object: `React.memo` compares by reference, so a
+   * fresh object per row would defeat row memoization (#68 G9).
+   *
+   * Defaults to no decoration, so surfaces with no notion of HEAD (Reflog,
+   * Rebase) stay unchanged.
    */
-  headStyle?: HeadIndicator;
+  headDecor?: HeadDecor;
 }
+
+/** Accent at an alpha, carrying whatever hue the active theme set. */
+const accentA = (alpha: number) => `oklch(from var(--accent) l c h / ${alpha})`;
 
 export const COMMIT_ROW_BASE_H = 26;
 
@@ -1306,22 +1357,29 @@ export const PGCommitRow = React.memo(function PGCommitRow({
   graphW,
   clamped,
   isHead,
-  headStyle = "none",
+  headDecor = NO_HEAD_DECOR,
 }: PGCommitRowProps) {
   const [hover, setHover] = React.useState(false);
   const step = useDensityStep();
   const h = rowHeight ?? COMMIT_ROW_BASE_H + step;
-  const headBar = !!isHead && (headStyle === "bar" || headStyle === "both");
-  const headTint = !!isHead && (headStyle === "tint" || headStyle === "both");
-  // Selection outranks the HEAD tint — the selected row must stay obvious even
-  // when it IS head, and two accent washes stacked read as neither.
+  // One gate for every mark, so "this row is not HEAD" is checked once.
+  const d = isHead && !headDecor.bare ? headDecor : NO_HEAD_DECOR;
+  // Selection outranks the HEAD wash — the selected row must stay obvious even
+  // when it IS head, and two accent washes stacked read as neither. Leaving
+  // `background` undefined is what lets the [data-selected] CSS rule apply.
   const background = selected
     ? undefined
-    : headTint
-      ? "oklch(from var(--accent) l c h / 0.16)"
+    : d.tintAlpha > 0
+      ? accentA(d.tintAlpha)
       : hover
         ? "var(--bg-2)"
         : undefined;
+  // The outline is an INSET shadow, not a border: a border would change the
+  // row's box and shift every column by its width when HEAD scrolls past.
+  const outline =
+    d.outlineW > 0
+      ? `inset 0 0 0 ${d.outlineW}px ${accentA(d.outlineAlpha)}`
+      : undefined;
   return (
     <div
       data-testid="commit-row"
@@ -1348,11 +1406,12 @@ export const PGCommitRow = React.memo(function PGCommitRow({
         cursor: "pointer",
         position: "relative",
         borderBottom: "1px solid oklch(from var(--border-0) l c h / 0.5)",
+        boxShadow: outline,
       }}
     >
       {/* HEAD's bar sits first so a selected HEAD row shows the selection bar
-          on top of it — same edge, selection wins the 2px. */}
-      {headBar && (
+          on top of it — same edge, selection wins its 2px. */}
+      {d.barW > 0 && (
         <span
           data-testid="commit-head-bar"
           style={{
@@ -1360,9 +1419,9 @@ export const PGCommitRow = React.memo(function PGCommitRow({
             left: 0,
             top: 0,
             bottom: 0,
-            width: 3,
+            width: d.barW,
             background: "var(--accent)",
-            boxShadow: "0 0 6px oklch(from var(--accent) l c h / 0.6)",
+            boxShadow: `0 0 ${d.barGlow}px ${accentA(0.65)}`,
           }}
         />
       )}
@@ -1385,6 +1444,8 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           width={graphW}
           height={h}
           clamped={clamped}
+          ringStroke={d.ringStroke}
+          ringGlow={d.ringGlow}
         />
       )}
       <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-11)" }}>{sha}</span>
@@ -1397,6 +1458,22 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           paddingRight: 10,
         }}
       >
+        {/* Ahead of the branch pills: the one mark that says "you are here" in
+            words rather than in color, for anyone who can't separate the accent
+            wash from a hover. */}
+        {d.badge && (
+          <PGBadge
+            tone="accent"
+            style={{
+              flexShrink: 0,
+              borderColor: accentA(0.7),
+              boxShadow:
+                d.badgeGlow > 0 ? `0 0 ${d.badgeGlow}px ${accentA(0.5)}` : undefined,
+            }}
+          >
+            <span data-testid="commit-head-badge">HEAD</span>
+          </PGBadge>
+        )}
         {refs?.map((r, i) => (
           <PGBranchPill
             key={i}
@@ -1412,11 +1489,13 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           </PGBadge>
         )}
         <span
+          data-testid="commit-subject"
           style={{
             color: "var(--fg-0)",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
+            fontWeight: d.subjectWeight || undefined,
           }}
         >
           {message}

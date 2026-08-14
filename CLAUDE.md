@@ -306,7 +306,12 @@ features/            Per-feature: components + Zustand store colocated
 ├── rebase/          RebaseBasePicker + useRebaseMergeMode (persisted
 │                    flatten ⇄ preserve for merge commits in a plan)
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
-├── settings/        useSettingsStore (autoFetch, defaultPullMode, etc.)
+├── settings/        useSettingsStore (autoFetch, defaultPullMode, etc.),
+│                    headMarks (the HEAD row treatment: independent marks ×
+│                    one weight, resolved to draw numbers by resolveHeadDecor —
+│                    zero means "don't draw", so PGCommitRow never reads the
+│                    mark list) + HeadMarksControl (checkbox grid, weight knob,
+│                    and a live preview built from the real PGCommitRow)
 ├── palette/         usePaletteStore (step stack + chips), commands (catalog),
 │                    frecency, CommandPalette (⌘P runner: nav + search + actions;
 │                    rows show live keymap chords via PaletteItem.actionId)
