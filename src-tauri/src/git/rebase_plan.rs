@@ -47,6 +47,27 @@ pub fn validate(repo: &Repository, plan: &[RebaseStep]) -> AppResult<()> {
                 AppError::InvalidRebasePlan(format!("unknown commit {}", short(&step.oid)))
             })?;
 
+        if let Some(onto) = &step.onto {
+            // Either an earlier step (whose replayed copy the engine will have
+            // recorded by then) or a commit that already exists below the range.
+            let known_earlier = plan
+                .iter()
+                .take_while(|s| s.oid != step.oid)
+                .any(|s| &s.oid == onto);
+            let exists = repo
+                .revparse_single(onto)
+                .and_then(|o| o.peel_to_commit())
+                .is_ok();
+            if !known_earlier && !exists {
+                return Err(AppError::InvalidRebasePlan(format!(
+                    "{} is applied onto {}, which is neither an earlier step nor \
+                     an existing commit",
+                    short(&step.oid),
+                    short(onto)
+                )));
+            }
+        }
+
         if commit.parent_count() > 1 && !merge_legal(step.action) {
             return Err(AppError::InvalidRebasePlan(format!(
                 "{} is a merge commit — it can be dropped (which flattens the \

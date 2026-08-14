@@ -346,6 +346,19 @@ pub struct RebaseStep {
     pub action: RebaseAction,
     /// New message for reword / squash. Ignored for other actions.
     pub message: Option<String>,
+    /// The **original** oid this step must be applied onto. The engine resolves
+    /// it through the rewritten map and resets the detached HEAD there before
+    /// applying. `None` means "onto whatever the previous step produced" — the
+    /// linear default, which is every plan built before topology existed.
+    ///
+    /// This is how a generated plan expresses topology without git's
+    /// `label`/`reset` todo language: every commit is implicitly its own label.
+    #[serde(default)]
+    pub onto: Option<String>,
+    /// A merge step's **original** parents beyond the first, resolved through
+    /// the rewritten map at merge time. Empty for every other action.
+    #[serde(default)]
+    pub merge_parents: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

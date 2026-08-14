@@ -289,6 +289,36 @@ impl Libgit2Backend {
             .is_some())
     }
 
+    /// Put the detached HEAD on the commit a step wants to be applied onto.
+    /// `original_oid` is the pre-rebase oid; the rewritten map translates it to
+    /// this run's copy, falling back to the original when the commit was not
+    /// rewritten (it sits below the range).
+    fn move_to_base(&self, repo_id: &RepoId, original_oid: &str) -> AppResult<()> {
+        let resolved = {
+            let rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases
+                .get(repo_id)
+                .and_then(|s| s.rewritten.get(original_oid).cloned())
+                .unwrap_or_else(|| original_oid.to_string())
+        };
+
+        self.with_repo(repo_id, |repo| {
+            let target = repo
+                .revparse_single(&resolved)
+                .map_err(|_| AppError::InvalidRef(resolved.clone()))?
+                .peel_to_commit()?;
+            if repo.head()?.peel_to_commit()?.id() == target.id() {
+                return Ok(()); // already there — nothing to reset
+            }
+            repo.set_head_detached(target.id())?;
+            repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
+            Ok(())
+        })
+    }
+
     /// Point the original branch at the replayed history and reattach HEAD to
     /// it. Called once, when the plan is exhausted. A rebase that started from
     /// a detached HEAD just stays detached.
@@ -385,6 +415,15 @@ impl Libgit2Backend {
                 self.record_rewritten(repo_id, &step.oid)?;
                 self.persist_rebase(repo_id)?;
                 continue;
+            }
+
+            // Topology: a step that names an `onto` is replayed there rather
+            // than on the previous step's result. Skipped while resuming — the
+            // worktree already holds the user's resolution for this step.
+            if !resuming {
+                if let Some(onto) = step.onto.clone() {
+                    self.move_to_base(repo_id, &onto)?;
+                }
             }
 
             // A merge commit being kept as one commit needs a mainline; every
@@ -3436,6 +3475,7 @@ impl GitBackend for Libgit2Backend {
                 AppError::InvalidRebasePlan("the plan drops every commit".into())
             })?;
         let first_oid_str = first_step.oid.clone();
+        let first_step_onto = first_step.onto.clone();
 
         // Verify worktree is clean, remember the branch and its pre-rebase tip
         // (so an abort can put both back), then DETACH at the base and replay
@@ -3469,22 +3509,32 @@ impl GitBackend for Libgit2Backend {
             // `git reset --hard ORIG_HEAD` undoes this rebase from the CLI.
             crate::git::rebase_state::write_orig_head(repo, &orig_head)?;
 
-            let first_commit = repo
-                .revparse_single(&first_oid_str)
-                .map_err(|_| AppError::InvalidRef(first_oid_str.clone()))?
-                .peel_to_commit()?;
-            let parent = first_commit.parent(0).map_err(|_| {
-                AppError::InvalidRebasePlan(format!(
-                    "{} has no parent to rebase onto",
-                    crate::git::rebase_plan::short(&first_oid_str)
-                ))
-            })?;
+            // The run's base: what the first step says it sits on, else that
+            // commit's first parent.
+            let base = match &first_step_onto {
+                Some(onto) => repo
+                    .revparse_single(onto)
+                    .map_err(|_| AppError::InvalidRef(onto.clone()))?
+                    .peel_to_commit()?,
+                None => {
+                    let first_commit = repo
+                        .revparse_single(&first_oid_str)
+                        .map_err(|_| AppError::InvalidRef(first_oid_str.clone()))?
+                        .peel_to_commit()?;
+                    first_commit.parent(0).map_err(|_| {
+                        AppError::InvalidRebasePlan(format!(
+                            "{} has no parent to rebase onto",
+                            crate::git::rebase_plan::short(&first_oid_str)
+                        ))
+                    })?
+                }
+            };
 
             // Detach first, then hard-reset: with HEAD attached, the reset
             // would drag the branch ref along.
-            repo.set_head_detached(parent.id())?;
-            repo.reset(parent.as_object(), git2::ResetType::Hard, None)?;
-            Ok((orig_head, head_name, parent.id().to_string()))
+            repo.set_head_detached(base.id())?;
+            repo.reset(base.as_object(), git2::ResetType::Hard, None)?;
+            Ok((orig_head, head_name, base.id().to_string()))
         })?;
 
         let total = plan.len();
