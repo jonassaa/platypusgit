@@ -14,3 +14,4 @@ export * from "./use-prevent-browser-context-menu";
 export * from "./resizable";
 export * from "./skeleton";
 export * from "./window-controls";
+export { PGWindowedDiff, type PGWindowedDiffProps } from "./PGWindowedDiff";

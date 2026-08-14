@@ -1,6 +1,6 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { WordSpan } from "@/lib/wordDiff";
-import { pairChangedLines } from "@/lib/pairChangedLines";
+import { withChangedIndices, withSyntax, withWordSpans } from "@/lib/diffRows";
 import { buildLineSpans } from "@/lib/lineSpans";
 import type { SyntaxLine, SyntaxToken } from "@/lib/syntax";
 import { PGIcon, type IconName } from "./icons";
@@ -641,92 +641,10 @@ export function PGDiffLine({
   );
 }
 
-interface DiffChunk {
-  kind: DiffLineKind;
-  lines: DiffLineData[];
-}
 
-function chunkDiffLines(lines: DiffLineData[]): DiffChunk[] {
-  const chunks: DiffChunk[] = [];
-  for (const ln of lines) {
-    const last = chunks[chunks.length - 1];
-    if (last && last.kind === ln.kind) {
-      last.lines.push(ln);
-    } else {
-      chunks.push({ kind: ln.kind, lines: [ln] });
-    }
-  }
-  return chunks;
-}
 
-/**
- * Number the changed (`+`/`-`) lines of a hunk from 0, leaving context rows
- * unnumbered (#61 D7).
- *
- * This must count exactly the add/rem rows and nothing else: it is the wire
- * contract shared with the backend, whose `Patch::line_in_hunk` counts `+`/`-`
- * origins the same way. `hunk.lines` also carries context and header rows, so
- * a plain array index would address the wrong line.
- */
-function withChangedIndices(lines: DiffLineData[]): DiffLineData[] {
-  let n = 0;
-  return lines.map((l) =>
-    l.kind === "add" || l.kind === "rem"
-      ? { ...l, changedIndex: n++ }
-      : l,
-  );
-}
 
-/**
- * Attach each row's syntax tokens from the correct side of the diff.
- *
- * A `rem` row is a line of the OLD file and reads `old[lnL - 1]`; `add` and
- * `ctx` rows show new text and read `new[lnR - 1]`, falling back to `lnL` so a
- * deleted file's rows still resolve. Anything unresolvable is left plain rather
- * than guessed — a wrong index would colour a line with another line's tokens.
- */
-function attachSyntax(
-  lines: DiffLineData[],
-  syntax: { old: SyntaxLine[] | null; new: SyntaxLine[] | null } | undefined,
-): DiffLineData[] {
-  if (!syntax) return lines;
-  return lines.map((l) => {
-    const side = l.kind === "rem" ? syntax.old : syntax.new;
-    if (!side) return l;
-    const raw = l.kind === "rem" ? l.lnL : (l.lnR ?? l.lnL);
-    const n = typeof raw === "number" ? raw : Number(raw);
-    if (!Number.isFinite(n) || n < 1) return l;
-    const tokens = side[n - 1];
-    return tokens ? { ...l, syntax: tokens } : l;
-  });
-}
 
-/**
- * Attach intra-line word spans to adjacent rem/add chunk pairs (#61 D8).
- *
- * `chunkDiffLines` groups **by kind**, so a removed run and the added run that
- * follows it are two ADJACENT chunks — pairing crosses that pair rather than
- * happening inside one chunk. The pairing rule itself lives in
- * `@/lib/pairChangedLines`, shared with the split view and the commit-diff panel.
- */
-function withWordSpans(chunks: DiffChunk[]): DiffChunk[] {
-  const out = chunks.map((c) => ({ ...c, lines: c.lines.map((l) => ({ ...l })) }));
-  for (let i = 0; i + 1 < out.length; i++) {
-    const rem = out[i];
-    const add = out[i + 1];
-    if (rem.kind !== "rem" || add.kind !== "add") continue;
-    const paired = pairChangedLines(
-      rem.lines.map((l) => l.text ?? ""),
-      add.lines.map((l) => l.text ?? ""),
-    );
-    paired.forEach((p, k) => {
-      if (!p) return;
-      rem.lines[k].spans = p.old;
-      add.lines[k].spans = p.new;
-    });
-  }
-  return out;
-}
 
 /**
  * Render one line as spans, combining syntax classes and word-diff emphasis.
@@ -776,16 +694,26 @@ function DiffText({
   );
 }
 
-function PGDiffChunk({
-  chunk,
-  selectedLines,
+/**
+ * One diff row, self-contained.
+ *
+ * The add/rem background and gutter stripe used to live on a wrapper around each
+ * run of same-kind lines. They are per-row now because a windowed slice can start
+ * in the middle of a run, and there would be no wrapper to inherit from —
+ * per-row `border-left` stacks into the same continuous stripe.
+ *
+ * Exported so the windowed renderer reuses this markup rather than restating it.
+ */
+export function PGDiffRow({
+  line,
+  selected,
   onLineClick,
 }: {
-  chunk: DiffChunk;
-  selectedLines?: number[];
+  line: DiffLineData;
+  selected?: boolean;
   onLineClick?: (changedIndex: number, range: boolean) => void;
 }) {
-  const { kind, lines } = chunk;
+  const kind = line.kind;
   const bg: Partial<Record<DiffLineKind, string>> = {
     add: "var(--git-added-bg)",
     rem: "var(--git-removed-bg)",
@@ -813,34 +741,14 @@ function PGDiffChunk({
     empty: "var(--fg-3)",
   };
 
-  if (kind === "hunk" || kind === "info") {
-    return (
-      <>
-        {lines.map((ln, i) => (
-          <PGDiffLine key={i} {...ln} />
-        ))}
-      </>
-    );
-  }
+  // Header and separator rows keep their own renderer.
+  if (kind === "hunk" || kind === "info") return <PGDiffLine {...line} />;
 
+  const ln = line;
+  const selectable = onLineClick != null && ln.changedIndex != null;
+  const isSelected = selected ?? false;
   return (
-    <div
-      style={{
-        background: bg[kind] ?? "transparent",
-        borderLeft:
-          borderColor[kind] !== undefined
-            ? `2px solid ${borderColor[kind]}`
-            : "2px solid transparent",
-      }}
-    >
-      {lines.map((ln, i) => {
-        const selectable = onLineClick != null && ln.changedIndex != null;
-        const isSelected =
-          ln.changedIndex != null &&
-          (selectedLines?.includes(ln.changedIndex) ?? false);
-        return (
         <div
-          key={i}
           data-testid={selectable ? "diff-line-changed" : undefined}
           data-selected={isSelected || undefined}
           onClick={
@@ -853,11 +761,17 @@ function PGDiffChunk({
             fontFamily: "var(--font-mono)",
             fontSize: "var(--fs-12)",
             lineHeight: "var(--lh-code)",
-            minHeight: 18,
+            // Fixed pitch, read from CSS by the window's arithmetic. Was
+            // minHeight: an elastic row would put the window out of step.
+            height: "var(--diff-row-h)",
             cursor: selectable ? "pointer" : undefined,
             background: isSelected
               ? "oklch(from var(--accent) l c h / 0.18)"
-              : undefined,
+              : (bg[kind] ?? "transparent"),
+            borderLeft:
+              borderColor[kind] !== undefined
+                ? `2px solid ${borderColor[kind]}`
+                : "2px solid transparent",
           }}
         >
           <span
@@ -915,8 +829,80 @@ function PGDiffChunk({
             />
           </span>
         </div>
-        );
-      })}
+  );
+}
+
+/**
+ * A hunk's chrome bar: collapse chevron, header text, Discard and Stage.
+ *
+ * Split out of PGHunk so the windowed renderer can emit it as one row among many
+ * without duplicating the markup. Stays density-aware — it is chrome, not code.
+ */
+export function PGHunkHeader({
+  header,
+  staged,
+  onStage,
+  onDiscard,
+  expanded,
+  onToggle,
+  actionsDisabledReason,
+  selCount = 0,
+}: {
+  header: string;
+  staged?: boolean;
+  onStage?: () => void;
+  onDiscard?: () => void;
+  expanded: boolean;
+  onToggle?: () => void;
+  actionsDisabledReason?: string;
+  selCount?: number;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        height: "calc(26px + var(--row-step))",
+        padding: "0 8px",
+        background: "var(--bg-2)",
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--fs-11)",
+        color: "var(--fg-2)",
+      }}
+    >
+      <PGIconButton
+        icon={expanded ? "chevronDown" : "chevronRight"}
+        size="sm"
+        onClick={onToggle}
+      />
+      <span style={{ color: "var(--accent)" }}>@@ {header} @@</span>
+      <div style={{ flex: 1 }} />
+      <PGButton
+        size="xs"
+        variant="ghost"
+        onClick={onDiscard}
+        icon="x"
+        disabled={!!actionsDisabledReason}
+        title={actionsDisabledReason}
+      >
+        Discard
+      </PGButton>
+      <PGButton
+        data-testid="hunk-stage"
+        size="xs"
+        variant={staged ? "outline" : "primary"}
+        onClick={onStage}
+        icon={staged ? "check" : "plus"}
+        disabled={!!actionsDisabledReason}
+        title={actionsDisabledReason}
+      >
+        {selCount > 0
+          ? `${staged ? "Unstage" : "Stage"} ${selCount} lines`
+          : staged
+            ? "Staged"
+            : "Stage hunk"}
+      </PGButton>
     </div>
   );
 }
@@ -955,6 +941,16 @@ export interface PGHunkProps {
   syntax?: { old: SyntaxLine[] | null; new: SyntaxLine[] | null };
 }
 
+/**
+ * One hunk, header plus all its rows, unwindowed.
+ *
+ * No screen renders this any more — they all go through `PGWindowedDiff`, which
+ * reuses the same `PGHunkHeader` and `PGDiffRow`. It survives as the single-hunk
+ * primitive and as the behavioural guard for row rendering (see
+ * wordDiffRender.test.tsx and syntaxRender.test.tsx, which pin word spans and
+ * syntax spans through this public API). Delete it only together with those
+ * tests, and only once something else pins the same behaviour.
+ */
 export function PGHunk({
   header,
   lines = [],
@@ -974,69 +970,35 @@ export function PGHunk({
   // withChangedIndices runs FIRST and over the whole hunk: its numbering is the
   // wire contract shared with the backend's Patch::line_in_hunk (#61 D7), so it
   // must not depend on anything the syntax pass does.
-  const chunks = React.useMemo(
-    () => withWordSpans(chunkDiffLines(attachSyntax(withChangedIndices(lines), syntax))),
+  const rows = React.useMemo(
+    () => withWordSpans(withSyntax(withChangedIndices(lines), syntax)),
     [lines, syntax],
   );
   // Line selection is meaningless when the hunk's own indices don't address
   // what git would apply — the same condition that disables Stage/Discard.
   const lineClick = actionsDisabledReason ? undefined : onLineClick;
-  const selCount = selectedLines?.length ?? 0;
   return (
     <div style={{ borderBottom: "1px solid var(--border-0)" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          height: "calc(26px + var(--row-step))",
-          padding: "0 8px",
-          background: "var(--bg-2)",
-          fontFamily: "var(--font-mono)",
-          fontSize: "var(--fs-11)",
-          color: "var(--fg-2)",
-        }}
-      >
-        <PGIconButton
-          icon={expanded ? "chevronDown" : "chevronRight"}
-          size="sm"
-          onClick={onToggle}
-        />
-        <span style={{ color: "var(--accent)" }}>@@ {header} @@</span>
-        <div style={{ flex: 1 }} />
-        <PGButton
-          size="xs"
-          variant="ghost"
-          onClick={onDiscard}
-          icon="x"
-          disabled={!!actionsDisabledReason}
-          title={actionsDisabledReason}
-        >
-          Discard
-        </PGButton>
-        <PGButton
-          data-testid="hunk-stage"
-          size="xs"
-          variant={staged ? "outline" : "primary"}
-          onClick={onStage}
-          icon={staged ? "check" : "plus"}
-          disabled={!!actionsDisabledReason}
-          title={actionsDisabledReason}
-        >
-          {selCount > 0
-            ? `${staged ? "Unstage" : "Stage"} ${selCount} lines`
-            : staged
-              ? "Staged"
-              : "Stage hunk"}
-        </PGButton>
-      </div>
+      <PGHunkHeader
+        header={header}
+        staged={staged}
+        onStage={onStage}
+        onDiscard={onDiscard}
+        expanded={expanded}
+        onToggle={onToggle}
+        actionsDisabledReason={actionsDisabledReason}
+        selCount={selectedLines?.length ?? 0}
+      />
       {expanded && (
         <div>
-          {chunks.map((c, i) => (
-            <PGDiffChunk
+          {rows.map((line, i) => (
+            <PGDiffRow
               key={i}
-              chunk={c}
-              selectedLines={selectedLines}
+              line={line}
+              selected={
+                line.changedIndex != null &&
+                (selectedLines?.includes(line.changedIndex) ?? false)
+              }
               onLineClick={lineClick}
             />
           ))}

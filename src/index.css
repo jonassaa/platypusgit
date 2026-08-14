@@ -37,6 +37,12 @@
   --lh-body: 1.45;
   --lh-code: 1.55;
 
+  /* Code-row pitch, derived so --lh-code stays the single owner of code
+     geometry. Read at runtime by useDiffRowHeight for the diff window's
+     arithmetic — never restate it as a number in TS, since 1.55 * 12px is
+     18.6px and any literal is already wrong (#70). */
+  --diff-row-h: calc(var(--fs-12) * var(--lh-code));
+
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;

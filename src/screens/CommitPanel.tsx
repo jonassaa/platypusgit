@@ -8,7 +8,7 @@ import {
   PGCheckbox,
   PGEmpty,
   PGFileTree,
-  PGHunk,
+  PGWindowedDiff,
   PGIconButton,
   PGInput,
   PGSideBySideDiff,
@@ -23,14 +23,13 @@ import {
   pgPrompt,
   useContextMenu,
   usePaneWidth,
-  type DiffLineData,
   type PGFileTreeNode,
   type PGStageState,
   type SideLine,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
 import { PGPane, FocusableScroll, usePaneList, useAction } from "@/features/keymap";
 import { stageablePaths } from "@/features/repo/ops";
 import {
@@ -52,6 +51,8 @@ import {
 } from "@/lib/selection";
 import { getDiff, getLogPage } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
+import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import {
   WhitespaceToggle,
   useHunkActionsDisabledReason,
@@ -452,6 +453,54 @@ export function CommitPanelScreen() {
     old: { kind: "rev", rev: "HEAD", path: diff?.oldPath },
     new: { kind: "worktree" },
   });
+
+  // ── Windowed diff rows ───────────────────────────────────────────────────
+  // No wrap toggle in this pane, so rows are always fixed-pitch and windowing is
+  // always on. Row heights are known, so the window needs no measurement.
+  const rowH = useDiffRowHeight();
+  const headerH = 26 + useDensityStep();
+  const [collapsed, setCollapsed] = React.useState<ReadonlySet<number>>(new Set());
+  const toggleHunk = React.useCallback((i: number) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }, []);
+  React.useEffect(() => setCollapsed(new Set()), [selected?.path, selected?.side]);
+
+  const rows = React.useMemo(
+    () =>
+      flattenDiffRows(diff && !diff.binary ? diff.hunks : [], {
+        headerH,
+        rowH,
+        collapsed,
+        syntax,
+      }),
+    [diff, headerH, rowH, collapsed, syntax],
+  );
+  const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
+  const diffScrollRef = React.useRef<HTMLDivElement>(null);
+  const [diffScrollTop, setDiffScrollTop] = React.useState(0);
+  const [diffViewportH, setDiffViewportH] = React.useState(0);
+  React.useEffect(() => {
+    const el = diffScrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    setDiffViewportH(el.clientHeight);
+    const ro = new ResizeObserver(() => setDiffViewportH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [diffMode]);
+  const win = React.useMemo(
+    () =>
+      windowVariable(heights, {
+        scrollTop: diffScrollTop,
+        viewportH: diffViewportH,
+        overscan: 8,
+      }),
+    [heights, diffScrollTop, diffViewportH],
+  );
 
   React.useEffect(() => {
     if (!selected || !repo) {
@@ -920,7 +969,12 @@ export function CommitPanelScreen() {
             }}
           />
         </div>
-        <FocusableScroll style={{ flex: 1 }} ariaLabel="Diff">
+        <FocusableScroll
+          style={{ flex: 1 }}
+          ariaLabel="Diff"
+          innerRef={diffScrollRef}
+          onScroll={() => setDiffScrollTop(diffScrollRef.current?.scrollTop ?? 0)}
+        >
           {diffLoading && (
             <div
               style={{
@@ -956,54 +1010,52 @@ export function CommitPanelScreen() {
               </PGEmpty>
             )}
           {!diffLoading && !diffError && diff && !diff.binary && diff.hunks.length > 0 &&
-            diffMode === "unified" &&
-            diff.hunks.map((h, i) => (
-              <PGHunk
-                key={i}
-                header={h.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
-                lines={h.lines.map(toUiLine)}
-                expanded={true}
-                syntax={syntax}
-                staged={selected?.side === "staged"}
-                actionsDisabledReason={hunkActionsDisabled}
-                selectedLines={lineSel[i] ?? []}
-                onLineClick={(changedIndex, range) =>
-                  onLineClick(i, changedIndex, range)
-                }
-                onStage={() => {
-                  if (!selected) return;
-                  const sel = lineSel[i] ?? [];
-                  const store = useRepoStore.getState();
-                  if (selected.side === "staged") {
-                    if (sel.length) store.unstageLines(selected.path, i, sel);
-                    else store.unstageHunk(selected.path, i);
-                  } else {
-                    if (sel.length) store.stageLines(selected.path, i, sel);
-                    else store.stageHunk(selected.path, i);
-                  }
-                  clearLineSel();
-                }}
-                onDiscard={async () => {
-                  if (!selected) return;
-                  const sel = lineSel[i] ?? [];
-                  if (
-                    await pgConfirm({
-                      title: sel.length
-                        ? `Discard ${sel.length} selected line${sel.length === 1 ? "" : "s"}?`
-                        : "Discard this hunk?",
-                      body: `The change to ${selected.path} will be lost.`,
-                      danger: true,
-                      confirmLabel: sel.length ? "Discard lines" : "Discard hunk",
-                    })
-                  ) {
+            diffMode === "unified" && (
+              <PGWindowedDiff
+                rows={rows}
+                window={win}
+                collapsed={collapsed}
+                onToggleHunk={toggleHunk}
+                selectedLines={(i) => lineSel[i] ?? []}
+                onLineClick={onLineClick}
+                hunkActions={(i) => ({
+                  staged: selected?.side === "staged",
+                  actionsDisabledReason: hunkActionsDisabled,
+                  onStage: () => {
+                    if (!selected) return;
+                    const sel = lineSel[i] ?? [];
                     const store = useRepoStore.getState();
-                    if (sel.length) store.discardLines(selected.path, i, sel);
-                    else store.discardHunk(selected.path, i);
+                    if (selected.side === "staged") {
+                      if (sel.length) store.unstageLines(selected.path, i, sel);
+                      else store.unstageHunk(selected.path, i);
+                    } else {
+                      if (sel.length) store.stageLines(selected.path, i, sel);
+                      else store.stageHunk(selected.path, i);
+                    }
                     clearLineSel();
-                  }
-                }}
+                  },
+                  onDiscard: async () => {
+                    if (!selected) return;
+                    const sel = lineSel[i] ?? [];
+                    if (
+                      await pgConfirm({
+                        title: sel.length
+                          ? `Discard ${sel.length} selected line${sel.length === 1 ? "" : "s"}?`
+                          : "Discard this hunk?",
+                        body: `The change to ${selected.path} will be lost.`,
+                        danger: true,
+                        confirmLabel: sel.length ? "Discard lines" : "Discard hunk",
+                      })
+                    ) {
+                      const store = useRepoStore.getState();
+                      if (sel.length) store.discardLines(selected.path, i, sel);
+                      else store.discardHunk(selected.path, i);
+                      clearLineSel();
+                    }
+                  },
+                })}
               />
-            ))}
+            )}
           {!diffLoading && !diffError && diff && !diff.binary && diff.hunks.length > 0 &&
             diffMode === "split" && (
               <PGSideBySideDiff {...diffToSplit(diff)} />
@@ -1536,24 +1588,6 @@ function diffToSplit(d: FileDiff): { left: SideLine[]; right: SideLine[] } {
   return { left, right };
 }
 
-function toUiLine(l: {
-  kind: { kind: string };
-  oldLineno: number | null;
-  newLineno: number | null;
-  content: string;
-}): DiffLineData {
-  const k = l.kind.kind;
-  if (k === "Addition")
-    return { kind: "add", lnR: l.newLineno ?? undefined, text: l.content };
-  if (k === "Deletion")
-    return { kind: "rem", lnL: l.oldLineno ?? undefined, text: l.content };
-  return {
-    kind: "ctx",
-    lnL: l.oldLineno ?? undefined,
-    lnR: l.newLineno ?? undefined,
-    text: l.content,
-  };
-}
 
 function Header({
   title,

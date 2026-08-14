@@ -504,11 +504,14 @@ export interface PGToggleProps {
   checked?: boolean;
   onChange?: (v: boolean) => void;
   label?: ReactNode;
+  /** Test hook, same convention as PGResizeHandle — this renders no <input>. */
+  testId?: string;
 }
 
-export function PGToggle({ checked, onChange, label }: PGToggleProps) {
+export function PGToggle({ checked, onChange, label, testId }: PGToggleProps) {
   return (
     <label
+      data-testid={testId}
       style={{
         display: "inline-flex",
         alignItems: "center",
