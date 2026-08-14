@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 
 export type IconName =
-  | "repo" | "branch" | "commit" | "merge" | "fork" | "tag"
+  | "repo" | "branch" | "commit" | "merge" | "fork" | "tag" | "pullRequest"
   | "folder" | "folderOpen" | "file" | "fileCode"
   // File-type category glyphs — resolved per path by lib/fileIcon.ts.
   | "fileData" | "fileDoc" | "fileStyle" | "fileImage" | "fileShell"
@@ -44,6 +44,13 @@ const ICONS: Record<IconName, ReactNode> = {
     <circle cx="12" cy="3.5" r="1.5" />
     <circle cx="8" cy="12.5" r="1.5" />
     <path d="M4 5c0 3 4 3 4 6M12 5c0 3-4 3-4 6" />
+  </>,
+  // Pull / merge request (#92): a source lane arrowing into a target lane.
+  pullRequest: <>
+    <circle cx="4" cy="12.5" r="1.5" />
+    <circle cx="12" cy="3.5" r="1.5" />
+    <circle cx="12" cy="12.5" r="1.5" />
+    <path d="M4 11V5.5M12 5v6M4 5.5l-2 2M4 5.5l2 2" />
   </>,
   tag: <>
     <path d="M1.5 2.5h6l7 7-6 6-7-7v-6z" />

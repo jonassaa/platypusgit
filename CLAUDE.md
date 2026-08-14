@@ -19,6 +19,9 @@ New feature beyond MVP slice → write new spec + plan under these folders first
 
 Recent specs/plans (for context on current direction):
 - `2026-08-14-drag-and-drop-*` — one pointer-event drag primitive (`features/dnd/`); staging drag, graph ref/commit drops, rebase reorder gated + keyboard-paired (#91).
+- `2026-08-14-forge-integration-*` — PR/MR integration for GitHub + GitLab (#92 / #61 D11):
+  remote→forge detection, per-host API token under its OWN credential key, list /
+  open / checkout / create, `pulls` screen.
 - `2026-08-14-conflict-flow-*` — no Conflicts screen; `repoState`-driven operation bar; resolver window owns the conflicted-file list (#108).
 - `2026-08-10-clone-init-*` — clone (streaming progress) + init repository (#61 D3/D4).
 - `2026-07-07-merge-resolver-window-*` — Rider-style separate merge window (#25 pt 2); per-conflict keyboard side selection, editable CM6 result pane.
@@ -203,6 +206,38 @@ opener.rs        Handing URLs/paths to the OS default handler. SECURITY-critical
 update.rs        Update discovery — semver compare (semver crate, cmp_precedence),
                  dev-build (0.0.0) short-circuit BEFORE any network call,
                  GitHub release parsing, ureq agent w/ timeout + https_only
+forge/           Forge (GitHub / GitLab) integration — PR/MR list, create, checkout,
+                 CI status (#92). The trait is split into URL BUILDERS + RESPONSE
+                 PARSERS, not `list_pull_requests()`, so every forge-specific line
+                 is pure and testable against recorded JSON with no network:
+├── mod.rs       ForgeKind/ForgeRepo/ForgeDetection/PullRequest/ChecksSummary/
+│                NewPullRequest + the `Forge` trait, `forge_for(kind)`, and the
+│                injection guards every URL and git argv goes through:
+│                validate_host, encode_segment, validate_sha, validate_ref_name
+├── remote.rs    parse_remote_url + detect. PURE. Handles scp-like SSH, ssh://,
+│                http(s)://, git://, GitLab subgroups, self-hosted hosts. NOTE the
+│                port asymmetry: an SSH port is DROPPED (it is not where the API
+│                listens), an HTTPS port is KEPT (for self-hosted it is). A repo
+│                with no parseable remote yields None — a STATE, not an error
+├── token.rs     `Secret` (no Display, no Serialize, Debug prints `Secret(***)`),
+│                `redact`, and storage delegated to the user's git credential
+│                helper under `<host>.platypusgit-forge.invalid` (RFC 6761) —
+│                see the token-storage note under Conventions
+├── http.rs      The ONLY impure file: one ureq agent, https_only + timeout +
+│                4MB body cap; 401/403 → ForgeAuth, other non-2xx → Forge with the
+│                API's own message, everything scrub_credentials'd
+├── github.rs    REST v3. api.github.com for github.com, /api/v3 for Enterprise
+├── gitlab.rs    REST v4. Project id is the URL-encoded FULL PATH; MR create has
+│                NO draft param — draft is a `Draft: ` title prefix
+└── checkout.rs  The git half of "check out this PR": fetch_args / checkout_args /
+                 branch_exists, split out so tests/forge_checkout.rs can drive
+                 them against a real repo whose bare origin carries
+                 refs/pull/1/head at a commit on no branch (the fork case).
+                 The fetch writes NO ref (lands in FETCH_HEAD) — fetching into
+                 refs/heads/<local> is refused for a checked-out branch and would
+                 force-update someone's commits away. And do NOT pass `--` to
+                 `git rev-parse`: after it everything is a PATH, so every branch
+                 reads as absent (regression-tested)
 lib.rs           Tauri builder + invoke_handler! registry (all commands listed there)
 cli.rs           CLI arg parsing (LaunchIntent, parse_args, resolve_repo_root),
                  shim install/status helpers (install_shim, shim_status) —
@@ -262,6 +297,11 @@ commands/        Thin Tauri handlers, one file per area:
 │                  save_resolution, abort/continue_operation, run_mergetool,
 │                  restart_conflict
 ├── rebase.rs      rebase_start/continue/abort/status/acknowledge (interactive)
+├── forge.rs       forge_detect, forge_sign_in/sign_out/token_status/validate_token,
+│                  forge_list_pull_requests, forge_pull_request_checks,
+│                  forge_create_pull_request, forge_checkout_pull_request.
+│                  Owns `ForgeTokens` (managed per-process token cache) and
+│                  `blocking_forge`, which redacts the token out of any error
 ├── reflog.rs      get_reflog, checkout_detached
 └── create.rs      init_repo, default_init_branch, clone_repo (streaming
                    git clone → clone://progress events)
@@ -292,7 +332,7 @@ design/              In-house design system (NOT components/ui/). Exports via de
 
 screens/             One screen per activity-bar item + modal-ish deep views:
   RepoBrowser, CommitPanel, History, DiffViewer, Branches, Rebase,
-  Remote, Welcome, Reflog, CommitDiff, FileHistory, Blame, Settings
+  Remote, Pulls, Welcome, Reflog, CommitDiff, FileHistory, Blame, Settings
                      There is deliberately NO Conflict screen (#108): conflicts
                      are announced by OperationBar and resolved in the merge
                      window. A retired screen id must also be dropped from
@@ -355,13 +395,27 @@ features/            Per-feature: components + Zustand store colocated
 ├── auth/            Credential challenge/retry (#61 D5): useAuthStore (the one
 │                    pending challenge + the retry closure its raiser supplies —
 │                    deliberately NOT the secret) + CredentialDialog. The retry
-│                    helper is `withAuthRetry`, module-private inside
-│                    useRepoStore.ts; useCreateStore hand-rolls the same shape
+│                    helper is `withAuthRetry`, which LIVES IN useRepoStore.ts
+│                    and is exported so another feature store can reuse it
+│                    rather than grow a second retry path (useForgeStore.checkout
+│                    fetches a PR head ref, #92). It resolves as soon as it
+│                    RAISES a challenge, so a caller that needs to distinguish
+│                    "prompt is up" from "op failed" cannot use a boolean — see
+│                    `CheckoutOutcome`. useCreateStore hand-rolls the same shape
 │                    for clone because it must drop `busy` before prompting and
 │                    only has a repo id after the clone succeeds.
 ├── create/          Clone + Init dialogs (PGModal), useCreateStore,
 │                    deriveRepoName. Clone shells out to real git with the
 │                    same prompt-less env as fetch/pull/push.
+├── forge/           PR/MR feature (#92): useForgeStore (detection, list, checks,
+│                    create, checkout, sign-in/out; hostKinds+logins persisted
+│                    under `pg-forge-hosts`, NEVER a token), forgeLabels (pure:
+│                    prNoun/prNumberLabel per forge — `!7` on GitLab, `#7` on
+│                    GitHub — and localBranchFor, which numbers a FORK request
+│                    instead of reusing its branch name), PullRequestRow,
+│                    CreatePullRequestDialog, ForgeSettings (rendered inside the
+│                    Settings screen; state lives here because an account list is
+│                    not a preference)
 ├── diff/            CommitDiffPanel (shared commit-diff view) + WhitespaceToggle
 │                    (ignore-whitespace control; also owns
 │                    useHunkActionsDisabledReason — hunk staging is disabled
@@ -496,6 +550,37 @@ lib/
 - **Rust:** every IPC-crossing fn returns `AppResult<T> = Result<T, AppError>`. No unwrap/panic in commands. Add `AppError` variants rather than stringifying.
 - **TS:** `AppError` union in `src/lib/errors.ts` stays 1:1 with Rust enum. New Rust variant → update TS same commit.
 - Wire format: `{ kind, message }` via `#[serde(tag = "kind", content = "message")]`. Consumers narrow on `kind`.
+- Some variants carry an IDENTIFIER, not prose — `Auth` (a struct), `ForgeAuth`
+  (a host), `BranchExists` (a branch name). `appErrorMessage` renders each into a
+  sentence; a new variant of that shape needs a case there, or the banner reads
+  `github.com`.
+- `ForgeAuth` is deliberately separate from `Auth`: `Auth` means "git needs a
+  credential for this remote, prompt and retry", so reusing it for a bad API token
+  would pop the transport-credential dialog for a problem only Settings can fix.
+
+### Forge tokens are NOT git credentials (#92)
+- `commands/net.rs::Credentials` answers git's askpass prompt for one
+  fetch/push. A forge API token authenticates an HTTP header for a host's API and
+  is kept until removed. **They share no struct, no storage key, and no code
+  path** — do not extend `Credentials` for a forge.
+- Storage is still delegated to the user's own git credential helper, but under
+  `protocol=https`, `host=<forge-host>.platypusgit-forge.invalid`,
+  `username=platypusgit-forge`. The `.invalid` namespacing is load-bearing:
+  GitLab's API and its git transport share one host (`gitlab.com/api/v4`), as
+  does GitHub Enterprise, so keying on the bare host would **overwrite the
+  credential the user pushes with**. `.invalid` is RFC 6761-reserved, so no git
+  remote can ever ask for it. A custom `protocol=` was tried and rejected:
+  `git-credential-osxkeychain` silently `exit(0)`s on an unknown protocol.
+- `git credential` runs with cwd = the OS temp dir, so a repo-local
+  `credential.helper` cannot redirect where a token is read from or stored.
+- `store_token` **round-trips** (`approve` → `fill` → compare) and raises
+  `ForgeTokenStore` naming the remedy when the token did not stick. Unlike D5,
+  storage here cannot be best-effort: a silently lost token means the user typed a
+  secret into a box for nothing.
+- A token is a `forge::token::Secret`: no `Display`, no `Serialize`, `Debug`
+  prints `Secret(***)`. `expose()` has exactly two call sites (the auth header,
+  and the credential-protocol writer). Grep for it before adding a third.
+- No command returns a token. `forge_token_status` reports presence + login.
 
 ### Adding a new git op (standard path)
 1. Add method to `GitBackend` trait (`src-tauri/src/git/mod.rs`).
@@ -576,14 +661,20 @@ lib/
 
 ### Network ops and credentials (#61 D5)
 
-- **One runner, six call sites.** Every op that shells out to real `git` over the
-  network goes through `commands::net::run_git_authenticated` (or, for clone,
+- **One runner, eight call sites.** Every op that shells out to real `git` over
+  the network goes through `commands::net::run_git_authenticated` (or, for clone,
   through its two primitives `apply_auth_env` + `map_git_failure`, because clone
-  needs a streamed stderr pipe rather than `.output()`). The six:
+  needs a streamed stderr pipe rather than `.output()`). The eight:
   `fetch`, `fetch_all`, `pull`, `push`, `push_tag`, `push_delete_branch` in
-  `commands/branches.rs`, plus `clone_repo` in `commands/create.rs`. A new network
-  op joins them; **do not open a second auth path.** `branches.rs`'s local
-  `run_git` (merge/rebase/checkout) is the deliberately credential-less sibling.
+  `commands/branches.rs`, plus `clone_repo` in `commands/create.rs`, plus
+  `forge_checkout_pull_request`'s FETCH in `commands/forge.rs` (#92 — its second
+  git call, the `checkout` of `FETCH_HEAD`, passes `None` on purpose: the tip is
+  already local and touches no remote). A new network op joins them; **do not open
+  a second auth path.** `branches.rs`'s local `run_git` (merge/rebase/checkout) is
+  the deliberately credential-less sibling, and `forge/token.rs`'s
+  `git credential` + `forge/checkout.rs`'s `git rev-parse` spawn git directly
+  because neither contacts a remote (and routing `git credential` through the
+  authenticated runner would set `GIT_ASKPASS` and change its semantics).
 - **Retry, never prompt mid-run.** The first attempt is always prompt-less, so the
   common case (helper or ssh-agent already works) is byte-for-byte what it always
   was. A failure is classified by `git/auth.rs::classify_auth_failure`; an auth
@@ -592,6 +683,13 @@ lib/
   verification failure stays `Network` on purpose — no typeable credential fixes
   it. New store actions use `withAuthRetry` and put `refreshAll()` INSIDE the
   retried closure.
+- **`withAuthRetry` returns once the challenge is RAISED, not once the retry
+  finishes.** So an action whose caller then decides something (a confirm, a
+  toast) cannot report success/failure as a boolean — `false` would mean both "it
+  failed" and "a password prompt is on screen", and the caller would stack its own
+  dialog on top of the prompt. `useForgeStore.checkout` returns a
+  `CheckoutOutcome` (`ok` | `branch-exists` | `auth-pending` | `error`) for exactly
+  this reason.
 - **Scrub before surfacing, always.** `map_git_failure` runs `scrub_credentials`
   first, on both branches, because git echoes remote URLs and a remote configured
   as `https://user:token@host/…` would otherwise put the token in an error banner

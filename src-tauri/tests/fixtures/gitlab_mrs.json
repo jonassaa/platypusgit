@@ -1,0 +1,32 @@
+[
+  {
+    "id": 90210,
+    "iid": 7,
+    "state": "opened",
+    "title": "Add the pipeline status column",
+    "web_url": "https://gitlab.com/group/sub/svc/-/merge_requests/7",
+    "draft": false,
+    "work_in_progress": false,
+    "updated_at": "2026-08-14T10:00:00.000Z",
+    "author": { "username": "aasberg", "name": "Jonas Aasberg" },
+    "source_branch": "feat/pipeline-column",
+    "target_branch": "main",
+    "sha": "cafebabedeadbeef0123456789abcdef01234567",
+    "source_project_id": 5,
+    "target_project_id": 5
+  },
+  {
+    "id": 90211,
+    "iid": 8,
+    "state": "opened",
+    "title": "Draft: rework the settings layout",
+    "web_url": "https://gitlab.com/group/sub/svc/-/merge_requests/8",
+    "updated_at": "2026-08-13T08:00:00.000Z",
+    "author": { "username": "contributor" },
+    "source_branch": "settings-rework",
+    "target_branch": "develop",
+    "sha": "0123456789abcdef0123456789abcdef01234567",
+    "source_project_id": 42,
+    "target_project_id": 5
+  }
+]

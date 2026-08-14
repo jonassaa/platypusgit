@@ -23,6 +23,7 @@ import {
   type ThemeDef,
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
+import { ForgeSettings } from "@/features/forge/ForgeSettings";
 import { cliShimStatus, installCliShim, type PullMode } from "@/lib/tauri";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import type { CliShimStatus } from "@/lib/types";
@@ -267,6 +268,7 @@ export function SettingsScreen() {
           />
         </Section>
 
+        <ForgeSettings />
         <KeyboardSection />
         <CliSection />
         <UpdatesSection />

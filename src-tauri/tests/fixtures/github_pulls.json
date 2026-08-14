@@ -1,0 +1,59 @@
+[
+  {
+    "number": 118,
+    "state": "open",
+    "title": "feat(history): HEAD indicator becomes six marks and a weight knob",
+    "html_url": "https://github.com/jonassaa/platypusgit/pull/118",
+    "draft": false,
+    "updated_at": "2026-08-14T09:12:44Z",
+    "user": { "login": "jonassaa" },
+    "head": {
+      "ref": "feat/head-marks",
+      "sha": "6d15cfe2b71a44c9f0e2d1a3b5c7e9f0a1b2c3d4",
+      "label": "jonassaa:feat/head-marks",
+      "repo": { "full_name": "jonassaa/platypusgit" }
+    },
+    "base": {
+      "ref": "main",
+      "repo": { "full_name": "jonassaa/platypusgit" }
+    }
+  },
+  {
+    "number": 119,
+    "state": "open",
+    "title": "docs: fix a typo in the keymap spec",
+    "html_url": "https://github.com/jonassaa/platypusgit/pull/119",
+    "draft": true,
+    "updated_at": "2026-08-13T18:01:00Z",
+    "user": { "login": "outside-contributor" },
+    "head": {
+      "ref": "patch-1",
+      "sha": "aaaaaaabbbbbbbcccccccdddddddeeeeeeefffffff",
+      "label": "outside-contributor:patch-1",
+      "repo": { "full_name": "outside-contributor/platypusgit" }
+    },
+    "base": {
+      "ref": "main",
+      "repo": { "full_name": "jonassaa/platypusgit" }
+    }
+  },
+  {
+    "number": 120,
+    "state": "open",
+    "title": "chore: bump deps (fork deleted)",
+    "html_url": "https://github.com/jonassaa/platypusgit/pull/120",
+    "draft": false,
+    "updated_at": "2026-08-12T07:30:00Z",
+    "user": { "login": "ghost" },
+    "head": {
+      "ref": "deps",
+      "sha": "1111111222222233333334444444555555566666",
+      "label": "unknown:deps",
+      "repo": null
+    },
+    "base": {
+      "ref": "main",
+      "repo": { "full_name": "jonassaa/platypusgit" }
+    }
+  }
+]

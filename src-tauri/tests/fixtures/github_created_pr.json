@@ -1,0 +1,15 @@
+{
+  "number": 121,
+  "state": "open",
+  "title": "feat(forge): PR / MR integration",
+  "html_url": "https://github.com/jonassaa/platypusgit/pull/121",
+  "draft": true,
+  "updated_at": "2026-08-14T12:00:00Z",
+  "user": { "login": "jonassaa" },
+  "head": {
+    "ref": "feat/forge-integration",
+    "sha": "abcdef0123456789abcdef0123456789abcdef01",
+    "repo": { "full_name": "jonassaa/platypusgit" }
+  },
+  "base": { "ref": "main", "repo": { "full_name": "jonassaa/platypusgit" } }
+}

@@ -75,6 +75,14 @@ const COMMON = {
   // because both actions are pane-scoped — presets.test.ts only forbids two
   // GLOBAL actions on one chord, and the dispatcher tries each id in turn.
   "diff.toggleLine": [" "],
+  // Pull / merge requests (#92). The shifted-digit family is already where
+  // screens without a primary number live (nav.reflog is ⌘⇧9 in rider), and
+  // ⌘⇧8 is free in both presets — classic's asserted ⌘8 = Diff stays put.
+  "nav.pulls": ["Mod+Shift+8"],
+  // Repo OPS live on Mod+Shift+<letter> (S/U/M/K/T). Y carries no entrenched
+  // meaning on any platform, and Shift — not Mod+Alt+<letter>, which the AltGr
+  // rule forbids (see presets.test.ts).
+  "forge.createPr": ["Mod+Shift+Y"],
   // Find-in-tree (matches the ⌘⇧F chip on the Files tree). Component-handled
   // by RepoBrowser; a find, not a mutating op, so ⌘⇧F muscle-memory is safe.
   "tree.find": ["Mod+Shift+F"],

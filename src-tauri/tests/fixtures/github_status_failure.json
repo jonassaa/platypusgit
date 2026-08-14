@@ -1,0 +1,8 @@
+{
+  "state": "failure",
+  "total_count": 2,
+  "statuses": [
+    { "state": "failure", "context": "e2e-linux" },
+    { "state": "success", "context": "typecheck" }
+  ]
+}

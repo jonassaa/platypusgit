@@ -22,7 +22,19 @@ export type AppError =
   | { kind: "Auth"; message: AuthChallenge }
   | { kind: "EmbeddedRepo"; message: string }
   | { kind: "DubiousOwnership"; message: string }
-  | { kind: "InvalidRebasePlan"; message: string };
+  | { kind: "InvalidRebasePlan"; message: string }
+  /** A forge API call failed (#92). Scrubbed + redacted: never carries a token. */
+  | { kind: "Forge"; message: string }
+  /**
+   * The forge API rejected our token for this HOST (401/403). Distinct from
+   * `Auth`, which is a git-transport credential prompt — only Settings can fix
+   * a bad API token, so the two must not share a dialog.
+   */
+  | { kind: "ForgeAuth"; message: string }
+  /** The token did not survive `git credential approve` → `fill` (#92). */
+  | { kind: "ForgeTokenStore"; message: string }
+  /** A local branch the operation would overwrite already exists. */
+  | { kind: "BranchExists"; message: string };
 
 /** Which credential the remote is asking for. */
 export type AuthKind = "Https" | "SshPassphrase" | "SshKey";
@@ -47,6 +59,11 @@ export function appErrorMessage(e: unknown): string {
     // Auth's payload is structured, not a sentence — render it here rather than
     // letting an object reach the UI as "[object Object]".
     if (e.kind === "Auth") return authChallengeMessage(e.message);
+    // ForgeAuth carries a HOST and BranchExists carries a BRANCH NAME, not
+    // prose. Rendered raw, the banner would just read "github.com".
+    if (e.kind === "ForgeAuth") return forgeAuthMessage(e.message);
+    if (e.kind === "BranchExists")
+      return `A local branch named ${e.message} already exists.`;
     return e.message ?? e.kind;
   }
   if (e instanceof Error) return e.message;
@@ -84,6 +101,39 @@ export function isAuthError(
   e: unknown,
 ): e is Extract<AppError, { kind: "Auth" }> {
   return isAppError(e) && e.kind === "Auth";
+}
+
+/**
+ * Narrow to a forge-token failure (#92). Routes the user to Settings, NOT to
+ * the git-transport credential dialog — a forge token is a different credential
+ * and no askpass prompt can supply it.
+ */
+export function isForgeAuthError(
+  e: unknown,
+): e is Extract<AppError, { kind: "ForgeAuth" }> {
+  return isAppError(e) && e.kind === "ForgeAuth";
+}
+
+/** The host a forge-token failure was for, or null. */
+export function forgeAuthHost(e: unknown): string | null {
+  return isForgeAuthError(e) ? e.message : null;
+}
+
+/**
+ * What to tell the user about a rejected or absent forge token. Same split of
+ * duties as the embedded-repo and dubious-ownership helpers: the Rust error stays
+ * terse (it carries only the host), the words live next to the UI — and they must
+ * point at Settings, because no askpass prompt can supply an API token.
+ */
+export function forgeAuthMessage(host: string): string {
+  return `The API token for ${host} is missing or was rejected. Add one in Settings → Integrations.`;
+}
+
+/** Narrow to "a local branch of that name already exists". */
+export function isBranchExistsError(
+  e: unknown,
+): e is Extract<AppError, { kind: "BranchExists" }> {
+  return isAppError(e) && e.kind === "BranchExists";
 }
 
 /**

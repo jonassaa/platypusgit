@@ -1,0 +1,15 @@
+{
+  "id": 90212,
+  "iid": 9,
+  "state": "opened",
+  "title": "Draft: add the forge integration",
+  "web_url": "https://gitlab.com/group/sub/svc/-/merge_requests/9",
+  "draft": true,
+  "updated_at": "2026-08-14T12:00:00.000Z",
+  "author": { "username": "aasberg" },
+  "source_branch": "feat/forge-integration",
+  "target_branch": "main",
+  "sha": "fedcba9876543210fedcba9876543210fedcba98",
+  "source_project_id": 5,
+  "target_project_id": 5
+}

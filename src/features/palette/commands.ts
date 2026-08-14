@@ -4,6 +4,8 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { useForgeStore } from "@/features/forge/useForgeStore";
+import { prNoun, prNumberLabel } from "@/features/forge/forgeLabels";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
@@ -202,6 +204,7 @@ const SCREENS: [string, string, string, ActionId][] = [
   ["branches", "Branches", "branch", "nav.branches"],
   ["rebase", "Rebase", "rebase", "nav.rebase"],
   ["remote", "Remotes", "link", "nav.remote"],
+  ["pulls", "Pull requests", "pullRequest", "nav.pulls"],
   ["diff", "Diff viewer", "fileCode", "nav.diff"],
   ["reflog", "Reflog", "clock", "nav.reflog"],
   ["settings", "Settings", "settings", "nav.settings"],
@@ -554,6 +557,55 @@ export function buildCommands(): PaletteItem[] {
         })),
       },
     );
+  }
+
+  // -- forge (pull / merge requests, #92) --
+  // Listed only once a forge is detected AND signed in: rows that could only
+  // ever flash "no forge here" would be noise in every other repository.
+  {
+    const forgeState = useForgeStore.getState();
+    if (forgeState.gate() === "ready" && forgeState.forge) {
+      const kind = forgeState.forge.kind;
+      const noun = prNoun(kind);
+      items.push({
+        type: "command", id: "action:forge-create",
+        search: `Create ${noun} open new pr mr`,
+        label: `Create ${noun}…`, icon: "pullRequest",
+        actionId: "forge.createPr",
+        run: direct(() => {
+          useForgeStore.getState().openCreate();
+          nav.setIntent({ kind: "switch-screen", screen: "pulls" });
+        }),
+      });
+      items.push({
+        type: "command", id: "action:forge-refresh",
+        search: `Refresh ${noun}s reload`,
+        label: `Refresh ${noun}s`, icon: "sync",
+        run: direct(() => void useForgeStore.getState().refresh()),
+      });
+      if (forgeState.pulls.length) {
+        items.push({
+          type: "command", id: "action:forge-open",
+          search: `Open ${noun} in browser`,
+          label: `Open ${noun} in browser…`, icon: "external",
+          run: step(() => ({
+            kind: "pick", title: `Open ${noun}`,
+            items: useForgeStore.getState().pulls.map((pr) => ({
+              type: "command" as const,
+              id: `pick-pr:${pr.number}`,
+              search: `${prNumberLabel(kind, pr.number)} ${pr.title} ${pr.author}`,
+              label: `${prNumberLabel(kind, pr.number)} ${pr.title}`,
+              detail: `${pr.author} · ${pr.sourceBranch} → ${pr.targetBranch}`,
+              icon: "pullRequest",
+              run: () => {
+                palette().closePalette();
+                void useForgeStore.getState().openInBrowser(pr);
+              },
+            })),
+          })),
+        });
+      }
+    }
   }
 
   // -- conflict resolution --

@@ -1,0 +1,10 @@
+{
+  "state": "success",
+  "total_count": 3,
+  "sha": "6d15cfe2b71a44c9f0e2d1a3b5c7e9f0a1b2c3d4",
+  "statuses": [
+    { "state": "success", "context": "e2e-linux" },
+    { "state": "success", "context": "typecheck" },
+    { "state": "success", "context": "cargo test" }
+  ]
+}
