@@ -486,8 +486,13 @@ describe("keymap — rider preset (default)", () => {
     await openRepo(repo.path);
     await jsChord("Mod+D");
     await waitScreen('[data-pg-pane="diff.files"]', "Diff");
-    await $('[data-hunk-index="1"]').waitForDisplayed({
-      timeout: 20_000, timeoutMsg: "second hunk never rendered — fixture geometry off?",
+    // Only hunk 0 is asserted up front. The diff is windowed and whole-file by
+    // default, so hunk 1 — ~50 lines further down — is not mounted until F7
+    // scrolls it into view; requiring it here would fail for a reason that has
+    // nothing to do with the keymap. The F7 sequence below proves both hunks
+    // exist, and now also that F7's scroll-into-view works.
+    await $('[data-hunk-index="0"]').waitForDisplayed({
+      timeout: 20_000, timeoutMsg: "first hunk never rendered — fixture geometry off?",
     });
     await jsChord("F7");
     await $('[data-hunk-index="0"][data-hunk-active]').waitForDisplayed({

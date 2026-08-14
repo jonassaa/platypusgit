@@ -72,6 +72,36 @@ describe("useSettingsStore persistence", () => {
     expect(useSettingsStore.getState().signCommits).toBe("config");
   });
 
+  it("defaults the diff to an inline, whole-file view", async () => {
+    const { useSettingsStore } = await freshStore();
+    const s = useSettingsStore.getState();
+    expect(s.diffViewMode).toBe("inline");
+    expect(s.diffContextMode).toBe("wholeFile");
+  });
+
+  it("persists both diff view settings", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().set("diffViewMode", "split");
+    useSettingsStore.getState().set("diffContextMode", "chunks");
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(raw.diffViewMode).toBe("split");
+    expect(raw.diffContextMode).toBe("chunks");
+  });
+
+  // Same reasoning as the uiDensity clamp below: load() copies a persisted value
+  // for a known key without validating it, and an unknown mode reaching the
+  // renderer would mean "neither branch" — a blank diff pane.
+  it("degrades unrecognized persisted diff modes to the defaults", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ diffViewMode: "sideways", diffContextMode: "everything" }),
+    );
+    const { useSettingsStore } = await freshStore();
+    const s = useSettingsStore.getState();
+    expect(s.diffViewMode).toBe("inline");
+    expect(s.diffContextMode).toBe("wholeFile");
+  });
+
   it("set() persists the changed key", async () => {
     const { useSettingsStore } = await freshStore();
     useSettingsStore.getState().set("autoStashBeforePull", false);

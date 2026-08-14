@@ -23,10 +23,18 @@ export type SideSource =
 export interface DiffSyntax {
   old: SyntaxLine[] | null;
   new: SyntaxLine[] | null;
+  /**
+   * The text the tokens came from.
+   *
+   * Exposed so whole-file mode can fill the gaps between hunks from it rather
+   * than issuing a second read of a blob this hook already fetched.
+   */
+  oldText: string | null;
+  newText: string | null;
 }
 
 /** No tokens for either side. Stable identity, so it is safe in a render path. */
-const EMPTY: DiffSyntax = { old: null, new: null };
+const EMPTY: DiffSyntax = { old: null, new: null, oldText: null, newText: null };
 
 /**
  * Tokens for both sides of a file diff.
@@ -88,7 +96,15 @@ export function useDiffSyntax(o: {
 
   const oldLines = useSyntax(path, texts.old);
   const newLines = useSyntax(path, texts.new);
-  return React.useMemo(() => ({ old: oldLines, new: newLines }), [oldLines, newLines]);
+  return React.useMemo(
+    () => ({
+      old: oldLines,
+      new: newLines,
+      oldText: texts.old,
+      newText: texts.new,
+    }),
+    [oldLines, newLines, texts.old, texts.new],
+  );
 }
 
 export { EMPTY as EMPTY_DIFF_SYNTAX };

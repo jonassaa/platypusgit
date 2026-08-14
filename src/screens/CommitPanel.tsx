@@ -53,12 +53,14 @@ import {
 import { getDiff, getLogPage } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
 import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import {
   WhitespaceToggle,
   useHunkActionsDisabledReason,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
+import { useWholeFile } from "@/features/diff/useWholeFile";
 import { buildStatusTree, findStatusByTreeKey, treeKeyToPath } from "@/lib/tree";
 import { useTreeViewMode } from "@/lib/useTreeViewMode";
 import type {
@@ -476,6 +478,10 @@ export function CommitPanelScreen() {
   }, []);
   React.useEffect(() => setCollapsed(new Set()), [selected?.path, selected?.side]);
 
+  // Whole file here too, on purpose: the hunk headers stay, so each change block
+  // keeps its own Stage/Discard and line selection while the file reads
+  // continuously around them. Hunk indices are the canonical ones either way.
+  const wholeFile = useWholeFile(syntax);
   const rows = React.useMemo(
     () =>
       flattenDiffRows(diff && !diff.binary ? diff.hunks : [], {
@@ -483,21 +489,17 @@ export function CommitPanelScreen() {
         rowH,
         collapsed,
         syntax,
+        wholeFile,
       }),
-    [diff, headerH, rowH, collapsed, syntax],
+    [diff, headerH, rowH, collapsed, syntax, wholeFile],
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
   const diffScrollRef = React.useRef<HTMLDivElement>(null);
   const [diffScrollTop, setDiffScrollTop] = React.useState(0);
-  const [diffViewportH, setDiffViewportH] = React.useState(0);
-  React.useEffect(() => {
-    const el = diffScrollRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    setDiffViewportH(el.clientHeight);
-    const ro = new ResizeObserver(() => setDiffViewportH(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [diffMode]);
+  const { viewportH: diffViewportH, remeasure: remeasureDiff } = useViewportH(
+    diffScrollRef,
+    [diffMode],
+  );
   const win = React.useMemo(
     () =>
       windowVariable(heights, {
@@ -980,7 +982,10 @@ export function CommitPanelScreen() {
           style={{ flex: 1 }}
           ariaLabel="Diff"
           innerRef={diffScrollRef}
-          onScroll={() => setDiffScrollTop(diffScrollRef.current?.scrollTop ?? 0)}
+          onScroll={() => {
+            setDiffScrollTop(diffScrollRef.current?.scrollTop ?? 0);
+            remeasureDiff();
+          }}
         >
           {diffLoading && (
             <div

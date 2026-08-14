@@ -651,8 +651,8 @@ export function PGDiffLine({
  * Render one line as spans, combining syntax classes and word-diff emphasis.
  *
  * Both come from buildLineSpans, which tiles the line — so this maps and never
- * reasons about gaps or overlaps. The changed-span tint stays relative to the
- * existing git tokens so custom and light themes carry through.
+ * reasons about gaps or overlaps. The changed-span tint is its own themeable
+ * token, per MODE, so a light theme can go darker where dark goes lighter.
  */
 function DiffText({
   text,
@@ -676,9 +676,7 @@ function DiffText({
     return <>{text}</>;
   }
   const tint =
-    kind === "add"
-      ? "oklch(from var(--git-added) l c h / 0.28)"
-      : "oklch(from var(--git-removed) l c h / 0.28)";
+    kind === "add" ? "var(--git-added-word)" : "var(--git-removed-word)";
   return (
     <>
       {rendered.map((s, i) => (

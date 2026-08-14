@@ -49,6 +49,7 @@ import {
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { useDiffSyntax, useSyntax } from "@/lib/syntax";
 import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
 import { splitCodeLines } from "@/lib/codeLines";
@@ -66,6 +67,7 @@ import {
   useHunkActionsDisabledReason,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
+import { useWholeFile } from "@/features/diff/useWholeFile";
 import { PGPane, FocusableScroll, useAction, usePaneList } from "@/features/keymap";
 import type {
   BranchInfo,
@@ -590,6 +592,7 @@ export function RepoBrowserScreen() {
       return next;
     });
   }, []);
+  const browserWholeFile = useWholeFile(browserSyntax);
   const diffRows = React.useMemo(
     () =>
       flattenDiffRows(diff && !diff.binary ? diff.hunks : [], {
@@ -597,21 +600,15 @@ export function RepoBrowserScreen() {
         rowH: diffRowH,
         collapsed: collapsedHunks,
         syntax: browserSyntax,
+        wholeFile: browserWholeFile,
       }),
-    [diff, diffHeaderH, diffRowH, collapsedHunks, browserSyntax],
+    [diff, diffHeaderH, diffRowH, collapsedHunks, browserSyntax, browserWholeFile],
   );
   const diffHeights = React.useMemo(() => diffRows.map((r) => r.h), [diffRows]);
   const diffScrollRef = React.useRef<HTMLDivElement>(null);
   const [diffScrollTop, setDiffScrollTop] = React.useState(0);
-  const [diffViewportH, setDiffViewportH] = React.useState(0);
-  React.useEffect(() => {
-    const el = diffScrollRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    setDiffViewportH(el.clientHeight);
-    const ro = new ResizeObserver(() => setDiffViewportH(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const { viewportH: diffViewportH, remeasure: remeasureDiff } =
+    useViewportH(diffScrollRef);
   const diffWin = React.useMemo(
     () =>
       windowVariable(diffHeights, {
@@ -965,7 +962,10 @@ export function RepoBrowserScreen() {
             style={{ flex: 1 }}
             ariaLabel="File preview"
             innerRef={diffScrollRef}
-            onScroll={() => setDiffScrollTop(diffScrollRef.current?.scrollTop ?? 0)}
+            onScroll={() => {
+              setDiffScrollTop(diffScrollRef.current?.scrollTop ?? 0);
+              remeasureDiff();
+            }}
           >
             {!selectedFile && (
               <PGEmpty

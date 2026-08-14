@@ -22,11 +22,13 @@ import {
   WhitespaceToggle,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
+import { useWholeFile } from "@/features/diff/useWholeFile";
 import { statusMark } from "@/lib/derive";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
 import { flattenDiffRows, rowOffset, windowVariable } from "@/lib/diffRows";
+import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { pairChangedLines } from "@/lib/pairChangedLines";
@@ -38,7 +40,16 @@ export function DiffViewerScreen() {
   const status = useRepoStore((s) => s.status);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const ignoreWhitespace = useIgnoreWhitespace();
-  const [mode, setMode] = React.useState<"unified" | "split">("unified");
+  // Persisted, so the choice is a preference rather than resetting on every
+  // navigation. The rest of this screen speaks "unified"; the setting speaks
+  // "inline". Mapping at this one boundary beats renaming every comparison.
+  const diffViewMode = useSettingsStore((s) => s.diffViewMode);
+  const setSetting = useSettingsStore((s) => s.set);
+  const mode: "unified" | "split" = diffViewMode === "split" ? "split" : "unified";
+  const setMode = React.useCallback(
+    (v: string) => setSetting("diffViewMode", v === "split" ? "split" : "inline"),
+    [setSetting],
+  );
   const [wrap, setWrap] = React.useState(false);
   const [filter, setFilter] = React.useState("");
   const [findQuery, setFindQuery] = React.useState("");
@@ -193,6 +204,10 @@ export function DiffViewerScreen() {
   }, []);
   React.useEffect(() => setCollapsed(new Set()), [selectedPath]);
 
+  // A find query rewrites the hunks down to matching lines only, so the pane
+  // becomes a list of matches rather than a file. Filler rows are never matches,
+  // so whole-file mode is suppressed while a query is active.
+  const wholeFile = useWholeFile(syntax, { disabled: !!findQuery.trim() });
   const rows = React.useMemo(
     () =>
       flattenDiffRows(findFiltered?.hunks ?? [], {
@@ -200,22 +215,15 @@ export function DiffViewerScreen() {
         rowH,
         collapsed,
         syntax,
+        wholeFile,
       }),
-    [findFiltered, headerH, rowH, collapsed, syntax],
+    [findFiltered, headerH, rowH, collapsed, syntax, wholeFile],
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = React.useState(0);
-  const [viewportH, setViewportH] = React.useState(0);
-  React.useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    setViewportH(el.clientHeight);
-    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [mode]);
+  const { viewportH, remeasure } = useViewportH(scrollRef, [mode]);
 
   // Wrap makes row heights genuinely unknown — pre-wrap rows are as tall as they
   // need to be — so windowing is off and every row renders. A very large wrapped
@@ -292,7 +300,7 @@ export function DiffViewerScreen() {
             <WhitespaceToggle />
             <PGButtonGroup
               value={mode}
-              onChange={(v) => setMode(v as typeof mode)}
+              onChange={setMode}
               options={[
                 { value: "unified", label: "Unified" },
                 { value: "split", label: "Split" },
@@ -448,7 +456,10 @@ export function DiffViewerScreen() {
               style={{ flex: 1 }}
               ariaLabel="Diff"
               innerRef={scrollRef}
-              onScroll={() => setScrollTop(scrollRef.current?.scrollTop ?? 0)}
+              onScroll={() => {
+                setScrollTop(scrollRef.current?.scrollTop ?? 0);
+                remeasure();
+              }}
             >
               {findFiltered.hunks.length === 0 && findQuery.trim() && (
                 <PGEmpty icon="search" title="No matches" />

@@ -5,3 +5,4 @@ export {
   type DiffSyntax,
   type SideSource,
 } from "./useDiffSyntax";
+export { usePrefetchSyntax, PREFETCH_MAX } from "./usePrefetchSyntax";

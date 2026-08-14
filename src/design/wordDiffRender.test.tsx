@@ -62,6 +62,16 @@ describe("word diff rendering", () => {
     expect(container.textContent).toContain("const a = 2;");
   });
 
+  it("tints changed words with the dedicated word tokens", () => {
+    // The emphasis has to be a token, not an inline alpha off --git-added: a
+    // light theme needs its own calibration, and the theme editor can only reach
+    // a named token.
+    renderLines(pair);
+    const [remMark, addMark] = screen.getAllByTestId("word-change");
+    expect(remMark.style.background).toContain("--git-removed-word");
+    expect(addMark.style.background).toContain("--git-added-word");
+  });
+
   it("pairs line-for-line across a multi-line rem/add run", () => {
     renderLines([
       rem(1, "let x = 1;"),

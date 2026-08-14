@@ -333,6 +333,8 @@ const SEMANTIC_TOKENS: Record<"dark" | "light", Record<string, string>> = {
     "--git-removed": "oklch(0.68 0.18 25)",
     "--git-removed-bg": "oklch(0.35 0.10 25 / 0.25)",
     "--git-removed-gutter": "oklch(0.45 0.14 25 / 0.5)",
+    "--git-added-word": "oklch(0.55 0.13 155 / 0.55)",
+    "--git-removed-word": "oklch(0.52 0.16 25 / 0.55)",
     "--git-modified": "oklch(0.75 0.14 75)",
     "--git-modified-bg": "oklch(0.35 0.08 75 / 0.2)",
     "--git-renamed": "oklch(0.72 0.15 235)",
@@ -366,6 +368,10 @@ const SEMANTIC_TOKENS: Record<"dark" | "light", Record<string, string>> = {
     "--git-removed": "oklch(0.54 0.20 25)",
     "--git-removed-bg": "oklch(0.91 0.07 25 / 0.55)",
     "--git-removed-gutter": "oklch(0.75 0.16 25 / 0.65)",
+    // The word fill has to go DARKER than the pale *-bg it sits on, where dark
+    // mode goes lighter — inheriting the dark value would wash out to invisible.
+    "--git-added-word": "oklch(0.78 0.16 155 / 0.85)",
+    "--git-removed-word": "oklch(0.78 0.17 25 / 0.85)",
     "--git-modified": "oklch(0.58 0.14 75)",
     "--git-modified-bg": "oklch(0.91 0.08 75 / 0.5)",
     "--git-renamed": "oklch(0.53 0.16 235)",
@@ -628,6 +634,21 @@ interface PersistedState {
    */
   signCommits: "config" | "always" | "never";
   diffContextLines: number;
+  /**
+   * Inline (unified) or side-by-side. Persisted so it is a preference rather
+   * than a per-visit choice — it used to live in the Diff screen's local state
+   * and reset on every navigation.
+   */
+  diffViewMode: "inline" | "split";
+  /**
+   * Whether the diff shows the whole file or only the changed chunks.
+   *
+   * `diffContextLines` still governs the FETCH in both modes: it is what hunk
+   * indices and `changedIndex` are computed against, so staging depends on it
+   * either way. This setting only selects whether the unchanged remainder of the
+   * file is filled in around those hunks for display.
+   */
+  diffContextMode: "wholeFile" | "chunks";
   ignoreWhitespaceInDiff: boolean;
   /** Parent directory last used for Clone/Init, prefilled next time. */
   lastCreateDir: string;
@@ -665,6 +686,8 @@ const DEFAULTS: PersistedState = {
   addSignoff: false,
   signCommits: "config",
   diffContextLines: 3,
+  diffViewMode: "inline",
+  diffContextMode: "wholeFile",
   ignoreWhitespaceInDiff: false,
   lastCreateDir: "",
 };
@@ -697,6 +720,14 @@ function load(): PersistedState {
     // "no indicator at all" in the row renderer.
     if (!HEAD_INDICATORS.includes(out.headIndicator as HeadIndicator)) {
       out.headIndicator = DEFAULTS.headIndicator;
+    }
+    // Same reasoning again for the two diff modes: the renderers branch on these
+    // exact strings, so an unknown value means "neither branch" — a blank pane.
+    if (!["inline", "split"].includes(out.diffViewMode as string)) {
+      out.diffViewMode = DEFAULTS.diffViewMode;
+    }
+    if (!["wholeFile", "chunks"].includes(out.diffContextMode as string)) {
+      out.diffContextMode = DEFAULTS.diffContextMode;
     }
     // Backfill logo colors for custom themes saved before the slots existed,
     // so the theme editor and CSS vars always have a value.
@@ -745,6 +776,8 @@ function snapshot(s: SettingsState): PersistedState {
     addSignoff: s.addSignoff,
     signCommits: s.signCommits,
     diffContextLines: s.diffContextLines,
+    diffViewMode: s.diffViewMode,
+    diffContextMode: s.diffContextMode,
     ignoreWhitespaceInDiff: s.ignoreWhitespaceInDiff,
     lastCreateDir: s.lastCreateDir,
   };
