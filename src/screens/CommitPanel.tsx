@@ -467,8 +467,10 @@ export function CommitPanelScreen() {
       return;
     }
     let cancelled = false;
+    // A rename's old side lives at its OLD path; HEAD has no blob at the new one.
+    const oldPath = diff?.oldPath ?? selected.path;
     Promise.all([
-      readFileContentAtRev(repo.id, "HEAD", selected.path).catch(() => null),
+      readFileContentAtRev(repo.id, "HEAD", oldPath).catch(() => null),
       readFileContent(repo.id, selected.path).catch(() => null),
     ]).then(([o, n]) => {
       if (!cancelled) setSides({ old: o?.text ?? null, new: n?.text ?? null });
@@ -476,7 +478,7 @@ export function CommitPanelScreen() {
     return () => {
       cancelled = true;
     };
-  }, [repo, selected?.path, selected?.status.embedded]);
+  }, [repo, selected?.path, selected?.status.embedded, diff?.oldPath]);
 
   const oldSyntax = useSyntax(selected?.path ?? null, sides.old);
   const newSyntax = useSyntax(selected?.path ?? null, sides.new);

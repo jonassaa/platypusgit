@@ -121,6 +121,36 @@ describe("DiffViewer syntax highlighting", () => {
     expect(document.querySelector(".syn-keyword")).toHaveTextContent("let");
   });
 
+  it("reads a renamed file's old side at its OLD path", async () => {
+    // HEAD has no blob at the new path, so using it would leave every removed
+    // line unhighlighted.
+    resetInvokeMock();
+    mockInvoke("get_status", () => [unstaged("new.ts")]);
+    mockInvoke("get_diff", () => ({ ...diff("new.ts"), oldPath: "old.ts" }));
+    mockInvoke("read_file_content", () => ({
+      path: "new.ts", binary: false, text: "let a = 2", fromHead: false, size: 9,
+    }));
+    mockInvoke("read_file_content_at_rev", () => ({
+      path: "old.ts", binary: false, text: "let a = 1 OLD", fromHead: true, size: 13,
+    }));
+    useRepoStore.setState({ status: [unstaged("new.ts")] } as never);
+    render(
+      <WithDialogs>
+        <DiffViewerScreen />
+      </WithDialogs>,
+    );
+    // The effect runs once before the diff resolves (oldPath unknown, so the new
+    // path) and again once it has it, so assert that SOME read used the old path
+    // rather than pinning the first one.
+    await waitFor(() => {
+      const atOldPath = getInvokeCalls().filter(
+        (c) => c.cmd === "read_file_content_at_rev" && c.args.path === "old.ts",
+      );
+      expect(atOldPath.length).toBeGreaterThan(0);
+      expect(atOldPath[0].args).toMatchObject({ revspec: "HEAD" });
+    });
+  });
+
   it("keeps word-diff marks alongside syntax spans", async () => {
     await waitFor(() =>
       expect(document.querySelectorAll('[data-testid="word-change"]').length).toBeGreaterThan(0),

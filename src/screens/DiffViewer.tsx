@@ -128,8 +128,12 @@ export function DiffViewerScreen() {
       return;
     }
     let cancelled = false;
+    // A rename's old side lives at its OLD path; HEAD has no blob at the new
+    // one, so reading `current.path` there would leave every removed line
+    // unhighlighted.
+    const oldPath = diff?.oldPath ?? current.path;
     Promise.all([
-      readFileContentAtRev(repo.id, "HEAD", current.path).catch(() => null),
+      readFileContentAtRev(repo.id, "HEAD", oldPath).catch(() => null),
       readFileContent(repo.id, current.path).catch(() => null),
     ]).then(([o, n]) => {
       if (!cancelled) setSides({ old: o?.text ?? null, new: n?.text ?? null });
@@ -137,7 +141,7 @@ export function DiffViewerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [repo, current?.path, current?.embedded]);
+  }, [repo, current?.path, current?.embedded, diff?.oldPath]);
 
   const oldSyntax = useSyntax(current?.path ?? null, sides.old);
   const newSyntax = useSyntax(current?.path ?? null, sides.new);
