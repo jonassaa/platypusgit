@@ -27,6 +27,7 @@ import { statusMark } from "@/lib/derive";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
+import { pairChangedLines } from "@/lib/pairChangedLines";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
@@ -135,6 +136,23 @@ export function DiffViewerScreen() {
   }, [diff, findQuery]);
 
   const split = React.useMemo(() => diffToSplit(findFiltered), [findFiltered]);
+
+  // Same side rule as the unified path: the left column is the old file, the
+  // right the new one, and a row resolves its tokens by its own line number.
+  const splitWithSyntax = React.useMemo(() => {
+    const attach = (rows: SideLine[], lines: typeof syntax.old): SideLine[] =>
+      rows.map((r) => {
+        if (!lines || r.kind === "info" || r.kind === "empty") return r;
+        const n = typeof r.ln === "number" ? r.ln : Number(r.ln);
+        if (!Number.isFinite(n) || n < 1) return r;
+        const tokens = lines[n - 1];
+        return tokens ? { ...r, syntax: tokens } : r;
+      });
+    return {
+      left: attach(split.left, syntax.old),
+      right: attach(split.right, syntax.new),
+    };
+  }, [split, syntax]);
 
   // Keyboard: arrows move the file selection while the list pane is focused.
   const selectedIndex = Math.max(
@@ -379,7 +397,10 @@ export function DiffViewerScreen() {
             </FocusableScroll>
           )}
           {!diffLoading && findFiltered && !findFiltered.binary && mode === "split" && (
-            <PGSideBySideDiff left={split.left} right={split.right} />
+            <PGSideBySideDiff
+              left={splitWithSyntax.left}
+              right={splitWithSyntax.right}
+            />
           )}
         </PGPane>
       </div>
@@ -406,45 +427,70 @@ function toUiLine(l: {
   };
 }
 
-function diffToSplit(d: FileDiff | null): {
+/**
+ * Flatten hunks into aligned left/right columns.
+ *
+ * Removals and additions are collected as RUNS and emitted side by side, so the
+ * i-th removal shares a row with the i-th addition. Emitting each line as it came
+ * let the columns drift apart on any hunk that mixed both, and paired rows are
+ * also what intra-line word diff needs.
+ *
+ * Exported for its own test: the alignment invariant (both columns always the same
+ * length, and the same index meaning the same place in the hunk) is the kind of
+ * thing that regresses silently through the UI.
+ */
+export function diffToSplit(d: FileDiff | null): {
   left: SideLine[];
   right: SideLine[];
 } {
   const left: SideLine[] = [];
   const right: SideLine[] = [];
   if (!d) return { left, right };
+
   for (const h of d.hunks) {
     left.push({ kind: "info", text: h.header });
     right.push({ kind: "info", text: h.header });
+
+    let remRun: typeof h.lines = [];
+    let addRun: typeof h.lines = [];
+
+    const flush = () => {
+      if (remRun.length === 0 && addRun.length === 0) return;
+      const paired = pairChangedLines(
+        remRun.map((l) => l.content),
+        addRun.map((l) => l.content),
+      );
+      const rows = Math.max(remRun.length, addRun.length);
+      for (let i = 0; i < rows; i++) {
+        const r = remRun[i];
+        const a = addRun[i];
+        const p = paired[i] ?? null;
+        left.push(
+          r
+            ? { kind: "rem", ln: r.oldLineno ?? undefined, text: r.content, spans: p?.old }
+            : { kind: "empty", ln: "", text: "" },
+        );
+        right.push(
+          a
+            ? { kind: "add", ln: a.newLineno ?? undefined, text: a.content, spans: p?.new }
+            : { kind: "empty", ln: "", text: "" },
+        );
+      }
+      remRun = [];
+      addRun = [];
+    };
+
     for (const ln of h.lines) {
       const k = ln.kind.kind;
-      if (k === "Addition") {
-        left.push({ kind: "empty", ln: "", text: "" });
-        right.push({
-          kind: "add",
-          ln: ln.newLineno ?? undefined,
-          text: ln.content,
-        });
-      } else if (k === "Deletion") {
-        left.push({
-          kind: "rem",
-          ln: ln.oldLineno ?? undefined,
-          text: ln.content,
-        });
-        right.push({ kind: "empty", ln: "", text: "" });
-      } else {
-        left.push({
-          kind: "ctx",
-          ln: ln.oldLineno ?? undefined,
-          text: ln.content,
-        });
-        right.push({
-          kind: "ctx",
-          ln: ln.newLineno ?? undefined,
-          text: ln.content,
-        });
+      if (k === "Deletion") remRun.push(ln);
+      else if (k === "Addition") addRun.push(ln);
+      else {
+        flush();
+        left.push({ kind: "ctx", ln: ln.oldLineno ?? undefined, text: ln.content });
+        right.push({ kind: "ctx", ln: ln.newLineno ?? undefined, text: ln.content });
       }
     }
+    flush();
   }
   return { left, right };
 }

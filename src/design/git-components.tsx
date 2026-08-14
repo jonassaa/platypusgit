@@ -1050,6 +1050,10 @@ export interface SideLine {
   kind: DiffLineKind;
   ln?: number | string;
   text?: string;
+  /** Intra-line word spans, set by the caller's pairing pass (`diffToSplit`). */
+  spans?: WordSpan[];
+  /** Line-relative syntax tokens for this row's side of the diff. */
+  syntax?: SyntaxToken[];
 }
 
 export function PGSideBySideDiff({
@@ -1114,7 +1118,12 @@ export function PGSideBySideDiff({
                       : "var(--fg-0)",
               }}
             >
-              {ln.text}
+              <DiffText
+                text={ln.text ?? ""}
+                spans={ln.spans}
+                syntax={ln.syntax}
+                kind={ln.kind}
+              />
             </span>
           </div>
         );
