@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { PGRebaseRow } from "@/design/git-components";
 import { PGButton } from "@/design/primitives";
-import { PGEmpty } from "@/design";
+import { PGEmpty, PGIcon } from "@/design";
 import type { CommitInfo } from "@/lib/types";
 import type { RebaseAction, RebaseStep } from "@/lib/types";
 import { commitsSince } from "@/lib/tauri";
@@ -19,17 +19,32 @@ interface PlanRow {
   subject: string;
   action: RebaseAction;
   message: string;
+  /** More than one parent — actions are restricted and the row is badged. */
+  isMerge: boolean;
 }
+
+/**
+ * Actions that mean anything for a merge row; mirrors `rebase_plan::merge_legal`
+ * on the backend. Keep the two in sync or the UI offers an action the backend
+ * refuses on submit.
+ */
+const MERGE_ACTIONS: RebaseAction[] = ["Drop", "MainlinePick"];
 
 function commitsToPlan(commits: CommitInfo[]): PlanRow[] {
   // Present commits oldest-first (log is newest-first).
-  return [...commits].reverse().map((c) => ({
-    oid: c.oid,
-    shortOid: c.shortOid,
-    subject: c.summary,
-    action: "Pick" as RebaseAction,
-    message: "",
-  }));
+  return [...commits].reverse().map((c) => {
+    const isMerge = c.parents.length > 1;
+    return {
+      oid: c.oid,
+      shortOid: c.shortOid,
+      subject: c.summary,
+      // A merge defaults to Drop: git's own flattening behaviour, and the only
+      // other action the backend accepts on one is MainlinePick.
+      action: (isMerge ? "Drop" : "Pick") as RebaseAction,
+      message: "",
+      isMerge,
+    };
+  });
 }
 
 // ─── Progress banner ─────────────────────────────────────────────────────────
@@ -162,12 +177,16 @@ export function RebaseScreen() {
     const byOid = new Map(commits.map((c) => [c.oid, c]));
     const rows: PlanRow[] = intent.plan.map((step) => {
       const c = byOid.get(step.oid);
+      const isMerge = (c?.parents.length ?? 0) > 1;
       return {
         oid: step.oid,
         shortOid: c?.shortOid ?? step.oid.slice(0, 7),
         subject: c?.summary ?? "",
-        action: step.action,
+        // A caller that hands us something the backend refuses on a merge (an
+        // older plan, a hand-built intent) gets the flattening default instead.
+        action: isMerge && !MERGE_ACTIONS.includes(step.action) ? "Drop" : step.action,
         message: step.message ?? "",
+        isMerge,
       };
     });
     setPlan(rows);
@@ -225,6 +244,9 @@ export function RebaseScreen() {
     setPlan([]);
     setBaseLabel(null);
   };
+
+  const mergeCount = plan.filter((r) => r.isMerge).length;
+  const flattenedCount = plan.filter((r) => r.isMerge && r.action === "Drop").length;
 
   if (!current) {
     return (
@@ -316,6 +338,48 @@ export function RebaseScreen() {
             </PGButton>
           </div>
 
+          {/* What happens to the merges in this range — stated before the run,
+              the way SmartGit and TortoiseGit do, rather than left for the user
+              to infer from a linear result. */}
+          {mergeCount > 0 && (
+            <div
+              data-testid="rebase-merge-warning"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 12px",
+                borderBottom: "1px solid var(--border-0)",
+                background: "oklch(from var(--git-modified) l c h / 0.12)",
+                color: "var(--fg-1)",
+                fontSize: "var(--fs-12)",
+              }}
+            >
+              <PGIcon
+                name="warn"
+                size={14}
+                style={{ color: "var(--git-modified)", flexShrink: 0 }}
+              />
+              <span>
+                {mergeCount === 1 ? "1 merge commit" : `${mergeCount} merge commits`} in
+                this range.{" "}
+                {flattenedCount > 0 && (
+                  <>
+                    {flattenedCount === mergeCount
+                      ? mergeCount === 1
+                        ? "It will be"
+                        : "They will be"
+                      : `${flattenedCount} will be`}{" "}
+                    dropped and the merged commits replayed individually — the branch
+                    becomes linear.{" "}
+                  </>
+                )}
+                Choose <strong>keep as one</strong> on a merge row to keep it as a
+                single commit instead.
+              </span>
+            </div>
+          )}
+
           {/* Rows */}
           <PGPane
             id="rebase.steps"
@@ -348,6 +412,8 @@ export function RebaseScreen() {
                         sha={row.shortOid}
                         subject={row.subject}
                         action={row.action}
+                        badge={row.isMerge ? "merge" : undefined}
+                        options={row.isMerge ? MERGE_ACTIONS : undefined}
                         onActionChange={(v) => updateRow(i, { action: v })}
                       />
                     </div>
