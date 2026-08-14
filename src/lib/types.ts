@@ -224,7 +224,15 @@ export interface ConflictSides {
 
 // ─── Interactive rebase ───────────────────────────────────────────────────────
 
-export type RebaseAction = "Pick" | "Reword" | "Edit" | "Squash" | "Fixup" | "Drop";
+export type RebaseAction =
+  | "Pick"
+  | "Reword"
+  | "Edit"
+  | "Squash"
+  | "Fixup"
+  | "Drop"
+  /** A merge commit kept as one ordinary commit — `git cherry-pick -m 1`. */
+  | "MainlinePick";
 
 export interface RebaseStep {
   oid: string;

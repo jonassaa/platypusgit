@@ -19,6 +19,7 @@ import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
 import { commitRowGrid, laneX } from "./graph-geometry";
 import type { WindowRange } from "@/lib/useWindowedList";
+import type { RebaseAction } from "@/lib/types";
 
 // ═════════════════════════════════════════════════════════
 // FILE TREE
@@ -1953,35 +1954,58 @@ export function PGConflictRow({
 // ═════════════════════════════════════════════════════════
 
 export interface PGRebaseRowProps {
-  action?: string;
+  /** Exact `RebaseAction` string — the same value the backend consumes. */
+  action?: RebaseAction;
   sha: string;
   subject: string;
-  onActionChange?: (v: string) => void;
+  onActionChange?: (v: RebaseAction) => void;
   index?: number;
   dragging?: boolean;
+  /** Restrict the dropdown — a merge row cannot be reworded, edited, or folded. */
+  options?: RebaseAction[];
+  /** Short label rendered next to the sha, e.g. "merge". */
+  badge?: string;
 }
 
+/// One entry per `RebaseAction`. The row speaks the backend's exact strings: it
+/// used to lowercase them and have the caller re-capitalise the first letter on
+/// the way back, which cannot express a two-word action like MainlinePick.
+const REBASE_ACTION_STYLE: Record<RebaseAction, { label: string; color: string }> = {
+  Pick: { label: "pick", color: "var(--git-added)" },
+  Reword: { label: "reword", color: "var(--accent)" },
+  Edit: { label: "edit", color: "var(--git-modified)" },
+  Squash: { label: "squash", color: "var(--accent-2)" },
+  Fixup: { label: "fixup", color: "var(--accent-2)" },
+  Drop: { label: "drop", color: "var(--git-removed)" },
+  MainlinePick: { label: "keep as one", color: "var(--accent-3)" },
+};
+
+const DEFAULT_REBASE_ACTIONS: RebaseAction[] = [
+  "Pick",
+  "Reword",
+  "Edit",
+  "Squash",
+  "Fixup",
+  "Drop",
+];
+
 export function PGRebaseRow({
-  action = "pick",
+  action = "Pick",
   sha,
   subject,
   onActionChange,
   index,
   dragging,
+  options,
+  badge,
 }: PGRebaseRowProps) {
-  const actions = [
-    { value: "pick", label: "pick", color: "var(--git-added)" },
-    { value: "reword", label: "reword", color: "var(--accent)" },
-    { value: "edit", label: "edit", color: "var(--git-modified)" },
-    { value: "squash", label: "squash", color: "var(--accent-2)" },
-    { value: "fixup", label: "fixup", color: "var(--accent-2)" },
-    { value: "drop", label: "drop", color: "var(--git-removed)" },
-  ];
-  const current = actions.find((a) => a.value === action) || actions[0];
+  const values = options ?? DEFAULT_REBASE_ACTIONS;
+  const current = REBASE_ACTION_STYLE[action] ?? REBASE_ACTION_STYLE.Pick;
   return (
     <div
       data-testid="rebase-row"
       data-sha={sha}
+      data-action={action}
       style={{
         display: "flex",
         alignItems: "center",
@@ -1994,8 +2018,8 @@ export function PGRebaseRow({
         fontFamily: "var(--font-mono)",
         fontSize: "var(--fs-12)",
         marginBottom: 4,
-        opacity: action === "drop" ? 0.5 : 1,
-        textDecoration: action === "drop" ? "line-through" : "none",
+        opacity: action === "Drop" ? 0.5 : 1,
+        textDecoration: action === "Drop" ? "line-through" : "none",
       }}
     >
       <PGIcon
@@ -2010,11 +2034,31 @@ export function PGRebaseRow({
       </span>
       <PGSelect
         value={action}
-        onChange={onActionChange}
+        onChange={(v) => onActionChange?.(v as RebaseAction)}
         size="sm"
-        options={actions.map((a) => ({ value: a.value, label: a.label }))}
-        style={{ width: 90, borderColor: current.color, color: current.color } as CSSProperties}
+        options={values.map((v) => ({
+          value: v,
+          label: REBASE_ACTION_STYLE[v].label,
+        }))}
+        style={{ width: 110, borderColor: current.color, color: current.color } as CSSProperties}
       />
+      {badge && (
+        <span
+          data-testid="rebase-row-badge"
+          style={{
+            fontSize: "var(--fs-10)",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+            padding: "1px 5px",
+            borderRadius: "var(--r-1)",
+            border: "1px solid var(--border-1)",
+            color: "var(--fg-2)",
+            flexShrink: 0,
+          }}
+        >
+          {badge}
+        </span>
+      )}
       <span style={{ color: "var(--fg-3)" }}>{sha}</span>
       <span
         style={{

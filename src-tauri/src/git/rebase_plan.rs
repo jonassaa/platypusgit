@@ -18,11 +18,12 @@ pub fn short(oid: &str) -> &str {
 
 /// Actions that mean something for a commit with more than one parent.
 ///
-/// Only `Drop` for now — git's own default, which drops merges and flattens the
-/// branch. Keeping a merge as one commit and recreating it are separate actions
-/// added later; this function is the single source of truth the UI mirrors.
+/// `Drop` flattens (git's own default: the merge disappears and its commits are
+/// replayed individually); `MainlinePick` keeps the merge as one ordinary
+/// commit. Recreating a merge is a separate action added later. This function is
+/// the single source of truth the UI mirrors.
 pub fn merge_legal(action: RebaseAction) -> bool {
-    matches!(action, RebaseAction::Drop)
+    matches!(action, RebaseAction::Drop | RebaseAction::MainlinePick)
 }
 
 pub fn validate(repo: &Repository, plan: &[RebaseStep]) -> AppResult<()> {
@@ -48,9 +49,10 @@ pub fn validate(repo: &Repository, plan: &[RebaseStep]) -> AppResult<()> {
 
         if commit.parent_count() > 1 && !merge_legal(step.action) {
             return Err(AppError::InvalidRebasePlan(format!(
-                "{} is a merge commit — it can only be dropped, which flattens \
-                 the branch, or left out of the plan",
-                short(&step.oid)
+                "{} is a merge commit — it can be dropped (which flattens the \
+                 branch) or kept as one commit, but not {:?}ed",
+                short(&step.oid),
+                step.action
             )));
         }
     }

@@ -1,5 +1,10 @@
 import { browser, $, expect } from "@wdio/globals";
-import { cherryRepo, rebaseConflictRepo, TempRepo } from "../support/tempRepo";
+import {
+  cherryRepo,
+  mergeRangeRepo,
+  rebaseConflictRepo,
+  TempRepo,
+} from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
   jsContextMenu, jsClickMenuItem, executeOnce, scrollCommitListTo,
@@ -85,7 +90,8 @@ describe("interactive rebase", () => {
       const row = rows.find((r) => r.textContent?.includes(rowText));
       const select = row?.querySelector("select") as HTMLSelectElement | null;
       if (!select) throw new Error(`rebase row select not found: ${rowText}`);
-      select.value = "drop";
+      // Exact RebaseAction value — the row used to lowercase its options.
+      select.value = "Drop";
       select.dispatchEvent(new Event("change", { bubbles: true }));
     }, dropRowText);
     await $('[data-testid="rebase-start"]').click();
@@ -97,6 +103,46 @@ describe("interactive rebase", () => {
       async () => repo.git("rev-parse", "HEAD").trim() === before,
       { timeout: 20_000, timeoutMsg: "abort did not restore HEAD" },
     );
+    expect(repo.git("status", "--porcelain").trim()).toBe("");
+  });
+
+  it("flattens a merge commit out of the range", async () => {
+    repo = mergeRangeRepo();
+    await openRepo(repo.path);
+    await stubNativeDialogs({ confirm: true });
+    await switchScreen("history");
+    await scrollCommitListTo("feat: a on main");
+    // "Interactive rebase from here" on A puts everything after A in the plan:
+    // F, C, and the merge M. (Never invoke it on the ROOT commit — that
+    // silently no-ops.)
+    await jsContextMenu('[data-testid="commit-row"]', { text: "feat: a on main" });
+    await jsClickMenuItem("Interactive rebase from here");
+
+    const warning = $('[data-testid="rebase-merge-warning"]');
+    await warning.waitForDisplayed({
+      timeout: 15_000,
+      timeoutMsg: "merge warning never appeared for a range containing a merge",
+    });
+    expect(await warning.getText()).toContain("1 merge commit");
+
+    await $('[data-testid="rebase-start"]').click();
+    // rebase-last-summary renders only once the rebase is done and the plan is
+    // cleared, so it cannot match mid-replay.
+    await $('[data-testid="rebase-last-summary"]').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "flattening rebase never reported completion",
+    });
+
+    // The merge is gone, the side branch's commit and file survived, and the
+    // history is linear.
+    expect(repo.git("log", "--oneline", "--merges").trim()).toBe("");
+    expect(repo.git("log", "--format=%s").trim().split("\n")).toEqual([
+      "feat: c on main",
+      "feat: f on feature",
+      "feat: a on main",
+      "feat: root",
+    ]);
+    expect(repo.read("f.txt")).toBe("f\n");
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 });

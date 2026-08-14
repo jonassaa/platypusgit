@@ -16,6 +16,12 @@ import type { CommitInfo, RebaseStep, RebaseAction } from "@/lib/types";
  *     squashed commit onto the previous one, so the run collapses to a single
  *     commit with `message`.
  *
+ * A commit with more than one parent (a merge) is always emitted as "Drop",
+ * whatever the mode asks for: that is git's own default (`git rebase -i` drops
+ * merge commits and flattens the branch), and the backend refuses any other
+ * action on a merge except MainlinePick, which the user picks per row in the
+ * Rebase screen.
+ *
  * Returns null when the `fromOid` isn't in the rebaseable range.
  */
 export function buildRebasePlan(
@@ -44,7 +50,9 @@ export function buildRebasePlan(
   return oldestFirst.map((c): RebaseStep => {
     let action: RebaseAction = "Pick";
     let message: string | null = null;
-    if (mode.kind === "fixup" && c.oid === mode.targetOid) {
+    if (c.parents.length > 1) {
+      action = "Drop";
+    } else if (mode.kind === "fixup" && c.oid === mode.targetOid) {
       action = "Fixup";
     } else if (mode.kind === "squash" && c.oid === mode.targetOid) {
       action = "Squash";
