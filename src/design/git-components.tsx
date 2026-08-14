@@ -1,5 +1,7 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { wordDiff, type WordSpan } from "@/lib/wordDiff";
+import { buildLineSpans } from "@/lib/lineSpans";
+import type { SyntaxLine, SyntaxToken } from "@/lib/syntax";
 import { PGIcon, type IconName } from "./icons";
 import {
   PGBadge,
@@ -505,9 +507,22 @@ export interface DiffLineData {
    * (#61 D7) — assigned by `PGHunk`, not by callers.
    */
   changedIndex?: number;
+  /**
+   * Line-relative syntax tokens for this row. Set by `PGHunk` from its `syntax`
+   * prop, or directly by a caller rendering a standalone `PGDiffLine`;
+   * undefined renders the line unhighlighted.
+   */
+  syntax?: SyntaxToken[];
 }
 
-export function PGDiffLine({ kind = "ctx", lnL, lnR, text }: DiffLineData) {
+export function PGDiffLine({
+  kind = "ctx",
+  lnL,
+  lnR,
+  text,
+  spans,
+  syntax,
+}: DiffLineData) {
   const bg: Record<DiffLineKind, string> = {
     ctx: "transparent",
     add: "var(--git-added-bg)",
@@ -619,7 +634,7 @@ export function PGDiffLine({ kind = "ctx", lnL, lnR, text }: DiffLineData) {
           paddingRight: 10,
         }}
       >
-        {text}
+        <DiffText text={text ?? ""} spans={spans} syntax={syntax} kind={kind} />
       </span>
     </div>
   );
@@ -662,6 +677,30 @@ function withChangedIndices(lines: DiffLineData[]): DiffLineData[] {
 }
 
 /**
+ * Attach each row's syntax tokens from the correct side of the diff.
+ *
+ * A `rem` row is a line of the OLD file and reads `old[lnL - 1]`; `add` and
+ * `ctx` rows show new text and read `new[lnR - 1]`, falling back to `lnL` so a
+ * deleted file's rows still resolve. Anything unresolvable is left plain rather
+ * than guessed — a wrong index would colour a line with another line's tokens.
+ */
+function attachSyntax(
+  lines: DiffLineData[],
+  syntax: { old: SyntaxLine[] | null; new: SyntaxLine[] | null } | undefined,
+): DiffLineData[] {
+  if (!syntax) return lines;
+  return lines.map((l) => {
+    const side = l.kind === "rem" ? syntax.old : syntax.new;
+    if (!side) return l;
+    const raw = l.kind === "rem" ? l.lnL : (l.lnR ?? l.lnL);
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n) || n < 1) return l;
+    const tokens = side[n - 1];
+    return tokens ? { ...l, syntax: tokens } : l;
+  });
+}
+
+/**
  * Attach intra-line word spans to adjacent rem/add chunk pairs (#61 D8).
  *
  * `chunkDiffLines` groups **by kind**, so a removed run and the added run that
@@ -687,38 +726,50 @@ function withWordSpans(chunks: DiffChunk[]): DiffChunk[] {
   return out;
 }
 
-/** Render line text, tinting the changed spans when a word diff produced any. */
+/**
+ * Render one line as spans, combining syntax classes and word-diff emphasis.
+ *
+ * Both come from buildLineSpans, which tiles the line — so this maps and never
+ * reasons about gaps or overlaps. The changed-span tint stays relative to the
+ * existing git tokens so custom and light themes carry through.
+ */
 function DiffText({
   text,
   spans,
+  syntax,
   kind,
 }: {
   text: string;
   spans?: WordSpan[];
+  syntax?: SyntaxToken[];
   kind: DiffLineKind;
 }) {
-  if (!spans || spans.length === 0) return <>{text}</>;
-  // Relative colour off the existing tokens, so custom and light themes carry
-  // through instead of a hardcoded tint.
+  const rendered = React.useMemo(
+    () => buildLineSpans(text, syntax ?? null, spans),
+    [text, syntax, spans],
+  );
+  // Nothing to mark: emit the bare string so the DOM stays as light as it was
+  // before highlighting existed.
+  if (rendered.length === 0) return <>{text}</>;
+  if (rendered.length === 1 && !rendered[0].cls && !rendered[0].changed) {
+    return <>{text}</>;
+  }
   const tint =
     kind === "add"
       ? "oklch(from var(--git-added) l c h / 0.28)"
       : "oklch(from var(--git-removed) l c h / 0.28)";
   return (
     <>
-      {spans.map((s, i) =>
-        s.changed ? (
-          <span
-            key={i}
-            data-testid="word-change"
-            style={{ background: tint, borderRadius: 2 }}
-          >
-            {text.slice(s.start, s.end)}
-          </span>
-        ) : (
-          <React.Fragment key={i}>{text.slice(s.start, s.end)}</React.Fragment>
-        ),
-      )}
+      {rendered.map((s, i) => (
+        <span
+          key={i}
+          className={s.cls}
+          data-testid={s.changed ? "word-change" : undefined}
+          style={s.changed ? { background: tint, borderRadius: 2 } : undefined}
+        >
+          {text.slice(s.start, s.end)}
+        </span>
+      ))}
     </>
   );
 }
@@ -854,7 +905,12 @@ function PGDiffChunk({
               paddingRight: 10,
             }}
           >
-            <DiffText text={ln.text ?? ""} spans={ln.spans} kind={kind} />
+            <DiffText
+              text={ln.text ?? ""}
+              spans={ln.spans}
+              syntax={ln.syntax}
+              kind={kind}
+            />
           </span>
         </div>
         );
@@ -887,6 +943,14 @@ export interface PGHunkProps {
   selectedLines?: number[];
   /** Called with a changed-line index; `range` is true for a shift-click. */
   onLineClick?: (changedIndex: number, range: boolean) => void;
+  /**
+   * Per-side syntax tokens for the WHOLE file, indexed by line number - 1.
+   *
+   * A `rem` row reads `old`; `add` and `ctx` rows read `new` — context rows show
+   * the new text, and for unchanged lines the two sides agree anyway. A row whose
+   * line number is missing, or past the end of its array, renders plain.
+   */
+  syntax?: { old: SyntaxLine[] | null; new: SyntaxLine[] | null };
 }
 
 export function PGHunk({
@@ -900,12 +964,17 @@ export function PGHunk({
   actionsDisabledReason,
   selectedLines,
   onLineClick,
+  syntax,
 }: PGHunkProps) {
   // Memoized: word diffing every rem/add pair on each render would repeat over
   // lists that are long and windowed.
+  //
+  // withChangedIndices runs FIRST and over the whole hunk: its numbering is the
+  // wire contract shared with the backend's Patch::line_in_hunk (#61 D7), so it
+  // must not depend on anything the syntax pass does.
   const chunks = React.useMemo(
-    () => withWordSpans(chunkDiffLines(withChangedIndices(lines))),
-    [lines],
+    () => withWordSpans(chunkDiffLines(attachSyntax(withChangedIndices(lines), syntax))),
+    [lines, syntax],
   );
   // Line selection is meaningless when the hunk's own indices don't address
   // what git would apply — the same condition that disables Stage/Discard.
