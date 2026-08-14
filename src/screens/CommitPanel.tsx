@@ -50,7 +50,13 @@ import {
   pruneSelection,
   type Selection,
 } from "@/lib/selection";
-import { getDiff, getLogPage } from "@/lib/tauri";
+import {
+  getDiff,
+  getLogPage,
+  readFileContent,
+  readFileContentAtRev,
+} from "@/lib/tauri";
+import { useSyntax } from "@/lib/syntax";
 import {
   WhitespaceToggle,
   useHunkActionsDisabledReason,
@@ -441,6 +447,43 @@ export function CommitPanelScreen() {
     if (sel.keys.length > 0) return selectedKeys;
     return new Set(selected ? [keyOf(selected)] : []);
   }, [sel.keys.length, selectedKeys, selected]);
+
+  // Whole-file text for syntax tokens, one read per side.
+  //
+  // This pane diffs against the INDEX (IndexToHead when staged,
+  // WorktreeToIndex otherwise), and the index is not readable — there is no
+  // read_file_content_at_index. HEAD and the worktree are the two texts we can
+  // get, and they agree with the index in every case except a partially staged
+  // file. Being off there mis-colours a line; it cannot affect what gets staged,
+  // because staging addresses lines by changedIndex, never by these tokens.
+  const [sides, setSides] = React.useState<{ old: string | null; new: string | null }>({
+    old: null,
+    new: null,
+  });
+
+  React.useEffect(() => {
+    if (!repo || !selected || selected.status.embedded) {
+      setSides({ old: null, new: null });
+      return;
+    }
+    let cancelled = false;
+    Promise.all([
+      readFileContentAtRev(repo.id, "HEAD", selected.path).catch(() => null),
+      readFileContent(repo.id, selected.path).catch(() => null),
+    ]).then(([o, n]) => {
+      if (!cancelled) setSides({ old: o?.text ?? null, new: n?.text ?? null });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, selected?.path, selected?.status.embedded]);
+
+  const oldSyntax = useSyntax(selected?.path ?? null, sides.old);
+  const newSyntax = useSyntax(selected?.path ?? null, sides.new);
+  const syntax = React.useMemo(
+    () => ({ old: oldSyntax, new: newSyntax }),
+    [oldSyntax, newSyntax],
+  );
 
   React.useEffect(() => {
     if (!selected || !repo) {
@@ -952,6 +995,7 @@ export function CommitPanelScreen() {
                 header={h.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
                 lines={h.lines.map(toUiLine)}
                 expanded={true}
+                syntax={syntax}
                 staged={selected?.side === "staged"}
                 actionsDisabledReason={hunkActionsDisabled}
                 selectedLines={lineSel[i] ?? []}
