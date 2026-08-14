@@ -88,6 +88,24 @@ export const roadmap = [
 
 export const changelog = [
   {
+    version: '0.0.8',
+    date: '2026-08-14',
+    status: 'feature',
+    notes: [
+      'In-app updates — Windows `.msi` and Linux `.AppImage` installs now download, verify and install updates in place, then relaunch. macOS and `.deb` are notify-only: they point at the release or `brew upgrade` rather than stepping on a package manager\'s bookkeeping.',
+      'Clone and create repositories — clone from a URL with live progress, or initialise a new repository, from the Welcome screen, the command palette, or `⌘⇧O` / `⌘⇧N`.',
+      'Authenticated remotes — fetch, pull, push and clone against private remotes. The first attempt stays prompt-less so an existing credential helper or SSH agent simply answers; only if that fails are you asked, and the operation is retried. "Remember" hands the credential to your own git credential helper, and only once it has actually worked.',
+      'Line-level staging — click or shift-click individual lines in a hunk and stage, unstage or discard just those. Plus word-level highlighting within a changed line, tri-state staging checkboxes on files and folders in the tree, and an ignore-whitespace toggle on every diff surface.',
+      'Commit signing — sign commits with GPG or SSH and see a verification badge on signed commits. The commit box is now a single field (subject and body, the shape git stores), Amend loads the previous message, and you can override the author or add `Co-Authored-By` trailers.',
+      'Rewritten commit graph — proper lane colouring, crossing edges, a HEAD marker and accessible labelling. History pages in as you scroll, and both the log and the file tree are virtualized, so large repositories stay responsive.',
+      'History upgrades — an inline commit diff that opens in place without switching screens, multi-select for a combined diff / squash / cherry-pick, and content search (`content:` / `contains:`) alongside author, path, date and SHA filters.',
+      'Editable branch tracking — set or change a branch\'s upstream from the Branches inspector or its context menu; a first push of an untracked branch establishes tracking instead of leaving it dangling.',
+      'Polish — light themes are properly calibrated (diff colours, graph lanes, pills and shadows no longer keep a dark calibration over a light canvas), per-file-type icons throughout, in-app dialogs with real danger styling and type-the-name confirmation for destructive actions, bundled Inter + JetBrains Mono, loading skeletons, and find-in-tree with `⌘⇧F`.',
+      'Repositories on a Windows drive under WSL (`/mnt/c/…`) open — they tripped git\'s dubious-ownership check and refused outright; you now get an explanation and a one-click way to trust the path.',
+      'Fixes, from a full review of everything since 0.0.7 — discarding a conflicted file deleted it instead of restoring the conflict; pull with auto-stash could leave your uncommitted work in a stash it never popped or mentioned; staging part of a file could then stage the wrong lines, because the diff pane kept showing the pre-stage version; whole branch lanes could vanish from the paginated log; staging a hunk or lines of a brand-new file failed outright; the commit summary counted unstaged edits toward the commit; discarding an untracked file silently did nothing; UI density skipped some row surfaces; a signed commit with an expired key read as unsigned. Embedded repositories are now detected as data rather than guessed from the path, and stay out of batch operations that would write an unresolvable gitlink.',
+    ],
+  },
+  {
     version: '0.0.7',
     date: '2026-07-08',
     status: 'feature',
