@@ -62,6 +62,18 @@ Out of scope:
   window next, through the same `WindowRange` convention — deliberately deferred
   rather than forgotten.
 
+## Delivery
+
+Three PRs, each shippable on its own, matching the `issue-61-tier2-pr*` pattern:
+
+1. **Engine and first surfaces** — `lib/syntax/`, the `--syn-*` palette,
+   `buildLineSpans`, the `DiffText` rewrite, unified diff (DiffViewer and
+   CommitPanel), Blame, RepoBrowser preview, and highlight.js removed.
+2. **Remaining surfaces** — `pairChangedLines` extracted, split-view pairing and
+   alignment, `CommitDiffPanel`, merge `SidePane`, merge result pane decorations.
+3. **Windowed diff rows** — `flattenDiffRows`, `windowVariable`, the `PGHunk`
+   split, and screen adoption.
+
 ## Decisions
 
 **Shiki, with `engine-javascript`.** Real TextMate grammars, ~200 languages,
@@ -113,6 +125,35 @@ path maps to no known grammar. Callers treat `null` as "render plain".
 `useSyntax` never blocks first paint: a surface renders plain text immediately
 and re-renders with spans when tokenization resolves. No spinner, no layout
 shift, because span-ification does not change row geometry.
+
+#### Verified Shiki contract
+
+Probed against `shiki@4.4.3` while planning, because three of these would
+otherwise be discovered as bugs:
+
+- `codeToTokens(code, { lang, theme })` returns `{ tokens: ThemedToken[][] }`,
+  one array per source line, and the line count matches the input exactly.
+- A token is `{ content, offset, color, fontStyle }`, and **`offset` is
+  document-absolute, not line-relative**. `tokenize.ts` subtracts each line's
+  start offset, because `WordSpan` is line-relative and the two must compose.
+- **Returned colors are upper-cased** regardless of the case supplied in the
+  theme, so the sentinel lookup normalizes before matching.
+- An unregistered language throws `ShikiError`, so it is catchable and becomes a
+  `null` return rather than a crash.
+- `loadLanguage(mod)` registers a grammar at runtime, which is what makes the
+  lazy per-language map work.
+
+Scope-to-token mapping uses a **sentinel theme**: one generated Shiki theme whose
+`settings` assign each `--syn-*` token a unique unused hex value, so
+`codeToTokens` hands back an identity that maps to a class by lookup. Both the
+theme and the lookup are generated from one table in `scopes.ts`, so they cannot
+drift. The alternative, `includeExplanation`, returns full scope chains per token
+and is documented as slower and larger for no gain here.
+
+Language loading is an **explicit map of static `import()` thunks**
+(`{ rust: () => import("shiki/langs/rust.mjs"), … }`). A template-literal
+specifier is not statically analyzable, so Vite could neither split nor resolve
+it.
 
 ### Palette
 
@@ -204,22 +245,54 @@ optional `window?: WindowRange` and the screen owns the `useWindowedList` hook,
 so indices mean the same thing on both sides. `PGHunk` and `PGSideBySideDiff`
 follow it.
 
-Three constraints:
+Four constraints:
 
 1. **`changedIndex` is numbered before windowing, over the full hunk.** It is
    the wire contract shared with the backend's `Patch::line_in_hunk` for
    line-level staging (#61 D7). Numbering a windowed slice would silently stage
    the wrong line. This is the highest-severity risk in the slice.
-2. **Uniform row pitch.** `useWindowedList` is fixed-pitch by design. Today's
-   hunk-header row is taller than a code row (2px padding plus two borders), so
-   header rows adopt code-row height and lose that padding. The pitch constant
-   is exported from `git-components.tsx` and consumed by both the component and
-   the screen, so the two cannot desync — the #70 lesson, and the reason
-   `PGGraphRow` takes its step as a number today.
-3. **Wrap disables windowing.** With `wrap` on, `whiteSpace: pre-wrap` makes row
-   height variable, which fixed pitch cannot express. The screen simply passes
-   no `window`, and every row renders. A very large diff with wrap on stays
+2. **A diff is not a fixed-pitch list, and it is not measured either.** A hunk
+   header is `calc(26px + var(--row-step))` of density-aware chrome carrying a
+   chevron and Stage/Discard, while a code row is `--fs-12 × --lh-code`. Two
+   pitches, so `useWindowedList` does not fit. But nothing here needs measuring:
+   both heights are known constants, so the file's rows flatten into one array
+   whose heights are computable, and an exact prefix-sum window over that array
+   is both correct and cheap. Rejected alternatives: giving headers code-row
+   height (cramps the buttons, drops the header out of density), and measuring
+   rows in the DOM (the complexity this avoids).
+3. **`--diff-row-h` becomes the single source for code-row pitch.** Declared in
+   CSS as `calc(var(--fs-12) * var(--lh-code))`, applied as the row's `height`,
+   and read once by `useDiffRowHeight()` for the window math. Deriving it in CSS
+   keeps `--lh-code` the owner of code geometry, and reading rather than
+   hardcoding avoids the #70 desync — 1.55 × 12px is 18.6px, so any literal
+   would already be wrong.
+4. **Wrap disables windowing.** With `wrap` on, `whiteSpace: pre-wrap` makes row
+   height genuinely unknown, which no amount of arithmetic recovers. The screen
+   passes no window and every row renders. A very large diff with wrap on stays
    slow; that combination is rare and this keeps the toggle.
+
+Concretely this needs a flat row model rather than `hunks.map(<PGHunk/>)`:
+
+```ts
+// src/lib/diffRows.ts
+export type DiffRow =
+  | { kind: "header"; hunkIndex: number; header: string; h: number }
+  | { kind: "line"; hunkIndex: number; line: DiffLineData; h: number };
+
+export function flattenDiffRows(
+  hunks: FileDiff["hunks"], headerH: number, rowH: number,
+): DiffRow[];
+
+export function windowVariable(
+  heights: number[], scrollTop: number, viewportH: number, overscan: number,
+): WindowRange;
+```
+
+`windowVariable` returns the same `WindowRange` shape `useWindowedList` already
+produces, so consumers and the `window?: WindowRange` prop convention are
+unchanged. `PGHunk` splits into presentational parts — a header component and a
+row renderer — so a flat window can span hunk boundaries while stage, discard,
+collapse and line selection keep working per hunk.
 
 In split mode a single scroller drives both columns from one shared
 `WindowRange`. F7 hunk navigation keeps using `scrollToIndex`, never a
@@ -280,8 +353,10 @@ rows, and windowing is exactly the change that can put an asserted row off-DOM.
   Worker is deliberately deferred until measurement shows it is needed.
 - **Windowed rows off-DOM** break e2e assertions that scroll implicitly. Covered
   by running the three affected specs.
-- **Hunk-header rows change height slightly** as the price of uniform pitch.
-  Intentional and visible; called out here so it is not read as a regression.
+- **Splitting `PGHunk` into header plus row renderer** touches a component that
+  already carries stage, discard, collapse and line selection. The split is
+  mechanical but the surface area is real; its existing tests are the guard, and
+  they must pass unchanged rather than be edited to fit.
 - **Merge result pane re-tokenizes on edit.** Debounced, with a documented
   CodeMirror-native fallback.
 
