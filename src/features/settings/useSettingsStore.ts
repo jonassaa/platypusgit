@@ -413,6 +413,45 @@ const SELECTION_TOKENS: Record<"dark" | "light", Record<string, string>> = {
   },
 };
 
+/**
+ * Syntax palette, per theme MODE. Same reasoning as SEMANTIC_TOKENS: light is
+ * calibrated on its own rather than inherited, because dark-calibrated syntax
+ * colours over a light canvas wash out (#61 B4).
+ *
+ * The dark column is byte-identical to the `:root` defaults in index.css. Edit
+ * both or they drift.
+ */
+const SYNTAX_TOKENS: Record<"dark" | "light", Record<string, string>> = {
+  dark: {
+    "--syn-keyword": "oklch(0.72 0.16 20)",
+    "--syn-string": "oklch(0.82 0.09 220)",
+    "--syn-number": "oklch(0.78 0.12 250)",
+    "--syn-comment": "oklch(0.62 0.02 260)",
+    "--syn-func": "oklch(0.78 0.14 300)",
+    "--syn-type": "oklch(0.80 0.13 155)",
+    "--syn-var": "oklch(0.78 0.13 60)",
+    "--syn-punct": "oklch(0.80 0.01 260)",
+    "--syn-tag": "oklch(0.78 0.13 155)",
+    "--syn-attr": "oklch(0.78 0.12 250)",
+    "--syn-regexp": "oklch(0.78 0.12 185)",
+    "--syn-meta": "oklch(0.75 0.12 300)",
+  },
+  light: {
+    "--syn-keyword": "oklch(0.52 0.20 20)",
+    "--syn-string": "oklch(0.42 0.14 250)",
+    "--syn-number": "oklch(0.48 0.16 255)",
+    "--syn-comment": "oklch(0.55 0.02 260)",
+    "--syn-func": "oklch(0.50 0.20 300)",
+    "--syn-type": "oklch(0.45 0.14 150)",
+    "--syn-var": "oklch(0.50 0.14 55)",
+    "--syn-punct": "oklch(0.35 0.01 260)",
+    "--syn-tag": "oklch(0.45 0.14 150)",
+    "--syn-attr": "oklch(0.48 0.16 255)",
+    "--syn-regexp": "oklch(0.45 0.13 185)",
+    "--syn-meta": "oklch(0.50 0.18 300)",
+  },
+};
+
 /** Apply theme by writing every color slot to CSS vars on :root. */
 export function applyTheme(theme: ThemeDef) {
   const root = document.documentElement;
@@ -446,6 +485,9 @@ export function applyTheme(theme: ThemeDef) {
     root.style.setProperty(token, value);
   }
   for (const [token, value] of Object.entries(SELECTION_TOKENS[mode])) {
+    root.style.setProperty(token, value);
+  }
+  for (const [token, value] of Object.entries(SYNTAX_TOKENS[mode])) {
     root.style.setProperty(token, value);
   }
   root.dataset.theme = theme.id;

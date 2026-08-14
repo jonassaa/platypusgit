@@ -101,6 +101,30 @@ describe("logo theme slots", () => {
     expect(root.getPropertyValue("--logo-2")).toBe(theme.colors.logo2);
   });
 
+  it("applyTheme writes every --syn-* token", async () => {
+    const { applyTheme, BUILTIN_THEMES } = await freshStore();
+    const { SYN_TOKENS } = await import("@/lib/syntax/scopes");
+    applyTheme({ ...BUILTIN_THEMES[0], mode: "dark" });
+    const root = document.documentElement.style;
+    for (const t of SYN_TOKENS) {
+      expect(root.getPropertyValue(`--syn-${t}`), `--syn-${t}`).not.toBe("");
+    }
+  });
+
+  it("calibrates --syn-* separately for light mode", async () => {
+    const { applyTheme, BUILTIN_THEMES } = await freshStore();
+    const base = BUILTIN_THEMES[0];
+    const root = document.documentElement.style;
+    applyTheme({ ...base, mode: "dark" });
+    const dark = root.getPropertyValue("--syn-keyword");
+    applyTheme({ ...base, mode: "light" });
+    const light = root.getPropertyValue("--syn-keyword");
+    // Dark-calibrated syntax colours over a light canvas wash out exactly like
+    // the diff and graph tokens did (#61 B4), so the two must differ.
+    expect(light).not.toBe(dark);
+    expect(light).not.toBe("");
+  });
+
   it("applyTheme falls back to the brand palette when a theme has no logo colors", async () => {
     const { applyTheme, BUILTIN_THEMES } = await freshStore();
     const base = BUILTIN_THEMES[0];
