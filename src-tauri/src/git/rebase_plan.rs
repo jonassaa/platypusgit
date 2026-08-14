@@ -20,10 +20,13 @@ pub fn short(oid: &str) -> &str {
 ///
 /// `Drop` flattens (git's own default: the merge disappears and its commits are
 /// replayed individually); `MainlinePick` keeps the merge as one ordinary
-/// commit. Recreating a merge is a separate action added later. This function is
-/// the single source of truth the UI mirrors.
+/// commit; `Merge` recreates it from its rewritten parents. This function is the
+/// single source of truth the UI mirrors.
 pub fn merge_legal(action: RebaseAction) -> bool {
-    matches!(action, RebaseAction::Drop | RebaseAction::MainlinePick)
+    matches!(
+        action,
+        RebaseAction::Drop | RebaseAction::MainlinePick | RebaseAction::Merge
+    )
 }
 
 pub fn validate(repo: &Repository, plan: &[RebaseStep]) -> AppResult<()> {
@@ -72,6 +75,35 @@ pub fn validate(repo: &Repository, plan: &[RebaseStep]) -> AppResult<()> {
             return Err(AppError::InvalidRebasePlan(format!(
                 "{} is a merge commit — it can be dropped (which flattens the \
                  branch) or kept as one commit, but not {:?}ed",
+                short(&step.oid),
+                step.action
+            )));
+        }
+
+        if step.action == RebaseAction::Merge {
+            if commit.parent_count() < 2 {
+                return Err(AppError::InvalidRebasePlan(format!(
+                    "{} is not a merge commit, so it cannot be recreated as one",
+                    short(&step.oid)
+                )));
+            }
+            if commit.parent_count() > 2 {
+                return Err(AppError::InvalidRebasePlan(format!(
+                    "{} is an octopus merge ({} parents) — recreating one is not \
+                     supported yet; drop it or keep it as one commit",
+                    short(&step.oid),
+                    commit.parent_count()
+                )));
+            }
+            if step.merge_parents.is_empty() {
+                return Err(AppError::InvalidRebasePlan(format!(
+                    "{} is a merge step with no parents to merge",
+                    short(&step.oid)
+                )));
+            }
+        } else if !step.merge_parents.is_empty() {
+            return Err(AppError::InvalidRebasePlan(format!(
+                "{} carries merge parents but its action is {:?}",
                 short(&step.oid),
                 step.action
             )));

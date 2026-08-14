@@ -232,7 +232,9 @@ export type RebaseAction =
   | "Fixup"
   | "Drop"
   /** A merge commit kept as one ordinary commit — `git cherry-pick -m 1`. */
-  | "MainlinePick";
+  | "MainlinePick"
+  /** A merge commit recreated from its rewritten parents (`--rebase-merges`). */
+  | "Merge";
 
 export interface RebaseStep {
   oid: string;

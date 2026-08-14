@@ -336,6 +336,11 @@ pub enum RebaseAction {
     /// ordinary commit, keeping the merge's message (`git cherry-pick -m 1`).
     /// On a non-merge commit it is identical to `Pick`.
     MainlinePick,
+    /// Recreate a merge commit: re-merge its rewritten parents and commit the
+    /// result with the original message and parent count (the equivalent of
+    /// `git rebase --rebase-merges`). Conflict resolutions recorded in the
+    /// original merge are NOT reused — git does not either.
+    Merge,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

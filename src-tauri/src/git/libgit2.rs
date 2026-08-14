@@ -174,6 +174,97 @@ impl Libgit2Backend {
         })
     }
 
+    /// Resolve a merge step's original parents through the rewritten map. A
+    /// parent that was not replayed (it lives below the range) keeps its own
+    /// oid.
+    fn resolved_merge_parents(
+        &self,
+        repo_id: &RepoId,
+        step: &RebaseStep,
+    ) -> AppResult<Vec<String>> {
+        let rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let rewritten = rebases.get(repo_id).map(|s| &s.rewritten);
+        Ok(step
+            .merge_parents
+            .iter()
+            .map(|old| {
+                rewritten
+                    .and_then(|m| m.get(old).cloned())
+                    .unwrap_or_else(|| old.clone())
+            })
+            .collect())
+    }
+
+    /// Re-merge a recreated merge's other parents into the current HEAD.
+    /// Returns `Ok(false)` when the merge conflicts — the worktree keeps the
+    /// conflicted index, so the Conflict screen and the merge resolver window
+    /// work exactly as they do for a conflicting pick.
+    ///
+    /// A worktree merge, not `merge_commits`: the conflicted index with its
+    /// stages is what every conflict surface in the app reads.
+    fn apply_merge(&self, repo_id: &RepoId, step: &RebaseStep) -> AppResult<bool> {
+        let parents = self.resolved_merge_parents(repo_id, step)?;
+        self.with_repo(repo_id, |repo| {
+            let annotated: Vec<git2::AnnotatedCommit> = parents
+                .iter()
+                .map(|oid| {
+                    let commit = repo
+                        .revparse_single(oid)
+                        .map_err(|_| AppError::InvalidRef(oid.clone()))?
+                        .peel_to_commit()?;
+                    Ok(repo.find_annotated_commit(commit.id())?)
+                })
+                .collect::<AppResult<Vec<_>>>()?;
+            let refs: Vec<&git2::AnnotatedCommit> = annotated.iter().collect();
+            repo.merge(&refs, None, None)?;
+            let index = repo.index()?;
+            Ok(!index.has_conflicts())
+        })
+    }
+
+    /// Commit the staged tree as the recreated merge — original message and
+    /// author, parents = current HEAD plus the rewritten other parents.
+    fn finish_merge(&self, repo_id: &RepoId, step: &RebaseStep) -> AppResult<()> {
+        let parents = self.resolved_merge_parents(repo_id, step)?;
+        self.with_repo(repo_id, |repo| {
+            let original = repo
+                .revparse_single(&step.oid)
+                .map_err(|_| AppError::InvalidRef(step.oid.clone()))?
+                .peel_to_commit()?;
+            let sig = crate::git::signature::default_signature(repo)?;
+            let mut index = repo.index()?;
+            let tree_oid = index.write_tree()?;
+            let tree = repo.find_tree(tree_oid)?;
+            let head = repo.head()?.peel_to_commit()?;
+
+            let others: Vec<git2::Commit> = parents
+                .iter()
+                .map(|oid| {
+                    Ok(repo
+                        .revparse_single(oid)
+                        .map_err(|_| AppError::InvalidRef(oid.clone()))?
+                        .peel_to_commit()?)
+                })
+                .collect::<AppResult<Vec<_>>>()?;
+            let mut parent_refs: Vec<&git2::Commit> = vec![&head];
+            parent_refs.extend(others.iter());
+
+            repo.commit(
+                Some("HEAD"),
+                &original.author(),
+                &sig,
+                original.message().unwrap_or(""),
+                &tree,
+                &parent_refs,
+            )?;
+            repo.cleanup_state()?;
+            Ok(())
+        })
+    }
+
     fn bump_completed(&self, repo_id: &RepoId) -> AppResult<()> {
         let mut rebases = self
             .rebases
@@ -426,6 +517,29 @@ impl Libgit2Backend {
                 }
             }
 
+            // A recreated merge is not a cherry-pick: it re-merges its rewritten
+            // parents. A resumed one skips the merge (the worktree already holds
+            // the user's resolution) and goes straight to committing it with
+            // both parents — which is why only `apply_merge` is guarded here.
+            if step.action == RebaseAction::Merge {
+                if !resuming && !self.apply_merge(repo_id, &step)? {
+                    let mut rebases = self
+                        .rebases
+                        .lock()
+                        .map_err(|e| AppError::Internal(e.to_string()))?;
+                    if let Some(state) = rebases.get_mut(repo_id) {
+                        state.conflict_step = Some(step);
+                    }
+                    drop(rebases);
+                    return self.mark_paused(repo_id, "conflict");
+                }
+                self.finish_merge(repo_id, &step)?;
+                self.bump_completed(repo_id)?;
+                self.record_rewritten(repo_id, &step.oid)?;
+                self.persist_rebase(repo_id)?;
+                continue;
+            }
+
             // A merge commit being kept as one commit needs a mainline; every
             // other step must not get one.
             let mainline = if step.action == RebaseAction::MainlinePick {
@@ -474,6 +588,15 @@ impl Libgit2Backend {
 
                 RebaseAction::Pick | RebaseAction::MainlinePick => {
                     self.bump_completed(repo_id)?;
+                }
+
+                RebaseAction::Merge => {
+                    // Unreachable: a Merge step is handled and `continue`d above,
+                    // because it re-merges rather than cherry-picks. Kept as an
+                    // explicit arm so adding an action forces a decision here.
+                    return Err(AppError::Internal(
+                        "merge step reached the cherry-pick path".into(),
+                    ));
                 }
 
                 RebaseAction::Reword => {

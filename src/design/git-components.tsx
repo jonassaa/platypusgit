@@ -1978,6 +1978,7 @@ const REBASE_ACTION_STYLE: Record<RebaseAction, { label: string; color: string }
   Fixup: { label: "fixup", color: "var(--accent-2)" },
   Drop: { label: "drop", color: "var(--git-removed)" },
   MainlinePick: { label: "keep as one", color: "var(--accent-3)" },
+  Merge: { label: "merge", color: "var(--accent-4)" },
 };
 
 const DEFAULT_REBASE_ACTIONS: RebaseAction[] = [
