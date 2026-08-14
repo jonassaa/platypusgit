@@ -3234,15 +3234,19 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn rebase_start(&self, repo_id: &RepoId, plan: Vec<RebaseStep>) -> AppResult<RebaseStatus> {
-        if plan.is_empty() {
-            return Err(AppError::InvalidRef("empty rebase plan".into()));
-        }
+        // Validate BEFORE touching anything. An unexecutable step used to be
+        // discovered mid-replay, with earlier picks already committed and the
+        // branch tip already moved.
+        self.with_repo(repo_id, |repo| crate::git::rebase_plan::validate(repo, &plan))?;
 
-        // Find the first non-Drop step — we need its parent as the new base.
+        // Validated above, so this cannot fail: the plan has at least one
+        // non-Drop step. We need its parent as the new base.
         let first_step = plan
             .iter()
             .find(|s| s.action != RebaseAction::Drop)
-            .ok_or_else(|| AppError::InvalidRef("rebase plan contains only drops".into()))?;
+            .ok_or_else(|| {
+                AppError::InvalidRebasePlan("the plan drops every commit".into())
+            })?;
         let first_oid_str = first_step.oid.clone();
 
         // Verify worktree is clean, remember the pre-rebase tip (so an abort

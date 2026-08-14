@@ -21,7 +21,8 @@ export type AppError =
    */
   | { kind: "Auth"; message: AuthChallenge }
   | { kind: "EmbeddedRepo"; message: string }
-  | { kind: "DubiousOwnership"; message: string };
+  | { kind: "DubiousOwnership"; message: string }
+  | { kind: "InvalidRebasePlan"; message: string };
 
 /** Which credential the remote is asking for. */
 export type AuthKind = "Https" | "SshPassphrase" | "SshKey";

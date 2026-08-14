@@ -2,6 +2,7 @@ pub mod auth;
 pub mod cli;
 pub mod libgit2;
 pub mod ownership;
+pub mod rebase_plan;
 pub mod signature;
 pub mod signing;
 pub mod types;
