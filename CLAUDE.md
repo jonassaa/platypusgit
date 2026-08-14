@@ -325,8 +325,9 @@ features/            Per-feature: components + Zustand store colocated
 │                    enforcement, DoubleShift, input policy, speed-search
 │                    fallback), useFocusStore (spatial Alt+Arrow + Tab cycling),
 │                    usePaneList (list nav + type-to-jump speed-search),
-│                    useHunkNav (F7/⇧F7 diff hunks), useSpeedSearchStore,
-│                    PGPane / FocusableScroll / CheatSheet
+│                    useHunkNav (F7/⇧F7 diff hunks), useDiffLineFocus (the
+│                    diff pane's per-LINE cursor + Space, see below),
+│                    useSpeedSearchStore, PGPane / FocusableScroll / CheatSheet
 ├── merge/           Merge resolver window — separate Tauri window (label
 │                    "merge"), routed via ?window=merge in main.tsx. mergeModel
 │                    (diff3 chunking, node-diff3), resultEditor (CM6 result pane
@@ -343,6 +344,13 @@ features/            Per-feature: components + Zustand store colocated
 │                    semver.ts (§11 precedence, hand-rolled + tested),
 │                    UpdateChip (titlebar), UpdatePanel (Escape via the
 │                    keymap's app.closeOverlay, not a local listener)
+├── auth/            Credential challenge/retry (#61 D5): useAuthStore (the one
+│                    pending challenge + the retry closure its raiser supplies —
+│                    deliberately NOT the secret) + CredentialDialog. The retry
+│                    helper is `withAuthRetry`, module-private inside
+│                    useRepoStore.ts; useCreateStore hand-rolls the same shape
+│                    for clone because it must drop `busy` before prompting and
+│                    only has a repo id after the clone succeeds.
 ├── create/          Clone + Init dialogs (PGModal), useCreateStore,
 │                    deriveRepoName. Clone shells out to real git with the
 │                    same prompt-less env as fetch/pull/push.
@@ -418,6 +426,26 @@ lib/
   the initial measurement leaves the height 0, `windowVariable` falls back to a
   400px viewport, and the bottom of a taller pane renders blank. Use
   `lib/useViewportH.ts`.
+- **Two cursors, two index spaces, and they must not be confused.** `useHunkNav`
+  keeps a HUNK cursor (F7/⇧F7, rendered as `data-hunk-active`);
+  `useDiffLineFocus` keeps a per-LINE cursor (list-nav chords + Space, rendered
+  as `data-focused`). A `DiffLineTarget` carries BOTH numbers because they are
+  different things: `rowIndex` addresses the flat `DiffRow[]` (what the focus ring
+  and `scrollTopForRow` use) and `changedIndex` addresses the hunk's changed
+  (`+`/`-`) lines (the ONLY value `stage_lines`/`unstage_lines`/`discard_lines`
+  accept). The line cursor deliberately walks changed lines only — context and
+  `fill` rows are unstageable, and skipping them is what keeps one mapping instead
+  of two. Never derive a backend index from a row index or vice versa; read
+  `changedIndex` off the row, where `flattenDiffRows` put it.
+- **Scroll a diff row into view BY OFFSET** (`scrollTopForRow`), never by
+  `querySelector` + `scrollIntoView`: the row is usually unmounted under
+  windowing, so the DOM route silently does nothing (the #68 G10 trap). It
+  no-ops for an out-of-range index or an unmeasured viewport rather than jumping
+  to the top.
+- **Line ops inherit the ignore-whitespace gate.** That flag rewrites hunk
+  boundaries, so both the click path and the keyboard cursor are switched off by
+  `useHunkActionsDisabledReason` — the keyboard must never reach what the mouse
+  cannot (#61 D2).
 
 ### Navigation model
 
@@ -439,6 +467,15 @@ lib/
   bare keys don't. `?` opens the cheat-sheet. `view.zoom*` (Mod+= / Mod+- /
   Mod+0) scales the UI through the WEBVIEW's own zoom (`applyZoom`, persisted as
   `uiZoom`), not a CSS transform — needs `core:webview:allow-set-webview-zoom`.
+- **Two PANE-scoped actions may share one chord; two global ones may not.** The
+  dispatcher's reverse map is `chord → ActionId[]` and it tries each id in turn,
+  so a declined action falls through to the next — `Space` is `list.toggle` in a
+  list pane and `diff.toggleLine` in the diff pane, resolved purely by which pane
+  holds focus. `presets.test.ts` enforces exactly that asymmetry, so prefer a
+  second catalog entry over hanging a second meaning off one action id: the cheat
+  sheet and palette then name each behavior in its own category, and the two can
+  be rebound apart. Register the pane handler as declining (`() => false`) when it
+  has nothing to act on, or it swallows the chord from the other action.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
 - Settings is a screen too, reached via titlebar gear or activity-bar settings slot.
 - Conflicts are NOT a destination: `OperationBar` (driven by `repoState`), the
@@ -528,6 +565,47 @@ lib/
   `rebase_abort` whenever a rebase is in progress. The Conflict screen and the
   Rebase banner must stay two entry points to one engine: committing the
   resolved tree without advancing the plan strands the rest of the rebase.
+
+### Network ops and credentials (#61 D5)
+
+- **One runner, six call sites.** Every op that shells out to real `git` over the
+  network goes through `commands::net::run_git_authenticated` (or, for clone,
+  through its two primitives `apply_auth_env` + `map_git_failure`, because clone
+  needs a streamed stderr pipe rather than `.output()`). The six:
+  `fetch`, `fetch_all`, `pull`, `push`, `push_tag`, `push_delete_branch` in
+  `commands/branches.rs`, plus `clone_repo` in `commands/create.rs`. A new network
+  op joins them; **do not open a second auth path.** `branches.rs`'s local
+  `run_git` (merge/rebase/checkout) is the deliberately credential-less sibling.
+- **Retry, never prompt mid-run.** The first attempt is always prompt-less, so the
+  common case (helper or ssh-agent already works) is byte-for-byte what it always
+  was. A failure is classified by `git/auth.rs::classify_auth_failure`; an auth
+  failure becomes `AppError::Auth(AuthChallenge)`, the frontend raises it through
+  `useAuthStore` and re-runs the SAME closure with credentials. Host-key
+  verification failure stays `Network` on purpose — no typeable credential fixes
+  it. New store actions use `withAuthRetry` and put `refreshAll()` INSIDE the
+  retried closure.
+- **Scrub before surfacing, always.** `map_git_failure` runs `scrub_credentials`
+  first, on both branches, because git echoes remote URLs and a remote configured
+  as `https://user:token@host/…` would otherwise put the token in an error banner
+  and the log file. Userinfo ends at the LAST `@` of the authority — splitting on
+  the first leaks the tail of a password containing `@`.
+- **Secrets travel in the environment, never in argv.** Argv is world-readable via
+  `ps`. `GIT_ASKPASS` points at our own bare executable with the mode selected by
+  `PLATYPUSGIT_ASKPASS`, because `GIT_ASKPASS` is exec'd directly and cannot carry
+  arguments. The shim answers on stdout and prints nothing else, ever.
+- **End option parsing with `--` before any user-supplied value.** Remotes and ref
+  names reach these commands from prompts and lists, and a value beginning with
+  `-` is otherwise parsed as an option — `git push --receive-pack=<program>` names
+  a program git runs for the transport, so this is argument injection, not a
+  confusing error. `push_tag_args` / `push_delete_args` emit the separator and a
+  test asserts every user value lands after it. Same class as the D5 security
+  review's finding that `verify_commit` handed an oid straight to `git show`.
+  `push_args` (fetch/pull/push) does NOT yet have one — its force flag is
+  documented as coming last, which `--` would turn into a refspec, so fixing it is
+  its own change.
+- **`credential_approve` refuses values containing a newline** rather than
+  escaping them: git's credential protocol is line-based `key=value`, so a
+  newline injects further keys and could file a password against another host.
 
 ### Async / threading (Rust)
 - `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Mutex<Repository>` inside a `Mutex<HashMap<RepoId, ...>>`.

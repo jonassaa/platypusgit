@@ -58,6 +58,43 @@ fn a_surfaced_error_never_carries_an_embedded_token() {
     assert!(!text.contains("ghp_leaked"), "credential leaked: {text}");
 }
 
+/// Tag push and remote-branch delete were the two pushes D5 left on the
+/// credential-less runner (#61 follow-up). They now go through the same
+/// `run_git_authenticated`, so the same classification and the same scrubbing
+/// must hold for the stderr THEY produce — which names a refspec, unlike the
+/// fetch/pull phrasings the tests above cover.
+#[test]
+fn a_failed_tag_push_is_an_auth_challenge_not_a_network_error() {
+    let err = map_git_failure(
+        "remote: Invalid username or password.\n\
+         fatal: Authentication failed for 'https://github.com/x/y.git/'\n\
+         error: failed to push some refs to 'https://github.com/x/y.git'",
+    );
+    match err {
+        AppError::Auth(c) => {
+            assert_eq!(c.host.as_deref(), Some("github.com"));
+            assert_eq!(c.kind, AuthKind::Https);
+        }
+        other => panic!("expected Auth, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_failed_branch_delete_scrubs_the_token_out_of_its_remote_url() {
+    // `git push --delete` echoes the remote URL twice — in the fatal line and in
+    // the "failed to push some refs to" line. Both must be scrubbed, or a remote
+    // configured with an embedded token puts it in the error banner and the log.
+    let err = map_git_failure(
+        "fatal: unable to access 'https://ada:ghp_leaked@github.com/x/y.git/': \
+         The requested URL returned error: 403\n\
+         error: failed to push some refs to \
+         'https://ada:ghp_leaked@github.com/x/y.git'",
+    );
+    let text = format!("{err:?}");
+    assert!(!text.contains("ghp_leaked"), "credential leaked: {text}");
+    assert!(text.contains("github.com/x/y"), "message lost its subject: {text}");
+}
+
 #[test]
 fn credentials_travel_in_the_environment_never_in_argv() {
     let c = creds();

@@ -70,6 +70,11 @@ const COMMON = {
   // Rider NextDiff/PreviousDiff — real JetBrains bindings.
   "diff.nextChange": ["F7"],
   "diff.prevChange": ["Shift+F7"],
+  // Same Space as list.toggle on purpose: in the file list Space stages the row,
+  // in the diff pane it stages the focused line. One key, one meaning. Legal
+  // because both actions are pane-scoped — presets.test.ts only forbids two
+  // GLOBAL actions on one chord, and the dispatcher tries each id in turn.
+  "diff.toggleLine": [" "],
   // Find-in-tree (matches the ⌘⇧F chip on the Files tree). Component-handled
   // by RepoBrowser; a find, not a mutating op, so ⌘⇧F muscle-memory is safe.
   "tree.find": ["Mod+Shift+F"],

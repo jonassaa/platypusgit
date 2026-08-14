@@ -82,6 +82,7 @@ export type ActionId =
   | "conflict.openResolver"
   | "diff.nextChange"
   | "diff.prevChange"
+  | "diff.toggleLine"
   | "commit.commit"
   | "commit.commitAndPush"
   | "commit.toggleAmend"
@@ -263,6 +264,13 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
 
   "diff.nextChange": { id: "diff.nextChange", title: "Next change (hunk)", category: "Diff", scope: "pane" },
   "diff.prevChange": { id: "diff.prevChange", title: "Previous change (hunk)", category: "Diff", scope: "pane" },
+  // Shares the Space chord with list.toggle, which is legal: both are
+  // pane-scoped, so the dispatcher's pane filter picks exactly one of them (a
+  // declined action falls through to the next id bound to the same chord). Its
+  // own catalog entry rather than a second list.toggle handler, so the cheat
+  // sheet says "Diff / stage the focused line" instead of hiding a diff action
+  // under "Lists & trees", and so the two can be rebound apart.
+  "diff.toggleLine": { id: "diff.toggleLine", title: "Stage / unstage focused line", category: "Diff", scope: "pane" },
 
   "repo.open": { id: "repo.open", title: "Open repository…", category: "Repository", scope: "global", run: openRepoOp },
   "repo.clone": { id: "repo.clone", title: "Clone repository…", category: "Repository", scope: "global", run: cloneRepoOp },

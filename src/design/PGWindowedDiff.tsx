@@ -28,6 +28,14 @@ export interface PGWindowedDiffProps {
   /** Selected changed-line indices for a hunk (#61 D7 index space). */
   selectedLines?: (hunkIndex: number) => number[];
   onLineClick?: (hunkIndex: number, changedIndex: number, range: boolean) => void;
+  /**
+   * Flat row index the keyboard line cursor sits on (#61 D7 step 5).
+   *
+   * A ROW index rather than a (hunk, changedIndex) pair: this renderer already
+   * knows each row's absolute index, so matching is one comparison and cannot
+   * mistake a collapsed or refetched hunk's line for the focused one.
+   */
+  focusedRow?: number | null;
 }
 
 export function PGWindowedDiff({
@@ -39,6 +47,7 @@ export function PGWindowedDiff({
   hunkActions,
   selectedLines,
   onLineClick,
+  focusedRow,
 }: PGWindowedDiffProps) {
   const start = win?.start ?? 0;
   const end = win?.end ?? rows.length;
@@ -88,6 +97,7 @@ export function PGWindowedDiff({
             selected={
               row.line.changedIndex != null && sel.includes(row.line.changedIndex)
             }
+            focused={focusedRow === start + i}
             onLineClick={
               onLineClick && !disabled
                 ? (changedIndex, range) => onLineClick(row.hunkIndex, changedIndex, range)

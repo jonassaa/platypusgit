@@ -429,15 +429,43 @@ pub async fn checkout_ref(
     run_git(&path, &["checkout", reference.as_str()]).await
 }
 
+/// Build `git push <remote> <tag>` args.
+///
+/// `--` ends option parsing before the two user-supplied values. Without it a
+/// value beginning with `-` is read as an option, and both of these come from
+/// the UI: the remote is typed into a prompt (`context-menu.tsx`), the tag name
+/// comes from the tag list. `--receive-pack=<program>` is a real `git push`
+/// option naming a program to run for the transport, so this is argument
+/// injection, not just a confusing error. Verified against git 2.50: without the
+/// separator git swallows the value as an option and then complains it has no
+/// refspec; with it, git reports `src refspec --receive-pack=… does not match
+/// any`. Same class of finding as the #61 D5 security review's third item, where
+/// `verify_commit` handed an oid straight to `git show`.
+fn push_tag_args<'a>(remote: &'a str, name: &'a str) -> Vec<&'a str> {
+    vec!["push", "--", remote, name]
+}
+
+/// Build `git push --delete <remote> <branch>` args.
+///
+/// `--delete` is ours, so it precedes the separator; see `push_tag_args` for why
+/// the separator is there at all.
+fn push_delete_args<'a>(remote: &'a str, name: &'a str) -> Vec<&'a str> {
+    vec!["push", "--delete", "--", remote, name]
+}
+
 #[tauri::command]
 pub async fn push_tag(
     state: State<'_, AppState>,
     repo_id: String,
     remote: String,
     name: String,
+    // Optional so an existing caller that omits it behaves exactly as before:
+    // the first attempt is always prompt-less, and only a retry carries a
+    // credential (#61 D5).
+    credentials: Option<Credentials>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git(&path, &["push", remote.as_str(), name.as_str()]).await
+    run_git_creds(&path, &push_tag_args(&remote, &name), credentials.as_ref()).await
 }
 
 #[tauri::command]
@@ -446,14 +474,20 @@ pub async fn push_delete_branch(
     repo_id: String,
     remote: String,
     name: String,
+    credentials: Option<Credentials>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git(&path, &["push", "--delete", remote.as_str(), name.as_str()]).await
+    run_git_creds(
+        &path,
+        &push_delete_args(&remote, &name),
+        credentials.as_ref(),
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::fetch_args;
+    use super::{fetch_args, push_delete_args, push_tag_args};
 
     #[test]
     fn fetch_args_with_prune() {
@@ -465,5 +499,42 @@ mod tests {
     fn fetch_args_without_prune() {
         assert_eq!(fetch_args(Some("origin"), false), ["fetch", "origin"]);
         assert_eq!(fetch_args(None, false), ["fetch", "--all"]);
+    }
+
+    #[test]
+    fn push_tag_args_end_options_before_the_user_values() {
+        assert_eq!(push_tag_args("origin", "v1.2.0"), ["push", "--", "origin", "v1.2.0"]);
+    }
+
+    #[test]
+    fn push_delete_args_keep_delete_before_the_separator() {
+        // `--delete` after `--` would be pushed as a refspec named "--delete".
+        assert_eq!(
+            push_delete_args("origin", "feature/x"),
+            ["push", "--delete", "--", "origin", "feature/x"]
+        );
+    }
+
+    #[test]
+    fn a_dash_leading_value_lands_after_the_separator_not_as_an_option() {
+        // The injection this guards: `--receive-pack` names a program git runs
+        // for the transport. Both builders must keep every user-supplied value
+        // strictly after the `--`.
+        for args in [
+            push_tag_args("--receive-pack=/bin/false", "v1"),
+            push_tag_args("origin", "--receive-pack=/bin/false"),
+            push_delete_args("--receive-pack=/bin/false", "main"),
+            push_delete_args("origin", "--receive-pack=/bin/false"),
+        ] {
+            let sep = args
+                .iter()
+                .position(|a| *a == "--")
+                .expect("builders must emit an end-of-options separator");
+            let hostile = args
+                .iter()
+                .position(|a| a.starts_with("--receive-pack"))
+                .expect("test value present");
+            assert!(hostile > sep, "{args:?}");
+        }
     }
 }

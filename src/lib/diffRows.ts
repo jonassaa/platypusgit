@@ -268,6 +268,33 @@ export function rowOffset(heights: number[], index: number): number {
 }
 
 /**
+ * Smallest `scrollTop` that brings row `index` fully into view, or the current
+ * one when it already is.
+ *
+ * By offset, never by DOM query: a windowed diff usually has the row in question
+ * unmounted, so `scrollIntoView` on a `querySelector` result silently does
+ * nothing (the #68 G10 trap, restated for variable-height rows). Heights are
+ * known exactly, so this needs no measurement.
+ *
+ * An out-of-range index or an unmeasured viewport (`viewportH <= 0`, which is
+ * what jsdom and the first paint report) leaves the scroll position alone rather
+ * than jumping to 0.
+ */
+export function scrollTopForRow(
+  heights: number[],
+  index: number,
+  o: { scrollTop: number; viewportH: number },
+): number {
+  const { scrollTop, viewportH } = o;
+  if (index < 0 || index >= heights.length || viewportH <= 0) return scrollTop;
+  const top = rowOffset(heights, index);
+  const bottom = top + heights[index];
+  if (top < scrollTop) return top;
+  if (bottom > scrollTop + viewportH) return bottom - viewportH;
+  return scrollTop;
+}
+
+/**
  * Window a list of known-height rows. Returns the same shape useWindowedList
  * produces, so consumers and the `window?: WindowRange` prop are unchanged.
  */

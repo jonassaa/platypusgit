@@ -707,10 +707,17 @@ function DiffText({
 export function PGDiffRow({
   line,
   selected,
+  focused,
   onLineClick,
 }: {
   line: DiffLineData;
   selected?: boolean;
+  /**
+   * The keyboard line cursor sits here (#61 D7 step 5). Distinct from
+   * `selected`: selection is a set the hunk's Stage button acts on, focus is the
+   * single line Space acts on, and the two are frequently different rows.
+   */
+  focused?: boolean;
   onLineClick?: (changedIndex: number, range: boolean) => void;
 }) {
   const kind = line.kind;
@@ -751,6 +758,7 @@ export function PGDiffRow({
         <div
           data-testid={selectable ? "diff-line-changed" : undefined}
           data-selected={isSelected || undefined}
+          data-focused={focused || undefined}
           onClick={
             selectable
               ? (e) => onLineClick!(ln.changedIndex!, e.shiftKey)
@@ -772,6 +780,12 @@ export function PGDiffRow({
               borderColor[kind] !== undefined
                 ? `2px solid ${borderColor[kind]}`
                 : "2px solid transparent",
+            // outline, not a border or extra padding: this row's height is the
+            // window's pitch, and anything that grows it puts the variable-height
+            // arithmetic out of step with what is rendered. outlineOffset pulls
+            // the ring inside so the neighbours don't clip it.
+            outline: focused ? "1px solid var(--accent)" : undefined,
+            outlineOffset: focused ? "-1px" : undefined,
           }}
         >
           <span
