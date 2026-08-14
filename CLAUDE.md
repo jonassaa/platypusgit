@@ -377,9 +377,16 @@ lib/
 - **`RebaseState.rewritten` maps original oid → replayed oid** for every step
   that ran, recorded *after* the action's post-commit rewrite (reword amends,
   squash/fixup collapse), and a dropped step maps to the HEAD it left behind.
-- **Merge commits in a plan may only be dropped** (git's own default: the merge
-  disappears and its commits are replayed individually). `rebase_plan::merge_legal`
-  is the single source of truth; any UI that offers merge-row actions mirrors it.
+- **Merge commits in a plan take one of two actions**: `Drop` (flatten — git's
+  own default: the merge disappears and its commits are replayed individually)
+  or `MainlinePick` (keep the merge as one ordinary commit — `git cherry-pick
+  -m 1`, so `start_pick` passes mainline 1). `rebase_plan::merge_legal` is the
+  single source of truth; `MERGE_ACTIONS` in `src/screens/Rebase.tsx` mirrors it,
+  and the two must stay in sync or the UI offers an action the backend refuses.
+- **`PGRebaseRow` speaks exact `RebaseAction` strings** (`"Pick"`, `"Drop"`,
+  `"MainlinePick"`), not lowercased ones — a two-word action cannot survive a
+  lowercase/re-capitalise round trip. E2E specs that drive the row's `<select>`
+  in-page must set the exact value.
 - **Every transition is mirrored to `.git/platypusgit-rebase.json`**, and
   `rebase_status` / `repo_state` fall back to it when this process did not start
   the rebase. `repo_state` gives the file precedence over libgit2's
