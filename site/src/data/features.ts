@@ -16,11 +16,14 @@ export const featureGroups = [
   { title: 'Staging', blurb: 'Granular control over what goes into a commit.', items: [
     'Stage / unstage / discard whole files',
     'Stage / unstage / discard individual hunks',
+    'Stage / unstage / discard individual lines',
     'Commit with amend and author override',
   ]},
   { title: 'Diff & viewing', blurb: 'See exactly what changed, anywhere.', items: [
     'Worktree / index / HEAD diffs',
     'Unified and side-by-side (split) diff views',
+    'Syntax highlighting on every diff, blame and preview surface',
+    'Word-level highlighting within a changed line',
     'Configurable diff context lines',
     'Commit-to-commit diffs',
     'Line-by-line blame',
@@ -50,13 +53,16 @@ export const featureGroups = [
   ]},
   { title: 'Conflict resolution', blurb: 'Resolve merges without leaving the app.', items: [
     '3-way conflict sides',
+    'Dedicated merge resolver window — ours · editable result · theirs',
+    'Operation bar — the app announces a merge, rebase or cherry-pick in progress',
     'Accept ours / theirs',
     'External mergetool launch',
     'Continue / abort operation',
   ]},
   { title: 'Interactive rebase', blurb: 'Reshape history visually.', items: [
     'Pick / reword / edit / squash / fixup / drop',
-    'Continue / abort',
+    'Merge commits — flatten (git default) or preserve topology',
+    'Continue / abort, resumable after quitting the app',
     'Rebase base picker',
   ]},
   { title: 'Remotes & network', blurb: 'Sync with anywhere.', items: [
@@ -77,9 +83,8 @@ export const featureGroups = [
 
 // Roadmap teaser (from features.md P0/P1 — clearly "planned")
 export const roadmap = [
-  'Intra-line (word-level) diff highlighting',
   'Branch compare — branch↔branch and branch↔working tree',
-  'GPG/SSH commit + tag signing with verified badge',
+  'GPG/SSH tag signing (commit signing shipped in 0.0.8)',
   'Multi-repo tabs / fast recent-repo switcher',
   'Quick merge/rebase from the branch picker',
   'Partial/hunk-level stash + rename + compare to working tree',
@@ -87,6 +92,21 @@ export const roadmap = [
 ];
 
 export const changelog = [
+  {
+    version: '0.0.9',
+    date: '2026-08-14',
+    status: 'feature',
+    notes: [
+      'Syntax highlighting on every code surface — the unified diff, split view, the inline commit diff, blame, the file preview, the repo browser\'s diff pane and all three panes of the merge resolver. Word-level highlighting inside a changed line composes with it rather than fighting it, and each theme carries its own syntax palette, so light themes are calibrated for a light canvas and switching mode never re-tokenizes.',
+      'Large diffs stay responsive — diff rows are windowed, so opening a thousand-line file mounts a screenful instead of the whole thing. `F7` hunk navigation scrolls by computed offset, so it still reaches a hunk that isn\'t mounted yet.',
+      'Interactive rebase understands merge commits. A merge in range used to fail partway through and leave the branch half-rewritten; now the plan is validated before the repository is touched, and merge rows are badged with a warning strip saying what will happen. Flatten (the default, and git\'s own) drops the merge and replays its side branch linearly, or keeps it as one ordinary commit; Preserve recreates the merges, the equivalent of `git rebase --rebase-merges`, and states its limitations up front.',
+      'A rebase now survives quitting the app. The replay runs on a detached HEAD and the branch moves exactly once, on completion, with the operation mirrored to disk and `ORIG_HEAD` re-asserted at every step — so Continue and Abort still work after a restart, and `git reset --hard ORIG_HEAD` remains a real escape hatch.',
+      'Conflicts are a state the app announces, not a tab you visit. Whenever a merge, rebase or cherry-pick is in progress, a bar under the titlebar names the operation and branch, counts what\'s left, shows the rebase step, and offers one verb — Resolve conflicts, then Finalize or Continue — plus a confirmed Abort. The old Conflicts screen is gone; the resolver window gained a conflicted-file sidebar and now asks before you leave a file with unapplied work.',
+      'History scope that means something — All / Mine walk every branch, This branch walks HEAD, replacing a client-side approximation. Squash and fixup run from History in place, with a prefilled, editable message built from every commit being squashed; no detour through the plan screen. The rebase plan reorders by drag, and the app opens on History.',
+      'UI zoom on `⌘=` / `⌘-` / `⌘0`, persisted; a customizable "you are here" HEAD indicator (edge bar, row highlight, both, or graph marker only); and entering a screen focuses its main pane, so the first keystroke lands where you\'re looking.',
+      'Fixes — a `.deb` install would have been handed an AppImage as its update payload once Linux self-update opens up, and the update panel now explains itself to `.deb` users instead of dead-ending; continue and abort work for a rebase git owns on disk, which previously abandoned queued steps or left you detached mid-rebase; a branch tip was truncated to seven characters, so the HEAD marker never drew and the ancestry filter silently matched nothing; rebase operations read the displayed log rather than HEAD\'s ancestry, so squashing two commits could produce three; the split view\'s two columns drifted apart on any hunk mixing removals and additions; re-selecting the current screen stranded keyboard focus; and the shell no longer side-scrolls.',
+    ],
+  },
   {
     version: '0.0.8',
     date: '2026-08-14',
