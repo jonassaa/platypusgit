@@ -15,10 +15,9 @@ export interface CommitSelectionPlan {
   oldestOid: string;
   /** Newest selected commit. */
   newestOid: string;
-  /** Parent of the oldest selected commit (`commits[oldestIdx+1]`), or null
-   *  when it's the root or its parent isn't loaded. */
+  /** First parent of the oldest selected commit, or null when it's the root. */
   baseOid: string | null;
-  /** Selected indices form one consecutive run in the log. */
+  /** The selection is an unbroken first-parent chain (oldest→newest). */
   contiguous: boolean;
   /** Any selected commit is a merge (>1 parent). */
   hasMerge: boolean;
@@ -38,17 +37,33 @@ export function planCommitSelection(
 
   const min = Math.min(...indices); // newest
   const max = Math.max(...indices); // oldest
-  const oids = indices
+  const oldestFirst = indices
     .slice()
     .sort((a, b) => b - a) // oldest→newest
-    .map((i) => commits[i].oid);
+    .map((i) => commits[i]);
+  const oids = oldestFirst.map((c) => c.oid);
+  const oldest = commits[max];
+
+  // The base is the oldest selected commit's FIRST PARENT, looked up by oid. It
+  // used to be `commits[max + 1]` — the next row in a graph-ordered log, which
+  // on any non-linear history is frequently a side-branch commit rather than a
+  // parent, so a rebase reset to the wrong base and silently dropped whatever
+  // sat between.
+  const baseOid = oldest.parents[0] ?? null;
+
+  // Contiguity means "these commits form an unbroken first-parent chain", which
+  // is what a range squash replays. Adjacent log rows are not enough: C and F
+  // can be neighbours while belonging to different branches.
+  const contiguous = oldestFirst.every(
+    (c, i) => i === 0 || c.parents[0] === oldestFirst[i - 1].oid,
+  );
 
   return {
     oids,
-    oldestOid: commits[max].oid,
+    oldestOid: oldest.oid,
     newestOid: commits[min].oid,
-    baseOid: commits[max + 1]?.oid ?? null,
-    contiguous: max - min + 1 === indices.length,
+    baseOid,
+    contiguous,
     hasMerge: indices.some((i) => commits[i].parents.length > 1),
   };
 }

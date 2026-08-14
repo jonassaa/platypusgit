@@ -345,6 +345,16 @@ export function useContextMenu<T>(
 
 export function commitMenuItems(commit: { sha?: string; subject?: string } | null): ContextMenuItem[] {
   const sha = commit?.sha || "—";
+  // Ancestry for the rebase entry points, from the full log. The base is the
+  // commit's FIRST PARENT — never the next log row, which on a graph is often a
+  // side-branch commit (see planCommitSelection). A merge commit is a legal
+  // start point (base = its mainline parent), but folding one into its parent
+  // is not: "squash a merge into its parent" has no coherent meaning.
+  const self = commit?.sha
+    ? (useRepoStore.getState().commits.find((c) => c.oid === commit.sha) ?? null)
+    : null;
+  const isMerge = (self?.parents.length ?? 0) > 1;
+  const baseOid = self?.parents[0] ?? null;
   return [
     { __menuTitle: `commit ${sha.slice(0, 7)}` },
     {
@@ -416,17 +426,16 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     },
     {
       icon: "rebase",
-      label: "Interactive rebase from here",
+      label: baseOid
+        ? "Interactive rebase from here"
+        : "Interactive rebase from here — root commit",
+      disabled: !baseOid,
       onClick: () => {
-        if (!commit?.sha) return;
+        if (!commit?.sha || !baseOid) return;
+        // "Rebase -i from here" means: replay everything newer than this
+        // commit's parent, this commit included.
         const commits = useRepoStore.getState().commits;
-        // "Rebase -i from here" means: rebase commits newer than target's parent.
-        // The parent of `commit.sha` in our newest-first commits list is the
-        // entry at `index + 1`.
-        const idx = commits.findIndex((c) => c.oid === commit.sha);
-        const base = commits[idx + 1]?.oid;
-        if (!base) return;
-        const plan = buildRebasePlan(commits, base, { kind: "edit-from" });
+        const plan = buildRebasePlan(commits, baseOid, { kind: "edit-from" });
         if (!plan || plan.length === 0) return;
         useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
       },
@@ -456,14 +465,14 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     },
     {
       icon: "fix",
-      label: "Fixup this commit into its parent",
+      label: isMerge
+        ? "Fixup into parent — merge commit"
+        : "Fixup this commit into its parent",
+      disabled: isMerge || !baseOid,
       onClick: () => {
-        if (!commit?.sha) return;
+        if (!commit?.sha || isMerge || !baseOid) return;
         const commits = useRepoStore.getState().commits;
-        const idx = commits.findIndex((c) => c.oid === commit.sha);
-        const base = commits[idx + 1]?.oid;
-        if (!base) return;
-        const plan = buildRebasePlan(commits, base, {
+        const plan = buildRebasePlan(commits, baseOid, {
           kind: "fixup",
           targetOid: commit.sha,
         });
@@ -473,9 +482,12 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     },
     {
       icon: "squash",
-      label: "Squash this commit into its parent",
+      label: isMerge
+        ? "Squash into parent — merge commit"
+        : "Squash this commit into its parent",
+      disabled: isMerge || !baseOid,
       onClick: async () => {
-        if (!commit?.sha) return;
+        if (!commit?.sha || isMerge || !baseOid) return;
         const msg = await pgPrompt({
           title: "Squash into parent",
           body: "Message for the combined commit.",
@@ -485,10 +497,7 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
         });
         if (!msg) return;
         const commits = useRepoStore.getState().commits;
-        const idx = commits.findIndex((c) => c.oid === commit.sha);
-        const base = commits[idx + 1]?.oid;
-        if (!base) return;
-        const plan = buildRebasePlan(commits, base, {
+        const plan = buildRebasePlan(commits, baseOid, {
           kind: "squash",
           targetOid: commit.sha,
           message: msg,
