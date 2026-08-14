@@ -6,6 +6,7 @@
 
 import React from "react";
 import { SidePane } from "./SidePane";
+import { useSyntax } from "@/lib/syntax";
 import { createResultEditor, type EditorHandle, type RegionState } from "./resultEditor";
 import type { MergeModel } from "./mergeModel";
 
@@ -24,8 +25,13 @@ export const MergeBody = React.forwardRef<
     // Owned by MergeWindow; optional so tests can render without a selection.
     currentConflict?: number | null;
     onRegionsChange: (r: RegionState[]) => void;
+    /**
+     * Conflicted file's path. Only used to pick a syntax grammar, so it is
+     * optional — without it all three panes render plain.
+     */
+    path?: string;
   }
->(function MergeBody({ model, currentConflict = null, onRegionsChange }, ref) {
+>(function MergeBody({ model, currentConflict = null, onRegionsChange, path }, ref) {
   const editorHost = React.useRef<HTMLDivElement>(null);
   const editor = React.useRef<EditorHandle | null>(null);
   const [regionStates, setRegionStates] = React.useState<RegionState[]>([]);
@@ -52,6 +58,13 @@ export const MergeBody = React.forwardRef<
     // model identity changes only when the file changes — full remount wanted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model]);
+
+  // Both side panes come from the model already in hand, so tokens need no read.
+  // Memoized on the model, whose identity changes only when the file does.
+  const oursText = React.useMemo(() => model.oursLines.join("\n"), [model]);
+  const theirsText = React.useMemo(() => model.theirsLines.join("\n"), [model]);
+  const oursSyntax = useSyntax(path ?? null, oursText);
+  const theirsSyntax = useSyntax(path ?? null, theirsText);
 
   const accept = React.useCallback((id: number, res: "ours" | "theirs" | "both") => {
     editor.current?.accept(id, res);
@@ -135,6 +148,7 @@ export const MergeBody = React.forwardRef<
         onAccept={(id) => accept(id, "ours")}
         scrollRef={oursScroll}
         onScroll={() => syncFrom("ours")}
+        syntax={oursSyntax}
       />
       <div style={{ width: 1, background: "var(--border-0)" }} />
       <div
@@ -152,6 +166,7 @@ export const MergeBody = React.forwardRef<
         onAccept={(id) => accept(id, "theirs")}
         scrollRef={theirsScroll}
         onScroll={() => syncFrom("theirs")}
+        syntax={theirsSyntax}
       />
     </div>
   );

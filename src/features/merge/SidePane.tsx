@@ -5,6 +5,8 @@
 // deleted the lines) carries an accept chevron in the gutter.
 
 import React from "react";
+import { buildLineSpans } from "@/lib/lineSpans";
+import type { SyntaxLine, SyntaxToken } from "@/lib/syntax";
 import type { ConflictRegion } from "./mergeModel";
 import type { RegionState } from "./resultEditor";
 
@@ -20,6 +22,20 @@ function sideRange(side: "ours" | "theirs", c: ConflictRegion): { start: number;
   return { start: s.start, count: s.lines.length };
 }
 
+/** One side's line text, highlighted once tokens for it exist. */
+function SideText({ text, syntax }: { text: string; syntax?: SyntaxToken[] }) {
+  if (!syntax || syntax.length === 0) return <>{text}</>;
+  return (
+    <>
+      {buildLineSpans(text, syntax, undefined).map((s, i) => (
+        <span key={i} className={s.cls}>
+          {text.slice(s.start, s.end)}
+        </span>
+      ))}
+    </>
+  );
+}
+
 export function SidePane({
   side,
   lines,
@@ -29,6 +45,7 @@ export function SidePane({
   onAccept,
   scrollRef,
   onScroll,
+  syntax,
 }: {
   side: "ours" | "theirs";
   lines: string[];
@@ -38,6 +55,8 @@ export function SidePane({
   onAccept: (id: number) => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   onScroll: () => void;
+  /** Per-line syntax tokens for this side, indexed the same as `lines`. */
+  syntax?: SyntaxLine[] | null;
 }): React.JSX.Element {
   const label = side === "ours" ? "YOURS" : "THEIRS";
   const headerColor = side === "ours" ? "var(--accent)" : "var(--accent-2, var(--fg-1))";
@@ -170,7 +189,12 @@ export function SidePane({
               <span style={{ flex: "0 0 18px", textAlign: "center" }}>
                 {startsHere != null ? chevronButton(startsHere) : null}
               </span>
-              <span style={{ flex: 1 }}>{lines[i] === "" ? " " : lines[i]}</span>
+              <span style={{ flex: 1 }}>
+                {/* U+00A0 placeholder for a blank line, not an empty span: a
+                    plain space collapses in JSX, and row heights must stay
+                    uniform or the middle pane's scroll sync drifts. */}
+                {lines[i] === "" ? " " : <SideText text={lines[i]} syntax={syntax?.[i]} />}
+              </span>
             </div>
           );
         })}
