@@ -1,47 +1,17 @@
-import { classForColor } from "./scopes";
+// Main-thread entry point for syntax tokens: cache, worker client, fallback.
+//
+// The heavy work lives in tokenizeCore.ts and normally runs in tokenize.worker.ts.
+// This module's job is to keep `tokenizeFile`'s contract unchanged — same
+// signature, same "null means render plain" rule — so useSyntax, useDiffSyntax and
+// their tests did not have to learn about any of it.
+import {
+  skipHighlight,
+  unpackLines,
+  type PackedSyntax,
+  type SyntaxLine,
+} from "./tokenizeCore";
 import { langForPath } from "./langs";
-import { SENTINEL_THEME_NAME, ensureLanguage, getHighlighter } from "./shiki";
-
-/** A syntax range over ONE line, in that line's own coordinates. */
-export interface SyntaxToken {
-  start: number;
-  end: number;
-  cls: string;
-}
-
-export type SyntaxLine = SyntaxToken[];
-
-/** Files past either guard render plain — highlighting is a nicety, not a feature. */
-export const MAX_HIGHLIGHT_BYTES = 1_000_000;
-export const MAX_HIGHLIGHT_LINES = 20_000;
-
-interface RawToken {
-  content: string;
-  offset: number;
-  color?: string;
-}
-
-/**
- * Rebase Shiki's DOCUMENT-absolute offsets to line-relative ranges, and resolve
- * sentinel colours to classes.
- *
- * The rebase is the whole point: `WordSpan` from wordDiff.ts is line-relative,
- * and buildLineSpans intersects the two. Leaving absolute offsets in would put
- * every line after the first out of range, silently yielding no spans.
- */
-export function toLineRelative(lines: RawToken[][]): SyntaxLine[] {
-  return lines.map((tokens) => {
-    const base = tokens.length > 0 ? tokens[0].offset : 0;
-    const out: SyntaxLine = [];
-    for (const t of tokens) {
-      const cls = classForColor(t.color);
-      if (!cls) continue; // unscoped text renders unstyled
-      const start = t.offset - base;
-      out.push({ start, end: start + t.content.length, cls });
-    }
-    return out;
-  });
-}
+import type { TokenizeReply, TokenizeRequest } from "./tokenize.worker";
 
 /** djb2. Enough to detect content change for a cache key; not a checksum. */
 function hash(s: string): string {
@@ -67,34 +37,102 @@ function remember(key: string, value: SyntaxLine[]): SyntaxLine[] {
   return value;
 }
 
+// undefined = not tried yet, null = unavailable, so fall back to this thread.
+let worker: Worker | null | undefined;
+let nextId = 1;
+const pending = new Map<number, (p: PackedSyntax | null) => void>();
+
+/**
+ * Give up on the worker and answer everyone still waiting.
+ *
+ * Reached by a failed script load or a worker crash. Leaving the pending
+ * promises unresolved would hang every caller forever, so they are resolved
+ * null — with `worker` now null, `tokenizeFile` retries them on this thread.
+ */
+function disableWorker(): void {
+  worker?.terminate();
+  worker = null;
+  const waiting = [...pending.values()];
+  pending.clear();
+  for (const resolve of waiting) resolve(null);
+}
+
+function getWorker(): Worker | null {
+  if (worker !== undefined) return worker;
+  try {
+    const w = new Worker(new URL("./tokenize.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    w.onmessage = (e: MessageEvent<TokenizeReply>) => {
+      const resolve = pending.get(e.data.id);
+      if (resolve) {
+        pending.delete(e.data.id);
+        resolve(e.data.packed);
+      }
+    };
+    // Degrading to the main thread means the worst case is the behaviour this
+    // replaced, never a diff with no highlighting at all.
+    w.onerror = disableWorker;
+    w.onmessageerror = disableWorker;
+    worker = w;
+  } catch {
+    // No Worker constructor at all — jsdom in the component tests, and any
+    // webview where module workers are unavailable.
+    worker = null;
+  }
+  return worker;
+}
+
 /**
  * Tokenize a whole file. Resolves null whenever highlighting is not available
- * or not worth it — unknown language, oversized input, or any Shiki failure.
- * Callers treat null as "render plain text".
+ * or not worth it — callers treat null as "render plain text".
+ *
+ * Results are cached on THIS thread, so a repeat never crosses the boundary and
+ * a re-render never re-tokenizes.
  */
 export async function tokenizeFile(
   path: string,
   text: string,
 ): Promise<SyntaxLine[] | null> {
   const lang = langForPath(path);
-  if (!lang) return null;
-  if (text.length > MAX_HIGHLIGHT_BYTES) return null;
-  const lineCount = text.split("\n").length;
-  if (lineCount > MAX_HIGHLIGHT_LINES) return null;
+  // Guards run here as well as in the core so an oversized or unknown file costs
+  // no worker round trip.
+  if (!lang || skipHighlight(path, text)) return null;
 
   const key = `${lang}:${hash(text)}:${text.length}`;
   const hit = cache.get(key);
   if (hit) return hit;
 
-  if (!(await ensureLanguage(lang))) return null;
-  try {
-    const hl = await getHighlighter();
-    const { tokens } = hl.codeToTokens(text, {
-      lang,
-      theme: SENTINEL_THEME_NAME,
-    }) as { tokens: RawToken[][] };
-    return remember(key, toLineRelative(tokens));
-  } catch {
-    return null;
+  const w = getWorker();
+  let packed: PackedSyntax | null = null;
+  if (w) {
+    const id = nextId++;
+    packed = await new Promise<PackedSyntax | null>((resolve) => {
+      pending.set(id, resolve);
+      w.postMessage({ id, path, text } satisfies TokenizeRequest);
+    });
   }
+  // Only when there is no worker to ask. Note the asymmetry: `!worker` is true
+  // only after disableWorker ran (or construction failed), so a legitimate null —
+  // unknown grammar, Shiki failure — is NOT retried on the main thread.
+  //
+  // Imported dynamically so Shiki stays out of the main bundle on the normal path.
+  if (!packed && !worker) {
+    const { tokenizeToPacked } = await import("./tokenizeShiki");
+    packed = await tokenizeToPacked(path, text);
+  }
+  if (!packed) return null;
+  return remember(key, unpackLines(packed));
 }
+
+export {
+  toLineRelative,
+  packLines,
+  unpackLines,
+  skipHighlight,
+  MAX_HIGHLIGHT_BYTES,
+  MAX_HIGHLIGHT_LINES,
+  type PackedSyntax,
+  type SyntaxLine,
+  type SyntaxToken,
+} from "./tokenizeCore";

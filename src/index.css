@@ -122,6 +122,12 @@
   --git-removed-bg: oklch(0.35 0.10 25 / 0.25);
   --git-removed-gutter: oklch(0.45 0.14 25 / 0.5);
 
+  /* Changed-word emphasis, sitting on top of an already-tinted add/rem line.
+     Deliberately much stronger than the *-bg line fill: the line background says
+     "this line changed", the word fill says "this is what changed in it". */
+  --git-added-word: oklch(0.55 0.13 155 / 0.55);
+  --git-removed-word: oklch(0.52 0.16 25 / 0.55);
+
   --git-modified: oklch(0.75 0.14 75);
   --git-modified-bg: oklch(0.35 0.08 75 / 0.2);
 

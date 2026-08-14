@@ -48,8 +48,8 @@ describe("flattenDiffRows", () => {
       rowH: 19,
       collapsed: new Set([0]),
     });
-    expect(rows.filter((r) => r.hunkIndex === 0)).toHaveLength(1);
-    expect(rows.filter((r) => r.hunkIndex === 1)).toHaveLength(4);
+    expect(rows.filter((r) => r.kind !== "fill" && r.hunkIndex === 0)).toHaveLength(1);
+    expect(rows.filter((r) => r.kind !== "fill" && r.hunkIndex === 1)).toHaveLength(4);
   });
 
   it("attaches word spans to paired rem/add rows", () => {
@@ -87,6 +87,258 @@ describe("flattenDiffRows", () => {
     // rem row is old line 2 → old[1]; add row is new line 2 → new[1].
     expect(lines[1].kind === "line" && lines[1].line.syntax?.[0].cls).toBe("syn-comment");
     expect(lines[2].kind === "line" && lines[2].line.syntax?.[0].cls).toBe("syn-keyword");
+  });
+});
+
+// Whole-file mode fills the unchanged remainder of the file in AROUND the hunks
+// the backend returned, rather than asking libgit2 for a huge context — that
+// would collapse the file into hunk 0 and break every stage-hunk index.
+describe("flattenDiffRows whole-file mode", () => {
+  function h(o: {
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+    lines: Array<["ctx" | "add" | "rem", number | null, number | null, string]>;
+  }): FileDiff["hunks"][number] {
+    const kindOf = { ctx: "Context", add: "Addition", rem: "Deletion" } as const;
+    return {
+      header: `@@ -${o.oldStart},${o.oldLines} +${o.newStart},${o.newLines} @@`,
+      oldStart: o.oldStart,
+      oldLines: o.oldLines,
+      newStart: o.newStart,
+      newLines: o.newLines,
+      lines: o.lines.map(([k, ol, nl, content]) => ({
+        kind: { kind: kindOf[k] },
+        oldLineno: ol,
+        newLineno: nl,
+        content,
+      })),
+    };
+  }
+
+  // A 6-line file where only line 4 changed, fetched with 0 context lines.
+  const oneChange = [
+    h({
+      oldStart: 4,
+      oldLines: 1,
+      newStart: 4,
+      newLines: 1,
+      lines: [
+        ["rem", 4, null, "old four"],
+        ["add", null, 4, "new four"],
+      ],
+    }),
+  ];
+  const NEW_TEXT = "one\ntwo\nthree\nnew four\nfive\nsix";
+  const OLD_TEXT = "one\ntwo\nthree\nold four\nfive\nsix";
+  const whole = (
+    hunks: FileDiff["hunks"],
+    newText: string | null,
+    oldText: string | null,
+  ) =>
+    flattenDiffRows(hunks, {
+      headerH: 26,
+      rowH: 19,
+      wholeFile: { newText, oldText },
+    });
+  const fillsOf = (rows: ReturnType<typeof flattenDiffRows>) =>
+    rows.flatMap((r) => (r.kind === "fill" ? [r.line] : []));
+
+  it("fills the leading and trailing unchanged regions", () => {
+    const rows = whole(oneChange, NEW_TEXT, OLD_TEXT);
+    expect(fillsOf(rows).map((l) => l.text)).toEqual([
+      "one",
+      "two",
+      "three",
+      "five",
+      "six",
+    ]);
+  });
+
+  it("numbers filler rows on both sides", () => {
+    const rows = whole(oneChange, NEW_TEXT, OLD_TEXT);
+    expect(fillsOf(rows).map((l) => [l.lnL, l.lnR])).toEqual([
+      [1, 1],
+      [2, 2],
+      [3, 3],
+      [5, 5],
+      [6, 6],
+    ]);
+  });
+
+  // The staging-safety invariant. Filler must be purely additive: if any hunk row
+  // differs, a hunk index or changedIndex has shifted and staging would apply the
+  // wrong lines.
+  it("leaves hunk rows byte-identical to chunked mode", () => {
+    const plain = flattenDiffRows(oneChange, { headerH: 26, rowH: 19 });
+    const rows = whole(oneChange, NEW_TEXT, OLD_TEXT);
+    expect(rows.filter((r) => r.kind !== "fill")).toEqual(plain);
+  });
+
+  it("keeps filler rows out of every hunk, so they can never be staged", () => {
+    const rows = whole(oneChange, NEW_TEXT, OLD_TEXT);
+    for (const r of rows) {
+      if (r.kind === "fill") expect("hunkIndex" in r).toBe(false);
+    }
+  });
+
+  it("handles a pure-deletion hunk, whose new side is zero-length", () => {
+    // Old lines 4-5 deleted from a 6-line file. Git writes +3,0 — the line
+    // BEFORE the deletion — so new content resumes at 4, not 3. Reading newStart
+    // literally here shifts every filler number after the hunk by one.
+    const rows = whole(
+      [
+        h({
+          oldStart: 4,
+          oldLines: 2,
+          newStart: 3,
+          newLines: 0,
+          lines: [
+            ["rem", 4, null, "four"],
+            ["rem", 5, null, "five"],
+          ],
+        }),
+      ],
+      "one\ntwo\nthree\nsix",
+      "one\ntwo\nthree\nfour\nfive\nsix",
+    );
+    expect(fillsOf(rows).map((l) => [l.lnL, l.lnR, l.text])).toEqual([
+      [1, 1, "one"],
+      [2, 2, "two"],
+      [3, 3, "three"],
+      [6, 4, "six"],
+    ]);
+  });
+
+  it("handles a pure-addition hunk, whose old side is zero-length", () => {
+    const rows = whole(
+      [
+        h({
+          oldStart: 3,
+          oldLines: 0,
+          newStart: 4,
+          newLines: 1,
+          lines: [["add", null, 4, "inserted"]],
+        }),
+      ],
+      "one\ntwo\nthree\ninserted\nfour",
+      "one\ntwo\nthree\nfour",
+    );
+    expect(fillsOf(rows).map((l) => [l.lnL, l.lnR, l.text])).toEqual([
+      [1, 1, "one"],
+      [2, 2, "two"],
+      [3, 3, "three"],
+      [4, 5, "four"],
+    ]);
+  });
+
+  it("fills between two hunks", () => {
+    const rows = whole(
+      [
+        h({
+          oldStart: 2,
+          oldLines: 1,
+          newStart: 2,
+          newLines: 1,
+          lines: [
+            ["rem", 2, null, "old two"],
+            ["add", null, 2, "new two"],
+          ],
+        }),
+        h({
+          oldStart: 5,
+          oldLines: 1,
+          newStart: 5,
+          newLines: 1,
+          lines: [
+            ["rem", 5, null, "old five"],
+            ["add", null, 5, "new five"],
+          ],
+        }),
+      ],
+      "one\nnew two\nthree\nfour\nnew five\nsix",
+      "one\nold two\nthree\nfour\nold five\nsix",
+    );
+    expect(fillsOf(rows).map((l) => l.text)).toEqual([
+      "one",
+      "three",
+      "four",
+      "six",
+    ]);
+  });
+
+  it("does not invent a blank row for a file ending in a newline", () => {
+    const rows = whole(oneChange, `${NEW_TEXT}\n`, `${OLD_TEXT}\n`);
+    expect(fillsOf(rows).map((l) => l.text)).toEqual([
+      "one",
+      "two",
+      "three",
+      "five",
+      "six",
+    ]);
+  });
+
+  it("keeps a genuine blank last line", () => {
+    const rows = whole(oneChange, `${NEW_TEXT}\n\n`, `${OLD_TEXT}\n\n`);
+    expect(fillsOf(rows).map((l) => l.text)).toEqual([
+      "one",
+      "two",
+      "three",
+      "five",
+      "six",
+      "",
+    ]);
+  });
+
+  it("degrades to chunked rows when the text is too short to fill the gap", () => {
+    const rows = whole(oneChange, "one\ntwo", "one\ntwo");
+    expect(rows.some((r) => r.kind === "fill")).toBe(false);
+    expect(rows).toEqual(flattenDiffRows(oneChange, { headerH: 26, rowH: 19 }));
+  });
+
+  it("degrades to chunked rows when the two sides disagree on the gap length", () => {
+    const bad = [
+      h({
+        oldStart: 4,
+        oldLines: 1,
+        newStart: 9,
+        newLines: 1,
+        lines: [
+          ["rem", 4, null, "old four"],
+          ["add", null, 9, "new four"],
+        ],
+      }),
+    ];
+    expect(whole(bad, NEW_TEXT, OLD_TEXT).some((r) => r.kind === "fill")).toBe(false);
+  });
+
+  it("renders chunked when there is no text at all", () => {
+    expect(whole(oneChange, null, null)).toEqual(
+      flattenDiffRows(oneChange, { headerH: 26, rowH: 19 }),
+    );
+  });
+
+  it("falls back to the old side when only it has text, as for a deleted file", () => {
+    const rows = whole(oneChange, null, OLD_TEXT);
+    expect(fillsOf(rows).map((l) => l.text)).toEqual([
+      "one",
+      "two",
+      "three",
+      "five",
+      "six",
+    ]);
+  });
+
+  it("still resolves syntax tokens for filler rows", () => {
+    const rows = flattenDiffRows(oneChange, {
+      headerH: 26,
+      rowH: 19,
+      wholeFile: { newText: NEW_TEXT, oldText: OLD_TEXT },
+      // New-side line 1 is "one"; filler reads the new side.
+      syntax: { old: null, new: [[{ start: 0, end: 3, cls: "syn-keyword" }]] },
+    });
+    expect(fillsOf(rows)[0].syntax?.[0].cls).toBe("syn-keyword");
   });
 });
 

@@ -213,8 +213,38 @@ export function SettingsScreen() {
 
         <Section title="Diff" subtitle="How diffs are rendered across the app.">
           <Row
+            label="Layout"
+            hint="Inline shows one column with added and removed lines interleaved. Split shows the old and new file side by side."
+            control={
+              <PGSelect
+                value={s.diffViewMode}
+                onChange={(v) => s.set("diffViewMode", v as "inline" | "split")}
+                options={[
+                  { value: "inline", label: "Inline" },
+                  { value: "split", label: "Split" },
+                ]}
+              />
+            }
+          />
+          <Row
+            label="Show"
+            hint="Whole file reads the file top to bottom with each change in place. Changed chunks shows only the hunks and their context lines. Either way, staging still applies exactly the hunks git would."
+            control={
+              <PGSelect
+                value={s.diffContextMode}
+                onChange={(v) =>
+                  s.set("diffContextMode", v as "wholeFile" | "chunks")
+                }
+                options={[
+                  { value: "wholeFile", label: "Whole file" },
+                  { value: "chunks", label: "Changed chunks" },
+                ]}
+              />
+            }
+          />
+          <Row
             label="Context lines"
-            hint="Unchanged lines shown around each hunk."
+            hint="Unchanged lines shown around each hunk in the changed-chunks view. Also the context every hunk stage/discard is computed against, so it applies in both views."
             control={
               <PGInput
                 type="number"

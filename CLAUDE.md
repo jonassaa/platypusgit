@@ -351,13 +351,57 @@ lib/
 ├── types.ts         Shared types mirroring Rust types.rs
 ├── errors.ts        AppError discriminated union 1:1 with Rust enum
 ├── derive.ts        Selectors: currentBranch, isStaged, isUnstaged, totalAheadBehind, …
-├── highlight.ts     Syntax highlighting for preview/diff
+├── syntax/          Shiki highlighting, OFF the main thread (see below)
+│   ├── tokenizeCore.ts   Shiki-FREE: SyntaxLine/SyntaxToken, MAX_HIGHLIGHT_*,
+│   │                     toLineRelative, packLines/unpackLines, skipHighlight
+│   ├── tokenizeShiki.ts  The one place codeToTokens is called
+│   ├── tokenize.worker.ts  Module worker running tokenizeShiki
+│   ├── tokenize.ts       Main-thread API: LRU cache + worker client + fallback.
+│   │                     `tokenizeFile(path, text)` — null means render plain
+│   ├── useSyntax.ts / useDiffSyntax.ts  Hooks; useDiffSyntax also EXPOSES the
+│   │                     texts it reads, which whole-file mode fills gaps from
+│   └── usePrefetchSyntax.ts  Bounded idle warm-up of a commit's other files
+├── diffRows.ts      Flat DiffRow model (header | line | fill) + exact
+│                    variable-height window. `fill` = whole-file gap filler
+├── useViewportH.ts  Scroll-container height WITHOUT depending on ResizeObserver
+├── useWindowedList.ts  Fixed-pitch windowing for the plain lists
 ├── fileIcon.ts      path → file-type glyph + themeable tint (tested)
 ├── tree.ts          buildStatusTree / buildStatusList — SAME row keys, which is
 │                    what makes the tree⇄flat toggle free of per-mode branches
 ├── useTreeViewMode.ts  Persisted tree|flat preference, one key per surface
 └── recents.ts       Recent-repo persistence
 ```
+
+### Diff rendering
+
+- **One row model, one renderer.** `flattenDiffRows` (`lib/diffRows.ts`) turns a
+  `FileDiff` into a flat `DiffRow[]`; `PGWindowedDiff` renders it. All four diff
+  surfaces (Diff screen, commit panel, repo browser, commit-diff panel) go
+  through both, so word spans, syntax, staging and F7 cannot drift between them.
+- **Whole file is the default view** (`diffContextMode: "wholeFile"`), and it is
+  composed on the FRONTEND: the canonical diff is left exactly as fetched and the
+  unchanged remainder is filled in around it as `fill` rows, from text
+  `useDiffSyntax` already read. **Never get whole-file by passing a large
+  `contextLines`** — libgit2 would return one hunk covering the file, so
+  `stage_hunk` would stage everything and `changedIndex` would shift. `fill` is a
+  distinct row kind with no `hunkIndex` precisely so it cannot reach a staging
+  path. Any inconsistent gap arithmetic degrades to chunked rather than render
+  wrong line numbers; git's `+N,0` convention (the line BEFORE) is normalized in
+  `effStart`, or every filler number after such a hunk shifts by one.
+- **Hunk headers stay in whole-file mode.** They carry Stage/Discard, the
+  collapse chevron, `data-hunk-index` for F7, and the e2e selectors.
+- **Tokenization runs in a module worker.** Shiki's `codeToTokens` is synchronous
+  CPU work, so awaiting it on the main thread still janked. Tokens come back
+  packed into transferable `Int32Array`s rather than one object per token.
+  `vite.config.ts` sets **`worker: { format: "es" }`** — Shiki's grammars are
+  dynamic imports, so the worker bundle is code-split and Vite's default `iife`
+  worker format fails the production build outright. A failed worker degrades to
+  main-thread tokenizing, which is also the path jsdom component tests take.
+- **Do not measure a scroll viewport behind a `typeof ResizeObserver` guard.**
+  WebKitGTK 605 (the Linux webview, and the e2e target) has none; guarding before
+  the initial measurement leaves the height 0, `windowVariable` falls back to a
+  400px viewport, and the bottom of a taller pane renders blank. Use
+  `lib/useViewportH.ts`.
 
 ### Navigation model
 

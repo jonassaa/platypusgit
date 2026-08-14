@@ -9,9 +9,11 @@ import {
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
+import { useWholeFile } from "./useWholeFile";
 import { SignatureBadge } from "@/features/signing/SignatureBadge";
-import { useDiffSyntax, type SideSource } from "@/lib/syntax";
+import { useDiffSyntax, usePrefetchSyntax, type SideSource } from "@/lib/syntax";
 import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
 import type { FileDiff } from "@/lib/types";
@@ -147,11 +149,26 @@ export function CommitDiffPanel({
     new: syntaxSides?.new ?? { kind: "none" },
   });
 
+  // Warm the token cache for the commit's other files while nothing else needs
+  // the worker, so moving down the file list usually hits the cache. The selected
+  // file goes first and the hook skips it — it is already loading above.
+  const prefetchPaths = React.useMemo(() => {
+    const others = diffs.filter((d) => d.path !== current?.path).map((d) => d.path);
+    return current ? [current.path, ...others] : others;
+  }, [diffs, current?.path]);
+  usePrefetchSyntax({
+    repoId: syntaxSides?.repoId ?? null,
+    paths: prefetchPaths,
+    source: syntaxSides?.new ?? { kind: "none" },
+    enabled: !loading && !error && !!syntaxSides,
+  });
+
   // Flat rows + an exact window, from the SAME helpers the other diff surfaces
   // use. The panel keeps its own lighter markup, but not its own row model:
   // flattenDiffRows already pairs the word spans and resolves each row's syntax
   // side, which this panel used to do by hand.
   const rowH = useDiffRowHeight();
+  const wholeFile = useWholeFile(syntax);
   const rows = React.useMemo(
     () =>
       flattenDiffRows(current && !current.binary ? current.hunks : [], {
@@ -160,21 +177,14 @@ export function CommitDiffPanel({
         headerH: rowH,
         rowH,
         syntax,
+        wholeFile,
       }),
-    [current, rowH, syntax],
+    [current, rowH, syntax, wholeFile],
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = React.useState(0);
-  const [viewportH, setViewportH] = React.useState(0);
-  React.useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    setViewportH(el.clientHeight);
-    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const { viewportH, remeasure } = useViewportH(scrollRef);
   const win = React.useMemo(
     () => windowVariable(heights, { scrollTop, viewportH, overscan: 8 }),
     [heights, scrollTop, viewportH],
@@ -332,7 +342,10 @@ export function CommitDiffPanel({
           style={{ flex: 1, padding: 12 }}
           ariaLabel="Diff"
           innerRef={scrollRef}
-          onScroll={() => setScrollTop(scrollRef.current?.scrollTop ?? 0)}
+          onScroll={() => {
+            setScrollTop(scrollRef.current?.scrollTop ?? 0);
+            remeasure();
+          }}
         >
           {current?.binary && (
             <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-12)" }}>

@@ -50,6 +50,12 @@ export function PGWindowedDiff({
         <div data-pg-spacer="top" style={{ height: `${win.topPad}px` }} />
       )}
       {slice.map((row, i) => {
+        // Whole-file filler: an unchanged line outside every hunk. It belongs to
+        // no hunk, so it gets no selection and no click target — there is no hunk
+        // index it could stage.
+        if (row.kind === "fill") {
+          return <PGDiffRow key={`f${start + i}`} line={row.line} />;
+        }
         if (row.kind === "header") {
           const actions = hunkActions?.(row.hunkIndex) ?? {};
           return (
