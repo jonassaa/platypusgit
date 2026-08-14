@@ -1004,8 +1004,8 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // Apply oldest→newest (the caller orders them). Each clean pick
       // auto-commits and moves HEAD; the next applies on top. A conflicting
       // pick throws (ConflictsDetected), stopping the sequence and leaving the
-      // repo in a conflicted CherryPick state for the Conflict screen. Refresh
-      // once at the end rather than per pick.
+      // repo in a conflicted CherryPick state — which the operation bar then
+      // announces. Refresh once at the end rather than per pick.
       for (const oid of oids) {
         await cherryPick(repo.id, oid);
       }
@@ -1322,6 +1322,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await get().refreshAll();
       return oid;
     } catch (e) {
+      // Refresh BEFORE recording the error (see mergeBranch): refreshAll clears
+      // `error` as its first act, and React batches same-tick sets. A `git
+      // rebase --continue` that stops on the NEXT conflict fails here with the
+      // repository already moved on, so the operation bar must re-read disk.
+      await get().refreshAll();
       set({ error: toAppError(e) });
       return null;
     }

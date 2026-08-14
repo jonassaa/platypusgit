@@ -34,6 +34,7 @@ import { PGPane, FocusableScroll, usePaneList, useAction } from "@/features/keym
 import { stageablePaths } from "@/features/repo/ops";
 import {
   currentBranch,
+  isConflicted,
   isStaged,
   isUnstaged,
   isUntracked,
@@ -165,6 +166,7 @@ export function CommitPanelScreen() {
         staged: f?.side === "staged",
         embedded: f?.status.embedded,
         untracked: !!f && f.side === "unstaged" && isUntracked(f.status),
+        conflicted: !!f && isConflicted(f.status),
       });
     },
   );

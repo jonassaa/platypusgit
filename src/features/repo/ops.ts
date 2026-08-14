@@ -7,7 +7,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pgFlash } from "@/design";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { currentBranch, isStaged, isUnstaged } from "@/lib/derive";
+import { openMergeWindow } from "@/features/merge/openMergeWindow";
+import { currentBranch, isConflicted, isStaged, isUnstaged } from "@/lib/derive";
 import type { FileStatus } from "@/lib/types";
 import { useRepoStore } from "./useRepoStore";
 
@@ -128,5 +129,21 @@ export function pushCurrentOp(): boolean {
     return true;
   }
   void repo.push(upstream[0], upstream[1]);
+  return true;
+}
+
+/** Open the merge resolver on the repository's conflicted files (#108).
+ *
+ *  The resolver is a separate window and picks its own first file, so this op
+ *  passes no path. Claims the chord either way — a user who pressed it wants to
+ *  hear that there is nothing to resolve, not nothing at all. */
+export function resolveConflictsOp(): boolean {
+  const repo = useRepoStore.getState();
+  if (!repo.current) return false;
+  if (!repo.status.some(isConflicted)) {
+    pgFlash("No conflicts to resolve");
+    return true;
+  }
+  void openMergeWindow(repo.current.id);
   return true;
 }

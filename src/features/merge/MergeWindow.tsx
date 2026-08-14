@@ -12,9 +12,12 @@ import {
   PGDialogHost,
   PGEmpty,
   PGIcon,
+  PGResizeHandle,
   PGSpinner,
   pgConfirm,
+  usePaneWidth,
 } from "@/design";
+import { MergeFileList, type MergeFile } from "./FileList";
 import {
   acceptOurs as acceptOursIpc,
   acceptTheirs as acceptTheirsIpc,
@@ -23,14 +26,11 @@ import {
   saveResolution,
 } from "@/lib/tauri";
 import type { ConflictSides, FileStatus } from "@/lib/types";
+import { isConflicted } from "@/lib/derive";
 import { eventToChord, formatChord } from "@/features/keymap/chord";
 import { buildMergeModel } from "./mergeModel";
 import { MergeBody, type MergeBodyHandle } from "./MergeBody";
 import type { RegionState } from "./resultEditor";
-
-function isConflicted(s: FileStatus): boolean {
-  return s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted";
-}
 
 export function findNextConflict(status: FileStatus[], current: string): string | null {
   const next = status.find((s) => isConflicted(s) && s.path !== current);
@@ -42,8 +42,36 @@ export function MergeWindow() {
   const [repoId, setRepoId] = React.useState(params.get("repoId") ?? "");
   const [path, setPath] = React.useState(params.get("path") ?? "");
   const [sides, setSides] = React.useState<ConflictSides | null>(null);
-  const [remaining, setRemaining] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
+  // The sidebar's contents. `conflicted` is disk truth; `sessionResolved` keeps
+  // files the user finished here listed anyway, so the list does not shrink out
+  // from under them as they work down it.
+  const [conflicted, setConflicted] = React.useState<string[]>([]);
+  const [sessionResolved, setSessionResolved] = React.useState<string[]>([]);
+  // Bumped when the open file changed on disk without being resolved (a
+  // "Restart resolution" brings its markers back), to re-fetch its sides.
+  const [reloadKey, setReloadKey] = React.useState(0);
+  const listPane = usePaneWidth(260, {
+    min: 180,
+    max: 520,
+    storageKey: "pg-merge-list-w",
+  });
+
+  const files: MergeFile[] = React.useMemo(() => {
+    const open = new Set(conflicted);
+    const all = Array.from(new Set([...conflicted, ...sessionResolved])).sort();
+    return all.map((p) => ({ path: p, resolved: !open.has(p) }));
+  }, [conflicted, sessionResolved]);
+  const remaining = conflicted.length;
+
+  /** Re-read which files are conflicted. Returns the raw status so callers can
+   *  pick the next file from the same snapshot. */
+  const refreshFiles = React.useCallback(async (): Promise<FileStatus[]> => {
+    if (!repoId) return [];
+    const status = await getStatus(repoId);
+    setConflicted(status.filter(isConflicted).map((s) => s.path));
+    return status;
+  }, [repoId]);
 
   const bodyRef = React.useRef<MergeBodyHandle>(null);
   // Region states drive the footer counter + Apply gate. They are SEEDED from
@@ -72,17 +100,37 @@ export function MergeWindow() {
     setApplyError(null);
   }
 
-  // Load sides + remaining count whenever the target file changes.
+  // Keep the file list current, and choose a file when the window was opened on
+  // the repository rather than on one (the operation bar's CTA, the status-bar
+  // count, the ⌘5 chord — none of them name a file).
+  React.useEffect(() => {
+    if (!repoId) return;
+    let stale = false;
+    void refreshFiles()
+      .then((status) => {
+        if (stale) return;
+        const first = status.filter(isConflicted)[0]?.path;
+        setPath((cur) => cur || first || "");
+        // Nothing to select and nothing to load: clear the spinner the sides
+        // effect below would otherwise leave running forever.
+        if (!first) setLoading(false);
+      })
+      .catch((e) => console.error("merge window file list failed", e));
+    return () => {
+      stale = true;
+    };
+  }, [repoId, reloadKey, refreshFiles]);
+
+  // Load the open file's sides.
   React.useEffect(() => {
     if (!repoId || !path) return;
     let stale = false;
     setLoading(true);
     setSides(null);
-    Promise.all([conflictSides(repoId, path), getStatus(repoId)])
-      .then(([s, status]) => {
+    conflictSides(repoId, path)
+      .then((s) => {
         if (stale) return;
         setSides(s);
-        setRemaining(status.filter(isConflicted).length);
       })
       .catch((e) => console.error("merge window load failed", e))
       .finally(() => !stale && setLoading(false));
@@ -90,32 +138,43 @@ export function MergeWindow() {
     return () => {
       stale = true;
     };
-  }, [repoId, path]);
-
-  // Main window can retarget an already-open resolver (user launches a
-  // different conflicted file while this window is open).
-  // Known limitation: a retarget switches files without a dirty-progress
-  // confirm — unapplied in-editor resolutions for the current file are
-  // dropped (the normal flow applies + auto-advances, so this only bites a
-  // manual mid-resolution re-launch). Revisit with a confirm if it bites.
-  React.useEffect(() => {
-    const un = listen<{ repoId: string; path: string }>("merge://open-file", (e) => {
-      setRepoId(e.payload.repoId);
-      setPath(e.payload.path);
-    });
-    return () => {
-      un.then((f) => f());
-    };
-  }, []);
+  }, [repoId, path, reloadKey]);
 
   /** After a file is resolved: notify main, load next conflict or close. */
   const advance = React.useCallback(async () => {
-    await emit("merge://resolved", { repoId, path });
-    const status = await getStatus(repoId);
-    const next = findNextConflict(status, path);
+    const done = path;
+    await emit("merge://resolved", { repoId, path: done });
+    setSessionResolved((prev) => (prev.includes(done) ? prev : [...prev, done]));
+    const status = await refreshFiles();
+    const next = findNextConflict(status, done);
     if (next) setPath(next);
     else await getCurrentWindow().close();
-  }, [repoId, path]);
+  }, [repoId, path, refreshFiles]);
+
+  /** A sidebar action took a file out of conflict (accept a side, mark
+   *  resolved). The open file follows the same path Apply does. */
+  const onFileResolved = React.useCallback(
+    async (p: string) => {
+      if (p === path) {
+        await advance();
+        return;
+      }
+      await emit("merge://resolved", { repoId, path: p });
+      setSessionResolved((prev) => (prev.includes(p) ? prev : [...prev, p]));
+      await refreshFiles();
+    },
+    [path, advance, repoId, refreshFiles],
+  );
+
+  /** A sidebar action changed a file that is still conflicted (a restart). */
+  const onFileChanged = React.useCallback(
+    async (p: string) => {
+      await refreshFiles();
+      // Its markers are back, so the loaded sides and the editor are stale.
+      if (p === path) setReloadKey((k) => k + 1);
+    },
+    [path, refreshFiles],
+  );
 
   const chooser = sides && (sides.binary || sides.ours == null || sides.theirs == null);
 
@@ -198,32 +257,71 @@ export function MergeWindow() {
     }
   }, [canApply, model, repoId, path, advance]);
 
-  // --- Close (confirm when this file has unsaved progress) ----------------
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const requestClose = React.useCallback(() => {
+  // --- Unapplied progress: side picks, or edits to the result pane ---------
+  const hasUnappliedProgress = React.useCallback(() => {
     const body = bodyRef.current;
     const regs = body?.regions() ?? regionStates;
     const editorText = body?.resultText();
-    const touched =
+    return (
       regs.some((r) => r.resolution !== null) ||
-      (editorText != null && model != null && editorText !== model.initialResult);
-    if (!touched) {
+      (editorText != null && model != null && editorText !== model.initialResult)
+    );
+  }, [regionStates, model]);
+
+  const confirmDiscard = () =>
+    pgConfirm({
+      title: "Discard this file's merge progress?",
+      body: "Side picks and edits to the result pane are lost; the file stays conflicted.",
+      danger: true,
+      confirmLabel: "Discard",
+    });
+
+  // --- Close (confirm when this file has unsaved progress) ----------------
+  const requestClose = React.useCallback(() => {
+    if (!hasUnappliedProgress()) {
       void getCurrentWindow().close();
       return;
     }
     void (async () => {
-      if (
-        await pgConfirm({
-          title: "Discard this file's merge progress?",
-          body: "Side picks and edits to the result pane are lost; the file stays conflicted.",
-          danger: true,
-          confirmLabel: "Discard",
-        })
-      ) {
-        void getCurrentWindow().close();
-      }
+      if (await confirmDiscard()) void getCurrentWindow().close();
     })();
-  }, [regionStates, model]);
+  }, [hasUnappliedProgress]);
+
+  // --- Switch files from the sidebar, or from a retarget event -------------
+  // Same gate as closing: leaving a file mid-resolution loses the same work.
+  const requestSwitchTo = React.useCallback(
+    (p: string) => {
+      if (!p || p === path) return;
+      if (!hasUnappliedProgress()) {
+        setPath(p);
+        return;
+      }
+      void (async () => {
+        if (await confirmDiscard()) setPath(p);
+      })();
+    },
+    [path, hasUnappliedProgress],
+  );
+
+  // The main window can retarget an already-open resolver. A named file goes
+  // through the same discard gate the sidebar uses — this used to switch
+  // silently and drop unapplied work. A null path means "the user asked for the
+  // resolver, not for a file": keep their place and just refresh the list.
+  const switchRef = React.useRef(requestSwitchTo);
+  switchRef.current = requestSwitchTo;
+  React.useEffect(() => {
+    const un = listen<{ repoId: string; path: string | null }>(
+      "merge://open-file",
+      (e) => {
+        setRepoId(e.payload.repoId);
+        if (e.payload.path) switchRef.current(e.payload.path);
+        else setReloadKey((k) => k + 1);
+      },
+    );
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   // --- Chord table: window-level keydown, capture phase (beats CM keymap) --
   // Rebuilt each render so the listener always sees latest closures.
@@ -283,34 +381,67 @@ export function MergeWindow() {
         >
           {path}
         </span>
-        <span
-          data-testid="merge-remaining"
-          style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-11)", color: "var(--fg-2)" }}
-        >
-          {remaining} file{remaining !== 1 ? "s" : ""} remaining
-        </span>
+        {/* Withheld until the first list fetch lands — an unqualified "0 files
+            remaining" on mount would be a wrong statement, not a loading one. */}
+        {files.length > 0 && (
+          <span
+            data-testid="merge-remaining"
+            style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-11)", color: "var(--fg-2)" }}
+          >
+            {remaining} file{remaining !== 1 ? "s" : ""} remaining
+          </span>
+        )}
       </div>
 
-      {loading ? (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <PGSpinner size={18} />
+      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+        {files.length > 0 && (
+          <>
+            <MergeFileList
+              files={files}
+              current={path}
+              repoId={repoId}
+              width={listPane.width}
+              onSelect={requestSwitchTo}
+              onResolved={(p) => void onFileResolved(p)}
+              onChanged={(p) => void onFileChanged(p)}
+            />
+            <PGResizeHandle onDrag={listPane.resize} />
+          </>
+        )}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {loading ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <PGSpinner size={18} />
+            </div>
+          ) : chooser ? (
+            <ChooserPanel sides={sides!} repoId={repoId} path={path} onResolved={advance} />
+          ) : model ? (
+            <MergeBody
+              key={path}
+              ref={bodyRef}
+              model={model}
+              currentConflict={currentId}
+              onRegionsChange={setRegionStates}
+              // #104 PR2: the panes highlight by the file's extension.
+              path={path}
+            />
+          ) : (
+            <PGEmpty icon="conflict" title="Nothing to resolve">
+              {path
+                ? "This file has no conflict entry (it may already be resolved)."
+                : "No conflicted files left in this repository."}
+            </PGEmpty>
+          )}
         </div>
-      ) : chooser ? (
-        <ChooserPanel sides={sides!} repoId={repoId} path={path} onResolved={advance} />
-      ) : model ? (
-        <MergeBody
-          key={path}
-          ref={bodyRef}
-          model={model}
-          currentConflict={currentId}
-          onRegionsChange={setRegionStates}
-          path={path}
-        />
-      ) : (
-        <PGEmpty icon="conflict" title="Nothing to resolve">
-          This file has no conflict entry (it may already be resolved).
-        </PGEmpty>
-      )}
+      </div>
 
       {applyError && (
         <div

@@ -1065,11 +1065,17 @@ export function fileMenuItems(
     staged?: boolean;
     embedded?: boolean;
     untracked?: boolean;
+    conflicted?: boolean;
   } | null,
 ): ContextMenuItem[] {
   const staged = !!file?.staged;
   const untracked = !!file?.untracked;
   const path = file?.path || "";
+  // With the Conflicts screen gone (#108), the row in Files/Commit is where a
+  // conflicted file is listed in the main window — so it is where resolving it
+  // has to be reachable. Staging a file still carrying markers is not the
+  // menu the user wants here, so this replaces it rather than extending it.
+  if (file?.conflicted) return conflictMenuItems({ path });
   if (file?.embedded) return embeddedRepoMenuItems(path);
   return [
     { __menuTitle: path || "file" },

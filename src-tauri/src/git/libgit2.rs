@@ -200,8 +200,8 @@ impl Libgit2Backend {
 
     /// Re-merge a recreated merge's other parents into the current HEAD.
     /// Returns `Ok(false)` when the merge conflicts — the worktree keeps the
-    /// conflicted index, so the Conflict screen and the merge resolver window
-    /// work exactly as they do for a conflicting pick.
+    /// conflicted index, so the operation bar and the merge resolver window work
+    /// exactly as they do for a conflicting pick.
     ///
     /// A worktree merge, not `merge_commits`: the conflicted index with its
     /// stages is what every conflict surface in the app reads.
@@ -263,6 +263,64 @@ impl Libgit2Backend {
             repo.cleanup_state()?;
             Ok(())
         })
+    }
+
+    /// True when a rebase GIT itself owns is in progress — the `.git/rebase-*`
+    /// state written by the `git rebase` that the `rebase_onto` command shells
+    /// out to, or by one the user started in a terminal before opening the app.
+    ///
+    /// Ours is excluded via `rebase_in_progress`, which covers both the
+    /// in-memory plan and the rehydratable state file — checking only the
+    /// HashMap would misread one of our own rebases as git's after a restart,
+    /// and then hand `git rebase --abort` a repository git sees no rebase in.
+    /// With ours ruled out, `repo_state` cannot be reporting our override
+    /// either, so what remains is libgit2's honest read of git's own dirs.
+    ///
+    /// The distinction matters because libgit2 cannot finish a git-owned rebase
+    /// and the generic paths are actively wrong for it: `continue_operation`
+    /// would commit the resolved tree and `cleanup_state()` — abandoning every
+    /// step still queued — and `abort_operation` would hard reset to the
+    /// mid-rebase HEAD, leaving the user detached at a half-rebased position
+    /// instead of back on their branch. Both hand off to git instead.
+    fn cli_rebase_in_progress(&self, repo_id: &RepoId) -> AppResult<bool> {
+        if self.rebase_in_progress(repo_id)? {
+            return Ok(false);
+        }
+        Ok(matches!(
+            self.repo_state(repo_id)?,
+            RepoState::Rebase | RepoState::RebaseInteractive | RepoState::RebaseMerge
+        ))
+    }
+
+    /// `git rebase --continue` / `--abort` in the worktree.
+    fn run_rebase_flag(&self, repo_id: &RepoId, flag: &str) -> AppResult<()> {
+        let repo_path = self.repo_path(repo_id)?;
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["rebase", flag])
+            // `--continue` commits the resolved tree, and git opens an editor
+            // for the message unless told not to. There is no tty here, so an
+            // editor would block forever.
+            .env("GIT_EDITOR", "true")
+            .env("GIT_SEQUENCE_EDITOR", "true")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| AppError::Io(e.to_string()))?;
+        if !out.status.success() {
+            // A `--continue` that runs into the NEXT conflict also exits
+            // non-zero, and says so on stdout rather than stderr — take
+            // whichever stream spoke so the banner is not empty.
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let detail = if stderr.is_empty() {
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            } else {
+                stderr
+            };
+            return Err(AppError::Git(format!("git rebase {flag}: {detail}")));
+        }
+        Ok(())
     }
 
     fn bump_completed(&self, repo_id: &RepoId) -> AppResult<()> {
@@ -4059,7 +4117,7 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn abort_operation(&self, repo_id: &RepoId) -> AppResult<()> {
-        // The Conflict screen and the palette both land here. When the paused
+        // The operation bar and the palette both land here. When the paused
         // operation is one of our rebases, hand it to the engine that owns it:
         // `rebase_abort` puts HEAD back on the branch and sweeps the state file,
         // while a plain hard reset here would leave both to guesswork — and
@@ -4067,6 +4125,15 @@ impl GitBackend for Libgit2Backend {
         // reporting a rebase that is over.
         if self.rebase_in_progress(repo_id)? {
             return self.rebase_abort(repo_id);
+        }
+
+        // A rebase GIT owns on disk — `rebase_onto` shells out to `git rebase`,
+        // and the user may also have started one in a terminal — is restored by
+        // `git rebase --abort`, which puts HEAD back on the pre-rebase branch
+        // tip. The reset below cannot: mid-rebase HEAD is wherever the rebase
+        // stopped, so it would leave a detached, half-rebased branch.
+        if self.cli_rebase_in_progress(repo_id)? {
+            return self.run_rebase_flag(repo_id, "--abort");
         }
 
         self.with_repo(repo_id, |repo| {
@@ -4091,6 +4158,9 @@ impl GitBackend for Libgit2Backend {
             });
         }
 
+        // Checked before the branch below so both remaining paths refuse with
+        // the same variant the frontend narrows on, rather than git's prose for
+        // one and ours for the other.
         self.with_repo(repo_id, |repo| {
             let statuses = repo.statuses(None)?;
             if statuses.iter().any(|s| s.status().is_conflicted()) {
@@ -4098,7 +4168,20 @@ impl GitBackend for Libgit2Backend {
                     "some files still have unresolved conflicts".into(),
                 ));
             }
+            Ok(())
+        })?;
 
+        // A rebase git owns on disk is advanced by `git rebase --continue`,
+        // which commits the resolved step and then applies the ones still
+        // queued. The generic commit below would finish the current step and
+        // throw the rest of the plan away.
+        if self.cli_rebase_in_progress(repo_id)? {
+            self.run_rebase_flag(repo_id, "--continue")?;
+            return self
+                .with_repo(repo_id, |repo| Ok(repo.head()?.peel_to_commit()?.id().to_string()));
+        }
+
+        self.with_repo(repo_id, |repo| {
             let sig = crate::git::signature::default_signature(repo)?.to_owned();
             let mut index = repo.index()?;
             let tree_oid = index.write_tree()?;

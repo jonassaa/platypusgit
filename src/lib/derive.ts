@@ -37,6 +37,17 @@ export function isUnstaged(s: FileStatus): boolean {
 }
 
 /**
+ * Mid-merge, libgit2 reports a conflicted path on both sides — but not always
+ * on both at once (a `mark_resolved` stages the index side while the worktree
+ * entry lags a refresh). Either side is enough to call it conflicted; every
+ * surface that lists conflicts must agree, or the count in the status bar and
+ * the list in the resolver disagree about the same file.
+ */
+export function isConflicted(s: FileStatus): boolean {
+  return s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted";
+}
+
+/**
  * Never committed and never staged — git holds no copy of it.
  *
  * Discarding one deletes it outright rather than restoring it, so the UI has to

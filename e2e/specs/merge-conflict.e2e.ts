@@ -1,12 +1,16 @@
+// Merge + conflict flow after #108: there is no Conflicts screen. The operation
+// bar is what announces the conflicted merge and carries Finalize/Abort, and a
+// conflicted row's own context menu is where a single file gets resolved.
+
 import { browser, $, expect } from "@wdio/globals";
 import { conflictRepo, cherryRepo, TempRepo } from "../support/tempRepo";
 import {
-  openRepo, resetApp, switchScreen, stubNativeDialogs,
+  openRepo, resetApp, stubNativeDialogs,
   jsContextMenu, jsClickMenuItem,
 } from "../support/app";
 
 /** Open picker, context-menu the branch row, click "Merge into current".
- *  window.confirm must already be stubbed. */
+ *  Confirm dialogs must already be stubbed. */
 async function mergeBranchViaPicker(name: string): Promise<void> {
   await $('[data-testid="branch-chip"]').click();
   const row = $(`[data-branch-row]*=${name}`);
@@ -15,14 +19,39 @@ async function mergeBranchViaPicker(name: string): Promise<void> {
   await jsClickMenuItem("Merge into current");
 }
 
-/** conflictRepo + open + stub + merge clash → wait for conflict row. */
+/** conflictRepo + open + stub + merge clash → wait for the operation bar, which
+ *  is the app's signal that a conflicted merge is open. */
 async function startConflictedMerge(repo: TempRepo): Promise<void> {
   await openRepo(repo.path);
   await stubNativeDialogs({ confirm: true });
   await mergeBranchViaPicker("clash");
-  await switchScreen("conflict");
-  await $('[data-testid="conflict-row"][data-path="conflict.txt"]').waitForDisplayed({
-    timeout: 20_000, timeoutMsg: "conflicted merge did not surface",
+  await $('[data-testid="operation-bar"]').waitForDisplayed({
+    timeout: 20_000, timeoutMsg: "operation bar never announced the conflicted merge",
+  });
+}
+
+/** Resolve one file from its row in the Files screen (the default screen, whose
+ *  "changes" filter lists a conflicted file). */
+async function resolveViaRowMenu(path: string, item: string): Promise<void> {
+  const row = $(`[data-pg-row][data-path="${path}"]`);
+  await row.waitForDisplayed({
+    timeout: 20_000, timeoutMsg: `conflicted row ${path} never appeared in Files`,
+  });
+  await jsContextMenu(`[data-pg-row][data-path="${path}"]`);
+  await jsClickMenuItem(item);
+}
+
+/** Nothing conflicted left → the bar offers the finish verb. Click it and wait
+ *  for the bar itself to go: `repoState` back to Clean is the UI signal. */
+async function finalizeOperation(): Promise<void> {
+  const finish = $('[data-testid="operation-continue"]');
+  await finish.waitForDisplayed({
+    timeout: 20_000, timeoutMsg: "Finalize never appeared after resolving",
+  });
+  await finish.click();
+  await $('[data-testid="operation-bar"]').waitForDisplayed({
+    reverse: true, timeout: 20_000,
+    timeoutMsg: "operation bar stayed up after finalize",
   });
 }
 
@@ -51,7 +80,7 @@ describe("merge & conflict", () => {
     expect(repo.read("cherry.txt")).toBe("cherry\n");
   });
 
-  it("shows conflict state immediately when a merge conflicts", async () => {
+  it("announces the conflicted merge without any manual refresh", async () => {
     repo = conflictRepo();
     await openRepo(repo.path);
     await stubNativeDialogs({ confirm: true });
@@ -60,84 +89,50 @@ describe("merge & conflict", () => {
     await $('[role="alert"]').waitForDisplayed({
       timeout: 20_000, timeoutMsg: "error banner never appeared",
     });
-    // ...AND conflict state is visible WITHOUT any manual refresh:
-    await switchScreen("conflict");
-    await $('[data-testid="conflict-row"][data-path="conflict.txt"]').waitForDisplayed({
-      timeout: 20_000,
-      timeoutMsg: "conflict row not shown — refreshAll-on-error fix missing?",
+    // ...AND the operation bar says what is open and what is left, WITHOUT a
+    // manual refresh (the refreshAll-on-error path in the store).
+    const detail = $('[data-testid="operation-detail"]');
+    await detail.waitForDisplayed({
+      timeout: 20_000, timeoutMsg: "operation bar never appeared — refreshAll-on-error missing?",
     });
-    // ...AND the status-bar badge reflects it too (same refreshAll-on-error fix).
-    await $("span*=1 conflict").waitForDisplayed({
+    await expect(detail).toHaveText("1 conflict to resolve", { containing: true });
+    await expect($('[data-testid="operation-title"]')).toHaveText("Merge in progress", {
+      containing: true,
+    });
+    // ...AND the status bar agrees. Scoped to the bar: "1 conflict" is also a
+    // substring of the operation bar's own detail text.
+    await $('[data-testid="status-bar"]').$("span*=1 conflict").waitForDisplayed({
       timeout: 10_000, timeoutMsg: "status-bar conflict badge never appeared",
     });
     expect(repo.hasRef("MERGE_HEAD")).toBe(true);
   });
 
-  it("resolves with accept-ours and finalizes the merge", async () => {
+  it("resolves with accept-ours from the file row and finalizes", async () => {
     repo = conflictRepo();
     await startConflictedMerge(repo);
-    await $('[data-testid="conflict-row"][data-path="conflict.txt"]').click();
-    await $('[data-testid="accept-ours"]').waitForDisplayed({
-      timeout: 10_000, timeoutMsg: "detail action bar missing",
-    });
-    await $('[data-testid="accept-ours"]').click();
-    // accept-ours may auto-mark the file resolved (row leaves the list) —
-    // only click mark-resolved if it's still present. TOCTOU guard (#35):
-    // the post-accept refresh can unmount the button between isExisting()
-    // and click() — the button vanishing IS the resolved state, so swallow
-    // the re-find failure; the finalize wait + repo-truth asserts below
-    // remain the real gates.
-    const markResolvedBtn = $('[data-testid="mark-resolved"]');
-    try {
-      if (await markResolvedBtn.isExisting()) await markResolvedBtn.click();
-    } catch {
-      // button unmounted mid-flight — file already resolved
-    }
-    const finalize = $('[data-testid="conflict-finalize"]');
-    await browser.waitUntil(async () => finalize.isEnabled(), {
-      timeout: 10_000, timeoutMsg: "Finalize never enabled after resolving",
-    });
-    await finalize.click();
-    await $("div*=No conflicts").waitForDisplayed({
-      timeout: 20_000, timeoutMsg: "conflict screen did not clear after finalize",
-    });
+    await resolveViaRowMenu("conflict.txt", "Accept ours");
+    await finalizeOperation();
     expect(repo.hasRef("MERGE_HEAD")).toBe(false);
     expect(repo.read("conflict.txt")).toBe("ours change\n");
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 
-  it("resolves with accept-theirs", async () => {
+  it("resolves with accept-theirs from the file row", async () => {
     repo = conflictRepo();
     await startConflictedMerge(repo);
-    await $('[data-testid="conflict-row"][data-path="conflict.txt"]').click();
-    await $('[data-testid="accept-theirs"]').waitForDisplayed({
-      timeout: 10_000, timeoutMsg: "detail action bar missing",
-    });
-    await $('[data-testid="accept-theirs"]').click();
-    // Same TOCTOU guard as the accept-ours test above (#35).
-    const markResolvedBtn = $('[data-testid="mark-resolved"]');
-    try {
-      if (await markResolvedBtn.isExisting()) await markResolvedBtn.click();
-    } catch {
-      // button unmounted mid-flight — file already resolved
-    }
-    await browser.waitUntil(
-      async () => $('[data-testid="conflict-finalize"]').isEnabled(),
-      { timeout: 10_000, timeoutMsg: "Finalize never enabled" },
-    );
-    await $('[data-testid="conflict-finalize"]').click();
-    await $("div*=No conflicts").waitForDisplayed({
-      timeout: 20_000, timeoutMsg: "conflict screen did not clear",
-    });
+    await resolveViaRowMenu("conflict.txt", "Accept theirs");
+    await finalizeOperation();
     expect(repo.read("conflict.txt")).toBe("theirs change\n");
+    expect(repo.hasRef("MERGE_HEAD")).toBe(false);
   });
 
   it("aborts a conflicted merge and restores the tree", async () => {
     repo = conflictRepo();
     await startConflictedMerge(repo);
-    await $('[data-testid="conflict-abort"]').click(); // confirm already stubbed true
-    await $("div*=No conflicts").waitForDisplayed({
-      timeout: 20_000, timeoutMsg: "abort did not clear conflict screen",
+    await $('[data-testid="operation-abort"]').click(); // confirm already stubbed true
+    await $('[data-testid="operation-bar"]').waitForDisplayed({
+      reverse: true, timeout: 20_000,
+      timeoutMsg: "operation bar stayed up after abort",
     });
     expect(repo.hasRef("MERGE_HEAD")).toBe(false);
     expect(repo.read("conflict.txt")).toBe("ours change\n");

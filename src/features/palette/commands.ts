@@ -6,8 +6,8 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep } from "./steps";
-import { currentBranch, relativeTime } from "@/lib/derive";
-import { headUpstream } from "@/features/repo/ops";
+import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
+import { headUpstream, resolveConflictsOp } from "@/features/repo/ops";
 import type { ActionId } from "@/features/keymap";
 import type { PaletteItem, PaletteStep } from "./types";
 
@@ -128,7 +128,6 @@ const SCREENS: [string, string, string, ActionId][] = [
   ["commit", "Commit", "commit", "nav.commit"],
   ["history", "History", "history", "nav.history"],
   ["branches", "Branches", "branch", "nav.branches"],
-  ["conflict", "Conflicts", "conflict", "nav.conflict"],
   ["rebase", "Rebase", "rebase", "nav.rebase"],
   ["remote", "Remotes", "link", "nav.remote"],
   ["diff", "Diff viewer", "fileCode", "nav.diff"],
@@ -461,6 +460,21 @@ export function buildCommands(): PaletteItem[] {
         })),
       },
     );
+  }
+
+  // -- conflict resolution --
+  // Listed only while something is conflicted: with the Conflicts screen gone
+  // (#108) this is the palette's route to the resolver window, and a row that
+  // only ever flashes "nothing to resolve" would be noise the rest of the time.
+  if (repo.status.some(isConflicted)) {
+    items.push({
+      type: "command", id: "action:resolve-conflicts",
+      search: "Resolve conflicts merge rebase", label: "Resolve conflicts…",
+      icon: "conflict", actionId: "conflict.openResolver",
+      run: direct(() => {
+        resolveConflictsOp();
+      }),
+    });
   }
 
   // -- in-progress operation controls --

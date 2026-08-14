@@ -56,7 +56,11 @@ describe("keymap — rider preset (default)", () => {
     pair?.dispose(); pair = null;
   });
 
-  it("nav chords switch screens (⌘K, ⌘9, ⌘D, ⌘1/4-7, ⌘⇧9, ⌘,)", async () => {
+  // ⌘5 is deliberately absent: since #108 it is `conflict.openResolver`, which
+  // opens the resolver WINDOW rather than switching screens (covered by
+  // merge-window.e2e.ts and by the ops unit test), so it has no place in a
+  // screen-switching walk.
+  it("nav chords switch screens (⌘K, ⌘9, ⌘D, ⌘1/4/6/7, ⌘⇧9, ⌘,)", async () => {
     // dirtyRepo: the Commit screen only mounts its panes when changes exist
     // (clean tree renders the "Working tree clean" empty state instead).
     repo = dirtyRepo();
@@ -65,7 +69,6 @@ describe("keymap — rider preset (default)", () => {
       { chord: "Mod+K", marker: '[data-pg-pane="commit.files"]', label: "Commit (⌘K)" },
       { chord: "Mod+9", marker: '[data-pg-pane="history.list"]', label: "History (⌘9)" },
       { chord: "Mod+4", marker: '[data-pg-pane="branches.list"]', label: "Branches (⌘4)" },
-      { chord: "Mod+5", marker: "div*=No conflicts", label: "Conflicts (⌘5)" },
       { chord: "Mod+6", marker: '[data-testid="rebase-start"]', label: "Rebase (⌘6)" },
       { chord: "Mod+7", marker: '[data-pg-pane="remote.list"]', label: "Remotes (⌘7)" },
       { chord: "Mod+D", marker: '[data-pg-pane="diff.files"]', label: "Diff (⌘D)" },

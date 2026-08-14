@@ -117,7 +117,7 @@ function RebaseBanner({
   let message: string;
   if (isConflict) {
     message =
-      "Conflicts detected — resolve them in the Conflicts screen, then click Continue.";
+      "Conflicts detected — resolve them with Resolve conflicts in the bar above, then click Continue.";
   } else if (isEdit) {
     message = "Paused for edit — amend the worktree as needed, then click Continue.";
   } else {
