@@ -110,6 +110,59 @@ describe("useSettingsStore persistence", () => {
   });
 });
 
+// The HEAD treatment moved from one `headIndicator` enum to marks × weight. The
+// old key is NOT in the schema any more, so the generic copy loop skips it — the
+// migration has to reach into the raw payload, and these tests are what say it
+// still does. Silently losing the setting looks identical to a fresh install.
+describe("head marks migration", () => {
+  it("carries a legacy headIndicator over to marks at the strong weight", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ headIndicator: "both" }));
+    const { useSettingsStore } = await freshStore();
+    const s = useSettingsStore.getState();
+    expect(s.headMarks).toEqual(["bar", "tint", "ring"]);
+    expect(s.headWeight).toBe("strong");
+  });
+
+  it("keeps a legacy 'none' honest — the graph ring, and nothing else", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ headIndicator: "none" }));
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().headMarks).toEqual(["ring"]);
+  });
+
+  it("prefers a stored mark list over the legacy key", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ headIndicator: "both", headMarks: ["badge"] }),
+    );
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().headMarks).toEqual(["badge"]);
+  });
+
+  it("respects an empty mark list instead of resetting to the default", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ headMarks: [] }));
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().headMarks).toEqual([]);
+  });
+
+  it("sanitizes a junk list and an unknown weight", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ headMarks: ["ring", "sparkles", "ring"], headWeight: "nuclear" }),
+    );
+    const { useSettingsStore } = await freshStore();
+    const s = useSettingsStore.getState();
+    expect(s.headMarks).toEqual(["ring"]);
+    expect(s.headWeight).toBe("strong");
+  });
+
+  it("defaults a fresh install to bar + wash + ring", async () => {
+    const { useSettingsStore } = await freshStore();
+    const s = useSettingsStore.getState();
+    expect(s.headMarks).toEqual(["bar", "tint", "ring"]);
+    expect(s.headWeight).toBe("strong");
+  });
+});
+
 describe("logo theme slots", () => {
   const BRAND_PRIMARY = "#3e9b91";
   const BRAND_SECONDARY = "#e6a95a";

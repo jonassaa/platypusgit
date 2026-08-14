@@ -434,6 +434,8 @@ export interface PGCheckboxProps {
   label?: ReactNode;
   indeterminate?: boolean;
   disabled?: boolean;
+  /** Lands on the <label>, matching PGToggle — this component spreads no rest. */
+  testId?: string;
 }
 
 export function PGCheckbox({
@@ -442,9 +444,11 @@ export function PGCheckbox({
   label,
   indeterminate,
   disabled,
+  testId,
 }: PGCheckboxProps) {
   return (
     <label
+      data-testid={testId}
       style={{
         display: "inline-flex",
         alignItems: "center",

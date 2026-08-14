@@ -38,6 +38,7 @@ import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
+import { resolveHeadDecor } from "@/features/settings/headMarks";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
@@ -181,7 +182,14 @@ export function HistoryScreen() {
   const head = currentBranch(branches);
   const headName = head?.name ?? null;
   const headOid = head?.tip ?? null;
-  const headIndicator = useSettingsStore((s) => s.headIndicator);
+  // Resolved ONCE for the whole list: every row gets the same object reference,
+  // which is what keeps PGCommitRow's memo effective (#68 G9).
+  const headMarks = useSettingsStore((s) => s.headMarks);
+  const headWeight = useSettingsStore((s) => s.headWeight);
+  const headDecor = React.useMemo(
+    () => resolveHeadDecor(headMarks, headWeight),
+    [headMarks, headWeight],
+  );
   const { onContextMenu: onCommitContext, menu: commitMenu } =
     useContextMenu<{ sha: string; subject: string }>(commitMenuItems);
   const { onContextMenu: onCommitMulti, menu: commitMultiMenu } =
@@ -646,7 +654,7 @@ export function HistoryScreen() {
               refs={refsByOid.get(c.oid)}
               selected={selectedSet.has(c.oid)}
               isHead={c.oid === headOid}
-              headStyle={headIndicator}
+              headDecor={headDecor}
               oid={c.oid}
               onRowClick={onRowClick}
               onRowContext={onRowContext}

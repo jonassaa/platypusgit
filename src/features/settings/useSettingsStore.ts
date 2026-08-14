@@ -1,5 +1,13 @@
 import { create } from "zustand";
 import type { PullMode } from "@/lib/tauri";
+import {
+  DEFAULT_HEAD_WEIGHT,
+  HEAD_WEIGHTS,
+  migrateHeadIndicator,
+  normalizeHeadMarks,
+  type HeadMark,
+  type HeadWeight,
+} from "./headMarks";
 
 const STORAGE_KEY = "pg-settings-v2";
 
@@ -544,23 +552,11 @@ export function applyDensity(density: UiDensity) {
 }
 
 // ─── HEAD ("you are here") indicator ─────────────────────────────────────────
-
-/**
- * How the commit HEAD points at is marked in History, on top of the graph's own
- * HEAD ring (part of the graph, always drawn).
- *
- * "bar" is the default: an edge bar reads at a glance without repainting a row
- * whose colors carry other meaning. "tint" is for wanting the whole row lit.
- */
-export const HEAD_INDICATORS = ["none", "bar", "tint", "both"] as const;
-export type HeadIndicator = (typeof HEAD_INDICATORS)[number];
-
-export const HEAD_INDICATOR_LABELS: Record<HeadIndicator, string> = {
-  none: "Graph marker only",
-  bar: "Edge bar",
-  tint: "Highlight row",
-  both: "Bar + highlight",
-};
+//
+// The catalog, the weight table and the resolver live in `./headMarks` — pure
+// and separately tested. Re-exported here because every existing consumer
+// already imports its HEAD types from this module.
+export * from "./headMarks";
 
 // ─── UI zoom (Mod+= / Mod+- / Mod+0, like an editor) ─────────────────────────
 
@@ -618,8 +614,13 @@ interface PersistedState {
   uiDensity: "compact" | "comfortable";
   /** Webview zoom factor — 1 is 100%. See applyZoom. */
   uiZoom: number;
-  /** How the History row you are currently on (HEAD) is marked. */
-  headIndicator: HeadIndicator;
+  /**
+   * Which marks the History row you are currently on (HEAD) carries, and how
+   * hard they hit. Two orthogonal settings rather than one enum of every
+   * combination — see ./headMarks.
+   */
+  headMarks: HeadMark[];
+  headWeight: HeadWeight;
   defaultPullMode: PullMode;
   autoFetchEnabled: boolean;
   autoFetchMinutes: number;
@@ -676,7 +677,8 @@ const DEFAULTS: PersistedState = {
   customThemes: [],
   uiDensity: "compact",
   uiZoom: 1,
-  headIndicator: "bar",
+  headMarks: ["bar", "tint", "ring"],
+  headWeight: DEFAULT_HEAD_WEIGHT,
   defaultPullMode: "Rebase",
   autoFetchEnabled: false,
   autoFetchMinutes: 5,
@@ -716,10 +718,19 @@ function load(): PersistedState {
     // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
     // factor is rejected by the webview and would leave the UI unzoomable.
     out.uiZoom = normalizeZoom(Number(out.uiZoom));
-    // Same reasoning as the zoom clamp: an unknown value would silently mean
-    // "no indicator at all" in the row renderer.
-    if (!HEAD_INDICATORS.includes(out.headIndicator as HeadIndicator)) {
-      out.headIndicator = DEFAULTS.headIndicator;
+    // HEAD marks: prefer a stored list, else carry over the pre-#118 single
+    // `headIndicator` enum, else the default. Migration reads `parsed`, not
+    // `out` — the old key is gone from the schema, so the copy loop above never
+    // picked it up. Landing an upgraded install on "strong" is deliberate: the
+    // same choice as before, just at roughly twice the visibility.
+    out.headMarks =
+      normalizeHeadMarks(parsed.headMarks) ??
+      migrateHeadIndicator(parsed.headIndicator) ??
+      DEFAULTS.headMarks;
+    // Same reasoning as the zoom clamp: an unknown weight would resolve every
+    // mark to NaN and silently draw nothing.
+    if (!HEAD_WEIGHTS.includes(out.headWeight as HeadWeight)) {
+      out.headWeight = DEFAULTS.headWeight;
     }
     // Same reasoning again for the two diff modes: the renderers branch on these
     // exact strings, so an unknown value means "neither branch" — a blank pane.
@@ -766,7 +777,8 @@ function snapshot(s: SettingsState): PersistedState {
     customThemes: s.customThemes,
     uiDensity: s.uiDensity,
     uiZoom: s.uiZoom,
-    headIndicator: s.headIndicator,
+    headMarks: s.headMarks,
+    headWeight: s.headWeight,
     defaultPullMode: s.defaultPullMode,
     autoFetchEnabled: s.autoFetchEnabled,
     autoFetchMinutes: s.autoFetchMinutes,

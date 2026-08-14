@@ -14,17 +14,15 @@ import {
 import {
   BUILTIN_THEMES,
   DENSITY_STEP_PX,
-  HEAD_INDICATORS,
-  HEAD_INDICATOR_LABELS,
   THEME_COLOR_FIELDS,
   ZOOM_MAX,
   ZOOM_MIN,
-  type HeadIndicator,
   applyTheme,
   useSettingsStore,
   type ThemeColors,
   type ThemeDef,
 } from "@/features/settings/useSettingsStore";
+import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { cliShimStatus, installCliShim, type PullMode } from "@/lib/tauri";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import type { CliShimStatus } from "@/lib/types";
@@ -637,19 +635,8 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
 
       <Row
         label="Current position (HEAD)"
-        hint="How History marks the commit you are on. The graph's HEAD ring is always drawn; this is the row treatment on top of it."
-        control={
-          <PGSelect
-            size="sm"
-            value={s.headIndicator}
-            onChange={(v) => s.set("headIndicator", v as HeadIndicator)}
-            data-testid="settings-head-indicator"
-            options={HEAD_INDICATORS.map((k) => ({
-              value: k,
-              label: HEAD_INDICATOR_LABELS[k],
-            }))}
-          />
-        }
+        hint="How History marks the commit you are on. Pick any combination of marks, then set how hard they hit — the preview is the real History row."
+        control={<HeadMarksControl />}
       />
 
       <Row
