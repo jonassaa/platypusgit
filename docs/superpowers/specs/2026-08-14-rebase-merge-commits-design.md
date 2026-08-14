@@ -243,8 +243,16 @@ situation. The Conflict screen's Continue/Abort buttons gate on
 - **Entry points** compute the base as `commit.parents[0]`, never
   `commits[idx + 1]`. A merge commit is an allowed start point (base = its
   mainline parent). "Fixup into parent" and "Squash into parent" stay disabled
-  on a merge commit, with the reason in the tooltip — folding a merge into its
-  parent has no coherent meaning.
+  on a merge commit, with the reason carried in the disabled label — the
+  pattern `commitMultiMenuItems` already uses for its squash block
+  (`"Squash 3 — contains a merge"`).
+- **`planCommitSelection` carries the same positional assumption twice** and is
+  corrected with the entry points: `baseOid` becomes the oldest selected
+  commit's `parents[0]` instead of `commits[max + 1]`, and `contiguous` requires
+  the selected rows to form a real first-parent chain rather than merely
+  occupying adjacent log rows — on a graph, the neighbouring row is often a
+  side-branch commit. The multi-select squash path already refuses a selection
+  containing a merge (`hasMerge`), which stays as-is.
 
 ## Testing
 
@@ -267,7 +275,9 @@ situation. The Conflict screen's Continue/Abort buttons gate on
   `abort_operation` restores the branch) rather than committing and stalling.
 
 **Frontend unit** — `buildRebasePlan` in both modes: `onto` and `mergeParents`
-assignment, merge-row actions, base `parents[0]`.
+assignment, merge-row actions, base `parents[0]`; `planCommitSelection` base and
+first-parent-chain contiguity on a graph where the adjacent log row belongs to a
+side branch.
 
 **Component** — warning-strip copy per mode, restricted merge action set,
 reorder controls disabled in preserve mode.
