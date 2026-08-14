@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { flattenDiffRows, rowOffset, windowVariable } from "./diffRows";
+import {
+  flattenDiffRows,
+  rowOffset,
+  scrollTopForRow,
+  windowVariable,
+} from "./diffRows";
 import type { FileDiff } from "./types";
 
 const hunk = (n: number): FileDiff["hunks"][number] => ({
@@ -386,5 +391,51 @@ describe("rowOffset", () => {
     expect(rowOffset([26, 19, 19], 0)).toBe(0);
     expect(rowOffset([26, 19, 19], 2)).toBe(45);
     expect(rowOffset([26, 19, 19], 99)).toBe(64);
+  });
+});
+
+describe("scrollTopForRow", () => {
+  // Ten 20px rows in a 60px viewport — three rows visible at a time.
+  const hs = Array.from({ length: 10 }, () => 20);
+  const at = (index: number, scrollTop: number) =>
+    scrollTopForRow(hs, index, { scrollTop, viewportH: 60 });
+
+  it("leaves the scroll position alone when the row is already fully visible", () => {
+    // scrollTop 40 shows rows 2,3,4 (offsets 40..100).
+    expect(at(2, 40)).toBe(40);
+    expect(at(3, 40)).toBe(40);
+    expect(at(4, 40)).toBe(40);
+  });
+
+  it("scrolls up to the row's own top when it is above the viewport", () => {
+    expect(at(1, 40)).toBe(20);
+    expect(at(0, 40)).toBe(0);
+  });
+
+  it("scrolls down by the minimum that shows the row's bottom", () => {
+    // Row 5 ends at 120; a 60px viewport must start at 60, not jump to the row.
+    expect(at(5, 40)).toBe(60);
+    expect(at(9, 0)).toBe(140);
+  });
+
+  it("holds still for an out-of-range index", () => {
+    // The keyboard cursor is -1 before it has moved, and a shrinking diff can
+    // leave it past the end — neither may yank the pane to the top.
+    expect(at(-1, 40)).toBe(40);
+    expect(at(10, 40)).toBe(40);
+  });
+
+  it("holds still when the viewport has not been measured yet", () => {
+    // jsdom and the first paint both report 0; scrolling on that would compute a
+    // position from a viewport that does not exist.
+    expect(scrollTopForRow(hs, 9, { scrollTop: 40, viewportH: 0 })).toBe(40);
+  });
+
+  it("works with the diff's mixed row heights", () => {
+    // A header (26) then two code rows (18), twice.
+    const mixed = [26, 18, 18, 26, 18, 18];
+    // Row 4 spans 88..106; a 40px viewport at 0 must scroll to 66.
+    expect(scrollTopForRow(mixed, 4, { scrollTop: 0, viewportH: 40 })).toBe(66);
+    expect(scrollTopForRow(mixed, 0, { scrollTop: 66, viewportH: 40 })).toBe(0);
   });
 });

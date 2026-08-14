@@ -30,7 +30,14 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
-import { PGPane, FocusableScroll, usePaneList, useAction } from "@/features/keymap";
+import {
+  PGPane,
+  FocusableScroll,
+  usePaneList,
+  useAction,
+  useDiffLineFocus,
+  type DiffLineTarget,
+} from "@/features/keymap";
 import { stageablePaths } from "@/features/repo/ops";
 import {
   currentBranch,
@@ -52,7 +59,7 @@ import {
 } from "@/lib/selection";
 import { getDiff, getLogPage } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
-import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import { flattenDiffRows, scrollTopForRow, windowVariable } from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import {
@@ -565,6 +572,62 @@ export function CommitPanelScreen() {
     clearLineSel();
   }, [selected?.path, selected?.side, diff, clearLineSel]);
 
+  // ── Line-level keyboard focus (#61 D7 step 5) ────────────────────────────
+  // Scroll BY OFFSET: the focused row is usually not mounted in a windowed diff,
+  // so a DOM query would find nothing and arrow keys would stop scrolling with no
+  // error (#68 G10). clientHeight is read live so the callback's identity does
+  // not change with the viewport — usePaneList's scroll effect depends on it.
+  const scrollDiffRowIntoView = React.useCallback(
+    (rowIndex: number) => {
+      const el = diffScrollRef.current;
+      if (!el) return;
+      el.scrollTop = scrollTopForRow(heights, rowIndex, {
+        scrollTop: el.scrollTop,
+        viewportH: el.clientHeight,
+      });
+    },
+    [heights],
+  );
+
+  /**
+   * Space on the focused line, staging on the unstaged side and unstaging on the
+   * staged side — the same direction rule the hunk header's button uses.
+   *
+   * Acts on the whole line selection when the focused line is part of it, exactly
+   * as Space on the file list acts on the whole multi-selection when the row is
+   * part of it. Otherwise it acts on the focused line alone, so Space is useful
+   * without selecting anything first.
+   */
+  const toggleFocusedLine = React.useCallback(
+    (t: DiffLineTarget) => {
+      if (!selected) return;
+      const inSelection = (lineSel[t.hunkIndex] ?? []).includes(t.changedIndex);
+      // One index space throughout: whether it came from the selection or from
+      // the cursor, every element is a changedIndex.
+      const targets = inSelection ? lineSel[t.hunkIndex] : [t.changedIndex];
+      const store = useRepoStore.getState();
+      if (selected.side === "staged") {
+        store.unstageLines(selected.path, t.hunkIndex, targets);
+      } else {
+        store.stageLines(selected.path, t.hunkIndex, targets);
+      }
+      clearLineSel();
+    },
+    [selected, lineSel, clearLineSel],
+  );
+
+  const lineFocus = useDiffLineFocus({
+    paneId: "commit.diff",
+    rows,
+    // Same trigger as the selection clear above: a refetched diff renumbers.
+    resetKey: diff,
+    // Ignore-whitespace rewrites hunk boundaries, so neither the mouse nor the
+    // keyboard may address lines through indices git would not honor (#61 D2).
+    disabled: !!hunkActionsDisabled,
+    scrollToRow: scrollDiffRowIntoView,
+    onToggle: toggleFocusedLine,
+  });
+
   const headBranch = currentBranch(branches);
   const defaultRemote = remotes[0] ?? null;
 
@@ -1030,6 +1093,7 @@ export function CommitPanelScreen() {
                 onToggleHunk={toggleHunk}
                 selectedLines={(i) => lineSel[i] ?? []}
                 onLineClick={onLineClick}
+                focusedRow={lineFocus.focused?.rowIndex ?? null}
                 hunkActions={(i) => ({
                   staged: selected?.side === "staged",
                   actionsDisabledReason: hunkActionsDisabled,

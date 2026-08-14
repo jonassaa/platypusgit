@@ -506,20 +506,28 @@ export async function checkoutRef(
   return invoke<void>("checkout_ref", { repoId, reference });
 }
 
+/**
+ * Push one tag. Takes `credentials` like the other pushes: the first attempt is
+ * prompt-less and only a retry after an `Auth` failure carries a credential
+ * (#61 D5, extended to tag push in the D5 follow-up).
+ */
 export async function pushTag(
   repoId: string,
   remote: string,
   name: string,
+  credentials?: Credentials,
 ): Promise<void> {
-  return invoke<void>("push_tag", { repoId, remote, name });
+  return invoke<void>("push_tag", { repoId, remote, name, credentials });
 }
 
+/** Delete a branch on the remote (see `pushTag` for the credential contract). */
 export async function pushDeleteBranch(
   repoId: string,
   remote: string,
   name: string,
+  credentials?: Credentials,
 ): Promise<void> {
-  return invoke<void>("push_delete_branch", { repoId, remote, name });
+  return invoke<void>("push_delete_branch", { repoId, remote, name, credentials });
 }
 
 export interface StashSaveOptions {

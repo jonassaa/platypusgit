@@ -10,6 +10,7 @@ export * from "./spatial";
 export * from "./PGPane";
 export * from "./usePaneList";
 export * from "./useHunkNav";
+export * from "./useDiffLineFocus";
 export * from "./FocusableScroll";
 export * from "./chordFor";
 export * from "./CheatSheet";

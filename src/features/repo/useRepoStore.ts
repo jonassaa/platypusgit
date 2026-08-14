@@ -877,26 +877,34 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
+  // Tag push and remote-branch delete are pushes, so they get the same
+  // challenge/retry as push/pull/fetch/clone. D5 threaded the four sites its
+  // spec named and left these two on the credential-less path, where an
+  // authenticated remote failed with git's stderr and no way to answer it.
   async pushTag(remote, name) {
     const repo = get().current;
     if (!repo) return;
-    try {
-      await pushTagFn(repo.id, remote, name);
-      await get().refreshAll();
-    } catch (e) {
-      set({ error: toAppError(e) });
-    }
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        await pushTagFn(repo.id, remote, name, creds);
+        await get().refreshAll();
+      },
+      (e) => set({ error: toAppError(e) }),
+    );
   },
 
   async pushDeleteBranch(remote, name) {
     const repo = get().current;
     if (!repo) return;
-    try {
-      await pushDeleteBranchFn(repo.id, remote, name);
-      await get().refreshAll();
-    } catch (e) {
-      set({ error: toAppError(e) });
-    }
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        await pushDeleteBranchFn(repo.id, remote, name, creds);
+        await get().refreshAll();
+      },
+      (e) => set({ error: toAppError(e) }),
+    );
   },
 
   async createBranch(name, from) {

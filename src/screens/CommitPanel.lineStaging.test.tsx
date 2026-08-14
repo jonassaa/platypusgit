@@ -47,6 +47,9 @@ const diffWithThreeAdditions = (path: string) => ({
   ],
 });
 
+/** The hunk button's label, which is how a line selection becomes observable. */
+const selCountLabel = () => screen.getByTestId("hunk-stage").textContent ?? "";
+
 const stageLinesCall = () =>
   [...getInvokeCalls()].reverse().find((c) => c.cmd === "stage_lines");
 const stageHunkCall = () =>
@@ -82,6 +85,12 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
     expect(rows).toHaveLength(3); // the context line is not selectable
 
     fireEvent.click(rows[1]); // second addition → changed index 1
+    // Wait for the selection to be observable before acting on it. The selection
+    // deliberately clears whenever `diff` changes, and the mount's diff fetch can
+    // still settle here; clicking Stage in the same tick then finds an empty
+    // selection and falls back to stage_hunk, so stage_lines is never called.
+    // Same reason the toggle-off case below waits between its two clicks.
+    await waitFor(() => expect(selCountLabel()).toMatch(/1 line/i));
     fireEvent.click(screen.getByTestId("hunk-stage"));
 
     await waitFor(() =>
@@ -96,14 +105,28 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
   it("shows the selection count on the stage button", async () => {
     const rows = await screen.findAllByTestId("diff-line-changed");
     fireEvent.click(rows[0]);
-    fireEvent.click(rows[2]);
-    expect(screen.getByTestId("hunk-stage").textContent).toMatch(/2 lines/i);
+    await waitFor(() => expect(selCountLabel()).toMatch(/1 line/i));
+    fireEvent.click(screen.getAllByTestId("diff-line-changed")[2]);
+    await waitFor(() => expect(selCountLabel()).toMatch(/2 lines/i));
   });
 
   it("extends a range on shift-click", async () => {
     const rows = await screen.findAllByTestId("diff-line-changed");
     fireEvent.click(rows[0]);
-    fireEvent.click(rows[2], { shiftKey: true });
+    // Waiting for the anchor click to land, for the same reason the toggle-off
+    // case below does: the selection deliberately clears when `diff` changes, and
+    // firing both clicks synchronously lets a pending refresh land between them —
+    // the shift-click then finds no anchor and reads as a plain click on row 2.
+    // It passed by luck until a render-timing change made it fail ~1 run in 3.
+    await waitFor(() =>
+      expect(screen.getByTestId("hunk-stage").textContent).toMatch(/1 line/i),
+    );
+    fireEvent.click(screen.getAllByTestId("diff-line-changed")[2], {
+      shiftKey: true,
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("hunk-stage").textContent).toMatch(/3 lines/i),
+    );
     fireEvent.click(screen.getByTestId("hunk-stage"));
 
     await waitFor(() =>
@@ -152,6 +175,7 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
     const before = diffCalls().length;
 
     fireEvent.click(rows[0]);
+    await waitFor(() => expect(selCountLabel()).toMatch(/1 line/i));
     fireEvent.click(screen.getByTestId("hunk-stage"));
 
     await waitFor(() => expect(stageLinesCall()).toBeDefined());
