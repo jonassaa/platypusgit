@@ -1,5 +1,5 @@
 import React from "react";
-import { PGIcon, PGSkeleton } from "@/design";
+import { PGIcon, PGResizeHandle, PGSkeleton, usePaneWidth } from "@/design";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
@@ -79,12 +79,24 @@ export function CommitDiffPanel({
     resetKey: selected,
   });
 
+  // Per mount site: History's bottom panel is wide and short, the full-screen
+  // commit diff is not, so one shared width would fit neither.
+  const filesPane = usePaneWidth(240, {
+    min: 140,
+    max: 640,
+    storageKey: `pg-${paneIdPrefix.replace(/\./g, "-")}-files-w`,
+  });
+
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
       <PGPane
         id={filesPaneId}
         style={{
-          width: 240,
+          width: filesPane.width,
+          // The column never shrinks, so cap it against the panel: in the
+          // narrow side-by-side History layout a wide drag would otherwise
+          // push the diff out of the detail pane entirely.
+          maxWidth: "60%",
           flexShrink: 0,
           borderRight: "1px solid var(--border-0)",
           fontFamily: "var(--font-mono)",
@@ -206,6 +218,11 @@ export function CommitDiffPanel({
           })}
         </FocusableScroll>
       </PGPane>
+      <PGResizeHandle
+        side="right"
+        testId={`${paneIdPrefix}-files-resize`}
+        onDrag={(d) => filesPane.resize(d)}
+      />
       <PGPane
         id={viewPaneId}
         style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}
