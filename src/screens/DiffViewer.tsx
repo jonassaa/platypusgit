@@ -25,8 +25,8 @@ import {
 } from "@/features/diff/WhitespaceToggle";
 import { statusMark } from "@/lib/derive";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
-import { getDiff, readFileContent, readFileContentAtRev } from "@/lib/tauri";
-import { useSyntax } from "@/lib/syntax";
+import { getDiff } from "@/lib/tauri";
+import { useDiffSyntax } from "@/lib/syntax";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
@@ -113,42 +113,14 @@ export function DiffViewerScreen() {
     };
   }, [current?.path, current?.embedded, repo, diffContextLines, ignoreWhitespace]);
 
-  // Whole-file text for both sides, because a hunk is only a window into a
-  // file: a block comment or template literal opening above it would mis-colour
-  // every line below. A failed read leaves that side plain rather than breaking
-  // the diff — an added or deleted file legitimately has only one side.
-  const [sides, setSides] = React.useState<{ old: string | null; new: string | null }>({
-    old: null,
-    new: null,
+  // This screen compares the worktree against HEAD; an embedded repo has no
+  // text to read on either side.
+  const syntax = useDiffSyntax({
+    repoId: current && !current.embedded ? (repo?.id ?? null) : null,
+    path: current?.path ?? null,
+    old: { kind: "rev", rev: "HEAD", path: diff?.oldPath },
+    new: { kind: "worktree" },
   });
-
-  React.useEffect(() => {
-    if (!repo || !current || current.embedded) {
-      setSides({ old: null, new: null });
-      return;
-    }
-    let cancelled = false;
-    // A rename's old side lives at its OLD path; HEAD has no blob at the new
-    // one, so reading `current.path` there would leave every removed line
-    // unhighlighted.
-    const oldPath = diff?.oldPath ?? current.path;
-    Promise.all([
-      readFileContentAtRev(repo.id, "HEAD", oldPath).catch(() => null),
-      readFileContent(repo.id, current.path).catch(() => null),
-    ]).then(([o, n]) => {
-      if (!cancelled) setSides({ old: o?.text ?? null, new: n?.text ?? null });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [repo, current?.path, current?.embedded, diff?.oldPath]);
-
-  const oldSyntax = useSyntax(current?.path ?? null, sides.old);
-  const newSyntax = useSyntax(current?.path ?? null, sides.new);
-  const syntax = React.useMemo(
-    () => ({ old: oldSyntax, new: newSyntax }),
-    [oldSyntax, newSyntax],
-  );
 
   const findFiltered = React.useMemo<FileDiff | null>(() => {
     if (!diff || !findQuery.trim()) return diff;
