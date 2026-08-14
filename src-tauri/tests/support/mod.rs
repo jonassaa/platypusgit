@@ -177,6 +177,104 @@ pub fn linear_history(tr: &TempRepo, n: usize) -> Vec<String> {
     oids
 }
 
+/// A repository with a merge commit in the middle of the range:
+///
+/// ```text
+/// root ── A ──── C ── M      (main)
+///          \        /
+///           ─── F ──         (feature)
+/// ```
+///
+/// `F` and `C` touch different files, so `M` is a clean merge. Returns the oids
+/// as strings.
+pub struct MergeHistory {
+    pub root: String,
+    pub a: String,
+    pub f: String,
+    pub c: String,
+    pub m: String,
+}
+
+pub fn merge_history(tr: &TempRepo) -> MergeHistory {
+    let root = tr
+        .repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .id()
+        .to_string();
+
+    let commit = |name: &str, body: &str, msg: &str| -> String {
+        self::fs::write_file(tr.path(), name, body);
+        let mut index = tr.repo.index().unwrap();
+        index.add_path(Path::new(name)).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = tr.repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
+        tr.repo
+            .commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&head])
+            .unwrap()
+            .to_string()
+    };
+
+    let a = commit("a.txt", "a\n", "A on main");
+
+    // feature branches off A
+    {
+        let a_commit = tr
+            .repo
+            .find_commit(git2::Oid::from_str(&a).unwrap())
+            .unwrap();
+        tr.repo.branch("feature", &a_commit, false).unwrap();
+    }
+    tr.repo.set_head("refs/heads/feature").unwrap();
+    tr.repo
+        .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .unwrap();
+    let f = commit("f.txt", "f\n", "F on feature");
+
+    // back to main
+    tr.repo.set_head("refs/heads/main").unwrap();
+    tr.repo
+        .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .unwrap();
+    let c = commit("c.txt", "c\n", "C on main");
+
+    // merge feature into main
+    let f_oid = git2::Oid::from_str(&f).unwrap();
+    let m = {
+        let annotated = tr.repo.find_annotated_commit(f_oid).unwrap();
+        tr.repo.merge(&[&annotated], None, None).unwrap();
+        let mut index = tr.repo.index().unwrap();
+        assert!(
+            !index.has_conflicts(),
+            "merge_history fixture must merge cleanly"
+        );
+        let tree_oid = index.write_tree().unwrap();
+        let tree = tr.repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
+        let f_commit = tr.repo.find_commit(f_oid).unwrap();
+        tr.repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "Merge branch 'feature'",
+                &tree,
+                &[&head, &f_commit],
+            )
+            .unwrap()
+            .to_string()
+    };
+    tr.repo.cleanup_state().unwrap();
+
+    MergeHistory { root, a, f, c, m }
+}
+
 /// A bare git repository in a tempdir — acts as a "remote" for network tests.
 pub struct BareTempRepo {
     pub dir: TempDir,

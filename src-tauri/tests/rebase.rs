@@ -134,6 +134,10 @@ fn rebase_edit_pauses_and_continue_resumes() {
     let status = backend.rebase_start(&handle.id, plan).unwrap();
     assert!(status.in_progress, "should be paused after edit");
     assert_eq!(status.pause_reason.as_deref(), Some("edit"));
+    assert!(
+        tr.repo.head_detached().unwrap(),
+        "the replay must run on a detached HEAD"
+    );
 
     // Simulate user done amending — just continue.
     let status2 = backend.rebase_continue(&handle.id).unwrap();

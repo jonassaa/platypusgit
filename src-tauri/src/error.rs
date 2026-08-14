@@ -66,6 +66,14 @@ pub enum AppError {
     /// `safe.directory` exception has to contain.
     #[error("repository is owned by another user: {0}")]
     DubiousOwnership(String),
+
+    /// A rebase plan the engine cannot execute — a merge commit carrying an
+    /// action that has no meaning for it, a duplicate or unknown oid, a plan
+    /// that drops everything. Raised by `rebase_plan::validate` *before*
+    /// `rebase_start` moves anything, so the repository is untouched when the
+    /// frontend shows it.
+    #[error("invalid rebase plan: {0}")]
+    InvalidRebasePlan(String),
 }
 
 impl From<git2::Error> for AppError {

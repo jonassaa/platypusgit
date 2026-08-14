@@ -276,7 +276,7 @@ pub struct StashSaveOptions {
 
 /// The current operation state of a repository.
 /// Mirrors `git2::RepositoryState`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RepoState {
     Clean,
     Merge,
@@ -324,7 +324,7 @@ pub struct ConflictSides {
 
 // ─── Interactive rebase ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RebaseAction {
     Pick,
     Reword,
