@@ -26,6 +26,7 @@ import {
   type ConflictRegion,
   type MergeModel,
 } from "./mergeModel";
+import { syntaxHighlighting } from "./syntaxDecorations";
 
 export interface RegionState {
   id: number;
@@ -145,8 +146,13 @@ export function createResultEditor(opts: {
   model: MergeModel;
   parent: HTMLElement;
   onChange: (regions: RegionState[]) => void;
+  /**
+   * Conflicted file's path, used only to pick a syntax grammar. Optional: with
+   * none, the pane renders plain, which is what tests without a path expect.
+   */
+  path?: string;
 }): EditorHandle {
-  const { model, parent, onChange } = opts;
+  const { model, parent, onChange, path } = opts;
   const conflictById = new Map<number, ConflictRegion>(
     model.conflicts.map((c) => [c.id, c]),
   );
@@ -170,6 +176,9 @@ export function createResultEditor(opts: {
         }
       }),
       theme,
+      // Same --syn-* classes as both side panes, so all three agree on colour
+      // and on which languages they know.
+      ...(path ? [syntaxHighlighting(path)] : []),
     ],
   });
 

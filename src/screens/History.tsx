@@ -691,6 +691,17 @@ export function HistoryScreen() {
       // The inline panel shows the selected commit's own diff; a multi-selection
       // renders MultiCommitDetail instead, so this is always one commit (#61 D6).
       verifyOid={current?.oid}
+      // The inline panel shows one commit's own diff, so the old side is its
+      // parent — `^` fails harmlessly on a root commit, which has no old side.
+      syntaxSides={
+        repo && current
+          ? {
+              repoId: repo.id,
+              old: { kind: "rev", rev: `${current.oid}^` },
+              new: { kind: "rev", rev: current.oid },
+            }
+          : undefined
+      }
     />
   );
 

@@ -304,6 +304,7 @@ export function MergeWindow() {
           model={model}
           currentConflict={currentId}
           onRegionsChange={setRegionStates}
+          path={path}
         />
       ) : (
         <PGEmpty icon="conflict" title="Nothing to resolve">

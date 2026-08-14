@@ -50,13 +50,8 @@ import {
   pruneSelection,
   type Selection,
 } from "@/lib/selection";
-import {
-  getDiff,
-  getLogPage,
-  readFileContent,
-  readFileContentAtRev,
-} from "@/lib/tauri";
-import { useSyntax } from "@/lib/syntax";
+import { getDiff, getLogPage } from "@/lib/tauri";
+import { useDiffSyntax } from "@/lib/syntax";
 import {
   WhitespaceToggle,
   useHunkActionsDisabledReason,
@@ -448,44 +443,15 @@ export function CommitPanelScreen() {
     return new Set(selected ? [keyOf(selected)] : []);
   }, [sel.keys.length, selectedKeys, selected]);
 
-  // Whole-file text for syntax tokens, one read per side.
-  //
-  // This pane diffs against the INDEX (IndexToHead when staged,
-  // WorktreeToIndex otherwise), and the index is not readable — there is no
-  // read_file_content_at_index. HEAD and the worktree are the two texts we can
-  // get, and they agree with the index in every case except a partially staged
-  // file. Being off there mis-colours a line; it cannot affect what gets staged,
-  // because staging addresses lines by changedIndex, never by these tokens.
-  const [sides, setSides] = React.useState<{ old: string | null; new: string | null }>({
-    old: null,
-    new: null,
+  // This pane diffs against the INDEX (IndexToHead when staged, WorktreeToIndex
+  // otherwise), which cannot be read — see the note on useDiffSyntax for why HEAD
+  // and the worktree are the right approximation and why being off is harmless.
+  const syntax = useDiffSyntax({
+    repoId: selected && !selected.status.embedded ? (repo?.id ?? null) : null,
+    path: selected?.path ?? null,
+    old: { kind: "rev", rev: "HEAD", path: diff?.oldPath },
+    new: { kind: "worktree" },
   });
-
-  React.useEffect(() => {
-    if (!repo || !selected || selected.status.embedded) {
-      setSides({ old: null, new: null });
-      return;
-    }
-    let cancelled = false;
-    // A rename's old side lives at its OLD path; HEAD has no blob at the new one.
-    const oldPath = diff?.oldPath ?? selected.path;
-    Promise.all([
-      readFileContentAtRev(repo.id, "HEAD", oldPath).catch(() => null),
-      readFileContent(repo.id, selected.path).catch(() => null),
-    ]).then(([o, n]) => {
-      if (!cancelled) setSides({ old: o?.text ?? null, new: n?.text ?? null });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [repo, selected?.path, selected?.status.embedded, diff?.oldPath]);
-
-  const oldSyntax = useSyntax(selected?.path ?? null, sides.old);
-  const newSyntax = useSyntax(selected?.path ?? null, sides.new);
-  const syntax = React.useMemo(
-    () => ({ old: oldSyntax, new: newSyntax }),
-    [oldSyntax, newSyntax],
-  );
 
   React.useEffect(() => {
     if (!selected || !repo) {

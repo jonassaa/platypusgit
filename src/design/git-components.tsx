@@ -1,5 +1,6 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
-import { wordDiff, type WordSpan } from "@/lib/wordDiff";
+import type { WordSpan } from "@/lib/wordDiff";
+import { pairChangedLines } from "@/lib/pairChangedLines";
 import { buildLineSpans } from "@/lib/lineSpans";
 import type { SyntaxLine, SyntaxToken } from "@/lib/syntax";
 import { PGIcon, type IconName } from "./icons";
@@ -705,9 +706,8 @@ function attachSyntax(
  *
  * `chunkDiffLines` groups **by kind**, so a removed run and the added run that
  * follows it are two ADJACENT chunks — pairing crosses that pair rather than
- * happening inside one chunk. The i-th removed line pairs with the i-th added
- * line for the first `min(rem, add)` lines; `wordDiff` itself returns null for
- * a pair too dissimilar to be the same line edited, and those get no spans.
+ * happening inside one chunk. The pairing rule itself lives in
+ * `@/lib/pairChangedLines`, shared with the split view and the commit-diff panel.
  */
 function withWordSpans(chunks: DiffChunk[]): DiffChunk[] {
   const out = chunks.map((c) => ({ ...c, lines: c.lines.map((l) => ({ ...l })) }));
@@ -715,13 +715,15 @@ function withWordSpans(chunks: DiffChunk[]): DiffChunk[] {
     const rem = out[i];
     const add = out[i + 1];
     if (rem.kind !== "rem" || add.kind !== "add") continue;
-    const n = Math.min(rem.lines.length, add.lines.length);
-    for (let k = 0; k < n; k++) {
-      const r = wordDiff(rem.lines[k].text ?? "", add.lines[k].text ?? "");
-      if (!r) continue;
-      rem.lines[k].spans = r.old;
-      add.lines[k].spans = r.new;
-    }
+    const paired = pairChangedLines(
+      rem.lines.map((l) => l.text ?? ""),
+      add.lines.map((l) => l.text ?? ""),
+    );
+    paired.forEach((p, k) => {
+      if (!p) return;
+      rem.lines[k].spans = p.old;
+      add.lines[k].spans = p.new;
+    });
   }
   return out;
 }
@@ -1048,6 +1050,10 @@ export interface SideLine {
   kind: DiffLineKind;
   ln?: number | string;
   text?: string;
+  /** Intra-line word spans, set by the caller's pairing pass (`diffToSplit`). */
+  spans?: WordSpan[];
+  /** Line-relative syntax tokens for this row's side of the diff. */
+  syntax?: SyntaxToken[];
 }
 
 export function PGSideBySideDiff({
@@ -1112,7 +1118,12 @@ export function PGSideBySideDiff({
                       : "var(--fg-0)",
               }}
             >
-              {ln.text}
+              <DiffText
+                text={ln.text ?? ""}
+                spans={ln.spans}
+                syntax={ln.syntax}
+                kind={ln.kind}
+              />
             </span>
           </div>
         );
