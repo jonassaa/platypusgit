@@ -1,8 +1,7 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { WordSpan } from "@/lib/wordDiff";
-import { withChangedIndices, withSyntax, withWordSpans } from "@/lib/diffRows";
 import { buildLineSpans } from "@/lib/lineSpans";
-import type { SyntaxLine, SyntaxToken } from "@/lib/syntax";
+import type { SyntaxToken } from "@/lib/syntax";
 import { PGIcon, type IconName } from "./icons";
 import {
   PGBadge,
@@ -506,13 +505,12 @@ export interface DiffLineData {
   /**
    * Index among the hunk's changed (`+`/`-`) lines, counted from 0; undefined
    * for context rows. This is the index space the line-staging backend ops use
-   * (#61 D7) — assigned by `PGHunk`, not by callers.
+   * (#61 D7) — assigned by `flattenDiffRows`, not by callers.
    */
   changedIndex?: number;
   /**
-   * Line-relative syntax tokens for this row. Set by `PGHunk` from its `syntax`
-   * prop, or directly by a caller rendering a standalone `PGDiffLine`;
-   * undefined renders the line unhighlighted.
+   * Line-relative syntax tokens for this row, resolved from the correct side of
+   * the diff by `flattenDiffRows`. Undefined renders the line unhighlighted.
    */
   syntax?: SyntaxToken[];
 }
@@ -836,8 +834,8 @@ export function PGDiffRow({
 /**
  * A hunk's chrome bar: collapse chevron, header text, Discard and Stage.
  *
- * Split out of PGHunk so the windowed renderer can emit it as one row among many
- * without duplicating the markup. Stays density-aware — it is chrome, not code.
+ * Emitted by the windowed renderer as one row among many. Stays density-aware —
+ * it is chrome, not code, so --row-step applies here and never to code rows.
  */
 export function PGHunkHeader({
   header,
@@ -908,106 +906,7 @@ export function PGHunkHeader({
   );
 }
 
-export interface PGHunkProps {
-  header: string;
-  lines?: DiffLineData[];
-  staged?: boolean;
-  onStage?: () => void;
-  onDiscard?: () => void;
-  expanded?: boolean;
-  onToggle?: () => void;
-  /**
-   * Disable Stage/Discard and explain why on hover. Set while the diff is
-   * whitespace-ignoring: those hunks are a rewritten view, so their indices
-   * don't address the hunks git would apply (#61 D2). It also suppresses line
-   * selection, for the same reason (#61 D7).
-   */
-  actionsDisabledReason?: string;
-  /**
-   * Selected changed-line indices within this hunk (#61 D7). Selection STATE
-   * belongs to the owning screen, not here — a primitive owning it plus the
-   * global key dispatcher would both answer the same input and the selection
-   * would move twice.
-   */
-  selectedLines?: number[];
-  /** Called with a changed-line index; `range` is true for a shift-click. */
-  onLineClick?: (changedIndex: number, range: boolean) => void;
-  /**
-   * Per-side syntax tokens for the WHOLE file, indexed by line number - 1.
-   *
-   * A `rem` row reads `old`; `add` and `ctx` rows read `new` — context rows show
-   * the new text, and for unchanged lines the two sides agree anyway. A row whose
-   * line number is missing, or past the end of its array, renders plain.
-   */
-  syntax?: { old: SyntaxLine[] | null; new: SyntaxLine[] | null };
-}
 
-/**
- * One hunk, header plus all its rows, unwindowed.
- *
- * No screen renders this any more — they all go through `PGWindowedDiff`, which
- * reuses the same `PGHunkHeader` and `PGDiffRow`. It survives as the single-hunk
- * primitive and as the behavioural guard for row rendering (see
- * wordDiffRender.test.tsx and syntaxRender.test.tsx, which pin word spans and
- * syntax spans through this public API). Delete it only together with those
- * tests, and only once something else pins the same behaviour.
- */
-export function PGHunk({
-  header,
-  lines = [],
-  staged,
-  onStage,
-  onDiscard,
-  expanded = true,
-  onToggle,
-  actionsDisabledReason,
-  selectedLines,
-  onLineClick,
-  syntax,
-}: PGHunkProps) {
-  // Memoized: word diffing every rem/add pair on each render would repeat over
-  // lists that are long and windowed.
-  //
-  // withChangedIndices runs FIRST and over the whole hunk: its numbering is the
-  // wire contract shared with the backend's Patch::line_in_hunk (#61 D7), so it
-  // must not depend on anything the syntax pass does.
-  const rows = React.useMemo(
-    () => withWordSpans(withSyntax(withChangedIndices(lines), syntax)),
-    [lines, syntax],
-  );
-  // Line selection is meaningless when the hunk's own indices don't address
-  // what git would apply — the same condition that disables Stage/Discard.
-  const lineClick = actionsDisabledReason ? undefined : onLineClick;
-  return (
-    <div style={{ borderBottom: "1px solid var(--border-0)" }}>
-      <PGHunkHeader
-        header={header}
-        staged={staged}
-        onStage={onStage}
-        onDiscard={onDiscard}
-        expanded={expanded}
-        onToggle={onToggle}
-        actionsDisabledReason={actionsDisabledReason}
-        selCount={selectedLines?.length ?? 0}
-      />
-      {expanded && (
-        <div>
-          {rows.map((line, i) => (
-            <PGDiffRow
-              key={i}
-              line={line}
-              selected={
-                line.changedIndex != null &&
-                (selectedLines?.includes(line.changedIndex) ?? false)
-              }
-              onLineClick={lineClick}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export interface SideLine {
   kind: DiffLineKind;

@@ -1,5 +1,9 @@
 import React from "react";
-import { readFileContent, readFileContentAtRev } from "@/lib/tauri";
+import {
+  readFileContent,
+  readFileContentAtIndex,
+  readFileContentAtRev,
+} from "@/lib/tauri";
 import { useSyntax } from "./useSyntax";
 import type { SyntaxLine } from "./tokenize";
 
@@ -13,6 +17,7 @@ import type { SyntaxLine } from "./tokenize";
 export type SideSource =
   | { kind: "rev"; rev: string; path?: string | null }
   | { kind: "worktree" }
+  | { kind: "index" }
   | { kind: "none" };
 
 export interface DiffSyntax {
@@ -37,11 +42,9 @@ const EMPTY: DiffSyntax = { old: null, new: null };
  * A failed read yields no tokens for that side and those rows render plain: a
  * missing blob must never break a diff.
  *
- * Panes that diff against the INDEX (the commit panel) cannot ask for it — there
- * is no read_file_content_at_index — so they pass HEAD and the worktree. Those
- * agree with the index except on a partially staged file, where being off
- * mis-colours a line. It cannot affect what gets staged, because staging addresses
- * lines by changedIndex, never by these tokens.
+ * Panes that diff against the INDEX (the commit panel) ask for it directly with
+ * `{ kind: "index" }`, so a partially staged file colours from the same content
+ * its diff was computed against.
  */
 export function useDiffSyntax(o: {
   repoId: string | null;
@@ -70,6 +73,7 @@ export function useDiffSyntax(o: {
     const read = (kind: SideSource["kind"], rev: string | null, p: string | null) => {
       if (kind === "none" || !p) return Promise.resolve(null);
       if (kind === "worktree") return readFileContent(repoId, p).catch(() => null);
+      if (kind === "index") return readFileContentAtIndex(repoId, p).catch(() => null);
       return rev ? readFileContentAtRev(repoId, rev, p).catch(() => null) : Promise.resolve(null);
     };
     Promise.all([read(oldKind, oldRev, oldPath), read(newKind, newRev, path)]).then(

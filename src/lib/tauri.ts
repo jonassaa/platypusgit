@@ -89,6 +89,22 @@ export async function listFilesAtRev(
   return invoke<FileStatus[]>("list_files_at_rev", { repoId, revspec });
 }
 
+/**
+ * Read a file's content from the INDEX — what committing would record.
+ *
+ * Differs from both other readers exactly when a file is partially staged, which
+ * is why the commit panel needs it: its diffs are against the index, so tokens
+ * taken from HEAD or the worktree could land on the wrong lines there.
+ * Rejects with `InvalidPath` for a path with no stage-0 entry (untracked, or
+ * conflicted); callers render those rows plain.
+ */
+export async function readFileContentAtIndex(
+  repoId: string,
+  path: string,
+): Promise<FileContent> {
+  return invoke<FileContent>("read_file_content_at_index", { repoId, path });
+}
+
 /** Read a file's content from the tree at `revspec`. */
 export async function readFileContentAtRev(
   repoId: string,
