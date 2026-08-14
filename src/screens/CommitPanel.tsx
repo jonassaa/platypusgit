@@ -48,6 +48,10 @@ import {
   emptySelection,
   primarySelectedKey,
   pruneSelection,
+  sidedFileKey,
+  sidedFolderKey,
+  sidedSelectionSource,
+  splitFileSelection,
   type Selection,
 } from "@/lib/selection";
 import { getDiff, getLogPage } from "@/lib/tauri";
@@ -144,24 +148,14 @@ export function CommitPanelScreen() {
   const { onContextMenu: onFolderCtx, menu: folderMenu } = useContextMenu<string>(
     (navKey) =>
       multiFileMenuItems(
-        splitByKeys(
-          expandSelectionKeys(navKey ? [navKey] : [], staged, unstaged),
-          staged,
-          unstaged,
-        ),
+        splitFileSelection(navKey ? [navKey] : [], selectionSource),
       ),
   );
 
   const { onContextMenu: onFileCtx, menu: fileMenu } = useContextMenu<FileSlot>(
     (f) => {
       if (f && sel.keys.length > 1 && sel.keys.includes(keyOf(f))) {
-        return multiFileMenuItems(
-          splitByKeys(
-            expandSelectionKeys(sel.keys, staged, unstaged),
-            staged,
-            unstaged,
-          ),
-        );
+        return multiFileMenuItems(splitFileSelection(sel.keys, selectionSource));
       }
       return fileMenuItems({
         path: f?.path,
@@ -262,6 +256,14 @@ export function CommitPanelScreen() {
     [status],
   );
 
+  // Selection keys → path buckets. Folder keys expand within their own section
+  // and embedded repos stay out of the stage/unstage/discard subsets; the rules
+  // are shared with the repo browser (lib/selection) so the two cannot drift.
+  const selectionSource = React.useMemo(
+    () => sidedSelectionSource(staged, unstaged),
+    [staged, unstaged],
+  );
+
   // Visible row order (staged block above changes block) — shift-click ranges
   // extend over this order and may cross the staged/unstaged boundary.
   const rowOrder = React.useMemo(
@@ -357,29 +359,21 @@ export function CommitPanelScreen() {
 
   const onNavStageToggle = React.useCallback(
     (navKey: string, next: boolean) => {
-      const split = splitByKeys(
-        expandSelectionKeys([navKey], staged, unstaged),
-        staged,
-        unstaged,
-      );
+      const split = splitFileSelection([navKey], selectionSource);
       if (next) {
         if (split.unstagedPaths.length) stage(split.unstagedPaths);
       } else if (split.stagedPaths.length) {
         unstage(split.stagedPaths);
       }
     },
-    [staged, unstaged, stage, unstage],
+    [selectionSource, stage, unstage],
   );
 
   // Checkbox on a row inside the multi-selection stages/unstages every
   // selected row on that side; on an unselected row it stays single-file.
   const togglePaths = (f: FileSlot): string[] => {
     if (sel.keys.length > 1 && sel.keys.includes(keyOf(f))) {
-      const split = splitByKeys(
-        expandSelectionKeys(sel.keys, staged, unstaged),
-        staged,
-        unstaged,
-      );
+      const split = splitFileSelection(sel.keys, selectionSource);
       const paths = f.side === "staged" ? split.stagedPaths : split.unstagedPaths;
       if (paths.length > 0) return paths;
     }
@@ -1315,7 +1309,7 @@ export function CommitPanelScreen() {
 }
 
 function keyOf(f: FileSlot): string {
-  return `${f.side}:${f.path}`;
+  return sidedFileKey(f.side, f.path);
 }
 
 /**
@@ -1324,39 +1318,7 @@ function keyOf(f: FileSlot): string {
  * directory for a file with an unlucky name.
  */
 function dirKeyOf(side: FileSlot["side"], dirPath: string): string {
-  return `${side}:dir:${dirPath}`;
-}
-
-/**
- * Replace any folder key with the keys of every file beneath it, so folder
- * rows feed the same path-based ops (stage / unstage / discard / copy) as a
- * multi-row selection. File keys pass through untouched, deduped.
- */
-function expandSelectionKeys(
-  keys: string[],
-  staged: FileSlot[],
-  unstaged: FileSlot[],
-): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const push = (k: string) => {
-    if (seen.has(k)) return;
-    seen.add(k);
-    out.push(k);
-  };
-  for (const key of keys) {
-    const m = /^(staged|unstaged):dir:(.*)$/.exec(key);
-    if (!m) {
-      push(key);
-      continue;
-    }
-    const side = m[1] as FileSlot["side"];
-    const prefix = `${m[2]}/`;
-    for (const f of side === "staged" ? staged : unstaged) {
-      if (f.path.startsWith(prefix)) push(keyOf(f));
-    }
-  }
-  return out;
+  return sidedFolderKey(side, dirPath);
 }
 
 /**
@@ -1433,42 +1395,6 @@ function SectionTree({
       onStageToggle={(treeKey, _node, next) => onStageToggle(navKeyFor(treeKey), next)}
     />
   );
-}
-
-/**
- * Split the selected row keys into staged/unstaged path arrays for multi-file
- * ops. Embedded git repositories go into their own bucket instead: they are not
- * files, so Stage/Unstage/Discard must not reach them (see FileStatus.embedded).
- */
-function splitByKeys(
-  keys: string[],
-  staged: FileSlot[],
-  unstaged: FileSlot[],
-): {
-  stagedPaths: string[];
-  unstagedPaths: string[];
-  embeddedPaths: string[];
-  untrackedPaths: string[];
-} {
-  const set = new Set(keys);
-  const selected = [...staged, ...unstaged].filter((f) => set.has(keyOf(f)));
-  const actionable = (side: FileSlot["side"]) =>
-    selected
-      .filter((f) => f.side === side && !f.status.embedded)
-      .map((f) => f.path);
-  return {
-    stagedPaths: actionable("staged"),
-    unstagedPaths: actionable("unstaged"),
-    embeddedPaths: [
-      ...new Set(selected.filter((f) => f.status.embedded).map((f) => f.path)),
-    ],
-    untrackedPaths: selected
-      .filter(
-        (f) =>
-          f.side === "unstaged" && !f.status.embedded && isUntracked(f.status),
-      )
-      .map((f) => f.path),
-  };
 }
 
 /**

@@ -17,10 +17,9 @@ use super::{
     types::{
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
         DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LogFilter, LogPage,
-        RebaseAction,
-        RebaseStatus, RebaseStep, ReflogEntry, ReflogOp, RemoteInfo, RepoHandle, RepoId, RepoState,
-        ResetMode, REFSPEC_ALL,
-        StashInfo, StashSaveOptions, StatusFlag, TagInfo, TagTarget,
+        RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
+        RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag, TagInfo,
+        TagTarget, REFSPEC_ALL,
     },
     GitBackend,
 };
@@ -550,7 +549,7 @@ impl Libgit2Backend {
                 // later `rebase_status` poll (banner) or `abort_operation`
                 // call doesn't treat this finished rebase as still
                 // in-progress/abortable via its now-stale `orig_head`.
-                let status = self.rebase_status(repo_id)?;
+                let mut status = self.rebase_status(repo_id)?;
                 {
                     let mut rebases = self
                         .rebases
@@ -561,6 +560,19 @@ impl Libgit2Backend {
                 // No in-memory entry any more, so this sweeps the state file
                 // too — the operation is over on disk as well.
                 self.persist_rebase(repo_id)?;
+                // ...which is exactly why the summary is written separately:
+                // with the state gone, this is the only record that the rebase
+                // happened, and `rebase_status` keeps reporting it until the UI
+                // acknowledges it (#47). Frontend caching of this is what the
+                // retained summary replaces.
+                let summary = RebaseSummary {
+                    total: status.total,
+                    completed: status.next_index,
+                };
+                self.with_repo(repo_id, |repo| {
+                    crate::git::rebase_state::save_summary(repo, &summary)
+                })?;
+                status.last_completed = Some(summary);
                 return Ok(status);
             };
 
@@ -3779,6 +3791,10 @@ impl GitBackend for Libgit2Backend {
             // Same escape hatch git leaves before rewriting history:
             // `git reset --hard ORIG_HEAD` undoes this rebase from the CLI.
             crate::git::rebase_state::write_orig_head(repo, &orig_head)?;
+            // A new rebase supersedes whatever the last one did, so the retained
+            // summary goes now — before the replay can write a new one. This is
+            // the clearing the frontend used to have to remember (#47).
+            crate::git::rebase_state::clear_summary(repo)?;
 
             // The run's base: what the first step says it sits on, else that
             // commit's first parent.
@@ -3887,6 +3903,10 @@ impl GitBackend for Libgit2Backend {
         self.with_repo(repo_id, |repo| {
             repo.cleanup_state()?;
             crate::git::rebase_state::clear(repo)?;
+            // An abort throws the replay away, so there is nothing to report
+            // about it — and a summary left from an EARLIER rebase would read as
+            // this one's outcome.
+            crate::git::rebase_state::clear_summary(repo)?;
             // The replay ran on a detached HEAD, so the branch never moved:
             // abort is "put HEAD back on the branch and throw the replay away".
             // A rebase started from a detached HEAD has no branch to return to,
@@ -3922,31 +3942,46 @@ impl GitBackend for Libgit2Backend {
                 next_index: state.completed,
                 total: state.total,
                 pause_reason: state.pause_reason.clone(),
+                last_completed: None,
             })
         };
-        if let Some(status) = in_memory {
-            return Ok(status);
-        }
 
-        // No in-memory entry: either there is no rebase, or this process did
-        // not start it (the app was restarted mid-rebase). The state file is
-        // the authority in that case.
-        self.with_repo(repo_id, |repo| {
-            Ok(match crate::git::rebase_state::load(repo)? {
-                Some(state) => RebaseStatus {
-                    in_progress: true,
-                    next_index: state.completed,
-                    total: state.total,
-                    pause_reason: state.pause_reason,
-                },
-                None => RebaseStatus {
-                    in_progress: false,
-                    next_index: 0,
-                    total: 0,
-                    pause_reason: None,
-                },
-            })
-        })
+        let mut status = match in_memory {
+            Some(status) => status,
+            // No in-memory entry: either there is no rebase, or this process
+            // did not start it (the app was restarted mid-rebase). The state
+            // file is the authority in that case.
+            None => self.with_repo(repo_id, |repo| {
+                Ok(match crate::git::rebase_state::load(repo)? {
+                    Some(state) => RebaseStatus {
+                        in_progress: true,
+                        next_index: state.completed,
+                        total: state.total,
+                        pause_reason: state.pause_reason,
+                        last_completed: None,
+                    },
+                    None => RebaseStatus {
+                        in_progress: false,
+                        next_index: 0,
+                        total: 0,
+                        pause_reason: None,
+                        last_completed: None,
+                    },
+                })
+            })?,
+        };
+
+        // The completed-rebase summary outlives the rebase it describes, so it
+        // is read here rather than derived from state that no longer exists.
+        // It is written only on completion and dropped on start/abort/ack, so
+        // it is always absent while `in_progress` is true.
+        status.last_completed =
+            self.with_repo(repo_id, crate::git::rebase_state::load_summary)?;
+        Ok(status)
+    }
+
+    fn rebase_acknowledge(&self, repo_id: &RepoId) -> AppResult<()> {
+        self.with_repo(repo_id, crate::git::rebase_state::clear_summary)
     }
 
     fn verify_commit(

@@ -372,6 +372,24 @@ pub struct RebaseStep {
     pub merge_parents: Vec<String>,
 }
 
+/// What a rebase that ran to completion did, kept after the rebase itself is
+/// over so the UI can still report it.
+///
+/// The engine sweeps its `RebaseState` the moment a plan finishes, so a
+/// `rebase_status` poll one tick later has nothing left to describe. The
+/// frontend used to cache the final status for the "N steps completed" line,
+/// which meant every abort and every start path had to remember to clear that
+/// cache (#47). The backend retains this instead, until `rebase_acknowledge`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseSummary {
+    /// Steps the completed plan contained.
+    pub total: usize,
+    /// Steps that ran, drops included — equal to `total` for a plan that
+    /// reached its end, which is the only way a summary is recorded.
+    pub completed: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RebaseStatus {
@@ -382,6 +400,10 @@ pub struct RebaseStatus {
     pub total: usize,
     /// "conflict" | "edit" | "ok" — only meaningful when in_progress is true.
     pub pause_reason: Option<String>,
+    /// The most recently completed rebase, until it is acknowledged. Always
+    /// `None` while a rebase is in progress: starting one supersedes it, and
+    /// aborting one drops it. See {@link RebaseSummary}.
+    pub last_completed: Option<RebaseSummary>,
 }
 
 /// How to integrate fetched changes during a pull.

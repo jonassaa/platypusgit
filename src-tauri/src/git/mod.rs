@@ -331,6 +331,11 @@ pub trait GitBackend: Send + Sync {
     fn rebase_continue(&self, repo_id: &RepoId) -> AppResult<RebaseStatus>;
     fn rebase_abort(&self, repo_id: &RepoId) -> AppResult<()>;
     fn rebase_status(&self, repo_id: &RepoId) -> AppResult<RebaseStatus>;
+    /// Drop the retained `RebaseStatus.last_completed` summary. Called once the
+    /// UI has shown it; without it the summary would greet the user again on
+    /// every later poll, and after a restart. Starting or aborting a rebase
+    /// drops it too, so this is the only path a plain "I've seen it" takes.
+    fn rebase_acknowledge(&self, repo_id: &RepoId) -> AppResult<()>;
 
     // === ignore ===
     /// Append a pattern to the repo's top-level `.gitignore`, creating the file

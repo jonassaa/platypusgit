@@ -51,7 +51,6 @@ beforeEach(() => {
     error: null,
     repoState: "Clean",
     rebaseStatus: SWEPT,
-    lastRebaseSummary: null,
     activity: {},
   });
   mockInvoke("rebase_status", () => SWEPT);

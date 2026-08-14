@@ -65,6 +65,7 @@ import {
   pushDeleteBranch as pushDeleteBranchFn,
   pushTag as pushTagFn,
   rebaseAbort,
+  rebaseAcknowledge as rebaseAcknowledgeFn,
   rebaseOnto as rebaseOntoFn,
   rebaseContinue as rebaseContinueFn,
   rebaseStart as rebaseStartFn,
@@ -166,15 +167,13 @@ interface RepoStoreState {
   loading: boolean;
   error: AppError | null;
   repoState: GitRepoState;
-  rebaseStatus: RebaseStatus;
   /**
-   * Final status of the most recently completed rebase, held frontend-side.
-   * The backend sweeps RebaseState on completion (#28), so the very next
-   * refreshAll's rebase_status poll reports total: 0 — this field preserves
-   * the "N steps completed" summary for the Rebase screen. Cleared when a
-   * new rebase starts, on abort, and on repo open/close.
+   * Live rebase progress AND, once a plan finishes, its retained
+   * `lastCompleted` summary — the backend keeps that until acknowledged, so the
+   * "N steps completed" line no longer needs a frontend cache that every abort
+   * and start path had to clear by hand (#47).
    */
-  lastRebaseSummary: RebaseStatus | null;
+  rebaseStatus: RebaseStatus;
   /** Active long-running ops keyed by op kind. */
   activity: RepoActivity;
   openRepo: (path: string) => Promise<void>;
@@ -294,6 +293,8 @@ interface RepoStoreState {
   rebaseStart: (plan: RebaseStep[]) => Promise<RebaseStatus | null>;
   rebaseContinue: () => Promise<RebaseStatus | null>;
   rebaseAbort: () => Promise<void>;
+  /** Drop the backend's retained completed-rebase summary once it's been shown. */
+  rebaseAcknowledge: () => Promise<void>;
   appendGitignore: (pattern: string) => Promise<void>;
   openInEditor: (relativePath: string) => Promise<void>;
 }
@@ -381,7 +382,6 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       commits: [],
       searchResults: null,
       commitFilter: {},
-      lastRebaseSummary: null,
       logRef: LOG_REF_ALL,
       commitCursor: null,
       searchCursor: null,
@@ -408,7 +408,6 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   error: null,
   repoState: "Clean",
   rebaseStatus: DEFAULT_REBASE_STATUS,
-  lastRebaseSummary: null,
   activity: {},
 
   async openRepo(path) {
@@ -613,7 +612,6 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       commitFilter: {},
       logRef: LOG_REF_ALL,
       searching: false,
-      lastRebaseSummary: null,
       error: null,
     });
   },
@@ -1361,12 +1359,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return null;
     try {
       const status = await rebaseStartFn(repo.id, plan);
-      // Capture the summary before refreshAll re-polls rebase_status — the
-      // backend sweeps RebaseState on completion, so the poll returns total: 0.
-      set({
-        rebaseStatus: status,
-        lastRebaseSummary: status.inProgress ? null : status,
-      });
+      set({ rebaseStatus: status });
       await get().refreshAll();
       return status;
     } catch (e) {
@@ -1380,10 +1373,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return null;
     try {
       const status = await rebaseContinueFn(repo.id);
-      set({
-        rebaseStatus: status,
-        ...(status.inProgress ? {} : { lastRebaseSummary: status }),
-      });
+      set({ rebaseStatus: status });
       await get().refreshAll();
       return status;
     } catch (e) {
@@ -1397,8 +1387,22 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await rebaseAbort(repo.id);
-      set({ rebaseStatus: DEFAULT_REBASE_STATUS, lastRebaseSummary: null });
+      set({ rebaseStatus: DEFAULT_REBASE_STATUS });
       await get().refreshAll();
+    } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async rebaseAcknowledge() {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await rebaseAcknowledgeFn(repo.id);
+      // Mirror the drop locally instead of a full refreshAll: acknowledging is
+      // a notice being dismissed, not a change to the repository, and a refresh
+      // here would re-walk the log on every visit to the Rebase screen.
+      set((s) => ({ rebaseStatus: { ...s.rebaseStatus, lastCompleted: null } }));
     } catch (e) {
       set({ error: toAppError(e) });
     }

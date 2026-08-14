@@ -9,6 +9,7 @@ import { createBranchInputStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
 import { headUpstream, resolveConflictsOp } from "@/features/repo/ops";
 import type { ActionId } from "@/features/keymap";
+import type { BranchInfo, CommitInfo, FileStatus } from "@/lib/types";
 import type { PaletteItem, PaletteStep } from "./types";
 
 const palette = () => usePaletteStore.getState();
@@ -27,36 +28,71 @@ function step(make: () => PaletteStep): () => void {
   return () => palette().pushStep(make());
 }
 
-// ---- pick-step item builders (read live store data) -----------------------
+// ---- row builders (read live store data) ----------------------------------
+//
+// One builder per row kind, shared by the palette's ROOT step (CommandPalette's
+// candidate set) and by the pick steps below. The only things that vary are the
+// id namespace, the icon, and what the row does — so those are the options.
+//
+// The id namespace matters: `PaletteItem.id` is the frecency key, and a root
+// row (`branch:…`) and a pick-step row for the same branch (`pick-branch:…`)
+// are different rows the user can invoke, so they must not share a key. The
+// default is the pick-step namespace; the root step passes its own.
 
-function branchItems(
-  predicate: (b: import("@/lib/types").BranchInfo) => boolean,
-  icon: string,
-  onPick: (name: string) => void,
-): PaletteItem[] {
-  return repoState()
-    .branches.filter(predicate)
-    .map((b) => ({
-      type: "branch" as const,
-      id: `pick-branch:${b.isRemote ? "r" : "l"}:${b.name}`,
-      search: b.name,
-      label: b.name,
-      detail: b.isRemote ? "remote" : (b.upstream ?? undefined),
-      icon,
-      run: () => {
-        palette().closePalette();
-        onPick(b.name);
-      },
-    }));
+interface RowOptions {
+  /**
+   * Id namespace — the row id is `<idPrefix>:<per-kind suffix>`. Defaults to
+   * the pick-step namespace.
+   */
+  idPrefix?: string;
+  icon: string;
 }
 
-function commitItems(
-  icon: string,
-  onPick: (oid: string) => void,
-): PaletteItem[] {
-  return repoState().commits.map((c) => ({
+export interface BranchItemsOptions extends RowOptions {
+  /** Rows to build from. Defaults to the live branch list. */
+  branches?: BranchInfo[];
+  /** Keep only matching branches. Defaults to keeping all of them. */
+  filter?: (b: BranchInfo) => boolean;
+  onPick: (name: string) => void;
+}
+
+export function branchItems({
+  branches,
+  filter,
+  idPrefix = "pick-branch",
+  icon,
+  onPick,
+}: BranchItemsOptions): PaletteItem[] {
+  const rows = branches ?? repoState().branches;
+  return (filter ? rows.filter(filter) : rows).map((b) => ({
+    type: "branch" as const,
+    id: `${idPrefix}:${b.isRemote ? "r" : "l"}:${b.name}`,
+    search: b.name,
+    label: b.name,
+    detail: b.isRemote ? "remote" : (b.upstream ?? undefined),
+    icon,
+    run: () => {
+      palette().closePalette();
+      onPick(b.name);
+    },
+  }));
+}
+
+export interface CommitItemsOptions extends RowOptions {
+  /** Rows to build from. Defaults to the live log. */
+  commits?: CommitInfo[];
+  onPick: (oid: string) => void;
+}
+
+export function commitItems({
+  commits,
+  idPrefix = "pick-commit",
+  icon,
+  onPick,
+}: CommitItemsOptions): PaletteItem[] {
+  return (commits ?? repoState().commits).map((c) => ({
     type: "commit" as const,
-    id: `pick-commit:${c.oid}`,
+    id: `${idPrefix}:${c.oid}`,
     search: `${c.summary} ${c.shortOid} ${c.author}`,
     label: c.summary,
     detail: `${c.shortOid} · ${relativeTime(c.timestamp)}`,
@@ -67,6 +103,42 @@ function commitItems(
     },
   }));
 }
+
+export interface FileItemsOptions extends RowOptions {
+  /** Rows to build from. Defaults to the live tracked-file list. */
+  files?: FileStatus[];
+  onPick: (path: string) => void;
+}
+
+/**
+ * Label is the basename, detail the directory. A file at the repo root has no
+ * directory, so its detail stays undefined rather than rendering an empty span.
+ */
+export function fileItems({
+  files,
+  idPrefix = "pick-file",
+  icon,
+  onPick,
+}: FileItemsOptions): PaletteItem[] {
+  return (files ?? repoState().allFiles).map((f) => {
+    const slash = f.path.lastIndexOf("/");
+    return {
+      type: "file" as const,
+      id: `${idPrefix}:${f.path}`,
+      search: f.path,
+      label: slash >= 0 ? f.path.slice(slash + 1) : f.path,
+      detail: slash >= 0 ? f.path.slice(0, slash) : undefined,
+      icon,
+      run: () => {
+        palette().closePalette();
+        onPick(f.path);
+      },
+    };
+  });
+}
+
+// The remaining builders are pick-step-only (the root step has no tag / stash /
+// remote row kind), so they stay on the plain positional signature.
 
 function tagItems(icon: string, onPick: (name: string) => void): PaletteItem[] {
   return repoState().tags.map((t) => ({
@@ -255,7 +327,11 @@ export function buildCommands(): PaletteItem[] {
     search: "Checkout branch switch", label: "Checkout branch…", icon: "branch",
     run: step(() => ({
       kind: "pick", title: "Checkout branch",
-      items: branchItems((b) => !b.isHead, "branch", (n) => void repo.checkoutBranch(n)),
+      items: branchItems({
+        filter: (b) => !b.isHead,
+        icon: "branch",
+        onPick: (n) => void repo.checkoutBranch(n),
+      }),
     })),
   });
   items.push({
@@ -269,7 +345,11 @@ export function buildCommands(): PaletteItem[] {
     search: "Merge branch into current", label: "Merge branch into current…", icon: "merge",
     run: step(() => ({
       kind: "pick", title: "Merge into current",
-      items: branchItems((b) => !b.isHead, "merge", (n) => void repo.mergeBranch(n)),
+      items: branchItems({
+        filter: (b) => !b.isHead,
+        icon: "merge",
+        onPick: (n) => void repo.mergeBranch(n),
+      }),
     })),
   });
   items.push({
@@ -277,7 +357,11 @@ export function buildCommands(): PaletteItem[] {
     search: "Rebase current onto branch", label: "Rebase current onto…", icon: "rebase",
     run: step(() => ({
       kind: "pick", title: "Rebase onto",
-      items: branchItems((b) => !b.isHead, "rebase", (n) => void repo.rebaseOnto(n)),
+      items: branchItems({
+        filter: (b) => !b.isHead,
+        icon: "rebase",
+        onPick: (n) => void repo.rebaseOnto(n),
+      }),
     })),
   });
   items.push({
@@ -285,8 +369,11 @@ export function buildCommands(): PaletteItem[] {
     search: "Delete branch", label: "Delete branch…", danger: true, icon: "trash",
     run: step(() => ({
       kind: "pick", title: "Delete branch",
-      items: branchItems((b) => !b.isHead && !b.isRemote, "trash", (n) =>
-        void repo.deleteBranch(n)),
+      items: branchItems({
+        filter: (b) => !b.isHead && !b.isRemote,
+        icon: "trash",
+        onPick: (n) => void repo.deleteBranch(n),
+      }),
     })),
   });
   items.push({
@@ -294,16 +381,20 @@ export function buildCommands(): PaletteItem[] {
     search: "Rename branch", label: "Rename branch…", icon: "branch",
     run: step(() => ({
       kind: "pick", title: "Rename branch",
-      items: branchItems((b) => !b.isRemote, "branch", (oldName) =>
-        palette().pushStep({
-          kind: "input", title: `Rename ${oldName}`, placeholder: "new-name",
-          initial: oldName,
-          validate: (v) => (v.trim() ? null : "Name required"),
-          onSubmit: (v) => {
-            palette().closePalette();
-            void repo.renameBranch(oldName, v.trim());
-          },
-        })),
+      items: branchItems({
+        filter: (b) => !b.isRemote,
+        icon: "branch",
+        onPick: (oldName) =>
+          palette().pushStep({
+            kind: "input", title: `Rename ${oldName}`, placeholder: "new-name",
+            initial: oldName,
+            validate: (v) => (v.trim() ? null : "Name required"),
+            onSubmit: (v) => {
+              palette().closePalette();
+              void repo.renameBranch(oldName, v.trim());
+            },
+          }),
+      }),
     })),
   });
 
@@ -332,7 +423,7 @@ export function buildCommands(): PaletteItem[] {
     search: "Cherry-pick commit", label: "Cherry-pick commit…", icon: "commit",
     run: step(() => ({
       kind: "pick", title: "Cherry-pick",
-      items: commitItems("commit", (oid) => void repo.cherryPick(oid)),
+      items: commitItems({ icon: "commit", onPick: (oid) => void repo.cherryPick(oid) }),
     })),
   });
   items.push({
@@ -340,7 +431,7 @@ export function buildCommands(): PaletteItem[] {
     search: "Revert commit", label: "Revert commit…", icon: "history",
     run: step(() => ({
       kind: "pick", title: "Revert",
-      items: commitItems("history", (oid) => void repo.revert(oid)),
+      items: commitItems({ icon: "history", onPick: (oid) => void repo.revert(oid) }),
     })),
   });
   items.push({
@@ -349,16 +440,19 @@ export function buildCommands(): PaletteItem[] {
     icon: "rebase",
     run: step(() => ({
       kind: "pick", title: "Reset to commit",
-      items: commitItems("commit", (oid) =>
-        palette().pushStep({
-          kind: "pick", title: "Reset mode",
-          items: (["Soft", "Mixed", "Hard"] as const).map((mode) => ({
-            type: "command" as const, id: `reset-mode:${mode}`,
-            search: mode, label: mode, danger: mode === "Hard",
-            icon: "rebase",
-            run: () => { palette().closePalette(); void repo.reset(oid, mode); },
-          })),
-        })),
+      items: commitItems({
+        icon: "commit",
+        onPick: (oid) =>
+          palette().pushStep({
+            kind: "pick", title: "Reset mode",
+            items: (["Soft", "Mixed", "Hard"] as const).map((mode) => ({
+              type: "command" as const, id: `reset-mode:${mode}`,
+              search: mode, label: mode, danger: mode === "Hard",
+              icon: "rebase",
+              run: () => { palette().closePalette(); void repo.reset(oid, mode); },
+            })),
+          }),
+      }),
     })),
   });
 

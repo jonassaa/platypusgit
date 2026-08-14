@@ -174,6 +174,27 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(checkedOut).toBe("feature/x"));
   });
 
+  it("keeps the root step's own id namespace for branch rows", async () => {
+    // The root rows and the pick-step rows come from the same builder in
+    // commands.ts, distinguished only by id prefix. That prefix is the frecency
+    // key, so a root branch row must record `branch:…`, never `pick-branch:…`.
+    const user = userEvent.setup();
+    useRepoStore.setState({
+      branches: [mkBranch("main", true), mkBranch("feature/x")],
+      checkoutBranch: async () => {},
+    });
+    usePaletteStore.setState({ open: true, query: "" });
+    render(<CommandPalette />);
+    await screen.findByRole("dialog");
+
+    await user.click(screen.getByPlaceholderText(/Search branches/i));
+    await user.keyboard("featurex");
+    await user.click(await screen.findByText(rowText("feature/x")));
+
+    const { loadFrecency } = await import("./frecency");
+    await waitFor(() => expect(loadFrecency()["branch:l:feature/x"]).toBeDefined());
+  });
+
   it("activates the highlighted row (not an unshown command) when a type chip is active", async () => {
     // Regression: keyboard nav must index the chip-filtered rows the DOM
     // renders. With a non-"all" chip, Enter previously activated flat[0] — the

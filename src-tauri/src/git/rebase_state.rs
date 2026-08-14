@@ -17,10 +17,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
-use super::types::RebaseStep;
+use super::types::{RebaseStep, RebaseSummary};
 
 pub const FILE_NAME: &str = "platypusgit-rebase.json";
 pub const VERSION: u32 = 1;
+
+/// Where the last COMPLETED rebase's summary lives — deliberately a second
+/// file, not a variant inside {@link FILE_NAME}.
+///
+/// Everything that asks "is a rebase in progress?" (`repo_state`,
+/// `rebase_in_progress`, `rehydrate_rebase`) answers by the mere existence of
+/// the in-progress file. Storing a finished rebase there would make all three
+/// claim an operation that is over, and offer Continue/Abort for it.
+pub const SUMMARY_FILE_NAME: &str = "platypusgit-rebase-last.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +101,60 @@ pub fn load(repo: &Repository) -> AppResult<Option<PersistedRebase>> {
 
 pub fn clear(repo: &Repository) -> AppResult<()> {
     match std::fs::remove_file(path(repo)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+// ── Last completed rebase ───────────────────────────────────────────────────
+// A rebase's state is swept the instant its plan finishes, so nothing is left
+// to describe it one poll later. The summary is kept beside it until the UI
+// acknowledges it, which is what lets `rebase_status` keep answering "N steps
+// completed" without the frontend caching the answer and having to invalidate
+// that cache on every abort and start path (#47).
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedSummary {
+    version: u32,
+    #[serde(flatten)]
+    summary: RebaseSummary,
+}
+
+pub fn summary_path(repo: &Repository) -> PathBuf {
+    repo.path().join(SUMMARY_FILE_NAME)
+}
+
+pub fn save_summary(repo: &Repository, summary: &RebaseSummary) -> AppResult<()> {
+    let target = summary_path(repo);
+    let tmp = target.with_extension("json.tmp");
+    let json = serde_json::to_vec_pretty(&PersistedSummary {
+        version: VERSION,
+        summary: *summary,
+    })
+    .map_err(|e| AppError::Internal(format!("serialising rebase summary: {e}")))?;
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, &target)?;
+    Ok(())
+}
+
+/// `Ok(None)` when there is nothing to report. Unlike the in-progress state, an
+/// unreadable summary is NOT an error: it describes an operation that already
+/// finished, so nothing is at risk in forgetting it — and failing the read would
+/// break `rebase_status` (and with it the whole refresh) over a stale note.
+pub fn load_summary(repo: &Repository) -> AppResult<Option<RebaseSummary>> {
+    let Ok(bytes) = std::fs::read(summary_path(repo)) else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_slice::<PersistedSummary>(&bytes)
+        .ok()
+        .filter(|p| p.version == VERSION)
+        .map(|p| p.summary))
+}
+
+pub fn clear_summary(repo: &Repository) -> AppResult<()> {
+    match std::fs::remove_file(summary_path(repo)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),

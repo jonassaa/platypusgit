@@ -51,3 +51,13 @@ pub async fn rebase_status(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
+
+/// Drop `RebaseStatus.last_completed` once the UI has shown it.
+#[tauri::command]
+pub async fn rebase_acknowledge(state: State<'_, AppState>, repo_id: String) -> AppResult<()> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.rebase_acknowledge(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}

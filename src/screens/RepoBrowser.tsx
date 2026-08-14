@@ -44,6 +44,9 @@ import {
   emptySelection,
   primarySelectedKey,
   pruneSelection,
+  splitFileSelection,
+  treeSelectionSource,
+  type FileSelectionSplit,
   type Selection,
 } from "@/lib/selection";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
@@ -319,58 +322,22 @@ export function RepoBrowserScreen() {
   );
 
   // Map selected tree keys to worktree statuses for multi-file operations.
-  // A selected FOLDER key resolves to no file entry, so expand it to every
+  // A selected FOLDER key resolves to no file entry, so it expands to every
   // visible descendant file (against the tree's source set, `filteredStatus`)
   // — otherwise a selected folder is silently dropped from the count and from
   // Stage/Discard, under-counting a destructive op. In all-files mode
   // unmodified files only exist in allFiles, not status — they carry no
-  // stage/unstage actions but still count and copy.
+  // stage/unstage actions but still count and copy. The bucketing rules
+  // themselves live in lib/selection so the commit panel cannot drift from
+  // them (#47).
+  const selectionSource = React.useMemo(
+    () => treeSelectionSource(filteredStatus, status, allFiles),
+    [filteredStatus, status, allFiles],
+  );
   const splitSelection = React.useCallback(
-    (
-      keys: string[],
-    ): {
-      stagedPaths: string[];
-      unstagedPaths: string[];
-      paths: string[];
-      embeddedPaths: string[];
-      untrackedPaths: string[];
-    } => {
-      const stagedPaths: string[] = [];
-      const unstagedPaths: string[] = [];
-      const embeddedPaths: string[] = [];
-      const untrackedPaths: string[] = [];
-      const paths: string[] = [];
-      const seen = new Set<string>();
-      const add = (st: FileStatus) => {
-        if (seen.has(st.path)) return;
-        seen.add(st.path);
-        paths.push(st.path);
-        // An embedded repo counts and copies like any row, but it is not a
-        // file — keep it out of the stage/unstage/discard subsets so a batch
-        // built from this selection never carries it to the backend.
-        if (st.embedded) {
-          embeddedPaths.push(st.path);
-          return;
-        }
-        if (isStaged(st)) stagedPaths.push(st.path);
-        if (isUnstaged(st)) unstagedPaths.push(st.path);
-        if (isUntracked(st)) untrackedPaths.push(st.path);
-      };
-      for (const key of keys) {
-        const st = findStatusByTreeKey(key, status, allFiles);
-        if (st) {
-          add(st);
-          continue;
-        }
-        // Folder key: pull in every visible file beneath it.
-        const prefix = treeKeyToPath(key) + "/";
-        for (const child of filteredStatus) {
-          if (child.path.startsWith(prefix)) add(child);
-        }
-      }
-      return { stagedPaths, unstagedPaths, paths, embeddedPaths, untrackedPaths };
-    },
-    [status, allFiles, filteredStatus],
+    (keys: string[]): FileSelectionSplit =>
+      splitFileSelection(keys, selectionSource),
+    [selectionSource],
   );
 
   /**

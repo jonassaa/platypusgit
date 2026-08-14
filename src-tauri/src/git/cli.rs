@@ -329,6 +329,9 @@ impl GitBackend for CliBackend {
     fn rebase_status(&self, _repo_id: &RepoId) -> AppResult<RebaseStatus> {
         Err(AppError::NotImplemented)
     }
+    fn rebase_acknowledge(&self, _repo_id: &RepoId) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
     fn read_reflog(&self, _repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>> {
         Err(AppError::NotImplemented)
     }

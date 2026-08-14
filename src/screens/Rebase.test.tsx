@@ -10,11 +10,13 @@ import type { CommitInfo, RebaseStatus, RepoHandle } from "@/lib/types";
 
 const handle: RepoHandle = { id: "repo-1", path: "/tmp/fake-repo", head: "refs/heads/main" };
 
+/** What `rebase_status` reports once the engine has swept its RebaseState. */
 const SWEPT_STATUS: RebaseStatus = {
   inProgress: false,
   nextIndex: 0,
   total: 0,
   pauseReason: null,
+  lastCompleted: null,
 };
 
 function makeCommit(oid: string, summary: string, parent: string): CommitInfo {
@@ -50,13 +52,22 @@ function resetStores() {
     error: null,
     repoState: "Clean",
     rebaseStatus: SWEPT_STATUS,
-    lastRebaseSummary: null,
     activity: {},
   });
   useNavStore.setState({ intent: null });
 }
 
-function wireRefreshAllMocks(): void {
+/**
+ * The backend behaviour the summary depends on: RebaseState is swept the moment
+ * a plan finishes (#28), but the completed-rebase summary is RETAINED until
+ * acknowledged (#47) — so the swept poll still carries `lastCompleted`, and
+ * `rebase_acknowledge` is what makes it stop.
+ */
+function wireRefreshAllMocks(retained: RebaseStatus["lastCompleted"] = null): {
+  ackCalls: () => number;
+} {
+  let acked = 0;
+  let held = retained;
   mockInvoke("get_status", () => []);
   mockInvoke("list_branches", () => []);
   mockInvoke("list_tags", () => []);
@@ -64,9 +75,13 @@ function wireRefreshAllMocks(): void {
   mockInvoke("list_remotes", () => []);
   mockInvoke("get_log_page", () => ({ commits, nextCursor: null }));
   mockInvoke("repo_state", () => "Clean");
-  // Post-#28 backend behavior: RebaseState is swept on completion, so the
-  // status poll right after a finished rebase reports total: 0.
-  mockInvoke("rebase_status", () => SWEPT_STATUS);
+  mockInvoke("rebase_status", () => ({ ...SWEPT_STATUS, lastCompleted: held }));
+  mockInvoke("rebase_acknowledge", () => {
+    acked += 1;
+    held = null;
+    return null;
+  });
+  return { ackCalls: () => acked };
 }
 
 function seedPlanIntent(): void {
@@ -81,15 +96,16 @@ function seedPlanIntent(): void {
 describe("RebaseScreen completion summary", () => {
   beforeEach(() => {
     resetStores();
-    wireRefreshAllMocks();
   });
 
-  it("shows the summary after a completed rebase even though refreshAll re-polls a swept rebase_status", async () => {
+  it("shows the summary from the retained backend value, not a frontend cache", async () => {
+    wireRefreshAllMocks({ total: 2, completed: 2 });
     mockInvoke("rebase_start", () => ({
       inProgress: false,
       nextIndex: 2,
       total: 2,
       pauseReason: null,
+      lastCompleted: { total: 2, completed: 2 },
     }));
 
     seedPlanIntent();
@@ -103,40 +119,57 @@ describe("RebaseScreen completion summary", () => {
       );
     });
 
-    // refreshAll really did clobber rebaseStatus with the swept poll…
+    // refreshAll really did re-poll a swept rebase_status — total is back to 0…
     const state = useRepoStore.getState();
-    expect(state.rebaseStatus).toEqual(SWEPT_STATUS);
-    // …but the summary survived frontend-side.
-    expect(state.lastRebaseSummary).toEqual({
-      inProgress: false,
-      nextIndex: 2,
-      total: 2,
-      pauseReason: null,
-    });
+    expect(state.rebaseStatus.total).toBe(0);
+    expect(state.rebaseStatus.inProgress).toBe(false);
+    // …and the summary survived because the BACKEND kept it, not the store.
+    expect(state.rebaseStatus.lastCompleted).toEqual({ total: 2, completed: 2 });
 
-    // Summary also survives any later refresh cycle (poll still swept).
+    // Still there after any later refresh cycle: nothing has acknowledged it.
     await useRepoStore.getState().refreshAll();
     expect(screen.getByTestId("rebase-last-summary")).toHaveTextContent(
       "Last rebase: 2 steps completed.",
     );
   });
 
-  it("clears the summary when a new rebase starts and pauses", async () => {
+  it("acknowledges the summary when the screen goes away, and does not show it again", async () => {
+    const { ackCalls } = wireRefreshAllMocks({ total: 3, completed: 3 });
     useRepoStore.setState({
-      lastRebaseSummary: { inProgress: false, nextIndex: 2, total: 2, pauseReason: null },
+      rebaseStatus: { ...SWEPT_STATUS, lastCompleted: { total: 3, completed: 3 } },
     });
-    mockInvoke("rebase_start", () => ({
+
+    const view = render(<RebaseScreen />);
+    expect(screen.getByTestId("rebase-last-summary")).toHaveTextContent(
+      "Last rebase: 3 steps completed.",
+    );
+    expect(ackCalls()).toBe(0);
+
+    view.unmount();
+    await waitFor(() => expect(ackCalls()).toBe(1));
+
+    // A later visit finds nothing retained — the notice is spent.
+    await useRepoStore.getState().refreshAll();
+    render(<RebaseScreen />);
+    expect(screen.queryByTestId("rebase-last-summary")).not.toBeInTheDocument();
+  });
+
+  it("shows no summary once a new rebase starts and pauses", async () => {
+    // The engine drops the summary at rebase_start, so no frontend clearing is
+    // involved — the very next status read simply has nothing to report.
+    wireRefreshAllMocks({ total: 2, completed: 2 });
+    useRepoStore.setState({
+      rebaseStatus: { ...SWEPT_STATUS, lastCompleted: { total: 2, completed: 2 } },
+    });
+    const paused: RebaseStatus = {
       inProgress: true,
       nextIndex: 1,
       total: 2,
       pauseReason: "conflict",
-    }));
-    mockInvoke("rebase_status", () => ({
-      inProgress: true,
-      nextIndex: 1,
-      total: 2,
-      pauseReason: "conflict",
-    }));
+      lastCompleted: null,
+    };
+    mockInvoke("rebase_start", () => paused);
+    mockInvoke("rebase_status", () => paused);
 
     seedPlanIntent();
     render(<RebaseScreen />);
@@ -146,18 +179,26 @@ describe("RebaseScreen completion summary", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("rebase-last-summary")).not.toBeInTheDocument();
     });
-    expect(useRepoStore.getState().lastRebaseSummary).toBeNull();
+    expect(useRepoStore.getState().rebaseStatus.lastCompleted).toBeNull();
   });
 
-  it("sets the summary when a paused rebase completes via continue, and abort clears it", async () => {
+  it("reports a paused rebase completing via continue, and an abort clears it", async () => {
+    wireRefreshAllMocks({ total: 3, completed: 3 });
     useRepoStore.setState({
-      rebaseStatus: { inProgress: true, nextIndex: 1, total: 3, pauseReason: "conflict" },
+      rebaseStatus: {
+        inProgress: true,
+        nextIndex: 1,
+        total: 3,
+        pauseReason: "conflict",
+        lastCompleted: null,
+      },
     });
     mockInvoke("rebase_continue", () => ({
       inProgress: false,
       nextIndex: 3,
       total: 3,
       pauseReason: null,
+      lastCompleted: { total: 3, completed: 3 },
     }));
 
     render(<RebaseScreen />);
@@ -170,9 +211,14 @@ describe("RebaseScreen completion summary", () => {
       );
     });
 
-    // Abort of a later rebase must not leave a stale "completed" summary.
+    // Abort must not leave a stale "completed" line: the engine clears the
+    // summary too, and the store's reset carries that through immediately.
     mockInvoke("rebase_abort", () => null);
+    mockInvoke("rebase_status", () => SWEPT_STATUS);
     await useRepoStore.getState().rebaseAbort();
-    expect(useRepoStore.getState().lastRebaseSummary).toBeNull();
+    expect(useRepoStore.getState().rebaseStatus.lastCompleted).toBeFalsy();
+    await waitFor(() => {
+      expect(screen.queryByTestId("rebase-last-summary")).not.toBeInTheDocument();
+    });
   });
 });

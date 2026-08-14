@@ -216,6 +216,7 @@ pub fn run() {
             commands::rebase::rebase_continue,
             commands::rebase::rebase_abort,
             commands::rebase::rebase_status,
+            commands::rebase::rebase_acknowledge,
             commands::reflog::get_reflog,
             commands::reflog::checkout_detached,
             commands::cli::take_launch_intent,

@@ -751,6 +751,16 @@ export async function rebaseStatus(repoId: string): Promise<RebaseStatus> {
   return invoke<RebaseStatus>("rebase_status", { repoId });
 }
 
+/**
+ * Drop the retained `RebaseStatus.lastCompleted` summary. The backend holds it
+ * until something has shown it, so a screen that renders the "N steps
+ * completed" line calls this — otherwise the same line reappears on every later
+ * poll and after a restart.
+ */
+export async function rebaseAcknowledge(repoId: string): Promise<void> {
+  return invoke<void>("rebase_acknowledge", { repoId });
+}
+
 export async function fileHistory(
   repoId: string,
   path: string,
