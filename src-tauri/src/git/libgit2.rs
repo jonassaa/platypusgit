@@ -328,7 +328,15 @@ impl Libgit2Backend {
         };
 
         self.with_repo(repo_id, |repo| match &snapshot {
-            Some(state) => crate::git::rebase_state::save(repo, state),
+            Some(state) => {
+                // Re-assert ORIG_HEAD on every transition, not just at start: a
+                // hard reset writes its own ORIG_HEAD, so the resets this engine
+                // performs mid-replay (moving to a step's base, collapsing a
+                // squash) would otherwise leave a mid-rebase commit there and
+                // break `git reset --hard ORIG_HEAD` as an escape hatch.
+                crate::git::rebase_state::write_orig_head(repo, &state.orig_head)?;
+                crate::git::rebase_state::save(repo, state)
+            }
             None => crate::git::rebase_state::clear(repo),
         })
     }

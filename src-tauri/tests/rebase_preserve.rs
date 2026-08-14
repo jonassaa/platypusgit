@@ -212,6 +212,38 @@ fn an_octopus_merge_cannot_be_recreated() {
     }
 }
 
+#[test]
+fn orig_head_survives_the_resets_a_preserving_replay_performs() {
+    let tr = TempRepo::with_initial_commit("root\n");
+    let h = merge_history(&tr);
+    // The fixture's own `git merge` wrote ORIG_HEAD (git does that), and the
+    // replay resets HEAD several times to reach each step's base — each reset
+    // writing its own ORIG_HEAD. The escape hatch documented for this engine
+    // (`git reset --hard ORIG_HEAD`) is only true if ours wins.
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .rebase_start(
+            &handle.id,
+            vec![
+                pick(&h.a),
+                pick(&h.f),
+                pick_onto(&h.c, &h.a),
+                merge_step(&h.m, &h.c, &[&h.f]),
+            ],
+        )
+        .unwrap();
+
+    let orig_head = std::fs::read_to_string(tr.path().join(".git").join("ORIG_HEAD"))
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(
+        orig_head, h.m,
+        "ORIG_HEAD must name the pre-rebase tip, not a commit the replay reset through"
+    );
+}
+
 // ─── conflicting recreate ────────────────────────────────────────────────────
 
 /// Same shape as `merge_history`, but both sides edit `shared.txt`, so the

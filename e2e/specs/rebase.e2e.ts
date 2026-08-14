@@ -145,4 +145,61 @@ describe("interactive rebase", () => {
     expect(repo.read("f.txt")).toBe("f\n");
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
+
+  it("preserves a merge commit when preserve mode is on", async () => {
+    repo = mergeRangeRepo();
+    const originalMerge = repo.git("rev-parse", "HEAD").trim();
+    await openRepo(repo.path);
+    await stubNativeDialogs({ confirm: true });
+    await switchScreen("history");
+    await scrollCommitListTo("feat: a on main");
+    await jsContextMenu('[data-testid="commit-row"]', { text: "feat: a on main" });
+    await jsClickMenuItem("Interactive rebase from here");
+    await $('[data-testid="rebase-row"]').waitForDisplayed({
+      timeout: 15_000,
+      timeoutMsg: "rebase plan never appeared",
+    });
+
+    await $('[data-testid="rebase-merge-mode-preserve"]').click();
+    const warning = $('[data-testid="rebase-merge-warning"]');
+    await warning.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "merge warning never appeared in preserve mode",
+    });
+    await browser.waitUntil(
+      async () => (await warning.getText()).includes("not preserved"),
+      {
+        timeout: 10_000,
+        timeoutMsg: "warning never switched to the preserve-mode copy",
+      },
+    );
+
+    await $('[data-testid="rebase-start"]').click();
+    await $('[data-testid="rebase-last-summary"]').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "preserving rebase never reported completion",
+    });
+
+    // The merge survives as a merge, with its topology intact: first parent the
+    // mainline commit, second the side branch.
+    expect(repo.git("log", "--merges", "--format=%s").trim()).toBe(
+      "Merge branch 'feature'",
+    );
+    expect(repo.git("log", "-1", "--format=%s", "HEAD^1").trim()).toBe(
+      "feat: c on main",
+    );
+    expect(repo.git("log", "-1", "--format=%s", "HEAD^2").trim()).toBe(
+      "feat: f on feature",
+    );
+    // A rebase really ran: rebase_start records the pre-rebase tip in ORIG_HEAD.
+    // Note HEAD's oid is EXPECTED to equal the original merge's — replaying
+    // unchanged commits onto the same base reproduces them byte for byte (same
+    // trees, messages, authors, and same-second committers), which is what a
+    // faithful recreate looks like. Asserting the oid changed would assert the
+    // engine corrupts something.
+    expect(repo.git("rev-parse", "ORIG_HEAD").trim()).toBe(originalMerge);
+    expect(repo.read("f.txt")).toBe("f\n");
+    expect(repo.read("c.txt")).toBe("c\n");
+    expect(repo.git("status", "--porcelain").trim()).toBe("");
+  });
 });
