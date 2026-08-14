@@ -52,7 +52,7 @@ function toUiLine(l: FileDiff["hunks"][number]["lines"][number]): DiffLineData {
  * Works on the flat line list rather than PGHunk's kind-grouped chunks, so it
  * scans for a removed run followed immediately by an added one.
  */
-function attachWordSpans(lines: DiffLineData[]): DiffLineData[] {
+export function withWordSpans(lines: DiffLineData[]): DiffLineData[] {
   const out = lines.map((l) => ({ ...l }));
   let i = 0;
   while (i < out.length) {
@@ -81,7 +81,7 @@ function attachWordSpans(lines: DiffLineData[]): DiffLineData[] {
 }
 
 /** Same side rule as everywhere else: rem reads the old file, add and ctx the new. */
-function attachSyntax(
+export function withSyntax(
   lines: DiffLineData[],
   syntax: { old: SyntaxLine[] | null; new: SyntaxLine[] | null } | undefined,
 ): DiffLineData[] {
@@ -112,8 +112,8 @@ export function flattenDiffRows(
     rows.push({ kind: "header", hunkIndex, header: h.header, h: headerH });
     if (collapsed?.has(hunkIndex)) return;
     // changedIndex FIRST, over the whole hunk, before anything slices rows.
-    const lines = attachWordSpans(
-      attachSyntax(withChangedIndices(h.lines.map(toUiLine)), syntax),
+    const lines = withWordSpans(
+      withSyntax(withChangedIndices(h.lines.map(toUiLine)), syntax),
     );
     for (const line of lines) rows.push({ kind: "line", hunkIndex, line, h: rowH });
   });
