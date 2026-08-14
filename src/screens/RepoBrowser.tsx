@@ -47,7 +47,9 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
-import { highlightFile } from "@/lib/highlight";
+import { useSyntax } from "@/lib/syntax";
+import { buildLineSpans } from "@/lib/lineSpans";
+import { splitCodeLines } from "@/lib/codeLines";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import {
   buildStatusList,
@@ -1174,8 +1176,10 @@ function EmbeddedRepoPanel({ path }: { path: string }) {
 }
 
 function FileContentView({ path, text }: { path: string; text: string }) {
-  const highlighted = React.useMemo(() => highlightFile(path, text), [path, text]);
-  const lines = highlighted.lines;
+  const lines = React.useMemo(() => splitCodeLines(text), [text]);
+  // Tokens arrive after first paint; until then the rows render plain, which is
+  // why nothing here waits on them.
+  const syntax = useSyntax(path, text);
 
   if (lines.length === 0) {
     return (
@@ -1189,12 +1193,12 @@ function FileContentView({ path, text }: { path: string; text: string }) {
 
   return (
     <div
-      className="hljs"
       style={{
         fontFamily: "var(--font-mono)",
         fontSize: "var(--fs-12)",
         lineHeight: "var(--lh-code)",
         background: "transparent",
+        color: "var(--fg-0)",
       }}
     >
       {lines.map((line, i) => (
@@ -1219,8 +1223,15 @@ function FileContentView({ path, text }: { path: string; text: string }) {
               paddingLeft: 10,
               paddingRight: 10,
             }}
-            dangerouslySetInnerHTML={{ __html: line || "&nbsp;" }}
-          />
+          >
+            {line === ""
+              ? " "
+              : buildLineSpans(line, syntax?.[i] ?? null, undefined).map((s, k) => (
+                  <span key={k} className={s.cls}>
+                    {line.slice(s.start, s.end)}
+                  </span>
+                ))}
+          </span>
         </div>
       ))}
     </div>

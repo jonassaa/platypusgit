@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "highlight.js/styles/github-dark.css";
 
 /* Bundled type (#61 B5). The design is mono-forward, but the stacks below used
  * to *name* Inter / JetBrains Mono without shipping them — on a machine that
@@ -125,6 +124,23 @@
   --git-untracked: oklch(0.72 0.12 295);
   --git-staged: oklch(0.72 0.15 155);
   --git-ignored: oklch(0.55 0.005 260);
+
+  /* syntax palette — pre-hydration defaults only. applyTheme() is the source of
+     truth and its `dark` column is byte-identical to these; edit both or they
+     drift. Colours never reach markup: rows carry `syn-*` classes, so a
+     theme-mode switch is CSS-only and never re-tokenizes. */
+  --syn-keyword: oklch(0.72 0.16 20);
+  --syn-string: oklch(0.82 0.09 220);
+  --syn-number: oklch(0.78 0.12 250);
+  --syn-comment: oklch(0.62 0.02 260);
+  --syn-func: oklch(0.78 0.14 300);
+  --syn-type: oklch(0.80 0.13 155);
+  --syn-var: oklch(0.78 0.13 60);
+  --syn-punct: oklch(0.80 0.01 260);
+  --syn-tag: oklch(0.78 0.13 155);
+  --syn-attr: oklch(0.78 0.12 250);
+  --syn-regexp: oklch(0.78 0.12 185);
+  --syn-meta: oklch(0.75 0.12 300);
 
   /* graph branch colors */
   --graph-1: oklch(0.72 0.15 235);
@@ -270,44 +286,26 @@ kbd {
 .pg-col  { display: flex; flex-direction: column; }
 .pg-fill { flex: 1; min-width: 0; min-height: 0; }
 
+
 /* ============================================================
- * Code viewer — light-mode syntax overrides.
- * highlight.js ships a single github-dark stylesheet globally; its
- * tokens are too light on light backgrounds. Override with the
- * github-light palette when the active theme is a light one.
+ * Syntax spans (Shiki).
+ *
+ * One rule per palette token, reading the var applyTheme() writes per theme
+ * mode. That is the whole light-mode story: no per-mode override list to keep in
+ * sync, which is what the highlight.js stylesheet this replaces needed.
  * ============================================================ */
-[data-theme-mode="light"] .hljs { color: #1f2328; background: transparent; }
-[data-theme-mode="light"] .hljs-comment,
-[data-theme-mode="light"] .hljs-quote { color: #57606a; }
-[data-theme-mode="light"] .hljs-keyword,
-[data-theme-mode="light"] .hljs-selector-tag,
-[data-theme-mode="light"] .hljs-meta,
-[data-theme-mode="light"] .hljs-doctag { color: #cf222e; }
-[data-theme-mode="light"] .hljs-string,
-[data-theme-mode="light"] .hljs-regexp,
-[data-theme-mode="light"] .hljs-attr { color: #0a3069; }
-[data-theme-mode="light"] .hljs-number,
-[data-theme-mode="light"] .hljs-literal,
-[data-theme-mode="light"] .hljs-built_in,
-[data-theme-mode="light"] .hljs-symbol,
-[data-theme-mode="light"] .hljs-type { color: #0550ae; }
-[data-theme-mode="light"] .hljs-title,
-[data-theme-mode="light"] .hljs-name,
-[data-theme-mode="light"] .hljs-section,
-[data-theme-mode="light"] .hljs-title.class_,
-[data-theme-mode="light"] .hljs-title.function_ { color: #8250df; }
-[data-theme-mode="light"] .hljs-variable,
-[data-theme-mode="light"] .hljs-template-variable,
-[data-theme-mode="light"] .hljs-params { color: #953800; }
-[data-theme-mode="light"] .hljs-tag,
-[data-theme-mode="light"] .hljs-selector-id,
-[data-theme-mode="light"] .hljs-selector-class,
-[data-theme-mode="light"] .hljs-selector-attr,
-[data-theme-mode="light"] .hljs-selector-pseudo { color: #116329; }
-[data-theme-mode="light"] .hljs-addition { color: #0a3069; background: #dafbe1; }
-[data-theme-mode="light"] .hljs-deletion { color: #82071e; background: #ffebe9; }
-[data-theme-mode="light"] .hljs-emphasis { font-style: italic; }
-[data-theme-mode="light"] .hljs-strong { font-weight: 600; }
+.syn-keyword { color: var(--syn-keyword); }
+.syn-string  { color: var(--syn-string); }
+.syn-number  { color: var(--syn-number); }
+.syn-comment { color: var(--syn-comment); font-style: italic; }
+.syn-func    { color: var(--syn-func); }
+.syn-type    { color: var(--syn-type); }
+.syn-var     { color: var(--syn-var); }
+.syn-punct   { color: var(--syn-punct); }
+.syn-tag     { color: var(--syn-tag); }
+.syn-attr    { color: var(--syn-attr); }
+.syn-regexp  { color: var(--syn-regexp); }
+.syn-meta    { color: var(--syn-meta); }
 
 /* ── Keyboard navigation ────────────────────────────────────────────────────
    Focus ring marks the active pane; row selection is focus-aware — vivid in

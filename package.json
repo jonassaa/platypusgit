@@ -34,11 +34,11 @@
     "@tauri-apps/plugin-os": "^2.3.2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
-    "highlight.js": "^11.11.1",
     "lucide-react": "^1.8.0",
     "node-diff3": "^3.2.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "shiki": "^4.4.3",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
