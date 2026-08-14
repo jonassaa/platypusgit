@@ -137,6 +137,27 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
     expect(stageLinesCall()).toBeUndefined();
   });
 
+  // After a partial stage the pane must show the NEW diff. The fetch effect keyed
+  // only on path/side/embedded, none of which change when the same file is
+  // partially staged, so the stale diff stayed on screen — and a follow-up
+  // selection then sent indices into it while the backend recomputed a fresh
+  // diff, staging different lines than the ones highlighted.
+  it("refetches the diff after a partial stage", async () => {
+    // refreshStatus fetches status and repo state together, so both must answer
+    // or it fails and never publishes the new status.
+    mockInvoke("repo_state", () => "Clean");
+    const diffCalls = () => getInvokeCalls().filter((c) => c.cmd === "get_diff");
+    const rows = await screen.findAllByTestId("diff-line-changed");
+    await waitFor(() => expect(diffCalls().length).toBeGreaterThan(0));
+    const before = diffCalls().length;
+
+    fireEvent.click(rows[0]);
+    fireEvent.click(screen.getByTestId("hunk-stage"));
+
+    await waitFor(() => expect(stageLinesCall()).toBeDefined());
+    await waitFor(() => expect(diffCalls().length).toBeGreaterThan(before));
+  });
+
   it("does not offer line selection while whitespace is ignored", async () => {
     await screen.findAllByTestId("diff-line-changed");
     fireEvent.click(screen.getByTitle("Ignore whitespace-only changes"));

@@ -38,6 +38,8 @@ import {
   isStaged,
   isUnstaged,
   isUntracked,
+  sideAdditions,
+  sideDeletions,
   statusMark,
 } from "@/lib/derive";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
@@ -471,7 +473,23 @@ export function CommitPanelScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selected?.path, selected?.side, selected?.status.embedded, repo, diffContextLines, ignoreWhitespace]);
+    // `status` is in here on purpose, as the signal that the file's staging state
+    // moved. Nothing else in this list changes when the SAME file is partially
+    // staged: path and side stay put, and additions/deletions are HEAD→worktree
+    // totals that a stage does not alter. Without it the pane kept showing the
+    // pre-stage diff, and the next line selection addressed indices into that
+    // stale diff while the backend recomputed a fresh one — staging lines other
+    // than the highlighted ones. `refreshStatus` replaces the array, so identity
+    // is the dependency; the cost is one diff fetch per status refresh.
+  }, [
+    selected?.path,
+    selected?.side,
+    selected?.status.embedded,
+    status,
+    repo,
+    diffContextLines,
+    ignoreWhitespace,
+  ]);
 
   // A line selection stops meaning the same thing once the file, the side, or
   // the diff shape changes — the indices would then address different lines.
@@ -482,12 +500,15 @@ export function CommitPanelScreen() {
   const headBranch = currentBranch(branches);
   const defaultRemote = remotes[0] ?? null;
 
+  // The composer's summary describes THE COMMIT, so it counts the staged side
+  // only. `additions`/`deletions` are both sides combined, which overstated the
+  // commit whenever a staged file had further unstaged edits.
   const stagedAdd = React.useMemo(
-    () => staged.reduce((s, f) => s + f.status.additions, 0),
+    () => staged.reduce((s, f) => s + sideAdditions(f.status, "staged"), 0),
     [staged],
   );
   const stagedDel = React.useMemo(
-    () => staged.reduce((s, f) => s + f.status.deletions, 0),
+    () => staged.reduce((s, f) => s + sideDeletions(f.status, "staged"), 0),
     [staged],
   );
 
@@ -752,8 +773,8 @@ export function CommitPanelScreen() {
                 path={f.path}
                 status={statusMark(f.status)}
                 staged
-                additions={f.status.additions}
-                deletions={f.status.deletions}
+                additions={sideAdditions(f.status, "staged")}
+                deletions={sideDeletions(f.status, "staged")}
                 selected={effectiveKeys.has(keyOf(f))}
                 onClick={onRowClick(f)}
                 onContextMenu={onRowContextMenu(f)}
@@ -826,8 +847,8 @@ export function CommitPanelScreen() {
                 path={f.path}
                 status={statusMark(f.status)}
                 staged={false}
-                additions={f.status.additions}
-                deletions={f.status.deletions}
+                additions={sideAdditions(f.status, "unstaged")}
+                deletions={sideDeletions(f.status, "unstaged")}
                 selected={effectiveKeys.has(keyOf(f))}
                 onClick={onRowClick(f)}
                 onContextMenu={onRowContextMenu(f)}

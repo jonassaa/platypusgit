@@ -129,6 +129,11 @@ pub struct SignatureStatus {
 /// `U` is "good signature, untrusted key" — reported as `Good`, with the signer
 /// line carrying the nuance, rather than inventing a state the UI would have to
 /// explain.
+///
+/// git's full code set is G/B/U/X/Y/R/E/N. `X` ("good signature that has
+/// expired") and `Y` ("good signature made by an expired key") are distinct codes
+/// but map to the same user-facing state: both are real signatures whose validity
+/// has lapsed. Missing `Y` reported a genuinely signed commit as unsigned.
 pub fn parse_verify_output(raw: &str) -> SignatureStatus {
     let mut parts = raw.trim_end_matches('\n').split('\0');
     let flag = parts.next().unwrap_or("N").trim();
@@ -138,7 +143,8 @@ pub fn parse_verify_output(raw: &str) -> SignatureStatus {
     let state = match flag.chars().next().unwrap_or('N') {
         'G' | 'U' => SigState::Good,
         'B' => SigState::Bad,
-        'X' => SigState::Expired,
+        // X: the signature expired. Y: the key that made it expired.
+        'X' | 'Y' => SigState::Expired,
         'R' => SigState::Revoked,
         'E' => SigState::UnknownKey,
         // 'N' and anything unexpected: treat as unsigned rather than claiming a
@@ -225,6 +231,9 @@ mod tests {
             // Good signature, untrusted key.
             ("U\0Ada <ada@x>\0ABCD", SigState::Good),
             ("X\0Ada <ada@x>\0ABCD", SigState::Expired),
+            // Good signature made by an expired key — a real signature, so it
+            // must never read as unsigned.
+            ("Y\0Ada <ada@x>\0ABCD", SigState::Expired),
             ("R\0Ada <ada@x>\0ABCD", SigState::Revoked),
             ("E\0\0", SigState::UnknownKey),
             ("N\0\0", SigState::None),

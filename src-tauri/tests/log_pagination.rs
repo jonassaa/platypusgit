@@ -131,6 +131,27 @@ fn a_merge_keeps_both_branches_alive_across_a_page_boundary() {
 }
 
 #[test]
+fn a_page_smaller_than_the_live_lane_count_keeps_every_lane() {
+    // Page size 2 above is >= the number of lanes, so every pushed start point
+    // gets walked. A page of ONE cannot: resuming from a two-lane cursor walks
+    // one lane and stops, leaving the other pushed-but-unvisited. It is nobody's
+    // parent in that page, so unless the frontier also carries its own start
+    // points forward, that lane is silently dropped and its commits never appear.
+    let tr = merged_history();
+    let (be, h) = tr.open_with_backend();
+
+    let all = be.log(&h.id, None, 1000).unwrap();
+    let paged = drain(&be, &h.id, 1);
+
+    let mut want = oids(&all);
+    let mut got = paged.clone();
+    want.sort();
+    got.sort();
+    assert_eq!(got, want, "a lane was dropped by a single-commit page");
+    assert_eq!(paged.len(), all.len(), "duplicate or missing commits");
+}
+
+#[test]
 fn paging_never_places_a_parent_before_its_child() {
     // The ordering guarantee that survives resumption, and the one the graph
     // layout actually depends on.
@@ -251,4 +272,48 @@ fn filtered_pages_cover_every_match_exactly_once() {
     }
 
     assert_eq!(paged, oids(&all));
+}
+
+#[test]
+fn filtered_pages_keep_both_lanes_of_a_merge_alive() {
+    // The linear-history test above cannot catch an over-consumed revwalk: the
+    // dropped oid is the previous commit's parent, so it survives in the frontier
+    // as a candidate anyway. A merge is what exposes it — a cursor START point
+    // pulled off the walk and discarded without being recorded is in neither
+    // `visited` nor `candidates`, so its whole lane vanishes from the log.
+    let tr = merged_history();
+    let (be, h) = tr.open_with_backend();
+    // Non-empty so this takes the filtered path (an empty filter delegates to
+    // log_page), and matches every commit in the fixture.
+    let filter = LogFilter {
+        author: Some("test@example.com".into()),
+        ..Default::default()
+    };
+
+    let all = be.log_filtered(&h.id, &filter, None, 1000).unwrap();
+    assert_eq!(all.len(), 6, "fixture should yield six commits");
+
+    // Small pages force several boundaries, each a chance to drop a lane.
+    for page in [1usize, 2, 3] {
+        let mut paged = Vec::new();
+        let mut cursor: Option<Vec<String>> = None;
+        loop {
+            let p = be
+                .log_filtered_page(&h.id, &filter, None, cursor.as_deref(), page)
+                .unwrap();
+            paged.extend(p.commits.iter().map(|c| c.oid.clone()));
+            match p.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+            assert!(paged.len() < 1_000, "filtered pagination did not terminate");
+        }
+        paged.sort();
+        let mut want = oids(&all);
+        want.sort();
+        assert_eq!(
+            paged, want,
+            "page size {page} lost or duplicated commits across a merge boundary"
+        );
+    }
 }

@@ -1,7 +1,7 @@
 // History asks for the next page as the window nears the end of the loaded
 // list, and stops asking at the end of history (#68 G11).
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 
 import { HistoryScreen } from "./History";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -96,6 +96,58 @@ describe("History pagination", () => {
     await waitFor(() =>
       expect(container.querySelector('[data-testid="log-loading-more"]')).not.toBeNull(),
     );
+  });
+
+  // A client-side filter can hold `visible` shorter than the window forever —
+  // "This branch" hard-caps it at `ahead`. The end-of-list condition is then true
+  // at rest, and every completed fetch re-arms the effect, so auto-paging used to
+  // walk the entire repository 500 commits at a time without the user scrolling.
+  it("stops auto-paging when a client-side filter starves the visible list", async () => {
+    let loaded = 0;
+    // Mirrors the real action: it flips `loadingMore` around the fetch, and that
+    // toggle is what re-arms the effect after each page.
+    const loadMoreCommits = vi.fn(async () => {
+      loaded += 1;
+      useRepoStore.setState({ loadingMore: true } as never);
+      await Promise.resolve();
+      useRepoStore.setState({
+        loadingMore: false,
+        // Each page appends more history that the "This branch" cap hides anyway.
+        commits: [
+          ...(useRepoStore.getState().commits as CommitInfo[]),
+          ...Array.from({ length: 30 }, (_, i) => ({
+            ...LOG[0],
+            oid: oid(1000 + loaded * 100 + i),
+            shortOid: String(1000 + loaded * 100 + i),
+          })),
+        ],
+      } as never);
+    });
+    prime({
+      commitCursor: ["frontier-oid"],
+      loadMoreCommits,
+      branches: [
+        {
+          name: "main",
+          isHead: true,
+          isRemote: false,
+          upstream: "origin/main",
+          ahead: 2,
+          behind: 0,
+          tip: oid(0),
+        },
+      ],
+    });
+
+    const { getByText } = render(<HistoryScreen />);
+    fireEvent.click(getByText("This branch"));
+
+    // Let the effect settle and re-arm as many times as it wants to.
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Bounded: a few barren pages are fine (a sparse filter has to dig), but it
+    // must not keep paging forever.
+    expect(loadMoreCommits.mock.calls.length).toBeLessThanOrEqual(4);
   });
 
   it("paginates a filtered list from its own cursor", async () => {

@@ -49,6 +49,42 @@ fn status_counts_staged_changes() {
     assert_eq!(readme.deletions, 0);
 }
 
+/// A partially staged file must report each side separately.
+///
+/// One combined HEAD→worktree number cannot answer both questions: the commit
+/// composer needs what committing would record (the staged side), while the
+/// unstaged row needs what is left over. Sharing one number made the composer
+/// overstate the commit and made both rows show the same count.
+#[test]
+fn status_separates_staged_from_unstaged_line_counts() {
+    let tr = TempRepo::with_initial_commit("a\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    // Stage one added line…
+    write_file(tr.path(), "README.md", "a\nstaged\n");
+    backend
+        .stage(&handle.id, &[PathBuf::from("README.md")])
+        .expect("stage");
+    // …then add two more in the worktree without staging them.
+    write_file(tr.path(), "README.md", "a\nstaged\nloose one\nloose two\n");
+
+    let status = backend.status(&handle.id).unwrap();
+    let readme = status.iter().find(|f| f.path == "README.md").unwrap();
+
+    assert_eq!(
+        (readme.staged_additions, readme.staged_deletions),
+        (1, 0),
+        "the commit would record exactly the one staged line"
+    );
+    assert_eq!(
+        (readme.unstaged_additions, readme.unstaged_deletions),
+        (2, 0),
+        "two lines are still unstaged"
+    );
+    // The combined pair stays available for callers that want one number.
+    assert_eq!((readme.additions, readme.deletions), (3, 0));
+}
+
 /// An unmodified working tree reports zero counts (and typically no entries).
 #[test]
 fn status_unmodified_has_zero_counts() {

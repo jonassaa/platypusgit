@@ -80,22 +80,50 @@ pub fn safe_workdir_path(workdir: &Path, relative: &str) -> AppResult<PathBuf> {
     Ok(workdir.join(rel))
 }
 
+/// The launcher executable to spawn.
+///
+/// SECURITY (Windows): `CreateProcess` searches the **current directory before
+/// the system directory**, so a bare `rundll32.exe` lookup is a binary-planting
+/// hole — a cloned repository containing its own `rundll32.exe` would be run
+/// instead of the real one, and the app's cwd *is* the repository whenever it
+/// was launched by the `pgit` shim from inside one. Pin the path to
+/// `%SystemRoot%\System32` so only the real launcher can ever be spawned.
+///
+/// Written with a runtime `cfg!` rather than `#[cfg]`-gated bodies so the
+/// Windows branch is still type-checked when building on macOS and Linux.
+fn opener_program() -> std::ffi::OsString {
+    let (prog, _) = OPENER;
+    if cfg!(target_os = "windows") {
+        let root = std::env::var_os("SystemRoot")
+            .unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
+        return Path::new(&root)
+            .join("System32")
+            .join(prog)
+            .into_os_string();
+    }
+    // On unix `execvp` does not search the working directory, so the PATH
+    // lookup that finds `open` / `xdg-open` is not attacker-influenced.
+    std::ffi::OsString::from(prog)
+}
+
 /// Hand `target` (a validated URL or path) to the OS default handler.
 ///
 /// Checks the child's exit status: `xdg-open` exits 3 when no handler exists,
 /// which the previous `let _ = …status()` reported as success while nothing
 /// opened.
 pub async fn open_with_default_app(target: &OsStr) -> AppResult<()> {
-    let (prog, pre) = OPENER;
-    let status = tokio::process::Command::new(prog)
+    let (_, pre) = OPENER;
+    let prog = opener_program();
+    let shown = prog.to_string_lossy().to_string();
+    let status = tokio::process::Command::new(&prog)
         .args(pre)
         .arg(target)
         .status()
         .await
-        .map_err(|e| AppError::Io(format!("failed to run {prog}: {e}")))?;
+        .map_err(|e| AppError::Io(format!("failed to run {shown}: {e}")))?;
     if !status.success() {
         return Err(AppError::Io(format!(
-            "{prog} exited with {status} while opening {}",
+            "{shown} exited with {status} while opening {}",
             target.to_string_lossy()
         )));
     }

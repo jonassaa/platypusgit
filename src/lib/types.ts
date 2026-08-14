@@ -21,11 +21,29 @@ export interface FileStatus {
   path: string;
   worktree: StatusFlag;
   index: StatusFlag;
-  /** Lines added vs HEAD (worktree + index). 0 when unmodified/binary or in
-   *  listings that don't compute stats (all-files / at-revision). */
+  /** Lines added, both sides combined (staged + unstaged). 0 when
+   *  unmodified/binary or in listings that don't compute stats (all-files /
+   *  at-revision). */
   additions: number;
-  /** Lines removed vs HEAD (worktree + index). */
+  /** Lines removed, both sides combined (staged + unstaged). */
   deletions: number;
+  /**
+   * Lines added between HEAD and the INDEX — what committing would record.
+   *
+   * Optional only so the many `FileStatus` fixtures in tests need not restate
+   * it; `get_status` always sends it. Prefer this and `unstagedAdditions` over
+   * the combined pair when rendering a specific side: one number per file
+   * cannot serve both, so a partially staged file would otherwise show the same
+   * counts on its staged and unstaged rows and the composer would overstate the
+   * commit.
+   */
+  stagedAdditions?: number;
+  /** Lines removed between HEAD and the index. */
+  stagedDeletions?: number;
+  /** Lines added between the index and the WORKING TREE — still unstaged. */
+  unstagedAdditions?: number;
+  /** Lines removed between the index and the working tree. */
+  unstagedDeletions?: number;
   /**
    * True when this entry is a directory that is itself a git repository and is
    * not a registered submodule (vendored dependency, stray clone, submodule

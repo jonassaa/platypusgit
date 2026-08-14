@@ -3,9 +3,21 @@ import { create } from "zustand";
 import { confirmTrust } from "@/features/repo/ownership";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { cloneRepo, initRepo, trustRepoPath } from "@/lib/tauri";
+import { useAuthStore } from "@/features/auth/useAuthStore";
+import {
+  cloneRepo,
+  initRepo,
+  rememberCredential,
+  trustRepoPath,
+  type Credentials,
+} from "@/lib/tauri";
 import type { CloneProgress, RepoHandle } from "@/lib/types";
-import { appErrorMessage, dubiousOwnershipPath, isDubiousOwnershipError } from "@/lib/errors";
+import {
+  appErrorMessage,
+  dubiousOwnershipPath,
+  isAuthError,
+  isDubiousOwnershipError,
+} from "@/lib/errors";
 
 type OpenDialog = "none" | "clone" | "init";
 
@@ -60,17 +72,63 @@ export const useCreateStore = create<CreateState>((set, get) => ({
 
   async runClone({ url, parentDir, name, recurseSubmodules }) {
     set({ busy: true, error: null, progress: null });
-    try {
-      const dest = await cloneRepo(url, parentDir, name, recurseSubmodules);
+
+    const attempt = async (creds?: Credentials) => {
+      const dest = await cloneRepo(url, parentDir, name, recurseSubmodules, creds);
       useSettingsStore.getState().set("lastCreateDir", parentDir);
       // busy false BEFORE close(), which refuses to close while busy.
       set({ busy: false, progress: null });
       set({ open: "none" });
       await useRepoStore.getState().openRepo(dest);
+    };
+
+    try {
+      await attempt();
     } catch (e) {
-      // Error stays in the dialog: the user needs the form still populated to
-      // fix a bad URL and retry.
-      set({ busy: false, progress: null, error: appErrorMessage(e) });
+      // A private remote is exactly what the credential flow exists for. The
+      // backend already classifies clone failures as AppError::Auth and
+      // clone_repo already takes credentials; without raising the challenge the
+      // Clone dialog just printed "Authentication required" with no way to
+      // answer it.
+      if (!isAuthError(e)) {
+        // Error stays in the dialog: the user needs the form still populated to
+        // fix a bad URL and retry.
+        set({ busy: false, progress: null, error: appErrorMessage(e) });
+        return;
+      }
+      const { host, kind } = e.message;
+      // Drop `busy` before prompting. `close()` refuses to close while busy, so
+      // staying busy would leave the Clone dialog undismissable if the user
+      // cancels the credential prompt.
+      set({ busy: false, progress: null, error: null });
+      useAuthStore.getState().raise({
+        host,
+        kind,
+        retry: async (creds, remember) => {
+          set({ busy: true, error: null, progress: null });
+          try {
+            await attempt(creds);
+            // Only after it worked, and only for HTTPS — `git credential
+            // approve` stores an HTTP(S) password. Needs the freshly opened repo
+            // to run the helper in, so this comes after `attempt` succeeded.
+            if (remember && host && kind === "Https") {
+              const repo = useRepoStore.getState().current;
+              if (repo) {
+                await rememberCredential(repo.id, host, creds).catch(() => {
+                  // No helper configured is not a failure worth surfacing — the
+                  // clone the user asked for still succeeded.
+                });
+              }
+            }
+          } catch (retryError) {
+            set({
+              busy: false,
+              progress: null,
+              error: appErrorMessage(retryError),
+            });
+          }
+        },
+      });
     }
   },
 

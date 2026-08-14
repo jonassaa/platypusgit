@@ -62,15 +62,41 @@ export function useWindowedList<T extends HTMLElement = HTMLDivElement>(o: {
   const [scrollTop, setScrollTop] = React.useState(0);
   const [viewportH, setViewportH] = React.useState(0);
 
+  // Measure + observe the scroll element, re-binding whenever it CHANGES.
+  //
+  // Deliberately has no dependency array. A ref's `.current` is not reactive, so
+  // an `[]` effect that bailed on a null ref would never retry: a caller whose
+  // scroller mounts later (behind a loading guard) or swaps element identity
+  // would be left with viewportH === 0 forever, permanently falling back to the
+  // `rowHeight * 20` screenful in `windowRange` — a tall window renders blank
+  // below that and resizing never fixes it. Running every render costs one ref
+  // comparison, and the identity guard keeps it from re-creating the observer.
+  const observedRef = React.useRef<T | null>(null);
+  const roRef = React.useRef<ResizeObserver | null>(null);
   React.useEffect(() => {
     const el = viewportRef.current;
+    if (el === observedRef.current) return;
+    roRef.current?.disconnect();
+    roRef.current = null;
+    observedRef.current = el;
     if (!el) return;
     setViewportH(el.clientHeight);
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
     ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+    roRef.current = ro;
+  });
+
+  // Unmount-only teardown. The measuring effect above cannot own this: with no
+  // dependency array its cleanup would run after every render.
+  React.useEffect(
+    () => () => {
+      roRef.current?.disconnect();
+      roRef.current = null;
+      observedRef.current = null;
+    },
+    [],
+  );
 
   const onScroll = React.useCallback(() => {
     const el = viewportRef.current;
