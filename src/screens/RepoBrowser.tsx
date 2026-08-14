@@ -6,7 +6,7 @@ import {
   PGButtonGroup,
   PGEmpty,
   PGFileTree,
-  PGHunk,
+  PGWindowedDiff,
   PGIconButton,
   PGInput,
   PGPanel,
@@ -24,7 +24,6 @@ import {
   useContextMenu,
   usePaneWidth,
   type ContextMenuItem,
-  type DiffLineData,
   type PGFileTreeNode,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -47,7 +46,9 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
-import { useSyntax } from "@/lib/syntax";
+import { useDiffSyntax, useSyntax } from "@/lib/syntax";
+import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
 import { splitCodeLines } from "@/lib/codeLines";
 import { getDiff, readFileContent } from "@/lib/tauri";
@@ -572,6 +573,60 @@ export function RepoBrowserScreen() {
     selectedFile.index.kind === "Unmodified";
   const selectedIsEmbedded = !!selectedFile?.embedded;
 
+  // This pane's diff pane went unhighlighted and unwindowed through the first
+  // three slices of #104 — it is a fourth diff surface that is easy to miss. It
+  // compares WorktreeToHead, same as the DiffViewer.
+  const browserSyntax = useDiffSyntax({
+    repoId: selectedFile && !selectedIsEmbedded ? (repo?.id ?? null) : null,
+    path: selectedFile?.path ?? null,
+    old: { kind: "rev", rev: "HEAD", path: diff?.oldPath },
+    new: { kind: "worktree" },
+  });
+  const diffRowH = useDiffRowHeight();
+  const diffHeaderH = 26 + useDensityStep();
+  const [collapsedHunks, setCollapsedHunks] = React.useState<ReadonlySet<number>>(
+    new Set(),
+  );
+  const toggleHunk = React.useCallback((i: number) => {
+    setCollapsedHunks((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }, []);
+  const diffRows = React.useMemo(
+    () =>
+      flattenDiffRows(diff && !diff.binary ? diff.hunks : [], {
+        headerH: diffHeaderH,
+        rowH: diffRowH,
+        collapsed: collapsedHunks,
+        syntax: browserSyntax,
+      }),
+    [diff, diffHeaderH, diffRowH, collapsedHunks, browserSyntax],
+  );
+  const diffHeights = React.useMemo(() => diffRows.map((r) => r.h), [diffRows]);
+  const diffScrollRef = React.useRef<HTMLDivElement>(null);
+  const [diffScrollTop, setDiffScrollTop] = React.useState(0);
+  const [diffViewportH, setDiffViewportH] = React.useState(0);
+  React.useEffect(() => {
+    const el = diffScrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    setDiffViewportH(el.clientHeight);
+    const ro = new ResizeObserver(() => setDiffViewportH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const diffWin = React.useMemo(
+    () =>
+      windowVariable(diffHeights, {
+        scrollTop: diffScrollTop,
+        viewportH: diffViewportH,
+        overscan: 8,
+      }),
+    [diffHeights, diffScrollTop, diffViewportH],
+  );
+
   React.useEffect(() => {
     if (!selectedFile || !repo) {
       setDiff(null);
@@ -910,7 +965,12 @@ export function RepoBrowserScreen() {
               Blame
             </PGButton>
           </div>
-          <FocusableScroll style={{ flex: 1 }} ariaLabel="File preview">
+          <FocusableScroll
+            style={{ flex: 1 }}
+            ariaLabel="File preview"
+            innerRef={diffScrollRef}
+            onScroll={() => setDiffScrollTop(diffScrollRef.current?.scrollTop ?? 0)}
+          >
             {!selectedFile && (
               <PGEmpty
                 icon="fileCode"
@@ -942,20 +1002,20 @@ export function RepoBrowserScreen() {
                 {previewError}
               </PGEmpty>
             )}
-            {selectedFile && !diffLoading && diff && !diff.binary &&
-              diff.hunks.map((h, i) => (
-                <PGHunk
-                  key={i}
-                  header={h.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
-                  lines={h.lines.map(toUiLine)}
-                  expanded={true}
-                  staged={false}
-                  actionsDisabledReason={hunkActionsDisabled}
-                  onStage={() => {
+            {selectedFile && !diffLoading && diff && !diff.binary && (
+              <PGWindowedDiff
+                rows={diffRows}
+                window={diffWin}
+                collapsed={collapsedHunks}
+                onToggleHunk={toggleHunk}
+                hunkActions={(i) => ({
+                  staged: false,
+                  actionsDisabledReason: hunkActionsDisabled,
+                  onStage: () => {
                     if (!selectedFile) return;
                     useRepoStore.getState().stageHunk(selectedFile.path, i);
-                  }}
-                  onDiscard={async () => {
+                  },
+                  onDiscard: async () => {
                     if (!selectedFile) return;
                     if (
                       await pgConfirm({
@@ -967,9 +1027,10 @@ export function RepoBrowserScreen() {
                     ) {
                       useRepoStore.getState().discardHunk(selectedFile.path, i);
                     }
-                  }}
-                />
-              ))}
+                  },
+                })}
+              />
+            )}
             {selectedFile && !diffLoading && diff?.binary && (
               <PGEmpty icon="file" title="Binary file">
                 Binary diffs aren&apos;t shown.
@@ -1238,24 +1299,6 @@ function FileContentView({ path, text }: { path: string; text: string }) {
   );
 }
 
-function toUiLine(l: {
-  kind: { kind: string };
-  oldLineno: number | null;
-  newLineno: number | null;
-  content: string;
-}): DiffLineData {
-  const k = l.kind.kind;
-  if (k === "Addition")
-    return { kind: "add", lnR: l.newLineno ?? undefined, text: l.content };
-  if (k === "Deletion")
-    return { kind: "rem", lnL: l.oldLineno ?? undefined, text: l.content };
-  return {
-    kind: "ctx",
-    lnL: l.oldLineno ?? undefined,
-    lnR: l.newLineno ?? undefined,
-    text: l.content,
-  };
-}
 
 function isHidden(s: FileStatus, hidden: Set<HideKind>): boolean {
   const sides: StatusFlag[] = [s.worktree, s.index];
