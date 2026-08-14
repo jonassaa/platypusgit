@@ -42,6 +42,7 @@ export const MergeBody = React.forwardRef<
     if (!editorHost.current) return;
     const handle = createResultEditor({
       model,
+      path,
       parent: editorHost.current,
       onChange: (r) => {
         setRegionStates(r);
