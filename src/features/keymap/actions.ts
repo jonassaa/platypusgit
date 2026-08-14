@@ -87,6 +87,8 @@ export type ActionId =
   | "commit.commitAndPush"
   | "commit.toggleAmend"
   | "branch.createNew"
+  | "rebase.moveStepUp"
+  | "rebase.moveStepDown"
   | "tree.find"
   | "repo.open"
   | "repo.clone"
@@ -302,6 +304,25 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
       usePaletteStore.getState().pushStep(createBranchInputStep());
       return true;
     },
+  },
+
+  // Keyboard parity for the rebase plan's drag reorder (#91). Component-handled
+  // by the Rebase screen while its plan pane holds focus — and it DECLINES in
+  // preserve mode, exactly as the drag and the chevrons do, so the chord falls
+  // through rather than looking broken.
+  "rebase.moveStepUp": {
+    id: "rebase.moveStepUp",
+    title: "Move rebase step up",
+    category: "Repository",
+    scope: "pane",
+    suppressInInput: true,
+  },
+  "rebase.moveStepDown": {
+    id: "rebase.moveStepDown",
+    title: "Move rebase step down",
+    category: "Repository",
+    scope: "pane",
+    suppressInInput: true,
   },
 
   // Component-handled: the Files tree registers a handler that focuses its

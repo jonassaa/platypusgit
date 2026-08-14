@@ -639,6 +639,65 @@ export async function jsSelectValue(selector: string, value: string): Promise<vo
   if (!ok) throw new Error(`jsSelectValue: select not found: ${selector}`);
 }
 
+/**
+ * Drag `fromSel` onto `toSel` with a real pointer sequence (#91).
+ *
+ * Why synthesized rather than `browser.performActions`: the embedded driver's
+ * actions endpoint synthesizes mousedown/mouseup/click only — it never emits
+ * `pointerdown`/`pointermove`/`pointerup`, which is the whole gesture
+ * (`features/dnd/dragController.ts`). Same class of limitation that forces
+ * `jsContextMenu` and `jsChord`.
+ *
+ * The events go out as real `PointerEvent`s dispatched ON the element under the
+ * pointer, because that is what a hardware move produces and what the
+ * controller's hit test reads (`e.target.closest("[data-pg-drop-id]")`).
+ * Coordinates come from live `getBoundingClientRect()` centres, so the drop
+ * lands wherever the layout actually put the target.
+ *
+ * Two moves: the first clears the 4px slop and arms the drag, the second lands
+ * on the target so a resolution is computed before the release.
+ */
+export async function jsDrag(fromSel: string, toSel: string): Promise<void> {
+  // executeOnce: a driver-retry re-run would perform the drag twice — a second
+  // stage/unstage or, on the graph, a second confirm.
+  const ok = await executeOnce(
+    (from: string, to: string) => {
+      const src = document.querySelector(from) as HTMLElement | null;
+      const dst = document.querySelector(to) as HTMLElement | null;
+      if (!src || !dst) return false;
+      const centre = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      };
+      const a = centre(src);
+      const b = centre(dst);
+      const fire = (el: HTMLElement, type: string, p: { x: number; y: number }) => {
+        const Ctor =
+          typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
+        el.dispatchEvent(
+          new Ctor(type, {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            clientX: p.x,
+            clientY: p.y,
+          } as PointerEventInit),
+        );
+      };
+      fire(src, "pointerdown", a);
+      // Halfway first: clears the slop while still over the source, so the
+      // gesture arms exactly as a hardware drag does.
+      fire(dst, "pointermove", { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      fire(dst, "pointermove", b);
+      fire(dst, "pointerup", b);
+      return true;
+    },
+    fromSel,
+    toSel,
+  );
+  if (!ok) throw new Error(`jsDrag: element not found (${fromSel} -> ${toSel})`);
+}
+
 /** Full length of the windowed History list, from the container's data-total. */
 export async function commitListTotal(): Promise<number> {
   const raw = await $('[data-testid="commit-list"]').getAttribute("data-total");

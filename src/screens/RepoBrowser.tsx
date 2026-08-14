@@ -64,6 +64,7 @@ import {
   treeKeyToPath,
 } from "@/lib/tree";
 import { useTreeViewMode } from "@/lib/useTreeViewMode";
+import { StageDropBar, useDragSource, type DragPayload } from "@/features/dnd";
 import { fuzzyMatch } from "@/features/palette/fuzzyMatch";
 import {
   WhitespaceToggle,
@@ -400,6 +401,62 @@ export function RepoBrowserScreen() {
       const { stagedPaths, unstagedPaths } = splitSelection([key]);
       const store = useRepoStore.getState();
       if (next) {
+        if (unstagedPaths.length) void store.stage(unstagedPaths);
+      } else if (stagedPaths.length) {
+        void store.unstage(stagedPaths);
+      }
+    },
+    [splitSelection],
+  );
+
+  // ── Drag to stage / unstage (#91) ─────────────────────────────────────────
+  //
+  // This screen has one tree and no staged/unstaged sections, so there is
+  // nothing in the layout to drop onto — `StageDropBar` supplies the two targets
+  // for the duration of the gesture and then disappears.
+  //
+  // The source is delegated from the scroller via `data-path`, so `PGFileTreeRow`
+  // needs no new prop, and both the payload and the drop go through this screen's
+  // `splitSelection` — i.e. the shared `splitFileSelection` (lib/selection.ts),
+  // exactly as the checkbox and the context menu do. Folder expansion and the
+  // embedded-repo exclusion therefore live in one place for all four.
+  const treeDragSource = useDragSource(
+    React.useCallback(
+      (target: HTMLElement): DragPayload | null => {
+        // Browsing a committed snapshot: there is no worktree to stage from.
+        if (browsingRev) return null;
+        const rowEl = target.closest("[data-path]") as HTMLElement | null;
+        const dataPath = rowEl?.getAttribute("data-path");
+        if (dataPath == null) return null;
+        const key = `/${dataPath}`;
+        const keys = sel.keys.length > 1 && sel.keys.includes(key) ? sel.keys : [key];
+        const { stagedPaths, unstagedPaths } = splitSelection(keys);
+        // The payload is just "these files" — one tree row can be partially
+        // staged, so there is no single side it came from. `side` is required by
+        // the type and unused by the bar, which is an explicit command surface
+        // rather than a second list (see StageDropBar). Which of these paths is
+        // actionable in a given direction is decided on drop, against live status.
+        const paths = [...new Set([...unstagedPaths, ...stagedPaths])];
+        if (paths.length === 0) return null;
+        return {
+          kind: "files",
+          side: "unstaged",
+          paths,
+          label: paths.length === 1 ? paths[0] : `${paths.length} files`,
+        };
+      },
+      [browsingRev, sel.keys, splitSelection],
+    ),
+  );
+
+  const onStageBarDrop = React.useCallback(
+    ({ action, paths }: { action: "stage" | "unstage"; paths: string[] }) => {
+      const store = useRepoStore.getState();
+      // Re-split against live status: the payload is "these files", and only the
+      // ones that actually have something to stage (or unstage) may be sent.
+      const keys = paths.map((p) => `/${p}`);
+      const { stagedPaths, unstagedPaths } = splitSelection(keys);
+      if (action === "stage") {
         if (unstagedPaths.length) void store.stage(unstagedPaths);
       } else if (stagedPaths.length) {
         void store.unstage(stagedPaths);
@@ -777,6 +834,7 @@ export function RepoBrowserScreen() {
           <div
             ref={treeScrollRef}
             onScroll={treeWin.onScroll}
+            {...treeDragSource}
             style={{ flex: 1, overflow: "auto", padding: "4px 0" }}
           >
             {tree.length === 0 && !loading && !revLoading && (
@@ -822,6 +880,7 @@ export function RepoBrowserScreen() {
             />
             {fileCtx.menu}
           </div>
+          <StageDropBar onDrop={onStageBarDrop} />
         </PGPane>
         <PGResizeHandle onDrag={treePane.resize} />
 

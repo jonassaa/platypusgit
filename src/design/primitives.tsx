@@ -735,6 +735,13 @@ export interface PGBranchPillProps {
   onClick?: () => void;
   active?: boolean;
   maxWidth?: number;
+  /**
+   * The ref as git names it (`main`, `origin/main`), published as `data-pg-ref`.
+   * `name` is a DISPLAY string — HEAD's pill reads "HEAD→main" and a remote ref
+   * is split into name + remote — so it can't be parsed back. History's drag
+   * source finds pills by this attribute (#91).
+   */
+  refName?: string;
 }
 
 export function PGBranchPill({
@@ -745,6 +752,7 @@ export function PGBranchPill({
   onClick,
   active,
   maxWidth,
+  refName,
 }: PGBranchPillProps) {
   const tones = {
     accent: "var(--accent)",
@@ -759,6 +767,7 @@ export function PGBranchPill({
     <div
       onClick={onClick}
       title={fullName}
+      data-pg-ref={refName}
       style={{
         display: "inline-flex",
         alignItems: "center",

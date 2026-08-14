@@ -1296,6 +1296,8 @@ export interface CommitRef {
   tone?: "accent" | "violet" | "green" | "amber" | "red";
   icon?: IconName | string;
   remote?: string;
+  /** The ref as git names it — see PGBranchPill.refName. */
+  ref?: string;
 }
 
 export interface PGCommitRowProps {
@@ -1493,6 +1495,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
             tone={r.tone}
             icon={r.icon}
             remote={r.remote}
+            refName={r.ref}
           />
         ))}
         {tagged && (
@@ -1687,6 +1690,14 @@ export interface PGRebaseRowProps {
   options?: RebaseAction[];
   /** Short label rendered next to the sha, e.g. "merge". */
   badge?: string;
+  /** Keyboard cursor row — what Mod+Shift+↑/↓ moves (#91). */
+  selected?: boolean;
+  /**
+   * False while reordering is disabled (preserve mode — git's own
+   * `--rebase-merges` reorder is unreliable). The grip goes dim and loses its
+   * grab cursor, so the row does not advertise a gesture that will not run.
+   */
+  reorderable?: boolean;
 }
 
 /// One entry per `RebaseAction`. The row speaks the backend's exact strings: it
@@ -1721,6 +1732,8 @@ export function PGRebaseRow({
   dragging,
   options,
   badge,
+  selected,
+  reorderable = true,
 }: PGRebaseRowProps) {
   const values = options ?? DEFAULT_REBASE_ACTIONS;
   const current = REBASE_ACTION_STYLE[action] ?? REBASE_ACTION_STYLE.Pick;
@@ -1729,12 +1742,18 @@ export function PGRebaseRow({
       data-testid="rebase-row"
       data-sha={sha}
       data-action={action}
+      data-pg-row=""
+      data-selected={selected ? "true" : undefined}
+      data-pg-reorderable={reorderable ? "true" : "false"}
+      title={reorderable ? undefined : "Reordering is disabled while preserving merges"}
       style={{
         display: "flex",
         alignItems: "center",
         gap: 8,
         padding: "calc(6px + var(--row-step) / 2) 10px",
-        background: dragging ? "var(--bg-3)" : "var(--bg-1)",
+        // Selection comes from the focus-aware [data-pg-row] CSS, so it must not
+        // be overpainted here — only the un-selected row states set a background.
+        background: selected ? undefined : dragging ? "var(--bg-3)" : "var(--bg-1)",
         border: "1px solid var(--border-0)",
         borderLeft: `3px solid ${current.color}`,
         borderRadius: "var(--r-3)",
@@ -1748,7 +1767,11 @@ export function PGRebaseRow({
       <PGIcon
         name="drag"
         size={14}
-        style={{ color: "var(--fg-3)", cursor: "grab" }}
+        style={{
+          color: "var(--fg-3)",
+          cursor: reorderable ? "grab" : "default",
+          opacity: reorderable ? 1 : 0.35,
+        }}
       />
       <span
         style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)", width: 20 }}

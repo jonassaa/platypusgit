@@ -353,3 +353,45 @@ kbd {
 [data-pg-row][data-selected]:not([data-pg-pane] [data-pg-row]) {
   background: var(--bg-selection);
 }
+
+/* ── Drag and drop ──────────────────────────────────────────────────────────
+   The gesture is pointer-event based (features/dnd) — no HTML5 drag session, so
+   there is no platform drag image to theme and nothing to un-style here.
+
+   Drop indication is written as an ATTRIBUTE by the controller rather than as
+   React state, so a hover across History's windowed, memoized commit rows costs
+   no renders (#68 G9). These rules are the entire visual half of that. */
+[data-pg-drop-over] {
+  box-shadow: inset 0 0 0 2px oklch(from var(--accent) l c h / 0.9);
+  background: oklch(from var(--accent) l c h / 0.14) !important;
+}
+
+/* A source must not let WebKit start its own native drag off a selection, a
+   link or an icon underneath the gesture. */
+[data-pg-drag-source] { -webkit-user-drag: none; }
+[data-pg-drag-source] * { -webkit-user-drag: none; }
+
+.pg-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 999998;
+  pointer-events: none;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 8px;
+  border-radius: var(--r-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  background: var(--bg-3);
+  color: var(--fg-0);
+  border: 1px solid var(--border-1);
+  box-shadow: var(--shadow-2);
+}
+.pg-drag-ghost[data-drop="ok"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pg-drag-ghost[data-drop="no"] { opacity: 0.75; }

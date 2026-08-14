@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-14-drag-and-drop-*` — one pointer-event drag primitive (`features/dnd/`); staging drag, graph ref/commit drops, rebase reorder gated + keyboard-paired (#91).
 - `2026-08-14-conflict-flow-*` — no Conflicts screen; `repoState`-driven operation bar; resolver window owns the conflicted-file list (#108).
 - `2026-08-10-clone-init-*` — clone (streaming progress) + init repository (#61 D3/D4).
 - `2026-07-07-merge-resolver-window-*` — Rider-style separate merge window (#25 pt 2); per-conflict keyboard side selection, editable CM6 result pane.
@@ -308,6 +309,13 @@ features/            Per-feature: components + Zustand store colocated
 ├── commits/         graphLayout + buildRebasePlan (both tested)
 ├── rebase/          RebaseBasePicker + useRebaseMergeMode (persisted
 │                    flatten ⇄ preserve for merge commits in a plan)
+├── dnd/             ALL drag-and-drop (#91). `useDragSource` / `useDropZone`
+│                    (useDnd.ts) over a module-level pointer gesture
+│                    (dragController.ts); `resolveDrop.ts` holds the PURE
+│                    staging + graph drop tables; `useRowReorder` (the rebase
+│                    plan's reorder) lives here too; `StageDropBar` is the
+│                    Files screen's drag-only Stage/Unstage targets.
+│                    See the "Drag and drop" convention below.
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
 ├── settings/        useSettingsStore (autoFetch, defaultPullMode, etc.),
 │                    headMarks (the HEAD row treatment: independent marks ×
@@ -684,6 +692,45 @@ lib/
 - Tree keyboard behavior belongs to the owning screen via `usePaneList`, not to
   `PGFileTree`: a local `onKeyDown` plus the global dispatcher both answer
   ArrowDown and the selection moves twice.
+
+### Drag and drop
+- **Pointer events, never HTML5 drag-and-drop.** `features/dnd/dragController.ts`
+  owns the gesture; there is no `dragstart`/`dataTransfer` path and sources
+  actively `preventDefault` the native one. Reasons: WebDriver cannot synthesize
+  an HTML5 drag session and jsdom has no `DataTransfer` (so an HTML5 gesture is
+  untestable at both layers), an HTML5 drag hands the platform an unthemable drag
+  image plus OS cursors, and `useRowReorder` was already pointer-based. Cost
+  accepted: no dragging files out of / into the window.
+- **A drag source is a CONTAINER, not a row.** Screens call `useDragSource` on the
+  list wrapper and resolve the grabbed row from `data-path` / `data-sha` /
+  `data-pg-ref` — attributes the rows already carry. So `PGChangeRow`,
+  `PGFileTreeRow` and `PGCommitRow` take no drag props and gain no per-row
+  closure. Do not "simplify" this into per-row hooks: `PGCommitRow` is memoized
+  and History's list is windowed (#68 G9/G10), and per-row subscriptions
+  re-render the visible slice on every pointer move.
+- **A source's reach is its pane's subtree, and that is load-bearing.** The commit
+  screen's two sources live inside `<PGPane id="commit.files">`, so a pointerdown
+  on a diff row in `commit.diff` never starts a drag and cannot disturb
+  `useDiffLineFocus`'s line cursor. Attaching a source higher up (the screen root,
+  say) would silently put the diff pane in drag range.
+- **Drop indication is a DOM attribute, not React state.** The controller writes
+  `data-pg-drop-over` on the resolved element (`index.css` styles it) and keeps
+  only `payload` + `overId` (the ZONE id) in the store. A zone that spans many
+  rows uses `resolve(el, payload)` — the delegated mode — rather than one zone
+  per row.
+- **The drop TABLE is pure and tested** (`features/dnd/resolveDrop.ts`).
+  `resolveStagingDrop` and `resolveGraphDrop` decide legality; screens only do
+  DOM work and call existing `useRepoStore` actions. The graph table is
+  deliberately asymmetric — merge only *into* HEAD, rebase only *HEAD* onto
+  something, cherry-pick only onto HEAD — because those are the only ops the
+  backend has, so no gesture can rewrite a branch you are not on or check one out
+  as a side effect. A refused drop returns `rejected` with a reason (shown on the
+  ghost, flashed on release), never silence.
+- **Every drag has a keyboard equivalent.** Staging → Space (`list.toggle`) and
+  the checkbox; rebase reorder → `rebase.moveStepUp/Down` (Mod+Shift+↑/↓) and the
+  chevrons; graph merge/rebase/cherry-pick → the branch/commit context menus, the
+  palette, and the Branches screen. A new gesture without one is not done.
+- Escape cancels any drag, from one capture-phase listener in the controller.
 
 ### Permissions (Tauri 2)
 - Shared permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
