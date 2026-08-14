@@ -2451,6 +2451,53 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
+    fn read_file_content_at_index(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+    ) -> AppResult<FileContent> {
+        let rel = path.to_path_buf();
+        let path_str = rel.to_string_lossy().into_owned();
+        self.with_repo(repo_id, |repo| {
+            let index = repo.index()?;
+            // Stage 0 is the normal, non-conflicted entry. A conflicted path has
+            // stages 1-3 and no 0, so it lands in the same "not in the index"
+            // branch as an untracked one — correct either way, because neither
+            // has a single index version to colour from.
+            let entry = index
+                .get_path(&rel, 0)
+                .ok_or_else(|| AppError::InvalidPath(format!("not in the index: {path_str}")))?;
+            let blob = repo.find_blob(entry.id)?;
+            let content = blob.content();
+            let size = content.len() as u64;
+            if blob.is_binary() {
+                return Ok(FileContent {
+                    path: path_str,
+                    binary: true,
+                    text: None,
+                    from_head: false,
+                    size,
+                });
+            }
+            Ok(match std::str::from_utf8(content) {
+                Ok(s) => FileContent {
+                    path: path_str,
+                    binary: false,
+                    text: Some(s.to_string()),
+                    from_head: false,
+                    size,
+                },
+                Err(_) => FileContent {
+                    path: path_str,
+                    binary: true,
+                    text: None,
+                    from_head: false,
+                    size,
+                },
+            })
+        })
+    }
+
     fn diff_commits(
         &self,
         repo_id: &RepoId,

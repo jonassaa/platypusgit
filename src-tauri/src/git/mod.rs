@@ -145,6 +145,18 @@ pub trait GitBackend: Send + Sync {
         revspec: &str,
         path: &Path,
     ) -> AppResult<FileContent>;
+    /// The INDEX copy of a file — what committing would record.
+    ///
+    /// Distinct from both other readers precisely when a file is partially
+    /// staged, which is the case the commit panel could not colour correctly
+    /// while it had to approximate the index with HEAD and the worktree.
+    /// A path with no stage-0 entry (untracked, or conflicted) is an
+    /// `InvalidPath`, so the caller can fall back to rendering plain rows.
+    fn read_file_content_at_index(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+    ) -> AppResult<FileContent>;
     fn diff_commits(
         &self,
         repo_id: &RepoId,

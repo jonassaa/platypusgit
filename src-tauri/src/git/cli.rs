@@ -115,6 +115,13 @@ impl GitBackend for CliBackend {
     ) -> AppResult<FileContent> {
         Err(AppError::NotImplemented)
     }
+    fn read_file_content_at_index(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+    ) -> AppResult<FileContent> {
+        Err(AppError::NotImplemented)
+    }
     fn diff_commits(
         &self,
         _repo_id: &RepoId,

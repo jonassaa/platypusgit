@@ -141,6 +141,7 @@ pub fn run() {
             commands::repo::read_file_content,
             commands::repo::list_files_at_rev,
             commands::repo::read_file_content_at_rev,
+            commands::repo::read_file_content_at_index,
             commands::repo::append_gitignore,
             commands::repo::open_in_editor,
             commands::commits::get_log,

@@ -444,14 +444,18 @@ export function CommitPanelScreen() {
     return new Set(selected ? [keyOf(selected)] : []);
   }, [sel.keys.length, selectedKeys, selected]);
 
-  // This pane diffs against the INDEX (IndexToHead when staged, WorktreeToIndex
-  // otherwise), which cannot be read — see the note on useDiffSyntax for why HEAD
-  // and the worktree are the right approximation and why being off is harmless.
+  // Tokens come from exactly the two sides the diff was computed from:
+  // IndexToHead for a staged row, WorktreeToIndex otherwise. Reading the index
+  // directly is what makes a partially staged file colour correctly — HEAD and
+  // the worktree disagree with it precisely in that case.
   const syntax = useDiffSyntax({
     repoId: selected && !selected.status.embedded ? (repo?.id ?? null) : null,
     path: selected?.path ?? null,
-    old: { kind: "rev", rev: "HEAD", path: diff?.oldPath },
-    new: { kind: "worktree" },
+    old:
+      selected?.side === "staged"
+        ? { kind: "rev", rev: "HEAD", path: diff?.oldPath }
+        : { kind: "index" },
+    new: selected?.side === "staged" ? { kind: "index" } : { kind: "worktree" },
   });
 
   // ── Windowed diff rows ───────────────────────────────────────────────────
