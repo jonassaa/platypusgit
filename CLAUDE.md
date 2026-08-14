@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-14-submodules-lfs-worktrees-bisect-*` — submodule/worktree screens, LFS panel + pointer-aware diffs, bisect in the operation bar (#93).
 - `2026-08-14-drag-and-drop-*` — one pointer-event drag primitive (`features/dnd/`); staging drag, graph ref/commit drops, rebase reorder gated + keyboard-paired (#91).
 - `2026-08-14-forge-integration-*` — PR/MR integration for GitHub + GitLab (#92 / #61 D11):
   remote→forge detection, per-host API token under its OWN credential key, list /
@@ -137,8 +138,8 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (19 files, 94
-  tests, all passing) drive the real debug binary: real webview →
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (22 files) drive the
+  real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
   driver or paid service — so it runs on Linux CI (WebKitGTK) and, in the same
@@ -246,13 +247,37 @@ git/
 ├── mod.rs       GitBackend trait — every git op, returns AppResult<T>
 ├── types.rs     RepoHandle, FileStatus, CommitInfo, BranchInfo, TagInfo, StashInfo,
 │                RemoteInfo, FileDiff, BlameLine, ReflogEntry, RebaseStep, RepoState,
-│                ConflictSides, CommitOptions, StashSaveOptions, TagTarget, ResetMode, etc.
+│                ConflictSides, CommitOptions, StashSaveOptions, TagTarget, ResetMode,
+│                SubmoduleInfo/SubmoduleState, WorktreeInfo/WorktreeBranch,
+│                LfsStatus/LfsFile/LfsPointer/LfsDiff, BisectStatus/BisectMark, etc.
 ├── libgit2.rs   Libgit2Backend — active impl, most ops real. NOTE: merge_branch
 │                and rebase_onto shell out to real git, so a conflicted rebase is
 │                git's on-disk state, not ours — continue/abort_operation detect
 │                that (cli_rebase_in_progress) and hand off to `git rebase
 │                --continue/--abort`. The libgit2 path would drop queued steps.
-├── cli.rs       CliBackend — stub for ops libgit2 handles poorly (LFS, creds, complex merges)
+├── cli.rs       CliBackend — stub for ops libgit2 handles poorly (LFS, creds, complex merges).
+│                Still 100% NotImplemented: the #93 shell-outs live in libgit2.rs
+│                because they need the same opened `Repository` their neighbours do
+├── submodule.rs SubmoduleStatus → the four `SubmoduleState`s (priority order:
+│                uninitialized > pointer moved > dirty inside), the per-listing
+│                declared-path set (free when there is no `.gitmodules`), and
+│                `git submodule update`'s arg builder. libgit2 for list/init/sync;
+│                update shells out because it FETCHES and credentials only flow
+│                through the askpass subprocess env (#93)
+├── worktree.rs  Linked worktrees: libgit2 for list/add/lock/unlock/prune (its
+│                prune defaults ARE `git worktree prune`'s). `remove` shells out —
+│                libgit2's only option is prune-with-WORKING_TREE, which deletes
+│                the directory with NO dirty check; `git worktree remove` refuses
+│                on uncommitted work, mapped to `DirtyWorktree` (#93)
+├── lfs.rs       git-LFS. Pointer parsing + `lfs_diff_of` are PURE, derived from a
+│                diff we already produced (a pointer is ≤3 lines, so it is all in
+│                the diff's own lines — no extra I/O). "Does this repo use LFS" is
+│                answered from `.gitattributes` via the INDEX, NOT `git lfs track`:
+│                it must be answerable with the binary MISSING (#93)
+├── bisect.rs    Bisect. Reads GIT's own `.git/BISECT_*` + `refs/bisect/*` — there
+│                is deliberately NO parallel state file (see the note below), and
+│                progress comes from `git rev-list --bisect-vars`, git's own
+│                arithmetic, so it is recomputable after a restart (#93)
 ├── ownership.rs libgit2's dubious-ownership refusal (GIT_EOWNER, git's
 │                CVE-2022-24765 check — the WSL `/mnt/c` case): error mapping,
 │                RepoPresence probe (Present/Absent/Refused — NEVER infer
@@ -303,6 +328,12 @@ commands/        Thin Tauri handlers, one file per area:
 │                  Owns `ForgeTokens` (managed per-process token cache) and
 │                  `blocking_forge`, which redacts the token out of any error
 ├── reflog.rs      get_reflog, checkout_detached
+├── submodule.rs   list_submodules, submodule_init/sync/update (the last takes
+│                  `credentials` and retries through net::run_git_authenticated)
+├── worktree.rs    list_worktrees, worktree_add/remove/lock/unlock/prune
+├── lfs.rs         lfs_status, lfs_checkout (local), lfs_fetch/lfs_pull (network,
+│                  credentialed like fetch/pull/push)
+├── bisect.rs      bisect_status/start/mark/reset
 └── create.rs      init_repo, default_init_branch, clone_repo (streaming
                    git clone → clone://progress events)
 ```
@@ -332,7 +363,8 @@ design/              In-house design system (NOT components/ui/). Exports via de
 
 screens/             One screen per activity-bar item + modal-ish deep views:
   RepoBrowser, CommitPanel, History, DiffViewer, Branches, Rebase,
-  Remote, Pulls, Welcome, Reflog, CommitDiff, FileHistory, Blame, Settings
+  Remote, Pulls, Welcome, Reflog, CommitDiff, FileHistory, Blame, Submodules,
+  Worktrees, Settings
                      There is deliberately NO Conflict screen (#108): conflicts
                      are announced by OperationBar and resolved in the merge
                      window. A retired screen id must also be dropped from
@@ -420,6 +452,17 @@ features/            Per-feature: components + Zustand store colocated
 │                    (ignore-whitespace control; also owns
 │                    useHunkActionsDisabledReason — hunk staging is disabled
 │                    while whitespace is ignored, see #61 D2)
+├── submodules/      useSubmodulesStore (list + init/sync/update, persisted
+│                    `recursive` toggle). Update goes through useRepoStore's
+│                    exported `withAuthRetry` — one credential flow, not two (#93)
+├── worktrees/       useWorktreesStore + WorktreeAddDialog. The store owns the
+│                    destructive flows so the screen and the row menu cannot drift:
+│                    remove is a `pgConfirm`, and git's `DirtyWorktree` refusal
+│                    becomes a SECOND, `requireText` confirm that passes --force
+├── lfs/             useLfsStore, LfsPanel (a section on the REMOTE screen, not a
+│                    screen — `git lfs fetch/pull` are remote-object transfers),
+│                    LfsDiffNotice (what all four diff surfaces render instead of
+│                    pointer text) (#93)
 └── cli/             useCliLaunch — takes the stashed first-launch intent +
                      listens for forwarded `cli-launch` events, drives
                      openRepo + nav screen-switch intent
@@ -476,6 +519,11 @@ lib/
   `effStart`, or every filler number after such a hunk shifts by one.
 - **Hunk headers stay in whole-file mode.** They carry Stage/Discard, the
   collapse chevron, `data-hunk-index` for F7, and the e2e selectors.
+- **Gate text rendering on `isTextualDiff(diff)`, not `!diff.binary`** (#93). A
+  git-LFS pointer IS text, so `binary` is honestly false — rendering its hunks
+  claims "2 lines changed" for a multi-megabyte asset. All four diff surfaces use
+  the shared gate and render the shared `LfsDiffNotice` instead; `binary` is
+  deliberately not overloaded, because other code trusts what it means.
 - **Tokenization runs in a module worker.** Shiki's `codeToTokens` is synchronous
   CPU work, so awaiting it on the main thread still janked. Tokens come back
   packed into transferable `Int32Array`s rather than one object per token.
@@ -543,6 +591,20 @@ lib/
 - Conflicts are NOT a destination: `OperationBar` (driven by `repoState`), the
   status-bar conflict count, `⌘5`/`conflict.openResolver` and a conflicted row's
   context menu all open the merge resolver window instead (#108).
+- **Bisect is not a destination either** (#93). It is a `repoState`, so
+  `OperationBar` owns it: its own `OpKind` with Good/Bad/Skip/**Reset**, and git's
+  own progress numbers. Reset REPLACES the generic Abort for this state —
+  `abort_operation` hard-resets to HEAD, and mid-bisect HEAD is the detached
+  commit being tested, so the bar's one previous button was actively harmful.
+  Entry points: the History commit menu's Bisect submenu, a two-commit selection,
+  and the palette. **No keyboard chords for bisect on purpose:** every catalog
+  action must be bound in both presets, the ⌘1–9 row is full, and a bare-chord
+  misfire mid-bisect corrupts the search with no undo short of a reset.
+- `submodules` (⌘⇧8) and `worktrees` (⌘⇧7) are activity-bar screens, same chord in
+  both presets. They are empty for most repositories and that is deliberate: a
+  conditional entry would move the bar's geometry under the user between repos.
+  **LFS is a panel on the Remote screen, not a screen** — `git lfs fetch/pull`
+  are remote-object transfers whose endpoint comes from the remote URL.
 
 ## Conventions
 
@@ -581,6 +643,11 @@ lib/
   prints `Secret(***)`. `expose()` has exactly two call sites (the auth header,
   and the credential-protocol writer). Grep for it before adding a third.
 - No command returns a token. `forge_token_status` reports presence + login.
+- `LfsUnavailable` is a **state, not a failure** (#93): the UI disables the LFS
+  actions and explains, so git's `'lfs' is not a git command` can never reach an
+  error banner. `NoBisect` likewise means "refresh", not "alarm". `DirtyWorktree`
+  is reused for `git worktree remove`'s refusal, which is what turns into the
+  second, type-the-name confirm.
 
 ### Adding a new git op (standard path)
 1. Add method to `GitBackend` trait (`src-tauri/src/git/mod.rs`).
@@ -661,18 +728,25 @@ lib/
 
 ### Network ops and credentials (#61 D5)
 
-- **One runner, eight call sites.** Every op that shells out to real `git` over
+- **One runner, eleven call sites.** Every op that shells out to real `git` over
   the network goes through `commands::net::run_git_authenticated` (or, for clone,
   through its two primitives `apply_auth_env` + `map_git_failure`, because clone
-  needs a streamed stderr pipe rather than `.output()`). The eight:
+  needs a streamed stderr pipe rather than `.output()`). The eleven:
   `fetch`, `fetch_all`, `pull`, `push`, `push_tag`, `push_delete_branch` in
-  `commands/branches.rs`, plus `clone_repo` in `commands/create.rs`, plus
-  `forge_checkout_pull_request`'s FETCH in `commands/forge.rs` (#92 — its second
-  git call, the `checkout` of `FETCH_HEAD`, passes `None` on purpose: the tip is
-  already local and touches no remote). A new network op joins them; **do not open
-  a second auth path.** `branches.rs`'s local `run_git` (merge/rebase/checkout) is
-  the deliberately credential-less sibling, and `forge/token.rs`'s
-  `git credential` + `forge/checkout.rs`'s `git rev-parse` spawn git directly
+  `commands/branches.rs` (all six via its local `run_git_creds` wrapper),
+  `clone_repo` in `commands/create.rs`, `forge_checkout_pull_request`'s FETCH in
+  `commands/forge.rs` (#92 — its second git call, the `checkout` of `FETCH_HEAD`,
+  passes `None` on purpose: the tip is already local and touches no remote), and
+  — since #93 — `submodule_update` (`commands/submodule.rs`) plus `lfs_fetch` /
+  `lfs_pull` (`commands/lfs.rs`). Count them in the tree before trusting this
+  number: #92 and #93 landed within a day of each other and each rewrote the
+  sentence for its own additions only. A new network op joins them; **do not open
+  a second auth path** — on the frontend that means `useRepoStore`'s exported
+  `withAuthRetry`, not a private copy, or the challenge is raised with nothing
+  mounted to answer it. The deliberately credential-less siblings are
+  `branches.rs`'s local `run_git` (merge/rebase/checkout) and `libgit2.rs`'s
+  `run_git_capture` (the #93 prompt-less shell-outs); `forge/token.rs`'s
+  `git credential` and `forge/checkout.rs`'s `git rev-parse` spawn git directly
   because neither contacts a remote (and routing `git credential` through the
   authenticated runner would set `GIT_ASKPASS` and change its semantics).
 - **Retry, never prompt mid-run.** The first attempt is always prompt-less, so the
@@ -712,6 +786,29 @@ lib/
 - **`credential_approve` refuses values containing a newline** rather than
   escaping them: git's credential protocol is line-based `key=value`, so a
   newline injects further keys and could file a password against another host.
+
+### Bisect: git's state is the only state of record (#93)
+
+- **There is no `.git/platypusgit-bisect.json`, and there must not be.** Every
+  transition is a `git bisect` invocation, so git owns `BISECT_START`,
+  `BISECT_LOG`, `BISECT_TERMS` and `refs/bisect/*`, and a second record could only
+  ever *disagree* with it. This is the exact inverse of `rebase_state.rs` — that
+  file exists because the app DRIVES the replay and git cannot finish it — and the
+  reason is the same one CLAUDE.md gives there, read from the other direction.
+- Reading git's files is also what makes a bisect survive an app restart and pick
+  up one the user started in a terminal, for free. `tests/bisect.rs` pins that
+  with a FRESH `Libgit2Backend` continuing and resetting a bisect it never started.
+- **`RepoState::Bisect` needed no new variant** — libgit2 already reports it off
+  `BISECT_LOG`. What was missing was the detail (`bisect_status`) and the actions.
+- Progress comes from `git rev-list --bisect-vars` (`bisect_nr` / `bisect_steps`),
+  git's own arithmetic, so the numbers match what `git bisect good` prints and —
+  unlike scraping that output — are recomputable at any time.
+- **Read the terms from `BISECT_TERMS`**, never assume "bad"/"good":
+  `refs/bisect/<term>` is named after them, so a `--term-old`/`--term-new` bisect
+  would otherwise be invisible (no bad ref found → no progress, no culprit).
+- Convergence is `bisect_rev == refs/bisect/<bad>` — git's own test. Note HEAD
+  then sits on the last commit *tested*, not on the culprit, so the UI must NAME
+  the first bad commit rather than let the user read a sha off the titlebar.
 
 ### Async / threading (Rust)
 - `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Mutex<Repository>` inside a `Mutex<HashMap<RepoId, ...>>`.
@@ -790,6 +887,12 @@ lib/
 - Tree keyboard behavior belongs to the owning screen via `usePaneList`, not to
   `PGFileTree`: a local `onKeyDown` plus the global dispatcher both answer
   ArrowDown and the selection moves twice.
+- **`FileStatus.submodule` is the exact complement of `embedded`** (#93), and they
+  are mutually exclusive by construction: `is_embedded_repo` already excludes a
+  `.gitmodules`-declared submodule. A submodule leaf renders with the `submodule`
+  glyph and gets `submoduleMenuItems`, because the ordinary file menu is a list of
+  dead ends on a gitlink (no diff, no blame, no history) — but staging it stays
+  legal, since an updated pointer is an ordinary commit.
 
 ### Drag and drop
 - **Pointer events, never HTML5 drag-and-drop.** `features/dnd/dragController.ts`

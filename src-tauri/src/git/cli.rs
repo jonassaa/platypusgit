@@ -4,10 +4,12 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileContent,
-        FileDiff, FileStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
-        RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo,
-        TagTarget,
+        BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
+        DiffKind, FileContent,
+        FileDiff, FileStatus, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+        RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
+        SubmoduleInfo, TagInfo,
+        TagTarget, WorktreeBranch, WorktreeInfo,
     },
     GitBackend,
 };
@@ -346,6 +348,87 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn blame_file(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<Vec<BlameLine>> {
+        Err(AppError::NotImplemented)
+    }
+
+    // === submodules / worktrees / LFS / bisect (#93) ===
+    // Stubs, per the standard path: keeping the trait shape exercised here is what
+    // catches a signature that only one impl can satisfy. The real shell-outs live
+    // in `Libgit2Backend` because they all need the same opened `Repository`
+    // (workdir, gitdir, index) their neighbours already have — reviving this type
+    // as a second real backend is a separate job.
+    fn submodules(&self, _repo_id: &RepoId) -> AppResult<Vec<SubmoduleInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn submodule_init(&self, _repo_id: &RepoId, _path: Option<&str>) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn submodule_sync(&self, _repo_id: &RepoId, _path: Option<&str>) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn submodule_update(
+        &self,
+        _repo_id: &RepoId,
+        _path: Option<&str>,
+        _recursive: bool,
+        _init: bool,
+    ) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn worktrees(&self, _repo_id: &RepoId) -> AppResult<Vec<WorktreeInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn worktree_add(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _branch: WorktreeBranch,
+    ) -> AppResult<WorktreeInfo> {
+        Err(AppError::NotImplemented)
+    }
+    fn worktree_remove(&self, _repo_id: &RepoId, _name: &str, _force: bool) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn worktree_lock(
+        &self,
+        _repo_id: &RepoId,
+        _name: &str,
+        _reason: Option<&str>,
+    ) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn worktree_unlock(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn worktree_prune(&self, _repo_id: &RepoId) -> AppResult<Vec<String>> {
+        Err(AppError::NotImplemented)
+    }
+    fn lfs_status(&self, _repo_id: &RepoId) -> AppResult<LfsStatus> {
+        Err(AppError::NotImplemented)
+    }
+    fn lfs_checkout(&self, _repo_id: &RepoId) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn bisect_status(&self, _repo_id: &RepoId) -> AppResult<BisectStatus> {
+        Err(AppError::NotImplemented)
+    }
+    fn bisect_start(
+        &self,
+        _repo_id: &RepoId,
+        _bad: &str,
+        _good: &[String],
+    ) -> AppResult<BisectStatus> {
+        Err(AppError::NotImplemented)
+    }
+    fn bisect_mark(
+        &self,
+        _repo_id: &RepoId,
+        _mark: BisectMark,
+        _rev: Option<&str>,
+    ) -> AppResult<BisectStatus> {
+        Err(AppError::NotImplemented)
+    }
+    fn bisect_reset(&self, _repo_id: &RepoId) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
 }

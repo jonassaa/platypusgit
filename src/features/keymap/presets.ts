@@ -92,6 +92,19 @@ const COMMON = {
   // reaches the rebase plan; suppressInInput keeps it off a caret.
   "rebase.moveStepUp": ["Mod+Shift+ArrowUp"],
   "rebase.moveStepDown": ["Mod+Shift+ArrowDown"],
+  // #93 — the two new screens. Shared by both presets because the plain ⌘1–9 row
+  // is fully taken in `platypusgit classic`, so a per-preset number would have to
+  // collide with something. ⌘⇧6/7 continue the pattern rider already set with
+  // ⌘⇧9 for the reflog, and digits resolve from `e.code` (see chord.ts), so these
+  // are layout-independent — Shift+7 typing "/" or "&" on a given keyboard does
+  // not change the chord.
+  //
+  // Submodules was ⌘⇧8 until #92 landed first and took it for `nav.pulls`; it
+  // moved down to ⌘⇧6 rather than displacing a shipped binding. Two GLOBAL
+  // actions on one chord is what presets.test.ts forbids, so this is a test
+  // failure rather than a silent shadow — which is the intended outcome.
+  "nav.submodules": ["Mod+Shift+6"],
+  "nav.worktrees": ["Mod+Shift+7"],
 } satisfies Partial<Record<ActionId, string[]>>;
 
 export const RIDER_PRESET: KeymapPreset = {

@@ -13,6 +13,7 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { currentBranch, totalAheadBehind } from "@/lib/derive";
 import { PGPane, FocusableScroll } from "@/features/keymap";
+import { LfsPanel } from "@/features/lfs/LfsPanel";
 import type { RemoteInfo } from "@/lib/types";
 
 export function RemoteScreen() {
@@ -275,6 +276,12 @@ export function RemoteScreen() {
           ))}
           </FocusableScroll>
         </PGPane>
+
+        {/* LFS lives here rather than on a screen of its own (#93): `git lfs
+            fetch/pull` are remote-object transfers whose endpoint comes from the
+            remote URL, and a third activity-bar entry that is empty for most
+            repositories would be worse. */}
+        <LfsPanel />
       </div>
       {remoteMenu}
     </div>

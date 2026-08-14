@@ -60,6 +60,16 @@ pub struct FileStatus {
     /// treat the row as its own thing rather than as a file. Always false for
     /// ordinary files and for registered submodules.
     pub embedded: bool,
+    /// True when this entry is a submodule the repository DECLARES — a
+    /// `.gitmodules` entry with a URL, i.e. the exact complement of `embedded`
+    /// (see `is_embedded_repo`: a registered submodule is deliberately excluded
+    /// there). The two are mutually exclusive by construction.
+    ///
+    /// Its gitlink is intentional, so staging and committing it is an ordinary
+    /// pointer update — but it still has no diff, no blame and no file history,
+    /// so the UI must render the row as a submodule rather than as a directory
+    /// nobody can explain (#93).
+    pub submodule: bool,
 }
 
 /// Refspec sentinel meaning "walk every branch we know of", not one ref —
@@ -220,6 +230,36 @@ pub struct FileDiff {
     pub additions: u32,
     pub deletions: u32,
     pub hunks: Vec<DiffHunk>,
+    /// Set when both sides of this diff are git-LFS **pointer files** (#93).
+    ///
+    /// The pointer is a ≤3-line text file, so `binary` is false and every diff
+    /// surface would otherwise render "3 lines changed" for a multi-megabyte
+    /// asset — actively misleading. `binary` is deliberately NOT overloaded (it
+    /// means "libgit2 says the blob is binary", and other code trusts that);
+    /// consumers gate their text rendering on `binary || lfs` instead.
+    ///
+    /// The hunks are left intact: this is derived FROM them, by parsing the
+    /// pointer out of the diff's own `+`/`-` lines, so it costs no extra I/O.
+    pub lfs: Option<LfsDiff>,
+}
+
+/// The two sides of an LFS pointer change. Either side is `None` for an added or
+/// deleted file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LfsDiff {
+    pub old: Option<LfsPointer>,
+    pub new: Option<LfsPointer>,
+}
+
+/// A parsed `version https://git-lfs.github.com/spec/v1` pointer file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LfsPointer {
+    /// The object id, WITHOUT the `sha256:` prefix.
+    pub oid: String,
+    /// Size of the real object in bytes.
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -460,4 +500,208 @@ pub struct ReflogEntry {
 pub struct CloneProgress {
     pub phase: String,
     pub percent: u8,
+}
+
+// ─── Submodules (#93) ─────────────────────────────────────────────────────────
+
+/// `git2::SubmoduleStatus`'s 13 bits collapsed to the four things a user can act
+/// on. Derived in a fixed priority order (see `submodule::state_from_status`):
+/// uninitialized outranks everything (nothing else is meaningful without a
+/// checkout), then a pointer mismatch, then dirt inside the submodule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubmoduleState {
+    /// Declared in `.gitmodules`, but the worktree has no checkout yet.
+    Uninitialized,
+    /// Checked out at the commit the superproject records, and clean.
+    UpToDate,
+    /// Right commit, but the submodule's own index or worktree is dirty.
+    Modified,
+    /// The checked-out commit differs from the gitlink the superproject records
+    /// — either it needs updating, or a new pointer needs staging.
+    OutOfSync,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmoduleInfo {
+    /// `.gitmodules` section name — usually, but not necessarily, the path.
+    pub name: String,
+    /// Path relative to the superproject worktree.
+    pub path: String,
+    pub url: Option<String>,
+    /// `submodule.<name>.branch`, when one is configured.
+    pub branch: Option<String>,
+    /// The gitlink the superproject records (HEAD's tree). `None` when the
+    /// submodule is not committed yet.
+    pub head_oid: Option<String>,
+    /// The commit checked out in the submodule's worktree. `None` when
+    /// uninitialized.
+    pub workdir_oid: Option<String>,
+    pub state: SubmoduleState,
+}
+
+// ─── Linked worktrees (#93) ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeInfo {
+    /// git's own name for the worktree (`.git/worktrees/<name>`).
+    pub name: String,
+    pub path: String,
+    /// Short branch name checked out there; `None` when detached or unreadable.
+    pub branch: Option<String>,
+    pub head_oid: Option<String>,
+    pub locked: bool,
+    /// Reason recorded by `worktree lock`, when one was given.
+    pub lock_reason: Option<String>,
+    /// git considers the admin files prunable — normally because the working
+    /// directory was deleted behind git's back.
+    pub prunable: bool,
+    /// True when this entry is the worktree the app currently has open, so a
+    /// user who opened the app *inside* a linked worktree can see where they
+    /// are standing.
+    pub is_current: bool,
+}
+
+/// Which branch a new worktree checks out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "name", rename_all = "camelCase")]
+pub enum WorktreeBranch {
+    /// Create a new branch at the current HEAD and check it out there.
+    New(String),
+    /// Check out an existing local branch (which must not be checked out
+    /// elsewhere).
+    Existing(String),
+}
+
+// ─── git-LFS (#93) ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LfsStatus {
+    /// `git lfs version` ran and exited 0. Everything below except `in_use` and
+    /// `patterns` needs it.
+    pub installed: bool,
+    /// Whatever `git lfs version` printed, when installed.
+    pub version: Option<String>,
+    /// The repository declares at least one `filter=lfs` attribute. Computed by
+    /// us from the `.gitattributes` files, NOT from `git lfs track` — this
+    /// question has to be answerable with the binary missing, which is exactly
+    /// when the user needs to be told the repository needs it.
+    pub in_use: bool,
+    /// The pattern half of those attribute lines.
+    pub patterns: Vec<String>,
+    /// LFS-managed paths in the worktree. Empty when the binary is missing.
+    pub files: Vec<LfsFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LfsFile {
+    pub path: String,
+    /// Short oid as `git lfs ls-files` prints it.
+    pub oid: String,
+    /// True when the real object is in the worktree (`*`), false when the file
+    /// is still just a pointer (`-`).
+    pub materialized: bool,
+}
+
+// ─── Bisect (#93) ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BisectMark {
+    Good,
+    Bad,
+    Skip,
+}
+
+/// A bisect in progress, read entirely from GIT's own state (`.git/BISECT_*`,
+/// `refs/bisect/*`) — there is deliberately no parallel state file, because
+/// every transition here is a `git bisect` invocation and a second record could
+/// only ever disagree with git's.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BisectStatus {
+    pub in_progress: bool,
+    /// Where `git bisect reset` will return to (`.git/BISECT_START`).
+    pub start_ref: Option<String>,
+    /// Terms in use, from `.git/BISECT_TERMS` — "bad"/"good" unless the user
+    /// started the bisect with `--term-old`/`--term-new` in a terminal.
+    pub bad_term: String,
+    pub good_term: String,
+    /// The revision currently checked out for testing.
+    pub current_oid: Option<String>,
+    /// git's own `bisect_nr`: revisions left to test after this one.
+    pub remaining: Option<usize>,
+    /// git's own `bisect_steps`: the log2 estimate.
+    pub steps: Option<usize>,
+    /// Set once the search converges. Note HEAD then sits on the last *tested*
+    /// commit, not on this one.
+    pub first_bad_oid: Option<String>,
+    pub good_count: usize,
+    pub bad_count: usize,
+    pub skipped_count: usize,
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    /// The one #93 type whose wire shape is not obvious from the struct — an
+    /// adjacently-tagged enum. A mismatch here fails only at runtime, in the one
+    /// command that creates a worktree, so pin it.
+    #[test]
+    fn worktree_branch_matches_the_typescript_union() {
+        let new: WorktreeBranch =
+            serde_json::from_str(r#"{"kind":"new","name":"feature/x"}"#).expect("new");
+        assert!(matches!(new, WorktreeBranch::New(ref n) if n == "feature/x"));
+        let existing: WorktreeBranch =
+            serde_json::from_str(r#"{"kind":"existing","name":"main"}"#).expect("existing");
+        assert!(matches!(existing, WorktreeBranch::Existing(ref n) if n == "main"));
+        assert_eq!(
+            serde_json::to_string(&WorktreeBranch::New("wt".into())).unwrap(),
+            r#"{"kind":"new","name":"wt"}"#
+        );
+    }
+
+    #[test]
+    fn bisect_mark_and_submodule_state_are_plain_strings() {
+        assert_eq!(serde_json::to_string(&BisectMark::Skip).unwrap(), r#""Skip""#);
+        assert_eq!(
+            serde_json::to_string(&SubmoduleState::OutOfSync).unwrap(),
+            r#""OutOfSync""#
+        );
+    }
+
+    #[test]
+    fn an_lfs_diff_serializes_the_camel_case_fields_the_ui_reads() {
+        let json = serde_json::to_string(&LfsDiff {
+            old: None,
+            new: Some(LfsPointer {
+                oid: "abc".into(),
+                size: 12,
+            }),
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"old":null,"new":{"oid":"abc","size":12}}"#);
+    }
+}
+
+impl BisectStatus {
+    /// The "no bisect here" answer, with git's default terms.
+    pub fn idle() -> Self {
+        Self {
+            in_progress: false,
+            start_ref: None,
+            bad_term: "bad".to_string(),
+            good_term: "good".to_string(),
+            current_oid: None,
+            remaining: None,
+            steps: None,
+            first_bad_oid: None,
+            good_count: 0,
+            bad_count: 0,
+            skipped_count: 0,
+        }
+    }
 }

@@ -15,11 +15,12 @@ use crate::opener::safe_workdir_path;
 
 use super::{
     types::{
+        BisectMark, BisectStatus,
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
-        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LogFilter, LogPage,
+        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LfsStatus, LogFilter, LogPage,
         RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
-        RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag, TagInfo,
-        TagTarget, REFSPEC_ALL,
+        RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag,
+        SubmoduleInfo, TagInfo, TagTarget, WorktreeBranch, WorktreeInfo, REFSPEC_ALL,
     },
     GitBackend,
 };
@@ -889,6 +890,25 @@ fn listed_entry_is_embedded_repo(
     is_embedded_repo(repo, Path::new(path))
 }
 
+/// True when a listing entry names a submodule the repository declares (#93).
+///
+/// Takes the path set built once per listing by
+/// `submodule::declared_submodule_paths`, so this is a hash lookup per entry, not a
+/// syscall — the same discipline `listed_entry_is_embedded_repo` follows, and for
+/// the same reason (`status()` runs after every index op).
+///
+/// libgit2 reports a submodule directory with a trailing slash in some listings and
+/// slashless in others, exactly as it does for an embedded repo, so both forms are
+/// normalized here. The result is the exact complement of `embedded`: a declared
+/// submodule is excluded from `is_embedded_repo` by `is_registered_submodule`, so
+/// the two flags can never both be set on one row.
+fn is_listed_submodule(submodule_paths: &std::collections::HashSet<String>, path: &str) -> bool {
+    if submodule_paths.is_empty() {
+        return false;
+    }
+    submodule_paths.contains(path.trim_end_matches('/'))
+}
+
 /// Whether the index tracks `rel` at ANY stage.
 ///
 /// Stage 0 is the ordinary merged entry, but a **conflicted** path has no stage-0
@@ -1511,14 +1531,20 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
             hunks.push(done);
         }
 
-        out.push(FileDiff {
+        let mut file_diff = FileDiff {
             path: new_path,
             old_path: old_path_opt,
             binary,
             additions,
             deletions,
             hunks,
-        });
+            lfs: None,
+        };
+        // Derived from the diff just built — no extra I/O (#93). Both commit-diff
+        // paths come through here, so they cannot disagree with `diff()` about what
+        // an LFS pointer diff is.
+        crate::git::lfs::annotate(&mut file_diff);
+        out.push(file_diff);
     }
 
     Ok(out)
@@ -2094,6 +2120,10 @@ impl GitBackend for Libgit2Backend {
             // gitlink-mode shortcut in `listed_entry_is_embedded_repo`, so a repo
             // whose index will not open just falls back to the slash check.
             let index = repo.index().ok();
+            // Also once for the whole listing, and free when there is no
+            // `.gitmodules` — which is why this can sit on the hottest path in the
+            // app (see `declared_submodule_paths`).
+            let submodule_paths = crate::git::submodule::declared_submodule_paths(repo);
             let mut out = Vec::with_capacity(statuses.len());
             for entry in statuses.iter() {
                 let path = entry.path().unwrap_or("").to_string();
@@ -2103,6 +2133,7 @@ impl GitBackend for Libgit2Backend {
                 let (unstaged_additions, unstaged_deletions) =
                     unstaged_stats.get(&path).copied().unwrap_or((0, 0));
                 let embedded = listed_entry_is_embedded_repo(repo, index.as_ref(), &path);
+                let submodule = is_listed_submodule(&submodule_paths, &path);
                 out.push(FileStatus {
                     path,
                     worktree: map_status_flag(s, StatusSide::Worktree),
@@ -2116,6 +2147,7 @@ impl GitBackend for Libgit2Backend {
                     unstaged_additions,
                     unstaged_deletions,
                     embedded,
+                    submodule,
                 });
             }
             Ok(out)
@@ -2134,6 +2166,7 @@ impl GitBackend for Libgit2Backend {
             // `include_unmodified` means every file in the worktree comes through
             // here, so a per-entry stat would be a syscall per file.
             let index = repo.index().ok();
+            let submodule_paths = crate::git::submodule::declared_submodule_paths(repo);
             let mut out = Vec::with_capacity(statuses.len());
             for entry in statuses.iter() {
                 let path = entry.path().unwrap_or("").to_string();
@@ -2142,6 +2175,7 @@ impl GitBackend for Libgit2Backend {
                 }
                 let s = entry.status();
                 let embedded = listed_entry_is_embedded_repo(repo, index.as_ref(), &path);
+                let submodule = is_listed_submodule(&submodule_paths, &path);
                 out.push(FileStatus {
                     path,
                     worktree: map_status_flag(s, StatusSide::Worktree),
@@ -2155,6 +2189,7 @@ impl GitBackend for Libgit2Backend {
                     unstaged_additions: 0,
                     unstaged_deletions: 0,
                     embedded,
+                    submodule,
                 });
             }
             Ok(out)
@@ -2581,14 +2616,17 @@ impl GitBackend for Libgit2Backend {
                 true
             })?;
 
-            Ok(FileDiff {
+            let mut file_diff = FileDiff {
                 path: current_path.unwrap_or(path_str),
                 old_path,
                 binary,
                 additions,
                 deletions,
                 hunks,
-            })
+                lfs: None,
+            };
+            crate::git::lfs::annotate(&mut file_diff);
+            Ok(file_diff)
         })
     }
 
@@ -2690,8 +2728,11 @@ impl GitBackend for Libgit2Backend {
                             unstaged_additions: 0,
                             unstaged_deletions: 0,
                             // Blobs only — a committed tree never yields a
-                            // directory entry, embedded or otherwise.
+                            // directory entry, embedded or otherwise. A submodule
+                            // is a `160000` gitlink, not a blob, so it is filtered
+                            // out by the `Blob` test above for the same reason.
                             embedded: false,
+                            submodule: false,
                         });
                     }
                 }
@@ -4397,9 +4438,333 @@ impl GitBackend for Libgit2Backend {
             Ok(out)
         })
     }
+
+    // ─── Submodules (#93) ─────────────────────────────────────────────────────
+
+    fn submodules(&self, repo_id: &RepoId) -> AppResult<Vec<SubmoduleInfo>> {
+        self.with_repo(repo_id, crate::git::submodule::list)
+    }
+
+    fn submodule_init(&self, repo_id: &RepoId, path: Option<&str>) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            for mut sm in repo.submodules()? {
+                if !submodule_matches(&sm, path) {
+                    continue;
+                }
+                // `overwrite: false` — an existing `submodule.<name>.url` in
+                // `.git/config` is a deliberate local override (a mirror, an SSH
+                // rewrite), and `git submodule init` leaves it alone too.
+                sm.init(false)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn submodule_sync(&self, repo_id: &RepoId, path: Option<&str>) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            for mut sm in repo.submodules()? {
+                if !submodule_matches(&sm, path) {
+                    continue;
+                }
+                sm.sync()?;
+            }
+            Ok(())
+        })
+    }
+
+    fn submodule_update(
+        &self,
+        repo_id: &RepoId,
+        path: Option<&str>,
+        recursive: bool,
+        init: bool,
+    ) -> AppResult<()> {
+        let workdir = self.repo_path(repo_id)?;
+        let args = crate::git::submodule::update_args(path, recursive, init);
+        // Prompt-less, like every other first-attempt network op: no tty here, so
+        // an authenticating submodule remote would otherwise hang on an invisible
+        // prompt. The failure is classified through the shared auth mapper, so a
+        // credential-needing remote raises `Auth` and the command layer's retry
+        // (with the askpass shim) is the one that can answer it.
+        run_git_capture(&workdir, &args)
+            .map(|_| ())
+            .map_err(|stderr| crate::commands::net::map_git_failure(&stderr))
+    }
+
+    // ─── Linked worktrees (#93) ───────────────────────────────────────────────
+
+    fn worktrees(&self, repo_id: &RepoId) -> AppResult<Vec<WorktreeInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let current = repo.workdir().map(|p| p.to_path_buf());
+            let names = repo.worktrees()?;
+            let mut out = Vec::new();
+            for name in names.iter().flatten() {
+                // One unreadable worktree must not take the whole list with it.
+                if let Ok(info) = crate::git::worktree::info(repo, name, current.as_deref()) {
+                    out.push(info);
+                }
+            }
+            out.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(out)
+        })
+    }
+
+    fn worktree_add(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        branch: WorktreeBranch,
+    ) -> AppResult<WorktreeInfo> {
+        let name = crate::git::worktree::name_for_path(path)?;
+        if path.exists() {
+            return Err(AppError::InvalidArgument(format!(
+                "{} already exists",
+                path.display()
+            )));
+        }
+        self.with_repo(repo_id, |repo| {
+            // The branch is resolved to a real reference in BOTH modes, rather
+            // than relying on libgit2's reference-less default: that default
+            // creates a branch named after the WORKTREE, which would silently
+            // ignore the name the user typed.
+            let reference = match &branch {
+                WorktreeBranch::New(b) => {
+                    let head = repo.head()?.peel_to_commit()?;
+                    repo.branch(b, &head, false)
+                        .map_err(|e| {
+                            AppError::InvalidArgument(format!("branch {b}: {}", e.message()))
+                        })?
+                        .into_reference()
+                }
+                WorktreeBranch::Existing(b) => repo
+                    .find_branch(b, BranchType::Local)
+                    .map_err(|_| AppError::InvalidRef(b.clone()))?
+                    .into_reference(),
+            };
+            let mut opts = git2::WorktreeAddOptions::new();
+            opts.reference(Some(&reference));
+            repo.worktree(&name, path, Some(&opts))?;
+            Ok(())
+        })?;
+        self.with_repo(repo_id, |repo| {
+            let current = repo.workdir().map(|p| p.to_path_buf());
+            crate::git::worktree::info(repo, &name, current.as_deref())
+        })
+    }
+
+    fn worktree_remove(&self, repo_id: &RepoId, name: &str, force: bool) -> AppResult<()> {
+        let workdir = self.repo_path(repo_id)?;
+        // git takes the PATH, and resolving it here also refuses an unknown name
+        // before anything is spawned.
+        let target = self.with_repo(repo_id, |repo| {
+            Ok(repo
+                .find_worktree(name)
+                .map_err(|_| AppError::InvalidArgument(format!("no such worktree: {name}")))?
+                .path()
+                .to_string_lossy()
+                .to_string())
+        })?;
+        let args = crate::git::worktree::remove_args(&target, force);
+        run_git_capture(&workdir, &args)
+            .map(|_| ())
+            .map_err(|stderr| crate::git::worktree::classify_remove_failure(&target, &stderr))
+    }
+
+    fn worktree_lock(&self, repo_id: &RepoId, name: &str, reason: Option<&str>) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let wt = repo
+                .find_worktree(name)
+                .map_err(|_| AppError::InvalidArgument(format!("no such worktree: {name}")))?;
+            wt.lock(reason)?;
+            Ok(())
+        })
+    }
+
+    fn worktree_unlock(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            let wt = repo
+                .find_worktree(name)
+                .map_err(|_| AppError::InvalidArgument(format!("no such worktree: {name}")))?;
+            wt.unlock()?;
+            Ok(())
+        })
+    }
+
+    fn worktree_prune(&self, repo_id: &RepoId) -> AppResult<Vec<String>> {
+        self.with_repo(repo_id, |repo| {
+            let names = repo.worktrees()?;
+            let mut pruned = Vec::new();
+            for name in names.iter().flatten() {
+                let Ok(wt) = repo.find_worktree(name) else {
+                    continue;
+                };
+                // Default options ARE `git worktree prune`'s: only invalid, only
+                // unlocked, and never deleting a working tree. libgit2 reports
+                // "not prunable" as an Err carrying the reason, so treat any
+                // failure as "leave it alone".
+                if wt.is_prunable(None).unwrap_or(false) && wt.prune(None).is_ok() {
+                    pruned.push(name.to_string());
+                }
+            }
+            Ok(pruned)
+        })
+    }
+
+    // ─── git-LFS (#93) ────────────────────────────────────────────────────────
+
+    fn lfs_status(&self, repo_id: &RepoId) -> AppResult<LfsStatus> {
+        let (patterns, has_lfs_dir) = self.with_repo(repo_id, |repo| {
+            Ok((
+                crate::git::lfs::declared_patterns(repo),
+                repo.path().join("lfs").is_dir(),
+            ))
+        })?;
+        let workdir = self.repo_path(repo_id)?;
+        let version = crate::git::lfs::version(&workdir);
+        let installed = version.is_some();
+        // A repository with objects already in `.git/lfs` uses LFS even if its
+        // attributes live somewhere this scan does not reach (a global
+        // `core.attributesFile`, say) — so the panel does not claim "not in use"
+        // while sitting on a pile of LFS objects.
+        let in_use = !patterns.is_empty() || has_lfs_dir;
+        let files = if installed {
+            run_git_capture(&workdir, &["lfs".to_string(), "ls-files".to_string()])
+                .map(|out| crate::git::lfs::parse_ls_files(&out))
+                // A repo whose LFS objects are unreadable still has a valid
+                // status; the file list is the optional part.
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Ok(LfsStatus {
+            installed,
+            version,
+            in_use,
+            patterns,
+            files,
+        })
+    }
+
+    fn lfs_checkout(&self, repo_id: &RepoId) -> AppResult<()> {
+        let workdir = self.repo_path(repo_id)?;
+        crate::git::lfs::require(&workdir)?;
+        run_git_capture(&workdir, &["lfs".to_string(), "checkout".to_string()])
+            .map(|_| ())
+            .map_err(|stderr| AppError::Git(format!("git lfs checkout: {}", stderr.trim())))
+    }
+
+    // ─── Bisect (#93) ─────────────────────────────────────────────────────────
+
+    fn bisect_status(&self, repo_id: &RepoId) -> AppResult<BisectStatus> {
+        self.with_repo(repo_id, crate::git::bisect::status)
+    }
+
+    fn bisect_start(
+        &self,
+        repo_id: &RepoId,
+        bad: &str,
+        good: &[String],
+    ) -> AppResult<BisectStatus> {
+        // Resolve every revspec to a full oid BEFORE it reaches argv: an
+        // unresolvable rev becomes `InvalidRef` instead of a git error, and a
+        // caller string can never arrive as something git reads as an option.
+        let (bad_oid, good_oids) = self.with_repo(repo_id, |repo| {
+            let bad_oid = crate::git::bisect::resolve(repo, bad)?;
+            let good_oids = good
+                .iter()
+                .map(|g| crate::git::bisect::resolve(repo, g))
+                .collect::<AppResult<Vec<_>>>()?;
+            Ok((bad_oid, good_oids))
+        })?;
+        let workdir = self.repo_path(repo_id)?;
+        let mut args = vec!["start".to_string(), bad_oid];
+        args.extend(good_oids);
+        crate::git::bisect::run(&workdir, &args)?;
+        self.bisect_status(repo_id)
+    }
+
+    fn bisect_mark(
+        &self,
+        repo_id: &RepoId,
+        mark: BisectMark,
+        rev: Option<&str>,
+    ) -> AppResult<BisectStatus> {
+        let (word, rev_oid) = self.with_repo(repo_id, |repo| {
+            if !crate::git::bisect::in_progress(repo) {
+                return Err(AppError::NoBisect);
+            }
+            let (bad_term, good_term) = crate::git::bisect::terms(repo);
+            let word = crate::git::bisect::mark_word(mark, &bad_term, &good_term);
+            let rev_oid = match rev {
+                Some(r) => Some(crate::git::bisect::resolve(repo, r)?),
+                None => None,
+            };
+            Ok((word, rev_oid))
+        })?;
+        let workdir = self.repo_path(repo_id)?;
+        let mut args = vec![word];
+        args.extend(rev_oid);
+        crate::git::bisect::run(&workdir, &args)?;
+        self.bisect_status(repo_id)
+    }
+
+    fn bisect_reset(&self, repo_id: &RepoId) -> AppResult<()> {
+        self.with_repo(repo_id, |repo| {
+            if !crate::git::bisect::in_progress(repo) {
+                return Err(AppError::NoBisect);
+            }
+            Ok(())
+        })?;
+        let workdir = self.repo_path(repo_id)?;
+        crate::git::bisect::run(&workdir, &["reset".to_string()]).map(|_| ())
+    }
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
+
+/// Does this submodule match a `None` ("all") or `Some(path)` selector?
+///
+/// Path, not name: the frontend addresses submodules by the worktree path it
+/// displays, and the two differ whenever `.gitmodules` names a section something
+/// other than its path.
+fn submodule_matches(sm: &git2::Submodule<'_>, path: Option<&str>) -> bool {
+    match path {
+        None => true,
+        Some(p) => sm.path().to_string_lossy() == p,
+    }
+}
+
+/// Run `git -C <workdir> <args…>` prompt-less, returning stdout.
+///
+/// On failure returns whichever stream spoke — git writes some refusals to stdout
+/// — so a caller's classifier always has something to match on.
+///
+/// Sync + `std::process::Command` on purpose: every caller is already inside
+/// `spawn_blocking` (commands wrap the whole backend call), which is the same shape
+/// `run_rebase_flag` uses.
+fn run_git_capture(workdir: &Path, args: &[String]) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workdir)
+        .args(args)
+        // No tty: without this an auth-requiring remote hangs forever on a prompt
+        // nobody can see.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "true")
+        .env("SSH_ASKPASS", "true")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
 
 /// Build a `CommitInfo` from a git2 commit. The `refs` field is left empty;
 /// callers that need ref labels (e.g. `log`) fill it in separately.

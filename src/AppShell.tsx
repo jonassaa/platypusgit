@@ -27,6 +27,8 @@ import { FileHistoryScreen } from "@/screens/FileHistory";
 import { BlameScreen } from "@/screens/Blame";
 import { SettingsScreen } from "@/screens/Settings";
 import { PullsScreen } from "@/screens/Pulls";
+import { SubmodulesScreen } from "@/screens/Submodules";
+import { WorktreesScreen } from "@/screens/Worktrees";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { headUpstream, openRepoDialog } from "@/features/repo/ops";
@@ -48,6 +50,8 @@ import { CloneDialog } from "@/features/create/CloneDialog";
 import { CredentialDialog } from "@/features/auth/CredentialDialog";
 import { InitDialog } from "@/features/create/InitDialog";
 import { OperationBar } from "@/features/repo/OperationBar";
+import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
+import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { UpdateChip } from "@/features/update/UpdateChip";
 import { UpdatePanel } from "@/features/update/UpdatePanel";
@@ -80,6 +84,8 @@ type ScreenId =
   | "commitDiff"
   | "fileHistory"
   | "blame"
+  | "submodules"
+  | "worktrees"
   | "settings";
 
 // Deep views are reachable ONLY via a nav intent (no activity-bar entry). They
@@ -98,6 +104,8 @@ const ACTIVITY_ACTION: Record<string, ActionId> = {
   pulls: "nav.pulls",
   diff: "nav.diff",
   reflog: "nav.reflog",
+  submodules: "nav.submodules",
+  worktrees: "nav.worktrees",
 };
 
 // Tooltip shortcuts are derived live from the active preset via chordFor
@@ -113,6 +121,12 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "pulls", icon: "pullRequest", label: "Pull requests" },
   { id: "diff", icon: "fileCode", label: "Diff viewer" },
   { id: "reflog", icon: "clock", label: "Reflog" },
+  // #93. Both are empty for most repositories, and that is fine: a repo WITH
+  // submodules or linked worktrees had nowhere at all to see them before, and a
+  // conditional activity-bar entry would make the bar's geometry move under the
+  // user as they switch repositories.
+  { id: "submodules", icon: "submodule", label: "Submodules" },
+  { id: "worktrees", icon: "worktree", label: "Worktrees" },
 ];
 
 // (There is no RESTORABLE whitelist any more: nothing is restored. Launch always
@@ -137,6 +151,23 @@ export function AppShell() {
   // making it a dependency (so origin capture sees the pre-switch screen).
   const screenRef = React.useRef(screen);
   screenRef.current = screen;
+
+  // Hydrate the submodule and worktree lists once per opened repository (#93).
+  //
+  // Surfaces that only READ those stores — the palette's submodule/worktree rows,
+  // the Files-screen row menu — have to be accurate before the user has visited
+  // either screen. Both lists are cheap (`list_submodules` returns empty with no
+  // `.gitmodules`) and both `refresh` calls swallow their own errors.
+  //
+  // Deliberately an effect here rather than a module-level `useRepoStore.subscribe`
+  // inside those stores: they are reachable from `@/design`'s context-menu module,
+  // so a store-module side effect runs mid-cycle while `useRepoStore` is still
+  // uninitialized.
+  React.useEffect(() => {
+    if (!repo) return;
+    void useSubmodulesStore.getState().refresh();
+    void useWorktreesStore.getState().refresh();
+  }, [repo]);
 
   const autoFetchEnabled = useSettingsStore((s) => s.autoFetchEnabled);
   const autoFetchMinutes = useSettingsStore((s) => s.autoFetchMinutes);
@@ -258,6 +289,8 @@ export function AppShell() {
     commitDiff: <CommitDiffScreen />,
     fileHistory: <FileHistoryScreen />,
     blame: <BlameScreen />,
+    submodules: <SubmodulesScreen />,
+    worktrees: <WorktreesScreen />,
     settings: <SettingsScreen />,
   };
 

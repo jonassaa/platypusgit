@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { PGIcon, type IconName } from "./icons";
 import { pgConfirm, pgPrompt } from "./dialog";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
+import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 import { planCommitSelection } from "@/features/commits/planCommitSelection";
@@ -535,6 +537,8 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       },
     },
     { divider: true },
+    ...bisectSubmenu(commit?.sha ?? null),
+    { divider: true },
     {
       icon: "copy",
       label: "Copy SHA",
@@ -573,6 +577,184 @@ function byOid(commits: CommitInfo[]): Map<string, CommitInfo> {
 function ancestryLog(): CommitInfo[] {
   const { commits, branches } = useRepoStore.getState();
   return headAncestryOf(commits, branches);
+}
+
+/**
+ * The Bisect group for one commit's context menu (#93).
+ *
+ * Two different menus depending on state, because the same words mean different
+ * things: with no bisect open, "this commit is bad" STARTS one; with one open it
+ * marks a revision inside the search. Collapsed into a submenu so the bisect verbs
+ * cannot be mistaken for the ordinary commit ops around them — and because a
+ * misfired mark corrupts the search with no undo short of a reset.
+ *
+ * Deliberately no keyboard chords anywhere in this group: see the design doc.
+ */
+function bisectSubmenu(sha: string | null): ContextMenuItem[] {
+  const bisect = useRepoStore.getState().bisectStatus;
+  const short = sha ? sha.slice(0, 7) : "—";
+  const items: ContextMenuItem[] = bisect.inProgress
+    ? [
+        {
+          icon: "check",
+          label: `Mark ${short} as ${bisect.goodTerm}`,
+          onClick: () => {
+            if (sha) void useRepoStore.getState().bisectMark("Good", sha);
+          },
+        },
+        {
+          icon: "warn",
+          label: `Mark ${short} as ${bisect.badTerm}`,
+          onClick: () => {
+            if (sha) void useRepoStore.getState().bisectMark("Bad", sha);
+          },
+        },
+        {
+          icon: "chevronRight",
+          label: `Skip ${short}`,
+          onClick: () => {
+            if (sha) void useRepoStore.getState().bisectMark("Skip", sha);
+          },
+        },
+        { divider: true },
+        {
+          icon: "undo",
+          label: "Reset bisect",
+          onClick: () => void useRepoStore.getState().bisectReset(),
+        },
+      ]
+    : [
+        {
+          icon: "warn",
+          // Legal with no good revision yet: `git bisect start <bad>` waits for
+          // one, which is exactly "it's broken now, I'll find a working one".
+          label: `Start bisect — ${short} is bad`,
+          onClick: () => {
+            if (sha) void useRepoStore.getState().bisectStart(sha, []);
+          },
+        },
+        {
+          icon: "check",
+          label: `Start bisect — ${short} is good, HEAD is bad`,
+          onClick: () => {
+            const head = useRepoStore.getState().branches.find((b) => b.isHead);
+            const tip = head?.tip ?? useRepoStore.getState().commits[0]?.oid ?? null;
+            if (sha && tip) void useRepoStore.getState().bisectStart(tip, [sha]);
+          },
+        },
+      ];
+  return [{ icon: "bisect", label: "Bisect", submenu: items }];
+}
+
+// ═════════════════════════════════════════════════════════
+// SUBMODULES / WORKTREES (#93)
+// ═════════════════════════════════════════════════════════
+
+export function submoduleMenuItems(
+  submodule: { path?: string; state?: string; url?: string | null } | null,
+): ContextMenuItem[] {
+  const path = submodule?.path ?? "";
+  const uninitialized = submodule?.state === "Uninitialized";
+  const store = () => useSubmodulesStore.getState();
+  return [
+    { __menuTitle: path || "submodule" },
+    {
+      icon: "download",
+      label: "Initialize",
+      disabled: !path || !uninitialized,
+      onClick: () => void store().init(path),
+    },
+    {
+      icon: "sync",
+      label: "Update to recorded commit",
+      disabled: !path,
+      onClick: () => void store().update(path),
+    },
+    {
+      icon: "link",
+      label: "Sync URL from .gitmodules",
+      disabled: !path,
+      onClick: () => void store().sync(path),
+    },
+    { divider: true },
+    {
+      icon: "external",
+      // An uninitialized submodule has no repository on disk to open.
+      label: uninitialized
+        ? "Open as repository — not initialized"
+        : "Open as repository",
+      disabled: !path || uninitialized,
+      onClick: () => void store().openAsRepo(path),
+    },
+    {
+      icon: "copy",
+      label: "Copy URL",
+      disabled: !submodule?.url,
+      onClick: () => {
+        if (!submodule?.url) return;
+        navigator.clipboard?.writeText(submodule.url);
+        pgFlash("copied submodule url");
+      },
+    },
+  ];
+}
+
+export function worktreeMenuItems(
+  worktree: {
+    name?: string;
+    path?: string;
+    locked?: boolean;
+    prunable?: boolean;
+    isCurrent?: boolean;
+  } | null,
+): ContextMenuItem[] {
+  const name = worktree?.name ?? "";
+  const store = () => useWorktreesStore.getState();
+  return [
+    { __menuTitle: name || "worktree" },
+    {
+      icon: "folder",
+      label: worktree?.isCurrent
+        ? "Open as repository — already open"
+        : worktree?.prunable
+          ? "Open as repository — directory missing"
+          : "Open as repository",
+      disabled: !worktree?.path || !!worktree?.prunable || !!worktree?.isCurrent,
+      onClick: () => {
+        if (worktree?.path) void store().openAsRepo(worktree.path);
+      },
+    },
+    {
+      icon: "lock",
+      label: worktree?.locked ? "Unlock" : "Lock…",
+      disabled: !name,
+      onClick: () => {
+        const wt = store().items.find((w) => w.name === name);
+        if (wt) void store().toggleLock(wt);
+      },
+    },
+    {
+      icon: "copy",
+      label: "Copy path",
+      disabled: !worktree?.path,
+      onClick: () => {
+        if (!worktree?.path) return;
+        navigator.clipboard?.writeText(worktree.path);
+        pgFlash("copied worktree path");
+      },
+    },
+    { divider: true },
+    {
+      icon: "trash",
+      label: "Remove…",
+      danger: true,
+      disabled: !name,
+      // The store owns both gates (a confirm, then a type-the-name confirm if git
+      // refuses on uncommitted work), so this menu and the row's button cannot
+      // drift apart on the dangerous half.
+      onClick: () => void store().remove(name),
+    },
+  ];
 }
 
 
@@ -653,6 +835,23 @@ export function commitMultiMenuItems(oids: string[]): ContextMenuItem[] {
         const outcome = await runRebasePlanNow(rebasePlan);
         if (outcome === "done") pgFlash(`squashed ${n} commits`);
         else if (outcome === "paused") pgFlash("squash paused — see the Conflicts screen");
+      },
+    },
+    { divider: true },
+    {
+      icon: "bisect",
+      // Two selected commits ARE a bisect range, so this is the fastest way in:
+      // newest is where the bug is, oldest is where it wasn't.
+      label:
+        n === 2
+          ? "Start bisect (newest bad, oldest good)"
+          : `Start bisect — needs exactly 2 commits, ${n} selected`,
+      disabled: n !== 2 || useRepoStore.getState().bisectStatus.inProgress,
+      onClick: () => {
+        if (n !== 2) return;
+        void useRepoStore
+          .getState()
+          .bisectStart(plan.newestOid, [plan.oldestOid]);
       },
     },
     { divider: true },
@@ -1114,6 +1313,7 @@ export function fileMenuItems(
     embedded?: boolean;
     untracked?: boolean;
     conflicted?: boolean;
+    submodule?: boolean;
   } | null,
 ): ContextMenuItem[] {
   const staged = !!file?.staged;
@@ -1125,6 +1325,19 @@ export function fileMenuItems(
   // menu the user wants here, so this replaces it rather than extending it.
   if (file?.conflicted) return conflictMenuItems({ path });
   if (file?.embedded) return embeddedRepoMenuItems(path);
+  // A registered submodule (#93). Not a file: it has no diff, no blame and no
+  // history, so the ordinary file menu is a list of dead ends. Its own menu can
+  // init/update/sync it and open it as a repository. Looked up in the submodule
+  // store so state-dependent entries (Initialize) are gated correctly; a path we
+  // have not listed yet still gets the menu, with the state-specific rows
+  // disabled.
+  if (file?.submodule) {
+    const key = path.replace(/\/+$/, "");
+    const known = useSubmodulesStore
+      .getState()
+      .items.find((s) => s.path === key);
+    return submoduleMenuItems(known ?? { path: key });
+  }
   return [
     { __menuTitle: path || "file" },
     staged

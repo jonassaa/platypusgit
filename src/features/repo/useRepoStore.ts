@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type {
   AuthorOverride,
+  BisectMark,
+  BisectStatus,
   BranchInfo,
   CommitInfo,
   FileContent,
@@ -29,6 +31,10 @@ import {
   acceptOurs,
   acceptTheirs,
   addRemote,
+  bisectMark as bisectMarkFn,
+  bisectReset as bisectResetFn,
+  bisectStart as bisectStartFn,
+  bisectStatus as bisectStatusFn,
   appendGitignore as appendGitignoreFn,
   openInEditor as openInEditorFn,
   checkoutBranch,
@@ -168,6 +174,17 @@ interface RepoStoreState {
   error: AppError | null;
   repoState: GitRepoState;
   /**
+   * The bisect git itself is running, if any (#93).
+   *
+   * Lives beside `repoState`/`rebaseStatus` rather than in a feature store because
+   * `OperationBar` needs it on every screen, and because — unlike `rebaseStatus`,
+   * which is an in-process map — this is read from GIT's own `.git/BISECT_*`
+   * files, so it survives a restart and picks up a bisect started in a terminal.
+   * Polled on every refresh: the backend short-circuits on one `Path::exists()`,
+   * so a repository with no bisect pays nothing.
+   */
+  bisectStatus: BisectStatus;
+  /**
    * Live rebase progress AND, once a plan finishes, its retained
    * `lastCompleted` summary — the backend keeps that until acknowledged, so the
    * "N steps completed" line no longer needs a frontend cache that every abort
@@ -295,6 +312,16 @@ interface RepoStoreState {
   rebaseAbort: () => Promise<void>;
   /** Drop the backend's retained completed-rebase summary once it's been shown. */
   rebaseAcknowledge: () => Promise<void>;
+  // bisect (#93)
+  /** `good` may be empty — git then waits for a good revision. */
+  bisectStart: (bad: string, good?: string[]) => Promise<void>;
+  /** Mark `rev` (default HEAD) and let git pick the next revision to test. */
+  bisectMark: (mark: BisectMark, rev?: string | null) => Promise<void>;
+  /**
+   * `git bisect reset`. NOT `abortOperation`, whose hard reset to HEAD would
+   * strand the user on the detached commit they were last testing.
+   */
+  bisectReset: () => Promise<void>;
   appendGitignore: (pattern: string) => Promise<void>;
   openInEditor: (relativePath: string) => Promise<void>;
 }
@@ -306,6 +333,11 @@ function toAppError(e: unknown): AppError {
 /**
  * Run a network op; on an authentication failure, raise a credential challenge
  * whose retry re-runs the SAME op with credentials (#61 D5).
+ *
+ * Exported since #93: `git submodule update` and `git lfs fetch/pull` are network
+ * ops owned by their own feature stores, and they must use THIS credential flow
+ * rather than a second one — a private copy would raise a challenge the shared
+ * `CredentialDialog` does not answer.
  *
  * The first attempt is always prompt-less, so the common case (a credential
  * helper or ssh-agent already answers) behaves exactly as it did before. A
@@ -363,6 +395,21 @@ const DEFAULT_REBASE_STATUS: RebaseStatus = {
   pauseReason: null,
 };
 
+/** No bisect, with git's default terms. Mirrors Rust `BisectStatus::idle()`. */
+const DEFAULT_BISECT_STATUS: BisectStatus = {
+  inProgress: false,
+  startRef: null,
+  badTerm: "bad",
+  goodTerm: "good",
+  currentOid: null,
+  remaining: null,
+  steps: null,
+  firstBadOid: null,
+  goodCount: 0,
+  badCount: 0,
+  skippedCount: 0,
+};
+
 export const useRepoStore = create<RepoStoreState>((set, get) => {
   const setActivity = (key: keyof RepoActivity, label: string | null) => {
     set((s) => {
@@ -387,6 +434,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       commits: [],
       searchResults: null,
       commitFilter: {},
+      bisectStatus: DEFAULT_BISECT_STATUS,
       logRef: LOG_REF_ALL,
       commitCursor: null,
       searchCursor: null,
@@ -413,6 +461,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   error: null,
   repoState: "Clean",
   rebaseStatus: DEFAULT_REBASE_STATUS,
+  bisectStatus: DEFAULT_BISECT_STATUS,
   activity: {},
 
   async openRepo(path) {
@@ -543,8 +592,17 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     set({ loading: true, error: null });
     const logRef = get().logRef;
     try {
-      const [status, branches, tags, stashes, remotes, commitPage, repoState, rebaseStatus] =
-        await Promise.all([
+      const [
+        status,
+        branches,
+        tags,
+        stashes,
+        remotes,
+        commitPage,
+        repoState,
+        rebaseStatus,
+        bisectStatus,
+      ] = await Promise.all([
           getStatus(repo.id),
           listBranches(repo.id),
           listTags(repo.id),
@@ -560,6 +618,12 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           }),
           repoStateFn(repo.id),
           rebaseStatusFn(repo.id),
+          // Degrades instead of failing the refresh. `bisect_status` shells out to
+          // `git rev-list --bisect-vars` for its progress numbers, and a repository
+          // where that cannot run must still show its status, branches and log —
+          // the same reasoning as the browsed-ref fallback above. The cost of the
+          // fallback is a bar without step counts, not a broken screen.
+          bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
         ]);
       set({
         status,
@@ -572,6 +636,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         commitCursor: commitPage.nextCursor,
         repoState,
         rebaseStatus,
+        bisectStatus,
         loading: false,
       });
       // Keep an active search in sync with the refreshed history.
@@ -589,11 +654,16 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     set({ error: null });
     try {
-      const [status, repoState] = await Promise.all([
+      // `bisect_status` joins the pair here because the operation bar's bisect
+      // actions must stay live after an index op too. The backend short-circuits
+      // on a single `Path::exists()`, so this is free unless a bisect is open.
+      const [status, repoState, bisectStatus] = await Promise.all([
         getStatus(repo.id),
         repoStateFn(repo.id),
+        // Same degrade-don't-fail policy as `refreshAll`.
+        bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
       ]);
-      set({ status, repoState });
+      set({ status, repoState, bisectStatus });
     } catch (e) {
       set({ error: toAppError(e) });
     }
@@ -617,6 +687,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       commitFilter: {},
       logRef: LOG_REF_ALL,
       searching: false,
+      bisectStatus: DEFAULT_BISECT_STATUS,
       error: null,
     });
   },
@@ -1417,6 +1488,48 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // here would re-walk the log on every visit to the Rebase screen.
       set((s) => ({ rebaseStatus: { ...s.rebaseStatus, lastCompleted: null } }));
     } catch (e) {
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async bisectStart(bad, good = []) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      const status = await bisectStartFn(repo.id, bad, good);
+      set({ bisectStatus: status });
+      // A bisect checks out a revision to test, so the whole world moved.
+      await get().refreshAll();
+    } catch (e) {
+      // Danger-op convention: refresh first, error last, so refreshAll's own
+      // `error: null` reset cannot batch the banner away.
+      await get().refreshAll();
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async bisectMark(mark, rev = null) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      const status = await bisectMarkFn(repo.id, mark, rev);
+      set({ bisectStatus: status });
+      await get().refreshAll();
+    } catch (e) {
+      await get().refreshAll();
+      set({ error: toAppError(e) });
+    }
+  },
+
+  async bisectReset() {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await bisectResetFn(repo.id);
+      set({ bisectStatus: DEFAULT_BISECT_STATUS });
+      await get().refreshAll();
+    } catch (e) {
+      await get().refreshAll();
       set({ error: toAppError(e) });
     }
   },

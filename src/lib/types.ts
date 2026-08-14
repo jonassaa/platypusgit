@@ -61,6 +61,18 @@ export interface FileStatus {
    * own kind of thing rather than as a file.
    */
   embedded: boolean;
+  /**
+   * True when this entry is a submodule the repository DECLARES (a `.gitmodules`
+   * entry with a URL) — the exact complement of `embedded`, and mutually
+   * exclusive with it by construction.
+   *
+   * Its gitlink is intentional, so staging it is an ordinary pointer update; but
+   * it still has no diff, no blame and no history, so the row is rendered as a
+   * submodule rather than as a directory nobody can explain (#93).
+   *
+   * Optional only so the many `FileStatus` fixtures in tests need not restate it.
+   */
+  submodule?: boolean;
 }
 
 export interface CommitInfo {
@@ -195,6 +207,26 @@ export interface FileDiff {
   additions: number;
   deletions: number;
   hunks: DiffHunk[];
+  /**
+   * Set when this diff is a git-LFS **pointer** change (#93).
+   *
+   * A pointer is a ≤3-line text file, so `binary` is false and rendering the
+   * hunks would claim "2 lines changed" for a multi-megabyte asset. Gate text
+   * rendering on `isTextualDiff` (`lib/derive.ts`) rather than on `binary` alone.
+   */
+  lfs?: LfsDiff | null;
+}
+
+/** The two sides of an LFS pointer change; either is null for an add/delete. */
+export interface LfsDiff {
+  old: LfsPointer | null;
+  new: LfsPointer | null;
+}
+
+/** A parsed LFS pointer file. `oid` carries no `sha256:` prefix. */
+export interface LfsPointer {
+  oid: string;
+  size: number;
 }
 
 export interface FileContent {
@@ -451,4 +483,99 @@ export interface ForgeCheckoutRequest {
   localBranch: string;
   /** The caller confirmed overwriting an existing local branch. */
   force: boolean;
+}
+
+// ─── Submodules (#93) ─────────────────────────────────────────────────────────
+
+/**
+ * Mirrors Rust `SubmoduleState`. Derived in priority order: uninitialized
+ * outranks everything, then a pointer mismatch, then dirt inside the submodule.
+ */
+export type SubmoduleState =
+  /** Declared in `.gitmodules`, never checked out. */
+  | "Uninitialized"
+  /** At the recorded commit and clean. */
+  | "UpToDate"
+  /** Right commit, dirty inside. */
+  | "Modified"
+  /** Checked-out commit differs from the recorded gitlink. */
+  | "OutOfSync";
+
+export interface SubmoduleInfo {
+  name: string;
+  path: string;
+  url: string | null;
+  branch: string | null;
+  /** The gitlink the superproject records. */
+  headOid: string | null;
+  /** The commit checked out in the submodule; null when uninitialized. */
+  workdirOid: string | null;
+  state: SubmoduleState;
+}
+
+// ─── Linked worktrees (#93) ───────────────────────────────────────────────────
+
+export interface WorktreeInfo {
+  name: string;
+  path: string;
+  branch: string | null;
+  headOid: string | null;
+  locked: boolean;
+  lockReason: string | null;
+  prunable: boolean;
+  /** True for the worktree the app currently has open. */
+  isCurrent: boolean;
+}
+
+/** Mirrors Rust `WorktreeBranch` (`#[serde(tag = "kind", content = "name")]`). */
+export type WorktreeBranch =
+  | { kind: "new"; name: string }
+  | { kind: "existing"; name: string };
+
+// ─── git-LFS (#93) ────────────────────────────────────────────────────────────
+
+export interface LfsStatus {
+  /** `git lfs version` ran. `false` is a STATE — disable, don't error. */
+  installed: boolean;
+  version: string | null;
+  /** The repo declares `filter=lfs`, answerable with the binary missing. */
+  inUse: boolean;
+  patterns: string[];
+  /** LFS paths in the worktree; empty when the binary is missing. */
+  files: LfsFile[];
+}
+
+export interface LfsFile {
+  path: string;
+  oid: string;
+  /** True when the real object is in the worktree, false when still a pointer. */
+  materialized: boolean;
+}
+
+// ─── Bisect (#93) ─────────────────────────────────────────────────────────────
+
+export type BisectMark = "Good" | "Bad" | "Skip";
+
+/**
+ * A bisect in progress, read from GIT's own `.git/BISECT_*` state — there is no
+ * parallel state file, so this survives a restart and picks up a bisect started
+ * in a terminal. Mirrors Rust `BisectStatus`.
+ */
+export interface BisectStatus {
+  inProgress: boolean;
+  /** Where `git bisect reset` returns to. */
+  startRef: string | null;
+  /** "bad"/"good" unless the bisect was started with custom terms. */
+  badTerm: string;
+  goodTerm: string;
+  currentOid: string | null;
+  /** git's own `bisect_nr`: revisions left after this one. */
+  remaining: number | null;
+  /** git's own `bisect_steps` estimate. */
+  steps: number | null;
+  /** Set once the search converges. HEAD is NOT on this commit. */
+  firstBadOid: string | null;
+  goodCount: number;
+  badCount: number;
+  skippedCount: number;
 }

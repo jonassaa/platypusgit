@@ -7,6 +7,7 @@ interface MutableNode {
   status?: string;
   children?: MutableNode[];
   defaultExpanded?: boolean;
+  submodule?: boolean;
 }
 
 /**
@@ -60,7 +61,14 @@ export function buildStatusTree(
       let next = cursor.children.find((c) => c.name === part);
       if (!next) {
         next = isLeaf
-          ? { name: part, status: hasChange ? statusMark(f) : undefined }
+          ? {
+              name: part,
+              status: hasChange ? statusMark(f) : undefined,
+              // A gitlink leaf renders as a submodule rather than as a nameless
+              // directory (#93). Only leaves: git does not recurse into one, so a
+              // submodule never has children in this tree.
+              submodule: f.submodule || undefined,
+            }
           : { name: part, children: [] };
         cursor.children.push(next);
       }
@@ -111,6 +119,7 @@ export function buildStatusList(files: FileStatus[]): PGFileTreeNode[] {
         // would disagree about one row's key.
         name: f.path.replace(/\/+$/, ""),
         status: hasChange ? statusMark(f) : undefined,
+        submodule: f.submodule || undefined,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));

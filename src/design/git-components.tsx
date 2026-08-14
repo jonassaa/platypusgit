@@ -21,7 +21,12 @@ import {
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
 import { GRAPH_PAD, commitRowGrid, laneX } from "./graph-geometry";
 import type { WindowRange } from "@/lib/useWindowedList";
-import type { RebaseAction } from "@/lib/types";
+import type {
+  RebaseAction,
+  SubmoduleInfo,
+  SubmoduleState,
+  WorktreeInfo,
+} from "@/lib/types";
 
 // ═════════════════════════════════════════════════════════
 // FILE TREE
@@ -33,6 +38,13 @@ export interface PGFileTreeNode {
   defaultExpanded?: boolean;
   children?: PGFileTreeNode[];
   extra?: ReactNode;
+  /**
+   * This leaf is a registered submodule (#93), not a file and not a folder.
+   * It gets the submodule glyph, because as an extension-less directory name it
+   * would otherwise resolve to the generic file icon — the "mystery directory"
+   * this flag exists to end.
+   */
+  submodule?: boolean;
 }
 
 /**
@@ -47,7 +59,7 @@ export interface PGFileTreeRowProps {
   name: string;
   path?: string;
   indent?: number;
-  kind?: "file" | "folder";
+  kind?: "file" | "folder" | "submodule";
   status?: string;
   expanded?: boolean;
   hasChildren?: boolean;
@@ -89,7 +101,11 @@ export function PGFileTreeRow({
   const glyph =
     kind === "folder"
       ? { icon: (expanded ? "folderOpen" : "folder") as IconName, color: FOLDER_ICON_COLOR }
-      : fileIconSpec(path ?? name);
+      : kind === "submodule"
+        ? // A submodule is a gitlink: not a file (no diff, no blame, no history)
+          // and not a folder (git will not recurse into it).
+          { icon: "submodule" as IconName, color: "var(--accent)" }
+        : fileIconSpec(path ?? name);
   return (
     <div
       data-path={path}
@@ -298,7 +314,9 @@ export function PGFileTree({
           name={f.node.name}
           path={f.key.replace(/^\//, "")}
           indent={f.indent}
-          kind={f.hasChildren ? "folder" : "file"}
+          kind={
+            f.hasChildren ? "folder" : f.node.submodule ? "submodule" : "file"
+          }
           status={f.node.status}
           hideStatus={!showStatus}
           stageState={rowStage[i]}
@@ -1952,6 +1970,280 @@ export function PGRemoteRow({
         </PGButton>
         <PGButton size="sm" variant="primary" icon="push" onClick={onPush}>
           Push
+        </PGButton>
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════
+// SUBMODULES (#93)
+// ═════════════════════════════════════════════════════════
+
+/** State pill copy + tone. Exported so the Submodules screen and its tests
+ *  read the same table instead of duplicating the strings. */
+export const SUBMODULE_STATE_LABEL: Record<
+  SubmoduleState,
+  { label: string; tone: "default" | "accent" | "success" | "warn" | "danger" | "violet" | "muted"; hint: string }
+> = {
+  Uninitialized: {
+    label: "not initialized",
+    tone: "muted",
+    hint: "Declared in .gitmodules but never checked out. Update to fetch it.",
+  },
+  UpToDate: {
+    label: "up to date",
+    tone: "success",
+    hint: "Checked out at the commit this repository records.",
+  },
+  Modified: {
+    label: "modified",
+    tone: "warn",
+    hint: "At the recorded commit, but with uncommitted changes inside.",
+  },
+  OutOfSync: {
+    label: "out of sync",
+    tone: "danger",
+    hint: "Checked out at a different commit than this repository records.",
+  },
+};
+
+export interface PGSubmoduleRowProps {
+  submodule: SubmoduleInfo;
+  onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
+  onInit?: () => void;
+  onUpdate?: () => void;
+  onOpen?: () => void;
+  busy?: boolean;
+}
+
+export function PGSubmoduleRow({
+  submodule,
+  onContextMenu,
+  onInit,
+  onUpdate,
+  onOpen,
+  busy,
+}: PGSubmoduleRowProps) {
+  const state = SUBMODULE_STATE_LABEL[submodule.state];
+  const recorded = submodule.headOid?.slice(0, 7) ?? "—";
+  const checkedOut = submodule.workdirOid?.slice(0, 7) ?? "—";
+  const drifted = submodule.state === "OutOfSync";
+
+  return (
+    <div
+      data-testid="submodule-row"
+      data-path={submodule.path}
+      data-state={submodule.state}
+      onContextMenu={onContextMenu}
+      title={state.hint}
+      style={{
+        // Density-aware (issue #70): padding-sized row, so half the step per side.
+        padding: "calc(10px + var(--row-step) / 2) 10px",
+        background: "var(--bg-1)",
+        border: "1px solid var(--border-0)",
+        borderRadius: "var(--r-3)",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        marginBottom: 6,
+      }}
+    >
+      <PGIcon name="submodule" size={14} style={{ color: "var(--accent)" }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontWeight: 600, fontSize: "var(--fs-13)" }}>
+            {submodule.path}
+          </span>
+          <PGBadge tone={state.tone}>{state.label}</PGBadge>
+          {submodule.branch && (
+            <PGBranchPill name={submodule.branch} tone="violet" />
+          )}
+        </div>
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-11)",
+            color: "var(--fg-2)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {submodule.url ?? "(no url)"}
+        </div>
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-11)",
+            color: "var(--fg-2)",
+            display: "flex",
+            gap: 10,
+          }}
+        >
+          <span>recorded {recorded}</span>
+          {/* Only worth showing when it differs — otherwise it is the same sha
+              twice, which reads as noise. */}
+          {drifted && (
+            <span data-testid="submodule-drift" style={{ color: "var(--git-modified)" }}>
+              checked out {checkedOut}
+            </span>
+          )}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {submodule.state === "Uninitialized" && (
+          <PGButton
+            size="sm"
+            variant="outline"
+            icon="download"
+            data-testid="submodule-init"
+            onClick={onInit}
+            loading={busy}
+          >
+            Init
+          </PGButton>
+        )}
+        <PGButton
+          size="sm"
+          variant="outline"
+          icon="sync"
+          data-testid="submodule-update"
+          onClick={onUpdate}
+          loading={busy}
+        >
+          Update
+        </PGButton>
+        <PGButton
+          size="sm"
+          variant="ghost"
+          icon="external"
+          data-testid="submodule-open"
+          onClick={onOpen}
+          // An uninitialized submodule has no repository on disk to open.
+          disabled={submodule.state === "Uninitialized"}
+        >
+          Open
+        </PGButton>
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════
+// LINKED WORKTREES (#93)
+// ═════════════════════════════════════════════════════════
+
+export interface PGWorktreeRowProps {
+  worktree: WorktreeInfo;
+  onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
+  onOpen?: () => void;
+  onRemove?: () => void;
+  onToggleLock?: () => void;
+  busy?: boolean;
+}
+
+export function PGWorktreeRow({
+  worktree,
+  onContextMenu,
+  onOpen,
+  onRemove,
+  onToggleLock,
+  busy,
+}: PGWorktreeRowProps) {
+  return (
+    <div
+      data-testid="worktree-row"
+      data-name={worktree.name}
+      data-current={worktree.isCurrent ? "1" : undefined}
+      onContextMenu={onContextMenu}
+      style={{
+        padding: "calc(10px + var(--row-step) / 2) 10px",
+        background: "var(--bg-1)",
+        // The worktree you are standing in gets the accent edge — without it the
+        // list is several near-identical paths and "which one am I in" is a guess.
+        border: worktree.isCurrent
+          ? "1px solid oklch(from var(--accent) l c h / 0.55)"
+          : "1px solid var(--border-0)",
+        borderRadius: "var(--r-3)",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        marginBottom: 6,
+      }}
+    >
+      <PGIcon
+        name="worktree"
+        size={14}
+        style={{ color: worktree.isCurrent ? "var(--accent)" : "var(--fg-2)" }}
+      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontWeight: 600, fontSize: "var(--fs-13)" }}>
+            {worktree.name}
+          </span>
+          {worktree.branch ? (
+            <PGBranchPill name={worktree.branch} tone="accent" />
+          ) : (
+            <PGBadge tone="muted">detached</PGBadge>
+          )}
+          {worktree.isCurrent && <PGBadge tone="accent">this window</PGBadge>}
+          {worktree.locked && (
+            <PGBadge tone="warn" icon="lock">
+              {worktree.lockReason ? `locked · ${worktree.lockReason}` : "locked"}
+            </PGBadge>
+          )}
+          {worktree.prunable && (
+            <PGBadge tone="danger" icon="warn">
+              directory missing
+            </PGBadge>
+          )}
+        </div>
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-11)",
+            color: "var(--fg-2)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {worktree.path}
+          {worktree.headOid ? ` · ${worktree.headOid.slice(0, 7)}` : ""}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <PGButton
+          size="sm"
+          variant="outline"
+          icon="folder"
+          data-testid="worktree-open"
+          onClick={onOpen}
+          // Nothing to open once the directory is gone.
+          disabled={worktree.prunable}
+        >
+          Open
+        </PGButton>
+        <PGButton
+          size="sm"
+          variant="ghost"
+          icon="lock"
+          data-testid="worktree-lock"
+          onClick={onToggleLock}
+        >
+          {worktree.locked ? "Unlock" : "Lock"}
+        </PGButton>
+        <PGButton
+          size="sm"
+          variant="ghost"
+          tone="danger"
+          icon="trash"
+          data-testid="worktree-remove"
+          onClick={onRemove}
+          loading={busy}
+        >
+          Remove
         </PGButton>
       </div>
     </div>

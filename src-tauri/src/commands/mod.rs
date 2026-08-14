@@ -1,3 +1,4 @@
+pub mod bisect;
 pub mod branches;
 pub mod cli;
 pub mod commits;
@@ -6,9 +7,12 @@ pub mod create;
 pub mod diff;
 pub mod forge;
 pub mod history;
+pub mod lfs;
 pub mod net;
 pub mod rebase;
 pub mod reflog;
 pub mod repo;
 pub mod stash;
+pub mod submodule;
 pub mod update;
+pub mod worktree;

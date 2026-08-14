@@ -275,6 +275,105 @@ pub fn merge_history(tr: &TempRepo) -> MergeHistory {
     MergeHistory { root, a, f, c, m }
 }
 
+/// Run `git` in `cwd`, panicking with git's own stderr on failure.
+///
+/// The fixtures below build submodules and worktrees, and both are far easier to
+/// set up with the real CLI than by hand — but only in FIXTURE code: the ops under
+/// test always go through the backend.
+pub fn git_in(cwd: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()
+        .expect("spawn git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+/// True when `git` can run `git lfs`. LFS tests that need the real binary are
+/// conditional on this — it is not installed everywhere, and a test suite that
+/// only passes on machines that happen to have it is worse than one that says so.
+pub fn lfs_installed() -> bool {
+    std::process::Command::new("git")
+        .args(["lfs", "version"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// An outer repository with a real submodule checked out at `vendor/inner`.
+///
+/// Both repos are tempdirs, and `inner` is held so it outlives the submodule's
+/// `.git` gitlink. `protocol.file.allow=always` is required: git ≥ 2.38 refuses the
+/// `file` transport for submodules by default (CVE-2022-39253), and every
+/// local-path submodule fixture needs the opt-in.
+pub struct SubmoduleFixture {
+    pub outer: TempRepo,
+    pub inner: TempRepo,
+}
+
+impl SubmoduleFixture {
+    pub const SUB_PATH: &'static str = "vendor/inner";
+
+    /// Remove the submodule's checkout and its `.git/config` entry, so it reads
+    /// back as `Uninitialized` — the state a fresh clone without
+    /// `--recurse-submodules` leaves behind.
+    pub fn deinit(&self) {
+        git_in(
+            self.outer.path(),
+            &["submodule", "deinit", "-f", Self::SUB_PATH],
+        );
+    }
+}
+
+pub fn with_submodule() -> SubmoduleFixture {
+    let inner = TempRepo::with_initial_commit("inner v1\n");
+    let outer = TempRepo::with_initial_commit("outer\n");
+    let inner_path = inner.path().to_string_lossy().to_string();
+    git_in(
+        outer.path(),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            &inner_path,
+            SubmoduleFixture::SUB_PATH,
+        ],
+    );
+    git_in(outer.path(), &["commit", "-m", "add submodule"]);
+    SubmoduleFixture { inner, outer }
+}
+
+/// A directory path in its own tempdir for a linked worktree to be created AT.
+///
+/// The path itself must not exist yet (`worktree_add` refuses an existing path), so
+/// this hands back a child of the tempdir. The `TempDir` is returned alongside and
+/// must be held for as long as the worktree is needed — dropping it deletes the
+/// worktree behind git's back, which is exactly what the prune test wants and
+/// exactly what every other test must avoid.
+///
+/// Never, ever point a worktree test at the repository it is running in: this
+/// project is developed through `.claude/worktrees/`, and a `worktree_remove` aimed
+/// at the wrong path would delete a live checkout.
+pub fn worktree_target(label: &str) -> (TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join(label);
+    (dir, path)
+}
+
 /// A bare git repository in a tempdir — acts as a "remote" for network tests.
 pub struct BareTempRepo {
     pub dir: TempDir,

@@ -1,6 +1,7 @@
 import type {
   BranchInfo,
   CommitInfo,
+  FileDiff,
   FileStatus,
   StatusFlag,
 } from "./types";
@@ -45,6 +46,20 @@ export function isUnstaged(s: FileStatus): boolean {
  */
 export function isConflicted(s: FileStatus): boolean {
   return s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted";
+}
+
+/**
+ * Should this diff be rendered as text at all? (#93)
+ *
+ * Two ways it should not: libgit2 called the blob binary, or it is a git-LFS
+ * **pointer** change. The second is why this exists as a helper rather than a
+ * `!diff.binary` test at each of the four diff surfaces — a pointer IS text, so
+ * `binary` is honestly false, and rendering its hunks claims "2 lines changed"
+ * for a multi-megabyte asset. Every surface must agree, or the same file reads
+ * differently depending on which pane you opened it in.
+ */
+export function isTextualDiff(diff: FileDiff | null | undefined): boolean {
+  return !!diff && !diff.binary && !diff.lfs;
 }
 
 /**
