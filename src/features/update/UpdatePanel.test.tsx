@@ -9,7 +9,8 @@ import type { Platform } from "@/lib/platform";
 import type { UpdateInfo } from "@/lib/types";
 
 // Mutable so BOTH platform arms are reachable. A module-level `() => "macos"`
-// made the Linux/.deb notify case (no brew hint) impossible to express.
+// made the Linux/.deb notify case impossible to express, which is exactly the
+// arm that shipped without a hint.
 const platformMock = vi.hoisted(() => ({ value: "macos" as Platform }));
 vi.mock("@/lib/platform", () => ({
   usePlatform: () => platformMock.value,
@@ -72,26 +73,31 @@ describe("UpdatePanel — capability + platform arms", () => {
     expect(screen.getByTestId("pg-update-action")).toHaveTextContent(
       /view release/i,
     );
-    expect(screen.getByTestId("pg-update-brew-hint")).toHaveTextContent(
+    expect(screen.getByTestId("pg-update-pkg-hint")).toHaveTextContent(
       "brew upgrade platypusgit",
     );
   });
 
-  it("notify on Linux (.deb install) offers 'View release' with NO brew hint", () => {
+  it("notify on Linux (.deb install) offers 'View release' AND the apt command", () => {
+    // Regression: this arm used to render no hint at all, so a .deb user got a
+    // "View release" button with no hint of why in-app install was unavailable.
     platformMock.value = "linux";
     seed({ capability: "notify" });
     render(<UpdatePanel />);
     expect(screen.getByTestId("pg-update-action")).toHaveTextContent(
       /view release/i,
     );
-    expect(screen.queryByTestId("pg-update-brew-hint")).toBeNull();
+    expect(screen.getByTestId("pg-update-pkg-hint")).toHaveTextContent(
+      "sudo apt install ./PlatypusGit_amd64.deb",
+    );
+    expect(screen.getByText(/package-manager installs/i)).toBeInTheDocument();
   });
 
-  it("self-update offers 'Install' and never the brew hint", () => {
+  it("self-update offers 'Install' and never a package-manager hint", () => {
     seed({ capability: "self-update" });
     render(<UpdatePanel />);
     expect(screen.getByTestId("pg-update-action")).toHaveTextContent(/install/i);
-    expect(screen.queryByTestId("pg-update-brew-hint")).toBeNull();
+    expect(screen.queryByTestId("pg-update-pkg-hint")).toBeNull();
   });
 });
 

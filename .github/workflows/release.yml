@@ -166,7 +166,7 @@ jobs:
     needs: version
     runs-on: windows-latest
     outputs:
-      sig: ${{ steps.sig.outputs.sig }}
+      msi_sig: ${{ steps.sig.outputs.msi_sig }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -243,13 +243,14 @@ jobs:
             echo "Updater signature file $sig_file is empty" >&2
             exit 1
           fi
-          echo "sig=$sig" >> "$GITHUB_OUTPUT"
+          echo "msi_sig=$sig" >> "$GITHUB_OUTPUT"
 
   linux:
     needs: version
     runs-on: ubuntu-22.04
     outputs:
-      sig: ${{ steps.sig.outputs.sig }}
+      appimage_sig: ${{ steps.sig.outputs.appimage_sig }}
+      deb_sig: ${{ steps.sig.outputs.deb_sig }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -321,22 +322,36 @@ jobs:
             src-tauri/target/release/bundle/appimage/PlatypusGit_amd64.AppImage
           fail_on_unmatched_files: true
 
-      - name: Read updater signature
+      # BOTH Linux bundles are updater artifacts, so both get a signature.
+      # tauri-cli's `sign_updaters` has covered Deb (and Rpm) alongside
+      # AppImage/msi/nsis since 2.10 — the .deb.sig has therefore been produced
+      # on every release build already; we just never read it, which is why
+      # latest.json had no `linux-x86_64-deb` entry.
+      #
+      # minisign signs CONTENT, not filenames, so the stable-name `cp` above
+      # leaves both signatures valid for the renamed copies we attach.
+      - name: Read updater signatures
         id: sig
         run: |
           set -euo pipefail
-          appimage_dir="src-tauri/target/release/bundle/appimage"
-          sig_file="$(ls "$appimage_dir"/*.AppImage.sig 2>/dev/null | head -n1 || true)"
-          if [ -z "$sig_file" ] || [ ! -f "$sig_file" ]; then
-            echo "No .AppImage.sig produced — is TAURI_SIGNING_PRIVATE_KEY set?" >&2
-            exit 1
-          fi
-          sig="$(cat "$sig_file")"
-          if [ -z "$sig" ]; then
-            echo "Updater signature file $sig_file is empty" >&2
-            exit 1
-          fi
-          echo "sig=$sig" >> "$GITHUB_OUTPUT"
+          # Called directly (never in a $(...) subshell) so `exit 1` aborts the
+          # job rather than just the substitution.
+          emit() {
+            name="$1"; dir="$2"; pattern="$3"
+            file="$(ls "$dir"/$pattern 2>/dev/null | head -n1 || true)"
+            if [ -z "$file" ] || [ ! -f "$file" ]; then
+              echo "No $pattern produced in $dir — is TAURI_SIGNING_PRIVATE_KEY set?" >&2
+              exit 1
+            fi
+            sig="$(cat "$file")"
+            if [ -z "$sig" ]; then
+              echo "Updater signature file $file is empty" >&2
+              exit 1
+            fi
+            echo "$name=$sig" >> "$GITHUB_OUTPUT"
+          }
+          emit appimage_sig src-tauri/target/release/bundle/appimage '*.AppImage.sig'
+          emit deb_sig      src-tauri/target/release/bundle/deb      '*.deb.sig'
 
   # Pin the Homebrew cask to this release: rewrite version + sha256 in
   # jonassaa/homebrew-platypusgit and commit straight to that tap's main.
@@ -406,6 +421,23 @@ jobs:
   # Publish the updater manifest so tauri-plugin-updater can verify + install.
   # Points at the stable-named release assets. macOS is intentionally omitted
   # (notify-only). Skipped for plain prereleases, same gate as bump-cask.
+  #
+  # KEY LAYOUT. The plugin builds its lookup key as `{os}-{arch}-{installer}`
+  # and searches [`{os}-{arch}-{installer}`, `{os}-{arch}`] in that order, where
+  # `installer` comes from the bundle type patched into the binary at bundle
+  # time (deb / rpm / appimage / nsis / msi / app). So we publish BOTH:
+  #
+  #   - bundle-specific keys, which is what any current client actually matches.
+  #     Without `linux-x86_64-deb` a .deb install falls through to the generic
+  #     `linux-x86_64` key and is handed an *AppImage* as its payload.
+  #   - the generic `{os}-{arch}` keys, for pre-2.10 clients that don't compute
+  #     an installer suffix at all.
+  #
+  # The generic Linux key can safely stay pointed at the AppImage: every client
+  # old enough to only look there is necessarily an AppImage install, because
+  # `update::capability` has always gated Linux self-update behind the APPIMAGE
+  # env var (a .deb install gets `notify` and never invokes the plugin). Same
+  # reasoning for `windows-x86_64` -> msi, the only Windows bundle we ship.
   updater-manifest:
     needs: [version, windows, linux]
     runs-on: ubuntu-latest
@@ -417,8 +449,9 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
           TAG: ${{ needs.version.outputs.tag }}
-          WIN_SIG: ${{ needs.windows.outputs.sig }}
-          LIN_SIG: ${{ needs.linux.outputs.sig }}
+          MSI_SIG: ${{ needs.windows.outputs.msi_sig }}
+          APPIMAGE_SIG: ${{ needs.linux.outputs.appimage_sig }}
+          DEB_SIG: ${{ needs.linux.outputs.deb_sig }}
           RELEASE_BODY: ${{ github.event.release.body }}
           RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
         run: |
@@ -426,7 +459,7 @@ jobs:
           # An empty signature publishes `"signature": ""`, which every client
           # rejects at install time — fail loudly instead (same guard shape as
           # bump-cask's sha256 check).
-          for name in WIN_SIG LIN_SIG; do
+          for name in MSI_SIG APPIMAGE_SIG DEB_SIG; do
             if [ -z "${!name}" ]; then
               echo "Empty updater signature ($name) — refusing to publish latest.json" >&2
               exit 1
@@ -449,17 +482,22 @@ jobs:
             --arg version "$VERSION" \
             --arg notes "$notes" \
             --arg pub_date "$pub_date" \
-            --arg win_sig "$WIN_SIG" \
-            --arg win_url "${base}/PlatypusGit_x64.msi" \
-            --arg lin_sig "$LIN_SIG" \
-            --arg lin_url "${base}/PlatypusGit_amd64.AppImage" \
+            --arg msi_sig "$MSI_SIG" \
+            --arg msi_url "${base}/PlatypusGit_x64.msi" \
+            --arg appimage_sig "$APPIMAGE_SIG" \
+            --arg appimage_url "${base}/PlatypusGit_amd64.AppImage" \
+            --arg deb_sig "$DEB_SIG" \
+            --arg deb_url "${base}/PlatypusGit_amd64.deb" \
             '{
               version: $version,
               notes: $notes,
               pub_date: $pub_date,
               platforms: {
-                "windows-x86_64": { signature: $win_sig, url: $win_url },
-                "linux-x86_64": { signature: $lin_sig, url: $lin_url }
+                "windows-x86_64":        { signature: $msi_sig,      url: $msi_url },
+                "windows-x86_64-msi":    { signature: $msi_sig,      url: $msi_url },
+                "linux-x86_64":          { signature: $appimage_sig, url: $appimage_url },
+                "linux-x86_64-appimage": { signature: $appimage_sig, url: $appimage_url },
+                "linux-x86_64-deb":      { signature: $deb_sig,      url: $deb_url }
               }
             }' > latest.json
           echo "--- latest.json ---"

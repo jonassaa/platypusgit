@@ -2,6 +2,7 @@ import React from "react";
 
 import { PGButton, PGIconButton } from "@/design";
 import { usePlatform } from "@/lib/platform";
+import { packageHint } from "./packageHint";
 import { useUpdateStore } from "./useUpdateStore";
 
 /** Dismissible panel with version, notes, and the primary update action. */
@@ -40,6 +41,7 @@ export function UpdatePanel() {
   if (!panelOpen || !info || !info.available) return null;
 
   const selfUpdate = capability === "self-update";
+  const hint = packageHint(capability, platform);
 
   return (
     <div
@@ -102,19 +104,27 @@ export function UpdatePanel() {
         </pre>
       )}
 
-      {!selfUpdate && platform === "macos" && (
-        <code
-          data-testid="pg-update-brew-hint"
-          style={{
-            fontSize: "var(--fs-11)",
-            color: "var(--fg-1)",
-            background: "var(--bg-2)",
-            borderRadius: "var(--r-2)",
-            padding: "4px 8px",
-          }}
-        >
-          brew upgrade platypusgit
-        </code>
+      {/* The notify path's only actionable content. This used to be a bare
+          macOS-gated `brew` line, so a Linux .deb install got "View release"
+          and no explanation at all. */}
+      {hint && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>
+            {hint.note}
+          </span>
+          <code
+            data-testid="pg-update-pkg-hint"
+            style={{
+              fontSize: "var(--fs-11)",
+              color: "var(--fg-1)",
+              background: "var(--bg-2)",
+              borderRadius: "var(--r-2)",
+              padding: "4px 8px",
+            }}
+          >
+            {hint.command}
+          </code>
+        </div>
       )}
 
       {installing && (
