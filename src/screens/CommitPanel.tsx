@@ -763,6 +763,7 @@ export function CommitPanelScreen() {
       {/* Column 1: change list */}
       <PGPane
         id="commit.files"
+        primary
         style={{
           width: changesPane.width,
           flexShrink: 0,

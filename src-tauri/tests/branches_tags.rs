@@ -314,3 +314,23 @@ fn set_upstream_unknown_local_branch_is_invalid_ref() {
         "expected InvalidRef, got {err:?}"
     );
 }
+
+/// `tip` is the FULL oid. It used to be truncated to 7 chars, which made every
+/// frontend comparison against `CommitInfo.oid` fail silently — History's HEAD
+/// marker never drew, and the HEAD-ancestry filter that rebase plans are built
+/// from degraded to "the whole log", sweeping other branches into a squash.
+#[test]
+fn branch_tip_is_the_full_oid() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let head_oid = tr.repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+    let (backend, handle) = tr.open_with_backend();
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let head = branches
+        .iter()
+        .find(|b| b.is_head)
+        .expect("no branch reported as HEAD");
+
+    assert_eq!(head.tip.as_deref(), Some(head_oid.as_str()));
+    assert_eq!(head_oid.len(), 40, "fixture sanity: oids are 40 chars");
+}

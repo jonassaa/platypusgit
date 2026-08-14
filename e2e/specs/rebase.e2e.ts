@@ -28,23 +28,16 @@ describe("interactive rebase", () => {
     await headRow.waitForDisplayed({ timeout: 15_000, timeoutMsg: "HEAD row missing" });
     await jsContextMenu('[data-testid="commit-row"]', { text: "fix: update a.txt" });
     await jsClickMenuItem("Squash this commit into its parent");
-    // AppShell auto-switches to the rebase screen with a prefilled plan
-    await $('[data-testid="rebase-row"]').waitForDisplayed({
-      timeout: 15_000, timeoutMsg: "rebase plan never appeared",
+    // The squash runs where it was invoked — no hand-off to the Rebase screen,
+    // no Start button. The completion signal is History repainting with the new
+    // message: the log only reloads once the rebase has finished, so this
+    // cannot match the intermediate state a `rev-list --count` poll could.
+    await $('[data-testid="commit-row"]*=squashed by e2e').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "History never showed the squashed commit",
     });
-    await $('[data-testid="rebase-start"]').click();
-    // Wait on the UI's completion signal, NOT on `rev-list --count HEAD === 2`.
-    // The plan replays as pick "feat: add b.txt" then squash "fix: update
-    // a.txt", so HEAD's commit count returns to 2 TWICE: once transiently when
-    // the pick lands (message still "feat: add b.txt"), and again once the
-    // squash rewrites the message. A count-based wait returns at whichever it
-    // polls first, and under CI load that was the intermediate state — the
-    // message assertion then read "feat: add b.txt" and the spec failed.
-    // rebase-last-summary renders only when the rebase is done and the plan is
-    // cleared, so it cannot match mid-replay.
-    await $('[data-testid="rebase-last-summary"]').waitForDisplayed({
-      timeout: 20_000, timeoutMsg: "squash rebase never reported completion",
-    });
+    // Still on History, and no plan was ever built.
+    await expect($('[data-testid="rebase-row"]')).not.toBeExisting();
     expect(repo.git("rev-list", "--count", "HEAD").trim()).toBe("2");
     expect(repo.git("log", "-1", "--pretty=%B")).toContain("squashed by e2e");
     expect(repo.git("status", "--porcelain").trim()).toBe("");

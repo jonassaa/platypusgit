@@ -31,7 +31,10 @@ import { createRowCache } from "@/features/commits/rowIdentity";
 import { useWindowedList } from "@/lib/useWindowedList";
 import { buildLogFilter, isFilterEmpty } from "@/features/commits/logFilter";
 import { planCommitSelection } from "@/features/commits/planCommitSelection";
+import { headAncestryOf } from "@/features/commits/headAncestry";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
+import { combinedSquashMessage } from "@/features/commits/squashMessage";
+import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -49,6 +52,7 @@ import {
   type Selection,
 } from "@/lib/selection";
 import type { CommitInfo, FileDiff } from "@/lib/types";
+import { LOG_REF_ALL } from "@/lib/types";
 
 type HistoryFilterKind = "all" | "mine" | "branch";
 type RefFilter = "all" | "local";
@@ -176,7 +180,8 @@ export function HistoryScreen() {
 
   const head = currentBranch(branches);
   const headName = head?.name ?? null;
-  const aheadCount = head?.ahead ?? 0;
+  const headOid = head?.tip ?? null;
+  const headIndicator = useSettingsStore((s) => s.headIndicator);
   const { onContextMenu: onCommitContext, menu: commitMenu } =
     useContextMenu<{ sha: string; subject: string }>(commitMenuItems);
   const { onContextMenu: onCommitMulti, menu: commitMultiMenu } =
@@ -195,17 +200,17 @@ export function HistoryScreen() {
 
   // Text/author/path/date/sha filtering happens on the backend (baseCommits).
   // The "mine"/"branch"/hide-merges toggles remain client-side refinements.
+  // "All"/"Mine" walk every branch, "This branch" walks HEAD alone — the scope
+  // is a backend concern (see the logRef effect below), so all that is left
+  // client-side is the author refinement and hide-merges.
   const visible = React.useMemo(() => {
     let list: CommitInfo[] = baseCommits;
     if (filterKind === "mine" && myEmail) {
       list = list.filter((c) => c.email === myEmail);
-    } else if (filterKind === "branch" && aheadCount > 0) {
-      // Approximate: "commits unique to this branch" ≈ top-N where N = ahead.
-      list = list.slice(0, aheadCount);
     }
     if (hideMerges) list = list.filter((c) => c.parents.length <= 1);
     return list;
-  }, [baseCommits, filterKind, myEmail, hideMerges, aheadCount]);
+  }, [baseCommits, filterKind, myEmail, hideMerges]);
 
   // Ancestry pool for parent rewriting. The UNION matters: `searchResults` has
   // no intervening commits by construction, and `commits` may not reach as deep
@@ -238,8 +243,8 @@ export function HistoryScreen() {
   // of truth for "where the user is" (#68 G11 on top of G10).
   //
   // Bounded on purpose. `visible` is the CLIENT-side-filtered list, and a filter
-  // can hold it shorter than the window indefinitely — "This branch" hard-caps it
-  // at `ahead`, and "mine"/hide-merges can starve it just as effectively. The
+  // can hold it shorter than the window indefinitely — "mine" and hide-merges
+  // can starve it however many pages the walk yields. The
   // end-of-list condition is then satisfied at rest with no scrolling, and
   // `loadMoreCommits` toggling `loadingMore` re-arms this effect after every
   // page, so it would walk the entire repository a page at a time. Allow a few
@@ -378,11 +383,13 @@ export function HistoryScreen() {
     pgFlash(`copied ${visible.length} commit${visible.length === 1 ? "" : "s"}`);
   }, [visible]);
 
-  // Log-source options: HEAD (the default walk) + every local branch. The
-  // selected ref scopes the backend log itself, so unmerged-branch commits
-  // become browsable (and cherry-pickable) — see setLogRef in useRepoStore.
+  // Log-source options: all branches (the default walk), HEAD alone, then every
+  // local branch. The selection scopes the backend log itself, so
+  // unmerged-branch commits are browsable (and cherry-pickable) — see setLogRef
+  // in useRepoStore.
   const logRefOptions = React.useMemo(
     () => [
+      { value: LOG_REF_ALL, label: "All branches" },
       { value: "", label: "HEAD" },
       ...branches
         .filter((b) => !b.isRemote)
@@ -390,6 +397,22 @@ export function HistoryScreen() {
     ],
     [branches],
   );
+
+  // The All / Mine / This branch group is a SCOPE, not a client-side sieve:
+  // "All" and "Mine" walk every branch, "This branch" walks HEAD alone.
+  //
+  // Only a CHANGE of scope rescopes the walk. Reacting to `logRef` instead
+  // would fight the ref selector next door: picking a branch (or HEAD) by hand
+  // leaves the group where it was, and the effect would immediately drag the
+  // log back. On mount the group is "All" and the store already defaults to
+  // every branch, so nothing refetches.
+  const appliedScope = React.useRef<HistoryFilterKind | null>(null);
+  React.useEffect(() => {
+    if (appliedScope.current === filterKind) return;
+    appliedScope.current = filterKind;
+    const target = filterKind === "branch" ? null : LOG_REF_ALL;
+    if (useRepoStore.getState().logRef !== target) void setLogRef(target);
+  }, [filterKind, setLogRef]);
 
   const toolbarRight = (
     <HistoryToolbarRight
@@ -544,6 +567,7 @@ export function HistoryScreen() {
   const listPane = (
     <PGPane
       id="history.list"
+      primary
       style={{
         flex: 1,
         minWidth: 0,
@@ -569,12 +593,11 @@ export function HistoryScreen() {
           alignItems: "center",
         }}
       >
-        {/* The count of lanes that did not fit belongs here, in text: the
-            gutter is a decorative graphic, and Phase 3 (G8) marks it
-            aria-hidden, so a fade alone would state this nowhere. */}
-        <span style={{ paddingLeft: 12 }}>
-          {hiddenLanes > 0 ? `GRAPH +${hiddenLanes}` : "GRAPH"}
-        </span>
+        {/* No "GRAPH" caption — the gutter is narrow and the word collided
+            with SHA. The count of lanes that did not fit still belongs here,
+            in text: the gutter is a decorative graphic, and Phase 3 (G8)
+            marks it aria-hidden, so a fade alone would state this nowhere. */}
+        <span style={{ paddingLeft: 12 }}>{hiddenLanes > 0 ? `+${hiddenLanes}` : ""}</span>
         <span>SHA</span>
         <span>SUBJECT</span>
         <span>AUTHOR</span>
@@ -622,6 +645,8 @@ export function HistoryScreen() {
               date={relativeTime(c.timestamp)}
               refs={refsByOid.get(c.oid)}
               selected={selectedSet.has(c.oid)}
+              isHead={c.oid === headOid}
+              headStyle={headIndicator}
               oid={c.oid}
               onRowClick={onRowClick}
               onRowContext={onRowContext}
@@ -847,9 +872,22 @@ function MultiCommitDetail({
   onCombinedDiff: () => void;
 }) {
   const commits = useRepoStore((s) => s.commits);
+  const branches = useRepoStore((s) => s.branches);
   const plan = React.useMemo(
     () => planCommitSelection(commits, oids),
     [commits, oids],
+  );
+  // Squash — and only squash — is defined over HEAD's ancestry: it rewrites the
+  // current branch. Combined diff and cherry-pick deliberately work on any
+  // commit in the log, which since the all-branches default includes commits
+  // HEAD cannot reach (that is the point of cherry-picking one).
+  const ancestry = React.useMemo(
+    () => headAncestryOf(commits, branches),
+    [commits, branches],
+  );
+  const squashPlan = React.useMemo(
+    () => planCommitSelection(ancestry, oids),
+    [ancestry, oids],
   );
   const byOid = React.useMemo(
     () => new Map(commits.map((c) => [c.oid, c])),
@@ -858,13 +896,18 @@ function MultiCommitDetail({
   if (!plan) return null;
   const n = plan.oids.length;
 
-  const squashBlock = !plan.contiguous
-    ? "non-contiguous selection"
-    : plan.hasMerge
-      ? "selection contains a merge"
-      : !plan.baseOid
-        ? "oldest commit is the root"
-        : null;
+  // Gated on the ANCESTRY plan: a selection can now span branches, and squash
+  // may only rewrite what the current branch actually contains.
+  const squashBlock =
+    !squashPlan || squashPlan.oids.length !== n
+      ? "selection isn't all on this branch"
+      : !squashPlan.contiguous
+        ? "non-contiguous selection"
+        : squashPlan.hasMerge
+          ? "selection contains a merge"
+          : !squashPlan.baseOid
+            ? "oldest commit is the root"
+            : null;
 
   const cherryPickSet = async () => {
     if (
@@ -877,21 +920,27 @@ function MultiCommitDetail({
       useRepoStore.getState().cherryPickMany(plan.oids);
   };
   const squashSet = async () => {
-    if (squashBlock || !plan.baseOid) return;
+    if (squashBlock || !squashPlan?.baseOid) return;
     const msg = await pgPrompt({
       title: `Squash ${n} commits into one`,
-      body: "Message for the combined commit.",
+      body: "Message for the combined commit — every squashed message, oldest first.",
       confirmLabel: "Squash",
       requireValue: true,
+      initialValue: combinedSquashMessage(squashPlan.oids, byOid),
+      multiline: 8,
     });
     if (!msg) return;
-    const rebasePlan = buildRebasePlan(commits, plan.baseOid, {
+    const rebasePlan = buildRebasePlan(ancestry, squashPlan.baseOid, {
       kind: "squash-range",
-      oids: plan.oids,
+      oids: squashPlan.oids,
       message: msg,
     });
-    if (rebasePlan)
-      useNavStore.getState().setIntent({ kind: "rebase-plan", plan: rebasePlan });
+    if (!rebasePlan) return;
+    // Runs here rather than handing over a plan to press Start on — see
+    // runRebasePlanNow. The context menu's Squash takes the same path.
+    const outcome = await runRebasePlanNow(rebasePlan);
+    if (outcome === "done") pgFlash(`squashed ${n} commits`);
+    else if (outcome === "paused") pgFlash("squash paused — see the Conflicts screen");
   };
 
   return (
@@ -1359,17 +1408,21 @@ function HistoryToolbarRight({
         onChange={(v) => onLogRef(v === "" ? null : v)}
         options={logRefOptions}
         size="sm"
-        title="Browse the log of another ref"
+        title="Which commits to walk — all branches, HEAD, or one branch"
         data-testid="history-ref-select"
       />
       <PGSelect
         value={refFilter}
         onChange={(v) => onRefFilter(v as RefFilter)}
         options={[
-          { value: "all", label: "All refs" },
-          { value: "local", label: "Local only" },
+          // Labels say "labels", not "refs": this picks which ref BADGES ride
+          // the rows, and next to the scope selector "All refs" read as a
+          // second scope control.
+          { value: "all", label: "All labels" },
+          { value: "local", label: "Local labels" },
         ]}
         size="sm"
+        title="Ref labels shown on commit rows"
       />
       <PGIconButton
         icon="filter"

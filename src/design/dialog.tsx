@@ -50,6 +50,12 @@ export interface PGPromptOptions {
   /** Reject empty input (after trimming) — the primary button stays disabled. */
   requireValue?: boolean;
   mono?: boolean;
+  /**
+   * Rows for a textarea instead of a one-line input — for values that are
+   * genuinely multi-line, like a combined commit message. Enter then inserts a
+   * newline and ⌘/Ctrl+Enter submits.
+   */
+  multiline?: number;
 }
 
 type Request =
@@ -140,13 +146,15 @@ function DialogView({ req }: { req: Request }) {
     isConfirm ? "" : ((req.opts as PGPromptOptions).initialValue ?? ""),
   );
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const areaRef = React.useRef<HTMLTextAreaElement>(null);
 
   React.useEffect(() => {
     // Focus the input if there is one, else the primary button, so Enter and
     // Escape work without a click first.
     const t = setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
+      const field = areaRef.current ?? inputRef.current;
+      field?.focus();
+      field?.select();
     }, 0);
     return () => clearTimeout(t);
   }, []);
@@ -171,6 +179,8 @@ function DialogView({ req }: { req: Request }) {
       e.preventDefault();
       cancel();
     } else if (e.key === "Enter" && !e.shiftKey) {
+      // In a multi-line prompt Enter belongs to the text; submitting is a chord.
+      if (!isConfirm && promptOpts.multiline && !(e.metaKey || e.ctrlKey)) return;
       e.stopPropagation();
       e.preventDefault();
       accept();
@@ -259,16 +269,40 @@ function DialogView({ req }: { req: Request }) {
           </div>
         </div>
 
-        {!isConfirm && (
-          <PGInput
-            inputRef={inputRef}
-            value={value}
-            onChange={setValue}
-            placeholder={promptOpts.placeholder}
-            mono={promptOpts.mono}
-            data-testid="dialog-input"
-          />
-        )}
+        {!isConfirm &&
+          (promptOpts.multiline ? (
+            <textarea
+              ref={areaRef}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={promptOpts.placeholder}
+              rows={promptOpts.multiline}
+              data-testid="dialog-input"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                background: "var(--bg-2)",
+                border: "1px solid var(--border-1)",
+                borderRadius: "var(--r-3)",
+                color: "var(--fg-0)",
+                fontFamily: promptOpts.mono === false ? "var(--font-sans)" : "var(--font-mono)",
+                fontSize: "var(--fs-12)",
+                lineHeight: "var(--lh-body)",
+                padding: "6px 8px",
+                resize: "vertical",
+                outline: "none",
+              }}
+            />
+          ) : (
+            <PGInput
+              inputRef={inputRef}
+              value={value}
+              onChange={setValue}
+              placeholder={promptOpts.placeholder}
+              mono={promptOpts.mono}
+              data-testid="dialog-input"
+            />
+          ))}
         {isConfirm && requireText !== undefined && (
           <PGInput
             inputRef={inputRef}

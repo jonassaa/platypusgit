@@ -5,7 +5,7 @@
 import { browser, $, expect } from "@wdio/globals";
 import { conflictRepo, cherryRepo, TempRepo } from "../support/tempRepo";
 import {
-  openRepo, resetApp, stubNativeDialogs,
+  openRepo, resetApp, stubNativeDialogs, switchScreen,
   jsContextMenu, jsClickMenuItem,
 } from "../support/app";
 
@@ -30,14 +30,21 @@ async function startConflictedMerge(repo: TempRepo): Promise<void> {
   });
 }
 
-/** Resolve one file from its row in the Files screen (the default screen, whose
- *  "changes" filter lists a conflicted file). */
+/** Resolve one file from its row in the Files screen, whose "changes" filter
+ *  lists a conflicted file.
+ *
+ *  Switching there explicitly, and scoping the row to the tree pane, both
+ *  matter: the app opens on History now, and History's diff panel ALSO renders
+ *  `[data-pg-row][data-path=…]` rows. An unscoped selector matched one of those
+ *  and then died on a context menu that has no "Accept ours" in it. */
 async function resolveViaRowMenu(path: string, item: string): Promise<void> {
-  const row = $(`[data-pg-row][data-path="${path}"]`);
+  await switchScreen("repo");
+  const selector = `[data-pg-pane="repo.tree"] [data-pg-row][data-path="${path}"]`;
+  const row = $(selector);
   await row.waitForDisplayed({
     timeout: 20_000, timeoutMsg: `conflicted row ${path} never appeared in Files`,
   });
-  await jsContextMenu(`[data-pg-row][data-path="${path}"]`);
+  await jsContextMenu(selector);
   await jsClickMenuItem(item);
 }
 

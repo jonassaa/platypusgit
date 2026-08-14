@@ -99,10 +99,11 @@ const ACTIVITY_ACTION: Record<string, ActionId> = {
 
 // Tooltip shortcuts are derived live from the active preset via chordFor
 // (see AppBody) — no hardcoded chord strings, they'd drift from the keymap.
+// History leads: it is the screen the app opens on, so it owns the first slot.
 const ACTIVITY_ITEMS: ActivityBarItem[] = [
+  { id: "history", icon: "history", label: "History" },
   { id: "repo", icon: "folder", label: "Files" },
   { id: "commit", icon: "commit", label: "Commit" },
-  { id: "history", icon: "history", label: "History" },
   { id: "branches", icon: "branch", label: "Branches" },
   { id: "rebase", icon: "rebase", label: "Rebase" },
   { id: "remote", icon: "link", label: "Remotes" },
@@ -110,16 +111,9 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "reflog", icon: "clock", label: "Reflog" },
 ];
 
-// What `pg-screen` is allowed to hold: every activity-bar destination, plus
-// Settings (persisted too, but reached from the gear). Derived rather than
-// listed so adding or retiring a tab cannot drift from it — a whitelist and not
-// a deep-view blacklist because ids also disappear between versions, and an
-// install that last sat on the removed Conflicts screen (#108) would otherwise
-// restore a key with no screen behind it and render `undefined`.
-const RESTORABLE = new Set<string>([
-  ...ACTIVITY_ITEMS.map((it) => it.id),
-  "settings",
-]);
+// (There is no RESTORABLE whitelist any more: nothing is restored. Launch always
+// lands on History, which also settles the "id retired between versions" problem
+// the whitelist existed for — a stale `pg-screen` value can no longer be read.)
 
 export function AppShell() {
   usePreventBrowserContextMenu();
@@ -128,17 +122,12 @@ export function AppShell() {
   const error = useRepoStore((s) => s.error);
   const clearError = useRepoStore((s) => s.clearError);
 
-  const [screen, setScreen] = React.useState<ScreenId>(() => {
-    const saved = localStorage.getItem("pg-screen");
-    // Reload-guard: a persisted deep view has no intent/payload on load, so it
-    // would render a dead empty state; a retired id has no screen at all.
-    if (!saved || !RESTORABLE.has(saved)) return "repo";
-    return saved as ScreenId;
-  });
-
-  React.useEffect(() => {
-    localStorage.setItem("pg-screen", screen);
-  }, [screen]);
+  // Launch always lands on History — it is the screen that answers "what is
+  // going on in this repo", so it is worth more than restoring wherever the
+  // last session happened to end (a deep view or Settings, most annoyingly).
+  // The old localStorage["pg-screen"] restore is gone with its write; nothing
+  // else reads the key.
+  const [screen, setScreen] = React.useState<ScreenId>("history");
 
   // Latest screen, readable synchronously from the intent effect below without
   // making it a dependency (so origin capture sees the pre-switch screen).
@@ -193,11 +182,21 @@ export function AppShell() {
     };
   }, []);
 
-  // On entering a screen, focus its first content pane so the keyboard is
-  // immediately live (runs on mount too → initial screen gets focus).
+  // On entering a screen, focus its primary pane so the keyboard is immediately
+  // live (runs on mount too → the initial screen gets focus).
+  //
+  // `entryTick` is what makes re-picking the CURRENT screen count as entering
+  // it. Clicking an activity-bar entry moves DOM focus to that button; with
+  // `[screen]` alone the effect can't fire when the screen didn't change, so
+  // focus stayed stranded on the bar and every list chord went nowhere.
+  const [entryTick, setEntryTick] = React.useState(0);
+  const enterScreen = React.useCallback((id: ScreenId) => {
+    setScreen(id);
+    setEntryTick((t) => t + 1);
+  }, []);
   React.useEffect(() => {
     useFocusStore.getState().requestContentFocus();
-  }, [screen]);
+  }, [screen, entryTick]);
 
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
@@ -234,7 +233,9 @@ export function AppShell() {
         enterDeep("commitDiff");
         break;
       case "switch-screen":
-        setScreen(intent.screen as ScreenId);
+        // enterScreen, not setScreen: a nav chord for the screen you are
+        // already on still means "put me in this screen" — see entryTick.
+        enterScreen(intent.screen as ScreenId);
         clearIntent();
         break;
     }
@@ -267,7 +268,7 @@ export function AppShell() {
         position: "relative",
       }}
     >
-      <AppTitlebar onOpenSettings={() => setScreen("settings")} />
+      <AppTitlebar onOpenSettings={() => enterScreen("settings")} />
       {/* Styled confirm/prompt host — pgConfirm/pgPrompt resolve false/null
           unless one of these is mounted. */}
       <PGDialogHost />
@@ -334,7 +335,7 @@ export function AppShell() {
         <AppBody
           screen={screen}
           screens={screens}
-          setScreen={setScreen}
+          setScreen={enterScreen}
         />
       ) : (
         <WelcomeScreen />

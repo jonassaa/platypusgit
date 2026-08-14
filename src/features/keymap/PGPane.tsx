@@ -20,6 +20,7 @@ export function PGPane({
   className,
   style,
   isBar,
+  primary,
 }: {
   id: string;
   children: React.ReactNode;
@@ -27,6 +28,11 @@ export function PGPane({
   style?: React.CSSProperties;
   /** Marks the activity bar: never auto-grabs focus, excluded from content. */
   isBar?: boolean;
+  /**
+   * This is the screen's main pane — entering the screen focuses it, and
+   * Alt+Right off the activity bar lands here. One per screen.
+   */
+  primary?: boolean;
 }) {
   const focused = useFocusStore((s) => s.focused === id);
   const speedQuery = useSpeedSearchStore((s) => s.queries[id] ?? "");
@@ -36,8 +42,9 @@ export function PGPane({
     return useFocusStore.getState().register(id, ref.current, {
       isBar,
       autoFocus: !isBar,
+      isPrimary: primary,
     });
-  }, [id, isBar]);
+  }, [id, isBar, primary]);
 
   // Move real DOM focus to the pane's inner focusable target (or the wrapper)
   // whenever this pane becomes the focused pane — unless focus is already inside.
@@ -72,6 +79,10 @@ export function PGPane({
       className={className}
       style={{ position: "relative", ...style }}
       onMouseDown={() => useFocusStore.getState().focus(id)}
+      // Also on click: a synthetic/driver-generated click can arrive without a
+      // mousedown, and clicking a row must always put the keyboard in this pane
+      // — otherwise the next arrow key is routed to whatever was focused before.
+      onClickCapture={() => useFocusStore.getState().focus(id)}
       onFocusCapture={() => useFocusStore.getState().focus(id)}
     >
       {children}

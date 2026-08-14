@@ -537,6 +537,59 @@ export function applyDensity(density: UiDensity) {
   root.dataset.density = d;
 }
 
+// ─── HEAD ("you are here") indicator ─────────────────────────────────────────
+
+/**
+ * How the commit HEAD points at is marked in History, on top of the graph's own
+ * HEAD ring (part of the graph, always drawn).
+ *
+ * "bar" is the default: an edge bar reads at a glance without repainting a row
+ * whose colors carry other meaning. "tint" is for wanting the whole row lit.
+ */
+export const HEAD_INDICATORS = ["none", "bar", "tint", "both"] as const;
+export type HeadIndicator = (typeof HEAD_INDICATORS)[number];
+
+export const HEAD_INDICATOR_LABELS: Record<HeadIndicator, string> = {
+  none: "Graph marker only",
+  bar: "Edge bar",
+  tint: "Highlight row",
+  both: "Bar + highlight",
+};
+
+// ─── UI zoom (Mod+= / Mod+- / Mod+0, like an editor) ─────────────────────────
+
+export const ZOOM_MIN = 0.6;
+export const ZOOM_MAX = 2.4;
+export const ZOOM_STEP = 0.1;
+
+/** Snap to the step grid and clamp — also the guard for a hand-edited value. */
+export function normalizeZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return 1;
+  const snapped = Math.round(zoom / ZOOM_STEP) * ZOOM_STEP;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(snapped * 100) / 100));
+}
+
+/**
+ * Scale the whole UI through the WEBVIEW's own zoom, not a CSS transform: text
+ * stays hinted at the new size and every fixed/absolute layout keeps working,
+ * which a `scale()` on a wrapper would break (dialogs, popovers, the titlebar).
+ *
+ * Fire-and-forget and failure-tolerant on purpose — it runs on module load, and
+ * in a plain browser (component tests) there is no webview to zoom.
+ */
+export function applyZoom(zoom: number): void {
+  const z = normalizeZoom(zoom);
+  document.documentElement.dataset.zoom = String(z);
+  void (async () => {
+    try {
+      const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+      await getCurrentWebview().setZoom(z);
+    } catch {
+      // No webview bridge (tests / browser) — the dataset hook is all there is.
+    }
+  })();
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // STORE
 // ═════════════════════════════════════════════════════════════════════════════
@@ -557,6 +610,10 @@ interface PersistedState {
   activeThemeId: string;
   customThemes: ThemeDef[];
   uiDensity: "compact" | "comfortable";
+  /** Webview zoom factor — 1 is 100%. See applyZoom. */
+  uiZoom: number;
+  /** How the History row you are currently on (HEAD) is marked. */
+  headIndicator: HeadIndicator;
   defaultPullMode: PullMode;
   autoFetchEnabled: boolean;
   autoFetchMinutes: number;
@@ -588,6 +645,8 @@ export interface SettingsState extends PersistedState {
   downloadTheme: (id: string) => void;
   importThemeJson: (json: string) => ThemeDef;
   set: <K extends keyof PersistedState>(key: K, value: PersistedState[K]) => void;
+  /** Nudge the zoom by whole steps; clamped at both ends. */
+  stepZoom: (steps: number) => void;
   reset: () => void;
 }
 
@@ -595,6 +654,8 @@ const DEFAULTS: PersistedState = {
   activeThemeId: "dark-cool",
   customThemes: [],
   uiDensity: "compact",
+  uiZoom: 1,
+  headIndicator: "bar",
   defaultPullMode: "Rebase",
   autoFetchEnabled: false,
   autoFetchMinutes: 5,
@@ -628,6 +689,14 @@ function load(): PersistedState {
     // "config", which defers to the repository rather than forcing signing on.
     if (!["config", "always", "never"].includes(out.signCommits as string)) {
       out.signCommits = DEFAULTS.signCommits;
+    }
+    // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
+    // factor is rejected by the webview and would leave the UI unzoomable.
+    out.uiZoom = normalizeZoom(Number(out.uiZoom));
+    // Same reasoning as the zoom clamp: an unknown value would silently mean
+    // "no indicator at all" in the row renderer.
+    if (!HEAD_INDICATORS.includes(out.headIndicator as HeadIndicator)) {
+      out.headIndicator = DEFAULTS.headIndicator;
     }
     // Backfill logo colors for custom themes saved before the slots existed,
     // so the theme editor and CSS vars always have a value.
@@ -665,6 +734,8 @@ function snapshot(s: SettingsState): PersistedState {
     activeThemeId: s.activeThemeId,
     customThemes: s.customThemes,
     uiDensity: s.uiDensity,
+    uiZoom: s.uiZoom,
+    headIndicator: s.headIndicator,
     defaultPullMode: s.defaultPullMode,
     autoFetchEnabled: s.autoFetchEnabled,
     autoFetchMinutes: s.autoFetchMinutes,
@@ -909,6 +980,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (key === "uiDensity") {
       applyDensity(get().uiDensity);
     }
+    if (key === "uiZoom") {
+      applyZoom(get().uiZoom);
+    }
+  },
+
+  stepZoom(steps) {
+    get().set("uiZoom", normalizeZoom(get().uiZoom + steps * ZOOM_STEP));
   },
 
   reset() {
@@ -916,6 +994,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     persist(DEFAULTS);
     applyTheme(BUILTIN_THEMES[0]);
     applyDensity(DEFAULTS.uiDensity);
+    applyZoom(DEFAULTS.uiZoom);
   },
 }));
 
@@ -926,6 +1005,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   const active = findTheme(s, s.activeThemeId) ?? BUILTIN_THEMES[0];
   applyTheme(active);
   applyDensity(s.uiDensity);
+  applyZoom(s.uiZoom);
 }
 
 /**

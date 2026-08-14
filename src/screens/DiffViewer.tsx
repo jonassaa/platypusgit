@@ -360,6 +360,7 @@ export function DiffViewerScreen() {
       >
         <PGPane
           id="diff.files"
+          primary
           style={{
             width: listPane.width,
             flexShrink: 0,

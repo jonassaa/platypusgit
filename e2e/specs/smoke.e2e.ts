@@ -1,6 +1,6 @@
 import { $, expect } from "@wdio/globals";
 import { basicRepo, TempRepo } from "../support/tempRepo";
-import { openRepo, resetApp } from "../support/app";
+import { openRepo, resetApp, switchScreen } from "../support/app";
 
 describe("smoke", () => {
   let repo: TempRepo | undefined;
@@ -23,14 +23,39 @@ describe("smoke", () => {
     await expect($("button*=Open repository…")).toBeDisplayed();
   });
 
-  it("opens a repo via recents and shows the file tree", async () => {
+  it("opens a repo via recents onto History, and Files still renders its tree", async () => {
     repo = basicRepo();
     await openRepo(repo.path);
-    // RepoBrowser filter group proves the Files screen rendered
-    await expect($("button*=Changes")).toBeDisplayed();
+    // Opening a repo lands on History — the log is the landing screen.
+    await $('[data-testid="commit-row"]').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "History showed no commit rows after opening the repo",
+    });
     // branch chip shows main
     await expect($('[data-testid="branch-chip"]')).toHaveText(
       expect.stringContaining("main"),
     );
+    // …and the Files screen is one switch away, with its filter group.
+    await switchScreen("repo");
+    await expect($("button*=Changes")).toBeDisplayed();
+  });
+
+  // The shell is a fixed frame; panes scroll, the window never does. A wide row
+  // or an off-viewport portal used to make the whole UI — titlebar, activity
+  // bar, status bar — slide sideways.
+  it("never lets the whole window scroll sideways", async () => {
+    repo = basicRepo();
+    await openRepo(repo.path);
+    const box = await browser.execute(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(box.scrollWidth).toBeLessThanOrEqual(box.clientWidth);
+
+    const scrolled = await browser.execute(() => {
+      window.scrollTo(400, 0);
+      return window.scrollX;
+    });
+    expect(scrolled).toBe(0);
   });
 });

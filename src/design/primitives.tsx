@@ -585,12 +585,14 @@ export function PGSelect({
         background: "var(--bg-2)",
         border: "1px solid var(--border-1)",
         borderRadius: "var(--r-3)",
-        padding: "0 4px 0 8px",
-        gap: 4,
         position: "relative",
         ...style,
       }}
     >
+      {/* The <select> carries the padding and fills the wrapper, so the whole
+          component is the hit target. Padding on the wrapper instead would
+          leave dead strips (and a fixed `width` a dead gap) where a click
+          lands on the div and opens nothing. */}
       <select
         value={value}
         onChange={(e) => onChange?.(e.target.value)}
@@ -604,8 +606,11 @@ export function PGSelect({
           color: "var(--fg-0)",
           fontSize: "var(--fs-12)",
           fontFamily: "var(--font-sans)",
-          paddingRight: 16,
+          padding: "0 20px 0 8px",
           cursor: "pointer",
+          flex: 1,
+          minWidth: 0,
+          width: "100%",
           height: "100%",
         }}
       >

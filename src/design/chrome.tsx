@@ -275,6 +275,7 @@ export function PGActivityBar({
       <PGTooltip content="Settings" placement="right">
         <button
           onClick={onSettingsClick}
+          data-activity="settings"
           style={{
             width: 44,
             height: 40,

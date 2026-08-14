@@ -23,6 +23,8 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { BranchInfo, StashInfo, TagInfo } from "@/lib/types";
+// `tip` is a full oid (see list_branches); these two rows show it short.
+import { shortSha } from "@/lib/derive";
 
 type Selection =
   | { kind: "branch"; name: string }
@@ -253,6 +255,7 @@ export function BranchesScreen() {
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <PGPane
           id="branches.list"
+          primary
           style={{
             flex: 1,
             minWidth: 0,
@@ -392,7 +395,7 @@ export function BranchesScreen() {
                     fontSize: "var(--fs-11)",
                   }}
                 >
-                  {b.tip ?? "—"}
+                  {b.tip ? shortSha(b.tip) : "—"}
                 </div>
                 <div
                   style={{
@@ -760,7 +763,7 @@ function BranchInspector({ branch }: { branch: BranchInfo }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <KV k="Kind" v={branch.isRemote ? "remote" : "local"} />
-        <KV k="Tip" v={<span className="mono">{branch.tip ?? "—"}</span>} />
+        <KV k="Tip" v={<span className="mono">{branch.tip ? shortSha(branch.tip) : "—"}</span>} />
         {!branch.isRemote && (
           <>
             <KV k="Tracks" v={branch.upstream ?? "— (no upstream)"} />

@@ -43,6 +43,12 @@ const COMMON = {
   // presets.test.ts and the two specs it cites).
   "repo.init": ["Mod+Shift+N"],
   "app.closeOverlay": ["Escape"],
+  // Editor-style zoom. Two chords each: "Mod+=" is the unshifted key, "Mod++"
+  // is what Shift+= (and the numpad plus) produce — eventToChord bakes the
+  // shift into the character, so the shifted form is its own chord string.
+  "view.zoomIn": ["Mod+=", "Mod++"],
+  "view.zoomOut": ["Mod+-", "Mod+_"],
+  "view.zoomReset": ["Mod+0"],
   "pane.focusLeft": ["Alt+ArrowLeft"],
   "pane.focusRight": ["Alt+ArrowRight"],
   "pane.focusUp": ["Alt+ArrowUp"],

@@ -168,6 +168,32 @@ describe("keymap — rider preset (default)", () => {
     await waitFocusedPane("activitybar", "Alt+ArrowLeft from the leftmost content pane should reach the activity bar");
   });
 
+  // Alt+Right off the activity bar means "go into this screen", so it lands on
+  // the screen's primary pane. Geometry alone answered differently: the bar is
+  // full-height, so History's bottom detail panel is often its nearest pane to
+  // the right.
+  it("panes: Alt+ArrowRight off the activity bar enters the screen's main pane", async () => {
+    repo = dirtyRepo();
+    await openRepo(repo.path);
+    await waitScreen('[data-pg-pane="history.list"]', "History");
+    await waitFocusedPane("history.list", "opening a repo should focus the commit list");
+
+    // Exactly one pane may carry the ring — several at once reads as "the whole
+    // UI is highlighted" and tells the user nothing about where the keyboard is.
+    const ringed = await browser.execute(
+      () => document.querySelectorAll("[data-pg-focused]").length,
+    );
+    expect(ringed).toBe(1);
+
+    await jsChord("Alt+ArrowLeft");
+    await waitFocusedPane("activitybar", "Alt+ArrowLeft should reach the activity bar");
+    await jsChord("Alt+ArrowRight");
+    await waitFocusedPane(
+      "history.list",
+      "Alt+ArrowRight off the bar should enter the commit list, not the detail panel",
+    );
+  });
+
   it("Alt+Arrow does not hijack caret movement while typing", async () => {
     repo = dirtyRepo();
     await openRepo(repo.path);

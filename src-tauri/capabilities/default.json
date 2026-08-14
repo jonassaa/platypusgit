@@ -14,6 +14,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-title",
     "core:webview:allow-create-webview-window",
+    "core:webview:allow-set-webview-zoom",
     "dialog:default",
     "dialog:allow-open",
     "os:default",
