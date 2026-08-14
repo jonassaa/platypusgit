@@ -1,6 +1,7 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { WordSpan } from "@/lib/wordDiff";
 import { pairChangedLines } from "@/lib/pairChangedLines";
+import { withChangedIndices } from "@/lib/diffRows";
 import { buildLineSpans } from "@/lib/lineSpans";
 import type { SyntaxLine, SyntaxToken } from "@/lib/syntax";
 import { PGIcon, type IconName } from "./icons";
@@ -659,23 +660,6 @@ function chunkDiffLines(lines: DiffLineData[]): DiffChunk[] {
   return chunks;
 }
 
-/**
- * Number the changed (`+`/`-`) lines of a hunk from 0, leaving context rows
- * unnumbered (#61 D7).
- *
- * This must count exactly the add/rem rows and nothing else: it is the wire
- * contract shared with the backend, whose `Patch::line_in_hunk` counts `+`/`-`
- * origins the same way. `hunk.lines` also carries context and header rows, so
- * a plain array index would address the wrong line.
- */
-function withChangedIndices(lines: DiffLineData[]): DiffLineData[] {
-  let n = 0;
-  return lines.map((l) =>
-    l.kind === "add" || l.kind === "rem"
-      ? { ...l, changedIndex: n++ }
-      : l,
-  );
-}
 
 /**
  * Attach each row's syntax tokens from the correct side of the diff.
