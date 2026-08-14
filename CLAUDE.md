@@ -217,6 +217,16 @@ git/
 │                RepoPresence probe (Present/Absent/Refused — NEVER infer
 │                "no repo" from a failed open), non-opening repo_root_for
 │                walk, and the global `safe.directory` writer
+├── rebase_plan.rs  Plan validation, run BEFORE `rebase_start` touches the repo:
+│                merge-legal actions, duplicate/unknown oids, all-drop plans.
+│                A rejected plan must leave HEAD, the branch ref, and the
+│                worktree untouched — that is the whole point of the module
+├── rebase_state.rs  On-disk mirror of an in-progress rebase
+│                (`.git/platypusgit-rebase.json` + `ORIG_HEAD`) so Continue and
+│                Abort survive an app restart. Deliberately NOT git's own
+│                `.git/rebase-merge/` dir — a half-compatible one would let
+│                `git status` / `git rebase --continue` claim a rebase they
+│                cannot drive
 └── signature.rs Author/committer signature helpers
 commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs        open_repo, trust_repo_path, get_status, list_all_files,
@@ -352,6 +362,33 @@ lib/
 - **Danger-op error paths refresh first, set error last.** In `useRepoStore` catch arms (see `mergeBranch`), call `refreshAll()` BEFORE `set({ error })`: `refreshAll` starts with `set({ error: null })`, and React 18 batches same-tick sets, so the opposite order silently wipes the banner. `refreshAll` never rethrows, so the error always wins when set last. A failed git op must still refresh — the UI reflects disk truth even on error.
 - `useNavStore` handles cross-screen navigation intents — add new `NavIntent` kinds there, route in `AppShell`.
 - Cross-feature state is rare; compose in `src/store.ts` if needed — don't hoist prematurely.
+
+### Interactive rebase engine
+- **The plan is validated before the repository is touched.**
+  `rebase_plan::validate` runs first in `rebase_start`; anything it rejects
+  raises `AppError::InvalidRebasePlan` with HEAD, the branch ref, and the
+  worktree untouched. Before this, an unexecutable step (a merge commit, which
+  libgit2 refuses to cherry-pick without a mainline) surfaced mid-replay with
+  earlier picks already committed and the branch tip already moved.
+- **The replay runs on a detached HEAD** and moves the branch ref exactly once,
+  when the plan completes (`finish_rebase`). So a failed or paused rebase never
+  leaves the branch mid-replay, and `rebase_abort` is "put HEAD back on the
+  branch" rather than a reset to a remembered oid.
+- **`RebaseState.rewritten` maps original oid → replayed oid** for every step
+  that ran, recorded *after* the action's post-commit rewrite (reword amends,
+  squash/fixup collapse), and a dropped step maps to the HEAD it left behind.
+- **Merge commits in a plan may only be dropped** (git's own default: the merge
+  disappears and its commits are replayed individually). `rebase_plan::merge_legal`
+  is the single source of truth; any UI that offers merge-row actions mirrors it.
+- **Every transition is mirrored to `.git/platypusgit-rebase.json`**, and
+  `rebase_status` / `repo_state` fall back to it when this process did not start
+  the rebase. `repo_state` gives the file precedence over libgit2's
+  `repo.state()`, which only sees the `CHERRY_PICK_HEAD` a paused step leaves
+  behind.
+- **`continue_operation` / `abort_operation` delegate** to `rebase_continue` /
+  `rebase_abort` whenever a rebase is in progress. The Conflict screen and the
+  Rebase banner must stay two entry points to one engine: committing the
+  resolved tree without advancing the plan strands the rest of the rebase.
 
 ### Async / threading (Rust)
 - `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Mutex<Repository>` inside a `Mutex<HashMap<RepoId, ...>>`.
