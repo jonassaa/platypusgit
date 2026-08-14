@@ -113,7 +113,6 @@ const SCREENS = [
   "commit",
   "history",
   "branches",
-  "conflict",
   "rebase",
   "remote",
   "diff",
@@ -182,4 +181,39 @@ describe("restoring a screen while a repo's data is still loading", () => {
       expect(container.textContent?.trim()).not.toBe("");
     });
   }
+
+  // An install upgrading across #108 has "conflict" in localStorage and there
+  // is no such screen any more — restoring it would render `undefined`.
+  it("falls back to Files when the saved screen no longer exists", async () => {
+    localStorage.setItem("pg-screen", "conflict");
+    useRepoStore.setState({
+      current: handle,
+      status: STATUS,
+      allFiles: ALL_FILES,
+      branches: [],
+      tags: [],
+      stashes: [],
+      remotes: [],
+      commits: COMMITS,
+      loading: false,
+      error: null,
+      repoState: "Clean",
+      rebaseStatus: {
+        inProgress: false,
+        nextIndex: 0,
+        total: 0,
+        pauseReason: null,
+      },
+      activity: {},
+    } as never);
+
+    const { container } = await act(async () => render(<App />));
+
+    // Files is what mounted, and the key is rewritten so the dead value does
+    // not survive the next launch either.
+    expect(localStorage.getItem("pg-screen")).toBe("repo");
+    expect(
+      container.querySelector('input[placeholder="Find in tree…"]'),
+    ).not.toBeNull();
+  });
 });

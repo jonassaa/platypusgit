@@ -342,3 +342,45 @@ describe("RepoBrowser discarding untracked files", () => {
     expect(discardCalls).toEqual([]);
   });
 });
+
+describe("RepoBrowser conflicted files", () => {
+  function conflicted(path: string): FileStatus {
+    return {
+      path,
+      worktree: { kind: "Conflicted" },
+      index: { kind: "Conflicted" },
+      additions: 0,
+      deletions: 0,
+      embedded: false,
+    } as FileStatus;
+  }
+
+  beforeEach(() => {
+    resetStore({ status: [conflicted("clash.txt")], repoState: "Merge" });
+    wireMocks();
+    resetDialogs();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // With the Conflicts screen gone (#108) this row is where a conflicted file
+  // is listed in the main window, so resolving it has to be reachable here.
+  it("offers the resolution actions instead of Stage", async () => {
+    render(
+      <WithDialogs>
+        <RepoBrowserScreen />
+      </WithDialogs>,
+    );
+    const row = await waitFor(() => treeRow("clash.txt"));
+
+    fireEvent.contextMenu(row);
+
+    const menu = await waitFor(contextMenu);
+    expect(within(menu).getByText("Open merge editor")).toBeInTheDocument();
+    expect(within(menu).getByText("Accept ours")).toBeInTheDocument();
+    expect(within(menu).getByText("Accept theirs")).toBeInTheDocument();
+    expect(within(menu).queryByText("Stage")).toBeNull();
+  });
+});

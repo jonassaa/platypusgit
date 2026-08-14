@@ -107,6 +107,9 @@ export function PGStatusBar({
 }) {
   return (
     <div
+      // Named so a test can scope to the bar: its short labels ("1 conflict")
+      // are substrings of copy elsewhere on screen, the operation bar included.
+      data-testid="status-bar"
       style={{
         height: 22,
         background: "var(--bg-titlebar)",

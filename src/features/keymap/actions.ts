@@ -20,6 +20,7 @@ import {
   pullCurrentOp,
   pushCurrentOp,
   refreshOp,
+  resolveConflictsOp,
   stageAllOp,
   unstageAllOp,
 } from "@/features/repo/ops";
@@ -44,7 +45,6 @@ export type ActionId =
   | "nav.commit"
   | "nav.history"
   | "nav.branches"
-  | "nav.conflict"
   | "nav.rebase"
   | "nav.remote"
   | "nav.diff"
@@ -75,6 +75,7 @@ export type ActionId =
   | "repo.refresh"
   | "repo.stageAll"
   | "repo.unstageAll"
+  | "conflict.openResolver"
   | "diff.nextChange"
   | "diff.prevChange"
   | "commit.commit"
@@ -139,7 +140,6 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "nav.commit": { id: "nav.commit", title: "Go to Commit", category: "Navigation", scope: "global", run: navTo("commit") },
   "nav.history": { id: "nav.history", title: "Go to History", category: "Navigation", scope: "global", run: navTo("history") },
   "nav.branches": { id: "nav.branches", title: "Go to Branches", category: "Navigation", scope: "global", run: navTo("branches") },
-  "nav.conflict": { id: "nav.conflict", title: "Go to Conflicts", category: "Navigation", scope: "global", run: navTo("conflict") },
   "nav.rebase": { id: "nav.rebase", title: "Go to Rebase", category: "Navigation", scope: "global", run: navTo("rebase") },
   "nav.remote": { id: "nav.remote", title: "Go to Remotes", category: "Navigation", scope: "global", run: navTo("remote") },
   "nav.diff": { id: "nav.diff", title: "Go to Diff viewer", category: "Navigation", scope: "global", run: navTo("diff") },
@@ -233,6 +233,9 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "repo.refresh": { id: "repo.refresh", title: "Refresh repository", category: "Repository", scope: "global", run: refreshOp },
   "repo.stageAll": { id: "repo.stageAll", title: "Stage all changes", category: "Repository", scope: "global", run: stageAllOp },
   "repo.unstageAll": { id: "repo.unstageAll", title: "Unstage all changes", category: "Repository", scope: "global", run: unstageAllOp },
+  // Took over Mod+5 from the removed "Go to Conflicts" (#108) — same finger,
+  // and now it opens the resolver window instead of a screen.
+  "conflict.openResolver": { id: "conflict.openResolver", title: "Resolve conflicts", category: "Repository", scope: "global", run: resolveConflictsOp },
 
   // commit.* carry no default runners: the message/amend state is
   // CommitPanel component state, so the panel registers handlers while

@@ -18,7 +18,6 @@ import { CommitPanelScreen } from "@/screens/CommitPanel";
 import { HistoryScreen } from "@/screens/History";
 import { DiffViewerScreen } from "@/screens/DiffViewer";
 import { BranchesScreen } from "@/screens/Branches";
-import { ConflictScreen } from "@/screens/Conflict";
 import { RebaseScreen } from "@/screens/Rebase";
 import { RemoteScreen } from "@/screens/Remote";
 import { WelcomeScreen } from "@/screens/Welcome";
@@ -47,6 +46,8 @@ import { BranchChip } from "@/features/branches/BranchChip";
 import { CloneDialog } from "@/features/create/CloneDialog";
 import { CredentialDialog } from "@/features/auth/CredentialDialog";
 import { InitDialog } from "@/features/create/InitDialog";
+import { OperationBar } from "@/features/repo/OperationBar";
+import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { UpdateChip } from "@/features/update/UpdateChip";
 import { UpdatePanel } from "@/features/update/UpdatePanel";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
@@ -59,6 +60,7 @@ import {
 } from "@/lib/errors";
 import {
   currentBranch,
+  isConflicted,
   isStaged,
   isUnstaged,
   totalAheadBehind,
@@ -69,7 +71,6 @@ type ScreenId =
   | "commit"
   | "history"
   | "branches"
-  | "conflict"
   | "rebase"
   | "remote"
   | "diff"
@@ -90,7 +91,6 @@ const ACTIVITY_ACTION: Record<string, ActionId> = {
   commit: "nav.commit",
   history: "nav.history",
   branches: "nav.branches",
-  conflict: "nav.conflict",
   rebase: "nav.rebase",
   remote: "nav.remote",
   diff: "nav.diff",
@@ -104,12 +104,22 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "commit", icon: "commit", label: "Commit" },
   { id: "history", icon: "history", label: "History" },
   { id: "branches", icon: "branch", label: "Branches" },
-  { id: "conflict", icon: "conflict", label: "Conflicts" },
   { id: "rebase", icon: "rebase", label: "Rebase" },
   { id: "remote", icon: "link", label: "Remotes" },
   { id: "diff", icon: "fileCode", label: "Diff viewer" },
   { id: "reflog", icon: "clock", label: "Reflog" },
 ];
+
+// What `pg-screen` is allowed to hold: every activity-bar destination, plus
+// Settings (persisted too, but reached from the gear). Derived rather than
+// listed so adding or retiring a tab cannot drift from it — a whitelist and not
+// a deep-view blacklist because ids also disappear between versions, and an
+// install that last sat on the removed Conflicts screen (#108) would otherwise
+// restore a key with no screen behind it and render `undefined`.
+const RESTORABLE = new Set<string>([
+  ...ACTIVITY_ITEMS.map((it) => it.id),
+  "settings",
+]);
 
 export function AppShell() {
   usePreventBrowserContextMenu();
@@ -119,11 +129,11 @@ export function AppShell() {
   const clearError = useRepoStore((s) => s.clearError);
 
   const [screen, setScreen] = React.useState<ScreenId>(() => {
-    const saved = localStorage.getItem("pg-screen") as ScreenId | null;
+    const saved = localStorage.getItem("pg-screen");
     // Reload-guard: a persisted deep view has no intent/payload on load, so it
-    // would render a dead empty state. Fall back to Files.
-    if (!saved || DEEP_VIEWS.has(saved)) return "repo";
-    return saved;
+    // would render a dead empty state; a retired id has no screen at all.
+    if (!saved || !RESTORABLE.has(saved)) return "repo";
+    return saved as ScreenId;
   });
 
   React.useEffect(() => {
@@ -236,7 +246,6 @@ export function AppShell() {
     history: <HistoryScreen />,
     diff: <DiffViewerScreen />,
     branches: <BranchesScreen />,
-    conflict: <ConflictScreen />,
     rebase: <RebaseScreen />,
     remote: <RemoteScreen />,
     reflog: <ReflogScreen />,
@@ -317,6 +326,10 @@ export function AppShell() {
           </button>
         </div>
       )}
+      {/* Below the banner (which is transient) and above the screens (which
+          all need to know): the standing "a merge/rebase is open" signal, and
+          the only route to the resolver now that the Conflicts tab is gone. */}
+      <OperationBar />
       {repo || screen === "settings" ? (
         <AppBody
           screen={screen}
@@ -584,9 +597,7 @@ function AppStatusBar() {
   const dirty = status.filter(
     (s) => isStaged(s) || isUnstaged(s),
   ).length;
-  const conflicts = status.filter(
-    (s) => s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted",
-  ).length;
+  const conflicts = status.filter(isConflicted).length;
 
   return (
     <PGStatusBar
@@ -615,6 +626,9 @@ function AppStatusBar() {
               icon="conflict"
               label={`${conflicts} conflict${conflicts !== 1 ? "s" : ""}`}
               tone="danger"
+              // A count you cannot act on is a dead end — this is the
+              // second route to the resolver, after the operation bar.
+              onClick={() => void openMergeWindow(repo.id)}
             />
           )}
           {loading && !activityLabel && <PGStatusItem icon="sync" label="syncing…" />}

@@ -18,6 +18,7 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-14-conflict-flow-*` — no Conflicts screen; `repoState`-driven operation bar; resolver window owns the conflicted-file list (#108).
 - `2026-08-10-clone-init-*` — clone (streaming progress) + init repository (#61 D3/D4).
 - `2026-07-07-merge-resolver-window-*` — Rider-style separate merge window (#25 pt 2); per-conflict keyboard side selection, editable CM6 result pane.
 - `2026-07-07-cli-launch-*` — `pgit` CLI launch, single-instance forwarding, shim install (#25).
@@ -132,7 +133,7 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (17 files, 86
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (19 files, 94
   tests, all passing) drive the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
@@ -210,7 +211,11 @@ git/
 ├── types.rs     RepoHandle, FileStatus, CommitInfo, BranchInfo, TagInfo, StashInfo,
 │                RemoteInfo, FileDiff, BlameLine, ReflogEntry, RebaseStep, RepoState,
 │                ConflictSides, CommitOptions, StashSaveOptions, TagTarget, ResetMode, etc.
-├── libgit2.rs   Libgit2Backend — active impl, most ops real
+├── libgit2.rs   Libgit2Backend — active impl, most ops real. NOTE: merge_branch
+│                and rebase_onto shell out to real git, so a conflicted rebase is
+│                git's on-disk state, not ours — continue/abort_operation detect
+│                that (cli_rebase_in_progress) and hand off to `git rebase
+│                --continue/--abort`. The libgit2 path would drop queued steps.
 ├── cli.rs       CliBackend — stub for ops libgit2 handles poorly (LFS, creds, complex merges)
 ├── ownership.rs libgit2's dubious-ownership refusal (GIT_EOWNER, git's
 │                CVE-2022-24765 check — the WSL `/mnt/c` case): error mapping,
@@ -274,11 +279,18 @@ design/              In-house design system (NOT components/ui/). Exports via de
 └── use-prevent-browser-context-menu.ts
 
 screens/             One screen per activity-bar item + modal-ish deep views:
-  RepoBrowser, CommitPanel, History, DiffViewer, Branches, Conflict, Rebase,
+  RepoBrowser, CommitPanel, History, DiffViewer, Branches, Rebase,
   Remote, Welcome, Reflog, CommitDiff, FileHistory, Blame, Settings
+                     There is deliberately NO Conflict screen (#108): conflicts
+                     are announced by OperationBar and resolved in the merge
+                     window. A retired screen id must also be dropped from
+                     AppShell's RESTORABLE set, or `pg-screen` restores it.
 
 features/            Per-feature: components + Zustand store colocated
-├── repo/            useRepoStore (the big one), useRecentsStore
+├── repo/            useRepoStore (the big one), useRecentsStore, ops (shared
+│                    keymap/palette/titlebar runners), OperationBar (the
+│                    `repoState !== "Clean"` bar under the titlebar: what
+│                    operation is open, conflicts left, Resolve/Finish/Abort)
 ├── nav/             useNavStore — cross-screen intents (diff-file, commit-vs-wt,
 │                    file-history, blame, rebase-plan, stash-diff)
 ├── branches/        BranchChip (titlebar), BranchPicker (popover)
@@ -304,8 +316,12 @@ features/            Per-feature: components + Zustand store colocated
 │                    (diff3 chunking, node-diff3), resultEditor (CM6 result pane
 │                    w/ tracked conflict regions), MergeWindow/MergeBody/SidePane
 │                    (Rider 3-pane: ours | editable result | theirs), chevron +
-│                    F7/⌘1-3/⌘↵ chords, openMergeWindow (opener). Applies via
-│                    save_resolution, emits merge://resolved → main refreshes.
+│                    F7/⌘1-3/⌘↵ chords, openMergeWindow (opener; path optional —
+│                    no path opens on the list), FileList (conflicted-file
+│                    sidebar + its own menu — this window's store has no open
+│                    repo, so it uses IPC wrappers, never useRepoStore/
+│                    conflictMenuItems). Applies via save_resolution, emits
+│                    merge://resolved → main refreshes.
 ├── update/          useUpdateStore (discovery, semver-aware dismiss memory,
 │                    self-update install w/ its own `installing` flag),
 │                    semver.ts (§11 precedence, hand-rolled + tested),
@@ -343,6 +359,9 @@ lib/
   bare keys don't. `?` opens the cheat-sheet.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
 - Settings is a screen too, reached via titlebar gear or activity-bar settings slot.
+- Conflicts are NOT a destination: `OperationBar` (driven by `repoState`), the
+  status-bar conflict count, `⌘5`/`conflict.openResolver` and a conflicted row's
+  context menu all open the merge resolver window instead (#108).
 
 ## Conventions
 

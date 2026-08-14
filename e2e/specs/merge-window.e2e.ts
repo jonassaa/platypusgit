@@ -1,6 +1,7 @@
-// Merge resolver window (docs/superpowers/specs/2026-07-07-merge-resolver-window-design.md):
-// second Tauri window (label "merge"), per-conflict accepts, apply +
-// auto-advance, finalize back in the main window.
+// Merge resolver window (docs/superpowers/specs/2026-07-07-merge-resolver-window-design.md
+// + docs/superpowers/specs/2026-08-14-conflict-flow-design.md): second Tauri
+// window (label "merge"), conflicted-file sidebar, per-conflict accepts, apply +
+// auto-advance, finalize back in the main window's operation bar.
 //
 // MULTI-WINDOW: this spec drives a SECOND Tauri window via the embedded wdio
 // driver (`switchToMergeWindow` → `browser.tauri.switchWindow("merge")`) and
@@ -14,7 +15,7 @@
 // open/transition/close, so switchWindow intermittently reports "No window
 // could be found". Run this spec headless (Docker/CI), not macOS-native.
 
-import { browser, $, expect } from "@wdio/globals";
+import { browser, $, $$, expect } from "@wdio/globals";
 import { conflictRepo, conflictRepoTwoFiles, TempRepo } from "../support/tempRepo";
 import {
   armDriverBridge,
@@ -25,13 +26,12 @@ import {
   openRepo,
   resetApp,
   stubNativeDialogs,
-  switchScreen,
 } from "../support/app";
 
 // --- helpers copied from merge-conflict.e2e.ts (spec files never cross-import) ---
 
 /** Open picker, context-menu the branch row, click "Merge into current".
- *  window.confirm must already be stubbed. */
+ *  Confirm dialogs must already be stubbed. */
 async function mergeBranchViaPicker(name: string): Promise<void> {
   await $('[data-testid="branch-chip"]').click();
   const row = $(`[data-branch-row]*=${name}`);
@@ -40,26 +40,22 @@ async function mergeBranchViaPicker(name: string): Promise<void> {
   await jsClickMenuItem("Merge into current");
 }
 
-/** open + stub + merge clash → wait for the conflict list to appear.
- *  Generalized from merge-conflict.e2e.ts's startConflictedMerge: waits for
- *  ANY conflict row (the two-file fixture has no conflict.txt), not a
- *  path-specific one. */
+/** open + stub + merge clash → wait for the operation bar. Since #108 that bar
+ *  is the app's conflict signal AND the launcher for this window. */
 async function startConflictedMerge(repo: TempRepo): Promise<void> {
   await openRepo(repo.path);
   await stubNativeDialogs({ confirm: true });
   await mergeBranchViaPicker("clash");
-  await switchScreen("conflict");
-  await $('[data-testid="conflict-row"]').waitForDisplayed({
+  await $('[data-testid="operation-bar"]').waitForDisplayed({
     timeout: 20_000, timeoutMsg: "conflicted merge did not surface",
   });
 }
 
-/** Select the first conflict row, then launch the resolver window from the
- *  detail action bar. */
+/** Launch the resolver from the operation bar. It names no file — the window
+ *  picks the first unresolved one from its own list. */
 async function launchMergeWindow(): Promise<void> {
-  await $('[data-testid="conflict-row"]').click();
-  const open = $('[data-testid="open-merge-editor"]');
-  await open.waitForDisplayed({ timeout: 10_000, timeoutMsg: "open-merge-editor missing" });
+  const open = $('[data-testid="operation-resolve"]');
+  await open.waitForDisplayed({ timeout: 10_000, timeoutMsg: "operation-resolve missing" });
   await open.click();
 }
 
@@ -86,6 +82,19 @@ async function switchToMergeWindow(): Promise<void> {
 async function switchToMainWindow(): Promise<void> {
   await browser.tauri.switchWindow("main");
   await armDriverBridge();          // back on main's document — re-arm
+}
+
+/** Finish the merge from the main window's operation bar. */
+async function finalizeOperation(): Promise<void> {
+  const finish = $('[data-testid="operation-continue"]');
+  await finish.waitForDisplayed({
+    timeout: 20_000, timeoutMsg: "Finalize never appeared after the window applied",
+  });
+  await finish.click();
+  await $('[data-testid="operation-bar"]').waitForDisplayed({
+    reverse: true, timeout: 20_000,
+    timeoutMsg: "operation bar stayed up after finalize",
+  });
 }
 
 describe("merge resolver window", () => {
@@ -128,26 +137,27 @@ describe("merge resolver window", () => {
     // Last conflicted file → the window closes itself.
 
     await switchToMainWindow();
-    await browser.waitUntil(
-      async () => $('[data-testid="conflict-finalize"]').isEnabled(),
-      { timeout: 10_000, timeoutMsg: "Finalize never enabled after window apply" },
-    );
-    await $('[data-testid="conflict-finalize"]').click();
-    await $("div*=No conflicts").waitForDisplayed({
-      timeout: 20_000, timeoutMsg: "conflict screen did not clear after finalize",
-    });
+    await finalizeOperation();
     // repo truth is the acceptance:
     expect(repo.read("conflict.txt")).toBe("theirs change\n");
     expect(repo.hasRef("MERGE_HEAD")).toBe(false);
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 
-  it("auto-advances to the second conflicted file after Apply", async () => {
+  it("lists both conflicts and auto-advances to the second after Apply", async () => {
     repo = conflictRepoTwoFiles();
     await startConflictedMerge(repo);
     await launchMergeWindow();
 
     await switchToMergeWindow();
+    // The sidebar shows the whole set, not just the open file (#108).
+    await $('[data-testid="merge-file-row"]').waitForDisplayed({
+      timeout: 10_000, timeoutMsg: "conflict list never rendered",
+    });
+    await browser.waitUntil(
+      async () => [...(await $$('[data-testid="merge-file-row"]'))].length === 2,
+      { timeout: 10_000, timeoutMsg: "conflict list did not list both files" },
+    );
     const firstPath = await $('[data-testid="merge-file-path"]').getText();
     // Chevron path this time (mouse parity with the chord path): take ours for
     // the first conflict region.
@@ -161,6 +171,11 @@ describe("merge resolver window", () => {
       async () => (await $('[data-testid="merge-file-path"]').getText()) !== firstPath,
       { timeout: 10_000, timeoutMsg: "window never advanced to the next file" },
     );
+    // The applied file stays listed, marked resolved, so the list does not
+    // shift under the user.
+    await expect(
+      $(`[data-testid="merge-file-row"][data-path="${firstPath}"]`),
+    ).toHaveAttribute("data-resolved", "true");
     // Wait for the second file's fresh (unresolved) model to finish loading
     // before driving it: Apply stays disabled until the new region is seeded.
     // Sending the accept chord earlier races the async sides fetch + editor
@@ -183,13 +198,11 @@ describe("merge resolver window", () => {
     await $('[data-testid="merge-apply"]').click();
 
     await switchToMainWindow();
-    await browser.waitUntil(
-      async () => $('[data-testid="conflict-finalize"]').isEnabled(),
-      { timeout: 10_000, timeoutMsg: "Finalize never enabled after both files applied" },
-    );
     // Both files resolved as ours and staged on disk (saveResolution writes +
     // stages before the window closes) — repo truth is the acceptance.
+    await finalizeOperation();
     expect(repo.read("alpha.txt")).toBe("ours a\n");
     expect(repo.read("beta.txt")).toBe("ours b\n");
+    expect(repo.hasRef("MERGE_HEAD")).toBe(false);
   });
 });

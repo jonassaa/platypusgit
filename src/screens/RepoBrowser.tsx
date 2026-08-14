@@ -32,6 +32,7 @@ import { useDensityStep, useSettingsStore } from "@/features/settings/useSetting
 import { useWindowedList } from "@/lib/useWindowedList";
 import {
   currentBranch,
+  isConflicted,
   isStaged,
   isUnstaged,
   isUntracked,
@@ -206,10 +207,7 @@ export function RepoBrowserScreen() {
     } else {
       switch (filterMode) {
         case "conflicts":
-          base = status.filter(
-            (s) =>
-              s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted",
-          );
+          base = status.filter(isConflicted);
           break;
         case "changes":
           base = status.filter(
@@ -535,6 +533,7 @@ export function RepoBrowserScreen() {
         staged: !!st && isStaged(st) && !isUnstaged(st),
         embedded: !!st?.embedded,
         untracked: !!st && isUntracked(st),
+        conflicted: !!st && isConflicted(st),
       });
     },
   );
@@ -551,11 +550,7 @@ export function RepoBrowserScreen() {
   );
 
   const conflictCount = React.useMemo(
-    () =>
-      status.filter(
-        (s) =>
-          s.worktree.kind === "Conflicted" || s.index.kind === "Conflicted",
-      ).length,
+    () => status.filter(isConflicted).length,
     [status],
   );
 
