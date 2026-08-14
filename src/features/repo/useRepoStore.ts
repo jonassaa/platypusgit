@@ -330,7 +330,11 @@ async function withAuthRetry(
         try {
           await run(creds);
           // Only after it worked: storing on submit would persist a typo.
-          if (remember && host) {
+          // HTTPS only: `git credential approve` stores an HTTP(S) password, so
+          // remembering an SSH passphrase there would file the wrong secret
+          // under `protocol=https` for this host and offer it at the next HTTPS
+          // prompt. SSH passphrases belong to ssh-agent, which we do not manage.
+          if (remember && host && kind === "Https") {
             await rememberCredential(repoId, host, creds).catch(() => {
               // No helper configured is not a failure the user needs to see —
               // the operation they asked for still succeeded.
@@ -1129,19 +1133,26 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async pull(remote, branch, mode = "Merge") {
     const repo = get().current;
     if (!repo) return;
-    setActivity("pull", `Pulling ${remote}/${branch}…`);
-    try {
-      await withAuthRetry(
-        repo.id,
-        async (creds) => {
+    // Declared OUTSIDE the retried closure on purpose. An auth failure leaves
+    // the stash in place (see the failure policy below) and then re-runs this
+    // closure with credentials; a per-attempt variable would start at null, find
+    // the now-clean tree, pull successfully and never pop — silently stranding
+    // the user's uncommitted work in a stash they were never told about.
+    let stashed: string | null = null;
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        // Each attempt owns its own progress indicator: the retry runs long
+        // after the first attempt's `finally` would have cleared it.
+        setActivity("pull", `Pulling ${remote}/${branch}…`);
+        try {
           // Carry over uncommitted work when the setting is on: stash → pull →
           // pop, mirroring checkoutBranch's auto-stash. stashSave returns null
           // when the tree is clean, so this is a no-op in the common case. If
           // the pull fails, the stash is deliberately NOT popped — the work
           // stays safe in the stash list rather than colliding with a conflicted
           // worktree (same policy as checkoutBranch).
-          let stashed: string | null = null;
-          if (useSettingsStore.getState().autoStashBeforePull) {
+          if (useSettingsStore.getState().autoStashBeforePull && stashed === null) {
             setActivity("pull", "Stashing changes…");
             stashed = await stashSave(repo.id, {
               message: `auto: pull ${remote}/${branch}`,
@@ -1154,19 +1165,21 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           if (stashed) {
             setActivity("pull", "Restoring stashed changes…");
             await stashPop(repo.id, 0);
+            // Popped — a later attempt must not pop it a second time.
+            stashed = null;
           }
           await get().refreshAll();
-        },
-        async (e) => {
-          // See mergeBranch's catch: refresh first, error last, so it isn't
-          // batched away by refreshAll's own `error: null` reset.
-          await get().refreshAll();
-          set({ error: toAppError(e) });
-        },
-      );
-    } finally {
-      setActivity("pull", null);
-    }
+        } finally {
+          setActivity("pull", null);
+        }
+      },
+      async (e) => {
+        // See mergeBranch's catch: refresh first, error last, so it isn't
+        // batched away by refreshAll's own `error: null` reset.
+        await get().refreshAll();
+        set({ error: toAppError(e) });
+      },
+    );
   },
 
   async push(remote, branch, force = "None") {

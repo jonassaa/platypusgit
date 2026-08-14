@@ -24,6 +24,16 @@ const LOOK: Record<
 };
 
 /**
+ * Settle time before verifying, matching the inline commit diff rendered beside
+ * this badge in the same panel (History's INLINE_DIFF_DEBOUNCE_MS).
+ *
+ * `verify_commit` shells out to `git show`, so without this, arrowing through the
+ * log spawns one process per row passed over — all of them still queued behind
+ * `spawn_blocking` after the user has stopped moving.
+ */
+const VERIFY_DEBOUNCE_MS = 100;
+
+/**
  * Signature status of one commit (#61 D6).
  *
  * Verifies **lazily, for this commit only** — a badge on every log row would
@@ -41,17 +51,20 @@ export function SignatureBadge({ oid }: { oid: string }) {
     }
     let cancelled = false;
     setStatus(null);
-    verifyCommit(repoId, oid)
-      .then((s) => {
-        if (!cancelled) setStatus(s);
-      })
-      .catch(() => {
-        // A verification failure is not worth an error banner: the commit and
-        // its diff are still perfectly viewable.
-        if (!cancelled) setStatus(null);
-      });
+    const handle = window.setTimeout(() => {
+      verifyCommit(repoId, oid)
+        .then((s) => {
+          if (!cancelled) setStatus(s);
+        })
+        .catch(() => {
+          // A verification failure is not worth an error banner: the commit and
+          // its diff are still perfectly viewable.
+          if (!cancelled) setStatus(null);
+        });
+    }, VERIFY_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      window.clearTimeout(handle);
     };
   }, [repoId, oid]);
 

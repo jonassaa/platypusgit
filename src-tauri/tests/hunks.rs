@@ -2,6 +2,7 @@ mod support;
 
 use std::path::PathBuf;
 
+use platypusgit_lib::error::AppError;
 use platypusgit_lib::git::GitBackend;
 
 use support::{fs::write_file, TempRepo};
@@ -540,5 +541,69 @@ fn unstage_lines_removes_only_the_selected_line_from_the_index() {
         staged_content(&tr, "README.md"),
         "base\nadd2\nadd3\n",
         "only the selected line should be unstaged"
+    );
+}
+
+// ─── newly created (untracked) files ─────────────────────────────────────────
+//
+// `diff()` includes untracked content so the viewer can show a new file's
+// contents, and the UI offers hunk/line staging on what it shows. The staging
+// ops used to rebuild their diff WITHOUT the untracked options, so a new file had
+// no delta at all and every one of them failed with InvalidPath.
+
+/// Repo with one committed file plus a brand-new untracked file whose single
+/// hunk has three '+' changed lines at indices 0, 1, 2.
+fn repo_with_untracked_file() -> (TempRepo, platypusgit_lib::git::libgit2::Libgit2Backend, platypusgit_lib::git::types::RepoHandle) {
+    let tr = TempRepo::with_initial_commit("base\n");
+    write_file(tr.path(), "new.txt", "a\nb\nc\n");
+    let (backend, handle) = tr.open_with_backend();
+    (tr, backend, handle)
+}
+
+#[test]
+fn stage_lines_stages_only_the_selected_lines_of_an_untracked_file() {
+    let (tr, backend, handle) = repo_with_untracked_file();
+
+    backend
+        .stage_lines(&handle.id, &PathBuf::from("new.txt"), 0, &[0, 1], 3)
+        .expect("stage_lines on an untracked file");
+
+    assert_eq!(
+        staged_content(&tr, "new.txt"),
+        "a\nb\n",
+        "only the selected lines should reach the index"
+    );
+    // The worktree keeps the whole file.
+    assert_eq!(
+        std::fs::read_to_string(tr.path().join("new.txt")).unwrap(),
+        "a\nb\nc\n"
+    );
+}
+
+#[test]
+fn stage_hunk_stages_a_whole_untracked_file() {
+    let (tr, backend, handle) = repo_with_untracked_file();
+
+    backend
+        .stage_hunk(&handle.id, &std::path::Path::new("new.txt"), 0, 3)
+        .expect("stage_hunk on an untracked file");
+
+    assert_eq!(staged_content(&tr, "new.txt"), "a\nb\nc\n");
+}
+
+#[test]
+fn discard_lines_refuses_an_untracked_file_with_a_clear_error() {
+    // Reversing a creation patch cannot express "drop some of the lines", so this
+    // is refused rather than misapplied. Whole-file `discard` deletes an
+    // untracked path, which is the operation that actually makes sense here.
+    let (_tr, backend, handle) = repo_with_untracked_file();
+
+    let err = backend
+        .discard_lines(&handle.id, &PathBuf::from("new.txt"), 0, &[0], 3)
+        .expect_err("partial discard of an untracked file is refused");
+
+    assert!(
+        matches!(err, AppError::InvalidArgument(ref m) if m.contains("not tracked yet")),
+        "got {err:?}"
     );
 }

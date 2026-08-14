@@ -421,6 +421,56 @@ fn is_registered_submodule(repo: &Repository, rel: &Path) -> bool {
 /// Directories are never index entries themselves, so `discard` needs this to
 /// tell an untracked directory (safe to delete) from a tracked one (must be
 /// restored, not removed).
+/// `is_embedded_repo`, but skipping the filesystem for entries that cannot be one.
+///
+/// `is_embedded_repo` stats every path it is handed, and `list_all_files`
+/// enumerates the ENTIRE worktree (unmodified files included) while `status()`
+/// runs after every stage, unstage, discard and hunk/line op — so that is one
+/// wasted syscall per ordinary file, on the hottest path in the app.
+///
+/// An embedded repo reaches a listing in exactly two shapes, and both are
+/// recognizable without touching disk:
+///
+/// * libgit2 would not recurse into it, so it is reported as the directory WITH a
+///   trailing slash (`embedded_repo.rs` pins `"vendor/lib/"`).
+/// * its gitlink is already in the index — staged by an older build or from the
+///   command line — in which case it is reported SLASSHLESS and the index entry
+///   carries mode `160000` (`unstage_still_removes_an_already_committed_gitlink`
+///   is the test that catches a slash-only check).
+///
+/// Anything else is an ordinary file. Index lookups are an in-memory search, so
+/// this costs no syscall.
+///
+/// Only for paths that came OUT of a listing. Operations (`stage`, `discard`,
+/// `reject_embedded_repo`) must keep calling `is_embedded_repo` directly: their
+/// path comes from the caller, which may pass either form — `embedded_repo.rs`
+/// exercises both `"vendor/lib/"` and `"vendor/lib"`.
+fn listed_entry_is_embedded_repo(
+    repo: &Repository,
+    index: Option<&git2::Index>,
+    path: &str,
+) -> bool {
+    const GITLINK_MODE: u32 = 0o160_000;
+    let could_be = path.ends_with('/')
+        || index
+            .and_then(|i| i.get_path(Path::new(path), 0))
+            .is_some_and(|e| e.mode == GITLINK_MODE);
+    if !could_be {
+        return false;
+    }
+    is_embedded_repo(repo, Path::new(path))
+}
+
+/// Whether the index tracks `rel` at ANY stage.
+///
+/// Stage 0 is the ordinary merged entry, but a **conflicted** path has no stage-0
+/// entry at all — only stages 1/2/3 (base/ours/theirs). Testing stage 0 alone
+/// therefore reads a conflicted file as untracked, which is how `discard` came to
+/// delete a merge in progress instead of restoring it.
+fn index_tracks_path(index: &git2::Index, rel: &Path) -> bool {
+    (0..=3).any(|stage| index.get_path(rel, stage).is_some())
+}
+
 fn index_has_entry_under(index: &git2::Index, rel: &Path) -> bool {
     let prefix = strip_trailing_slash(rel).to_string_lossy().to_string();
     if prefix.is_empty() {
@@ -482,6 +532,51 @@ fn map_status_flag(s: Status, side: StatusSide) -> StatusFlag {
 // ─── Hunk-level staging helpers ──────────────────────────────────────────────
 
 /// Find which delta index corresponds to `path` inside a diff.
+/// `DiffOptions` for a worktree-vs-index diff of one path, matching exactly what
+/// `diff()` builds for `DiffKind::WorktreeToIndex`.
+///
+/// The hunk/line staging ops MUST diff with the same options as the diff the user
+/// clicked on, or the hunk index and changed-line indices they were handed
+/// address different content. The untracked family is what used to be missing:
+/// without it a newly created file produces no delta at all, so
+/// `find_delta_index` returned `InvalidPath` and staging a new file's hunks or
+/// lines was impossible even though the UI offers it.
+fn worktree_index_diff_opts(path: &Path, context_lines: u32) -> DiffOptions {
+    let mut opts = DiffOptions::new();
+    opts.pathspec(path);
+    opts.context_lines(context_lines);
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true);
+    opts
+}
+
+/// git's on-disk octal mode for a diff entry.
+///
+/// `git2::FileMode` is an enum, so casting it to an integer yields the *variant
+/// discriminant* (0, 1, 2, …), not a mode — emitting that into a `new file mode`
+/// header made git read the entry as a gitlink and reject the patch with "corrupt
+/// patch for submodule".
+fn octal_file_mode(mode: git2::FileMode) -> u32 {
+    match mode {
+        git2::FileMode::BlobExecutable => 0o100_755,
+        git2::FileMode::Link => 0o120_000,
+        git2::FileMode::Commit => 0o160_000,
+        git2::FileMode::Tree => 0o040_000,
+        // Blob, BlobGroupWritable and Unreadable all become a regular file: a
+        // plain blob is the only thing a synthesized text patch can create.
+        _ => 0o100_644,
+    }
+}
+
+/// True when the delta has no pre-image, i.e. the patch creates the file.
+fn delta_creates_file(delta: &git2::DiffDelta<'_>) -> bool {
+    matches!(
+        delta.status(),
+        git2::Delta::Added | git2::Delta::Untracked
+    )
+}
+
 fn find_delta_index(diff: &git2::Diff, path: &Path) -> AppResult<usize> {
     for (i, delta) in diff.deltas().enumerate() {
         if let Some(p) = delta.new_file().path() {
@@ -599,16 +694,24 @@ fn run_signer(program: &str, args: &[String], payload: &str) -> AppResult<String
         .spawn()
         .map_err(|e| AppError::Git(format!("could not run {program}: {e}")))?;
 
-    child
+    // Feed stdin from a helper thread while the parent drains stdout and stderr.
+    // Writing the whole payload up front deadlocks once the child fills a pipe
+    // buffer (~64KB) it is waiting for us to read: gpg's `--status-fd=2` chatter
+    // goes to stderr, so a long commit message can leave both sides blocked.
+    let mut stdin = child
         .stdin
-        .as_mut()
-        .ok_or_else(|| AppError::Internal("signer has no stdin".into()))?
-        .write_all(payload.as_bytes())
-        .map_err(|e| AppError::Io(e.to_string()))?;
+        .take()
+        .ok_or_else(|| AppError::Internal("signer has no stdin".into()))?;
+    let buf = payload.as_bytes().to_vec();
+    let writer = std::thread::spawn(move || stdin.write_all(&buf));
 
     let out = child
         .wait_with_output()
         .map_err(|e| AppError::Io(e.to_string()))?;
+    // A signer that fails early closes stdin, which surfaces here as a broken
+    // pipe. That is not itself the failure — the exit status below is what
+    // decides, and it carries the signer's own diagnostics.
+    let _ = writer.join();
     if !out.status.success() {
         return Err(AppError::Git(format!(
             "signing failed: {}",
@@ -700,6 +803,17 @@ fn patch_text_for_lines(
         .to_string_lossy()
         .to_string();
 
+    // A file with no pre-image can only be *created* by a patch. Reversing such a
+    // patch would mean un-creating it, which a partial line selection cannot
+    // express — refuse rather than emit something `git apply` would either reject
+    // or misapply. Whole-file `discard` already deletes an untracked path.
+    let creates = delta_creates_file(&delta);
+    if creates && matches!(direction, PatchDirection::Reverse) {
+        return Err(AppError::InvalidArgument(format!(
+            "{path_str} is not tracked yet — discard the whole file instead of individual lines"
+        )));
+    }
+
     let (hunk_header, _) = patch.hunk(hunk_index).map_err(AppError::from)?;
     let old_start = hunk_header.old_start();
     let new_start = hunk_header.new_start();
@@ -775,7 +889,18 @@ fn patch_text_for_lines(
 
     let mut out = String::new();
     out.push_str(&format!("diff --git a/{p} b/{p}\n", p = path_str));
-    out.push_str(&format!("--- a/{}\n", path_str));
+    if creates {
+        // A creation patch must say so: `--- a/<path>` for a file that is not in
+        // the pre-image makes `git apply` fail ("does not exist in index"), and
+        // the hunk's old_start is 0, which is only valid against /dev/null.
+        out.push_str(&format!(
+            "new file mode {:o}\n",
+            octal_file_mode(delta.new_file().mode())
+        ));
+        out.push_str("--- /dev/null\n");
+    } else {
+        out.push_str(&format!("--- a/{}\n", path_str));
+    }
     out.push_str(&format!("+++ b/{}\n", path_str));
     // Counts are recomputed from the emitted body. Copying the source hunk's
     // header is the classic way to produce a patch `git apply` rejects.
@@ -800,35 +925,78 @@ fn patch_text_for_hunk(diff: &git2::Diff, delta_index: usize, hunk_index: usize)
 /// included, keyed by path. One diff pass + cheap `line_stats()` per delta (no
 /// full patch print). Untracked files count their whole content as additions.
 /// Keyed by both new and old paths so renames/deletions resolve either way.
-fn worktree_line_stats(repo: &Repository) -> AppResult<HashMap<String, (u32, u32)>> {
-    let mut opts = DiffOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .show_untracked_content(true)
-        .include_typechange(true);
+/// Per-path `(additions, deletions)` for one diff, in a single pass.
+///
+/// Uses `Diff::foreach` rather than `Patch::from_diff` per delta: a `Patch`
+/// materializes the whole per-file patch (every line, allocated) just to read two
+/// counters off it, and `status()` is the hottest path in the app — it runs after
+/// every stage, unstage, discard and hunk/line op. The callback form walks the
+/// same lines without building any of that.
+fn diff_line_stats(diff: &git2::Diff) -> AppResult<HashMap<String, (u32, u32)>> {
+    let mut map: HashMap<String, (u32, u32)> = HashMap::new();
+    // `foreach`'s line callback reports the file it belongs to, so the delta's
+    // paths are resolved per line rather than tracked across callbacks.
+    let mut line_cb = |delta: git2::DiffDelta<'_>, _hunk: Option<git2::DiffHunk<'_>>, line: git2::DiffLine<'_>| -> bool {
+        let add = match line.origin() {
+            '+' => true,
+            '-' => false,
+            // Context and the various file-header origins are not changes.
+            _ => return true,
+        };
+        for p in [delta.new_file().path(), delta.old_file().path()]
+            .into_iter()
+            .flatten()
+        {
+            let e = map.entry(p.to_string_lossy().to_string()).or_insert((0, 0));
+            if add {
+                e.0 += 1;
+            } else {
+                e.1 += 1;
+            }
+            // A rename reports both paths; count it once, under the new name,
+            // unless there is no new name (a deletion).
+            break;
+        }
+        true
+    };
+    diff.foreach(&mut |_, _| true, None, None, Some(&mut line_cb))?;
+    Ok(map)
+}
+
+/// `(HEAD → index, index → working tree)` line stats, keyed by path.
+///
+/// Two diffs rather than one combined `diff_tree_to_workdir_with_index`, because
+/// a single number per file cannot answer both questions: the composer needs to
+/// say what the COMMIT will contain (the staged side), while the unstaged rows
+/// need what is not staged yet. Sharing one HEAD→worktree number made the
+/// composer overstate the commit whenever a staged file had further unstaged
+/// edits, and made a partially staged file show identical counts on both rows.
+///
+/// The staged diff never touches the filesystem, so the added cost over the old
+/// single pass is small; the untracked-content scan lives entirely in the
+/// unstaged half, exactly as before.
+fn side_line_stats(
+    repo: &Repository,
+) -> AppResult<(HashMap<String, (u32, u32)>, HashMap<String, (u32, u32)>)> {
     let head_tree = match repo.head() {
         Ok(h) => Some(h.peel_to_tree()?),
         Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
         Err(e) => return Err(e.into()),
     };
-    let diff = repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?;
-    let mut map: HashMap<String, (u32, u32)> = HashMap::new();
-    for idx in 0..diff.deltas().len() {
-        let Some(patch) = git2::Patch::from_diff(&diff, idx)? else {
-            continue;
-        };
-        let (_ctx, add, del) = patch.line_stats()?;
-        let counts = (add as u32, del as u32);
-        if let Some(delta) = diff.get_delta(idx) {
-            if let Some(p) = delta.new_file().path() {
-                map.insert(p.to_string_lossy().to_string(), counts);
-            }
-            if let Some(p) = delta.old_file().path() {
-                map.entry(p.to_string_lossy().to_string()).or_insert(counts);
-            }
-        }
-    }
-    Ok(map)
+
+    let mut staged_opts = DiffOptions::new();
+    staged_opts.include_typechange(true);
+    let staged = repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut staged_opts))?;
+
+    let mut unstaged_opts = DiffOptions::new();
+    unstaged_opts
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true)
+        .include_typechange(true);
+    let unstaged = repo.diff_index_to_workdir(None, Some(&mut unstaged_opts))?;
+
+    Ok((diff_line_stats(&staged)?, diff_line_stats(&unstaged)?))
 }
 
 /// Convert a computed `git2::Diff` into per-file `FileDiff`s (path, rename
@@ -985,22 +1153,26 @@ fn resolve_commit<'a>(repo: &'a Repository, revspec: &str) -> AppResult<git2::Co
 /// caller returns an empty log). A missing/corrupt HEAD surfaces as an error
 /// instead — masking it as an empty log hides a broken repo. `Some(spec)`
 /// starts at any revspec (branch, tag, short/full oid) peeled to a commit —
-/// `InvalidRef` when it can't be resolved. Returns `Ok(true)` when a start
-/// point was pushed.
+/// `InvalidRef` when it can't be resolved.
+///
+/// Returns the oids actually pushed; empty means "nothing to walk". The caller
+/// needs the oids, not just a flag: a pushed start point that the page's limit
+/// stops short of has to survive into the next cursor.
 fn push_log_start(
     repo: &Repository,
     walk: &mut git2::Revwalk,
     refspec: Option<&str>,
-) -> AppResult<bool> {
+) -> AppResult<Vec<git2::Oid>> {
     match refspec {
         None => match repo.head() {
-            Ok(_) => {
-                walk.push_head()?;
-                Ok(true)
+            Ok(h) => {
+                let oid = h.peel_to_commit()?.id();
+                walk.push(oid)?;
+                Ok(vec![oid])
             }
             // Fresh repo, HEAD points at a branch with no commits yet → nothing
             // to walk. This is the only "empty log, not an error" case.
-            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(false),
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(Vec::new()),
             // NotFound (or anything else) means HEAD itself is missing/corrupt,
             // not an unborn branch — surface it rather than reporting an empty
             // history for a broken repo.
@@ -1009,7 +1181,7 @@ fn push_log_start(
         Some(spec) => {
             let commit = resolve_commit(repo, spec)?;
             walk.push(commit.id())?;
-            Ok(true)
+            Ok(vec![commit.id()])
         }
     }
 }
@@ -1038,6 +1210,21 @@ impl FrontierBuilder {
             visited: std::collections::HashSet::with_capacity(cap),
             cand_seen: std::collections::HashSet::new(),
             candidates: Vec::new(),
+        }
+    }
+
+    /// Register the walk's own start points as live lanes.
+    ///
+    /// A page can stop before reaching every pushed start point — resume from a
+    /// two-lane cursor `[A, B]` with a page size of one and only `A` is walked.
+    /// `B` is then in neither `visited` nor `candidates` (it is nobody's parent
+    /// here), so without this it would be dropped from the next cursor and every
+    /// commit reachable only through its lane would vanish from the log.
+    fn seed(&mut self, starts: &[git2::Oid]) {
+        for &oid in starts {
+            if self.cand_seen.insert(oid) {
+                self.candidates.push(oid);
+            }
         }
     }
 
@@ -1072,7 +1259,7 @@ impl FrontierBuilder {
 }
 
 /// Seed a revwalk for a page: from the cursor frontier when resuming,
-/// otherwise from `refspec`/HEAD. `Ok(false)` means "nothing to walk".
+/// otherwise from `refspec`/HEAD. An empty result means "nothing to walk".
 ///
 /// When a cursor is supplied `refspec` is deliberately ignored — the frontier
 /// already encodes which walk this continues.
@@ -1081,10 +1268,10 @@ fn push_page_start(
     walk: &mut git2::Revwalk,
     refspec: Option<&str>,
     cursor: Option<&[String]>,
-) -> AppResult<bool> {
+) -> AppResult<Vec<git2::Oid>> {
     match cursor {
         Some(frontier) if !frontier.is_empty() => {
-            let mut pushed = false;
+            let mut pushed = Vec::with_capacity(frontier.len());
             for raw in frontier {
                 let oid =
                     git2::Oid::from_str(raw).map_err(|_| AppError::InvalidRef(raw.clone()))?;
@@ -1092,7 +1279,7 @@ fn push_page_start(
                 // rather than failing the whole page.
                 if repo.find_commit(oid).is_ok() {
                     walk.push(oid)?;
-                    pushed = true;
+                    pushed.push(oid);
                 }
             }
             Ok(pushed)
@@ -1434,26 +1621,40 @@ impl GitBackend for Libgit2Backend {
 
     fn status(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
         self.with_repo(repo_id, |repo| {
-            // Per-file line stats (HEAD → working tree, index-aware) in one diff
-            // pass. Degrades to empty (→ 0/0 counts) rather than failing status.
-            let stats = worktree_line_stats(repo).unwrap_or_default();
+            // Per-file line stats for each side separately, so the staged and
+            // unstaged rows can report their own numbers. Degrades to empty
+            // (→ 0/0 counts) rather than failing status.
+            let (staged_stats, unstaged_stats) = side_line_stats(repo).unwrap_or_default();
             let mut opts = StatusOptions::new();
             opts.include_untracked(true)
                 .recurse_untracked_dirs(true)
                 .include_ignored(false);
             let statuses = repo.statuses(Some(&mut opts))?;
+            // Read once for the whole listing, not per entry: it only feeds the
+            // gitlink-mode shortcut in `listed_entry_is_embedded_repo`, so a repo
+            // whose index will not open just falls back to the slash check.
+            let index = repo.index().ok();
             let mut out = Vec::with_capacity(statuses.len());
             for entry in statuses.iter() {
                 let path = entry.path().unwrap_or("").to_string();
                 let s = entry.status();
-                let (additions, deletions) = stats.get(&path).copied().unwrap_or((0, 0));
-                let embedded = is_embedded_repo(repo, Path::new(&path));
+                let (staged_additions, staged_deletions) =
+                    staged_stats.get(&path).copied().unwrap_or((0, 0));
+                let (unstaged_additions, unstaged_deletions) =
+                    unstaged_stats.get(&path).copied().unwrap_or((0, 0));
+                let embedded = listed_entry_is_embedded_repo(repo, index.as_ref(), &path);
                 out.push(FileStatus {
                     path,
                     worktree: map_status_flag(s, StatusSide::Worktree),
                     index: map_status_flag(s, StatusSide::Index),
-                    additions,
-                    deletions,
+                    // Both sides together, for callers that want one number per
+                    // file rather than a per-side breakdown.
+                    additions: staged_additions + unstaged_additions,
+                    deletions: staged_deletions + unstaged_deletions,
+                    staged_additions,
+                    staged_deletions,
+                    unstaged_additions,
+                    unstaged_deletions,
                     embedded,
                 });
             }
@@ -1469,6 +1670,10 @@ impl GitBackend for Libgit2Backend {
                 .include_unmodified(true)
                 .include_ignored(false);
             let statuses = repo.statuses(Some(&mut opts))?;
+            // Once for the whole listing — see `status()`. This one matters most:
+            // `include_unmodified` means every file in the worktree comes through
+            // here, so a per-entry stat would be a syscall per file.
+            let index = repo.index().ok();
             let mut out = Vec::with_capacity(statuses.len());
             for entry in statuses.iter() {
                 let path = entry.path().unwrap_or("").to_string();
@@ -1476,7 +1681,7 @@ impl GitBackend for Libgit2Backend {
                     continue;
                 }
                 let s = entry.status();
-                let embedded = is_embedded_repo(repo, Path::new(&path));
+                let embedded = listed_entry_is_embedded_repo(repo, index.as_ref(), &path);
                 out.push(FileStatus {
                     path,
                     worktree: map_status_flag(s, StatusSide::Worktree),
@@ -1485,6 +1690,10 @@ impl GitBackend for Libgit2Backend {
                     // line stats — the tree shows status marks, not counts.
                     additions: 0,
                     deletions: 0,
+                    staged_additions: 0,
+                    staged_deletions: 0,
+                    unstaged_additions: 0,
+                    unstaged_deletions: 0,
                     embedded,
                 });
             }
@@ -1513,7 +1722,8 @@ impl GitBackend for Libgit2Backend {
             let ref_map = collect_ref_map(repo);
             let mut walk = repo.revwalk()?;
             walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-            if !push_page_start(repo, &mut walk, refspec, cursor)? {
+            let starts = push_page_start(repo, &mut walk, refspec, cursor)?;
+            if starts.is_empty() {
                 return Ok(LogPage {
                     commits: Vec::new(),
                     next_cursor: None,
@@ -1522,6 +1732,7 @@ impl GitBackend for Libgit2Backend {
 
             let mut out = Vec::with_capacity(limit.min(4096));
             let mut frontier = FrontierBuilder::new(limit.min(4096));
+            frontier.seed(&starts);
             for oid in walk.by_ref().take(limit) {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
@@ -1615,7 +1826,8 @@ impl GitBackend for Libgit2Backend {
             let ref_map = collect_ref_map(repo);
             let mut walk = repo.revwalk()?;
             walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-            if !push_page_start(repo, &mut walk, refspec, cursor)? {
+            let starts = push_page_start(repo, &mut walk, refspec, cursor)?;
+            if starts.is_empty() {
                 return Ok(LogPage {
                     commits: Vec::new(),
                     next_cursor: None,
@@ -1627,10 +1839,19 @@ impl GitBackend for Libgit2Backend {
             // resuming from a match's parents would skip the non-matching
             // commits between them and lose their ancestors entirely.
             let mut frontier = FrontierBuilder::new(limit.min(4096));
-            for oid in walk {
-                if out.len() >= limit {
-                    break;
-                }
+            frontier.seed(&starts);
+            // Pull from the walk ONLY while there is room for another match.
+            // `for oid in walk { if out.len() >= limit { break } … }` yields an oid
+            // first and discards it on the break, without recording it in the
+            // frontier — and a cursor start-point lost that way is in neither
+            // `visited` nor `candidates`, so `finish` omits it and every commit
+            // reachable only through that lane disappears from the log for good.
+            // `log_page` sidesteps this with `walk.by_ref().take(limit)`; the
+            // filtered walk cannot, because it decides per commit whether one
+            // counts towards the limit.
+            let mut walk = walk;
+            while out.len() < limit {
+                let Some(oid) = walk.next() else { break };
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
                 frontier.visit(oid, commit.parent_ids());
@@ -2004,6 +2225,10 @@ impl GitBackend for Libgit2Backend {
                             index: StatusFlag::Unmodified,
                             additions: 0,
                             deletions: 0,
+                            staged_additions: 0,
+                            staged_deletions: 0,
+                            unstaged_additions: 0,
+                            unstaged_deletions: 0,
                             // Blobs only — a committed tree never yields a
                             // directory entry, embedded or otherwise.
                             embedded: false,
@@ -2218,7 +2443,10 @@ impl GitBackend for Libgit2Backend {
                 // index" must not be read as "untracked" for one: deleting
                 // `src/` because `src` isn't an entry would wipe every tracked
                 // file beneath it. Restoring is what `git checkout -- src` does.
-                if index.get_path(p, 0).is_some() || index_has_entry_under(&index, p) {
+                // Any stage counts as tracked, not just stage 0 — a conflicted
+                // path lives at stages 1/2/3, and treating it as untracked would
+                // delete the user's merge in progress.
+                if index_tracks_path(&index, p) || index_has_entry_under(&index, p) {
                     restore.push(p);
                 } else if abs.exists() {
                     delete.push(abs);
@@ -2263,10 +2491,12 @@ impl GitBackend for Libgit2Backend {
         hunk_index: usize,
         context_lines: u32,
     ) -> AppResult<()> {
-        self.with_repo(repo_id, |repo| {
-            let mut opts = DiffOptions::new();
-            opts.pathspec(path);
-            opts.context_lines(context_lines);
+        // Returns Some(patch) for a file that is not in the index yet, which has
+        // to take the `git apply --cached` route instead: libgit2's
+        // `ApplyLocation::Index` needs an existing index entry and fails outright
+        // with "index does not contain <path>".
+        let creation_patch = self.with_repo(repo_id, |repo| {
+            let mut opts = worktree_index_diff_opts(path, context_lines);
             let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
 
             // Find delta for path, then count hunks via Patch.
@@ -2287,6 +2517,14 @@ impl GitBackend for Libgit2Backend {
                 )));
             }
 
+            let creates = diff
+                .get_delta(delta_idx)
+                .map(|d| delta_creates_file(&d))
+                .unwrap_or(false);
+            if creates {
+                return patch_text_for_hunk(&diff, delta_idx, hunk_index).map(Some);
+            }
+
             // Use ApplyOptions::hunk_callback to apply only the matching hunk.
             let mut counter: usize = 0;
             let mut apply_opts = git2::ApplyOptions::new();
@@ -2298,8 +2536,16 @@ impl GitBackend for Libgit2Backend {
 
             repo.apply(&diff, git2::ApplyLocation::Index, Some(&mut apply_opts))?;
             // apply_opts is dropped here, releasing the closure borrow.
-            Ok(())
-        })
+            Ok(None)
+        })?;
+
+        match creation_patch {
+            Some(text) => {
+                let repo_path = self.repo_path(repo_id)?;
+                git_apply(&repo_path, &["--cached"], &text)
+            }
+            None => Ok(()),
+        }
     }
 
     fn unstage_hunk(
@@ -2337,9 +2583,7 @@ impl GitBackend for Libgit2Backend {
     ) -> AppResult<()> {
         // Build patch text from the WorktreeToIndex diff, then `git apply --reverse`.
         let patch_text = self.with_repo(repo_id, |repo| {
-            let mut opts = DiffOptions::new();
-            opts.pathspec(path);
-            opts.context_lines(context_lines);
+            let mut opts = worktree_index_diff_opts(path, context_lines);
             let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
             let delta_index = find_delta_index(&diff, path)?;
             patch_text_for_hunk(&diff, delta_index, hunk_index)
@@ -2362,9 +2606,7 @@ impl GitBackend for Libgit2Backend {
         // subset of its lines. So it synthesizes a partial patch and pipes it
         // through the same `git apply` path unstage/discard already use.
         let patch_text = self.with_repo(repo_id, |repo| {
-            let mut opts = DiffOptions::new();
-            opts.pathspec(path);
-            opts.context_lines(context_lines);
+            let mut opts = worktree_index_diff_opts(path, context_lines);
             let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
             let delta_index = find_delta_index(&diff, path)?;
             patch_text_for_lines(
@@ -2421,9 +2663,7 @@ impl GitBackend for Libgit2Backend {
         context_lines: u32,
     ) -> AppResult<()> {
         let patch_text = self.with_repo(repo_id, |repo| {
-            let mut opts = DiffOptions::new();
-            opts.pathspec(path);
-            opts.context_lines(context_lines);
+            let mut opts = worktree_index_diff_opts(path, context_lines);
             let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
             let delta_index = find_delta_index(&diff, path)?;
             patch_text_for_lines(

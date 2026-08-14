@@ -33,11 +33,24 @@ pub struct FileStatus {
     pub path: String,
     pub worktree: StatusFlag,
     pub index: StatusFlag,
-    /// Lines added in this file vs HEAD (working tree + index combined).
+    /// Lines added in this file, both sides combined (staged + unstaged).
     /// 0 for unmodified/binary files and in listings that don't compute stats.
     pub additions: u32,
-    /// Lines removed in this file vs HEAD (working tree + index combined).
+    /// Lines removed in this file, both sides combined (staged + unstaged).
     pub deletions: u32,
+    /// Lines added between HEAD and the INDEX — i.e. what committing would
+    /// actually record. Kept separate from the unstaged side because one number
+    /// per file cannot serve both: a partially staged file otherwise reports the
+    /// same count on its staged and unstaged rows, and the commit composer
+    /// overstates the commit by including edits that are not staged.
+    pub staged_additions: u32,
+    /// Lines removed between HEAD and the index.
+    pub staged_deletions: u32,
+    /// Lines added between the index and the WORKING TREE — i.e. what is still
+    /// unstaged.
+    pub unstaged_additions: u32,
+    /// Lines removed between the index and the working tree.
+    pub unstaged_deletions: u32,
     /// True when this entry is a directory that is itself a git repository and
     /// is not a registered submodule (a vendored dependency, a stray clone).
     /// libgit2 refuses to recurse across the nested `.git` boundary, so it

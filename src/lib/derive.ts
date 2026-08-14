@@ -126,3 +126,34 @@ export function headSummary(
 ): CommitInfo | null {
   return commits[0] ?? null;
 }
+
+/**
+ * Added-line count for ONE side of a file's changes.
+ *
+ * A file can be modified on both sides at once, and `additions` is the two
+ * combined — so rendering it on a staged row overstates what committing would
+ * record, and rendering it on both rows shows the same number twice. The
+ * per-side fields answer the question the row is actually asking.
+ *
+ * Falls back to the combined count when the per-side fields are absent, which is
+ * the case for the many `FileStatus` fixtures in tests; `get_status` always
+ * sends them.
+ */
+export function sideAdditions(
+  status: FileStatus,
+  side: "staged" | "unstaged",
+): number {
+  const own =
+    side === "staged" ? status.stagedAdditions : status.unstagedAdditions;
+  return own ?? status.additions;
+}
+
+/** Removed-line count for one side. See {@link sideAdditions}. */
+export function sideDeletions(
+  status: FileStatus,
+  side: "staged" | "unstaged",
+): number {
+  const own =
+    side === "staged" ? status.stagedDeletions : status.unstagedDeletions;
+  return own ?? status.deletions;
+}

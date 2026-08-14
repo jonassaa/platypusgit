@@ -63,6 +63,11 @@ const DIFF_LAYOUT_KEY = "pg-history-diff-layout";
  * see the bottom, rather than after they hit it (#68 G11).
  */
 const LOAD_MORE_SLACK = 8;
+
+/// How many consecutive pages that add no *visible* rows auto-paging will fetch
+/// before giving up. Bounds a starving client-side filter to a few pages instead
+/// of a walk of the whole repository.
+const MAX_BARREN_PAGES = 3;
 /** Small debounce so arrow-scrolling the log doesn't fire a fetch per row. */
 const INLINE_DIFF_DEBOUNCE_MS = 100;
 
@@ -231,10 +236,43 @@ export function HistoryScreen() {
   // Fetch the next page as the window reaches the end of the loaded list.
   // Driven by the window rather than a scroll listener so there is one source
   // of truth for "where the user is" (#68 G11 on top of G10).
+  //
+  // Bounded on purpose. `visible` is the CLIENT-side-filtered list, and a filter
+  // can hold it shorter than the window indefinitely — "This branch" hard-caps it
+  // at `ahead`, and "mine"/hide-merges can starve it just as effectively. The
+  // end-of-list condition is then satisfied at rest with no scrolling, and
+  // `loadMoreCommits` toggling `loadingMore` re-arms this effect after every
+  // page, so it would walk the entire repository a page at a time. Allow a few
+  // consecutive pages that add no visible rows (a sparse filter legitimately has
+  // to dig for matches), then stop until something actually changes.
+  const autoPage = React.useRef({ barren: 0, sawVisible: -1, sawBase: -1 });
+  React.useEffect(() => {
+    // Any change to what is being filtered is a fresh start.
+    autoPage.current = { barren: 0, sawVisible: -1, sawBase: -1 };
+  }, [filterKind, hideMerges, searchResults]);
+
   React.useEffect(() => {
     if (!hasMoreLog || loadingMore) return;
-    if (win.end >= visible.length - LOAD_MORE_SLACK) void loadMoreCommits();
-  }, [win.end, visible.length, hasMoreLog, loadingMore, loadMoreCommits]);
+    if (win.end < visible.length - LOAD_MORE_SLACK) return;
+
+    const st = autoPage.current;
+    if (st.sawBase >= 0) {
+      if (visible.length > st.sawVisible) st.barren = 0;
+      else if (baseCommits.length > st.sawBase) st.barren += 1;
+    }
+    if (st.barren >= MAX_BARREN_PAGES) return;
+
+    st.sawVisible = visible.length;
+    st.sawBase = baseCommits.length;
+    void loadMoreCommits();
+  }, [
+    win.end,
+    visible.length,
+    baseCommits.length,
+    hasMoreLog,
+    loadingMore,
+    loadMoreCommits,
+  ]);
 
   const graphW = graphWidth(maxCol);
   const graphClamped = isGraphClamped(maxCol);

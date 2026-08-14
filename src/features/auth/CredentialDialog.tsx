@@ -113,11 +113,18 @@ export function CredentialDialog() {
           </div>
         </label>
 
-        <PGCheckbox
-          checked={remember}
-          onChange={setRemember}
-          label="Remember — stores it with git's own credential helper"
-        />
+        {/* HTTPS only. git's credential helpers store HTTP(S) passwords; an SSH
+            key passphrase belongs in ssh-agent, and handing it to `git
+            credential approve` would file it as this host's HTTPS password —
+            the wrong secret in the wrong store, offered on the next HTTPS
+            prompt. `withAuthRetry` enforces the same rule. */}
+        {challenge.kind === "Https" && (
+          <PGCheckbox
+            checked={remember}
+            onChange={setRemember}
+            label="Remember — stores it with git's own credential helper"
+          />
+        )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <PGButton

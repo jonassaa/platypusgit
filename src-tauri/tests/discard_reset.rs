@@ -4,7 +4,37 @@ use std::path::{Path, PathBuf};
 
 use platypusgit_lib::error::AppError;
 use platypusgit_lib::git::GitBackend;
-use support::{fs::{read_file, write_file}, TempRepo};
+use support::{fs::{read_file, write_file}, with_conflicting_merge, TempRepo};
+
+/// A conflicted path has index entries at stages 1/2/3 and NONE at stage 0, so
+/// a stage-0-only tracked check misreads it as untracked — and discard's
+/// untracked branch deletes the file outright. Discarding a conflicted file must
+/// restore a tracked version, never remove the user's merge in progress.
+#[test]
+fn discard_restores_a_conflicted_file_instead_of_deleting_it() {
+    let tr = with_conflicting_merge();
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .discard(&handle.id, &[PathBuf::from("README.md")])
+        .expect("discard a conflicted path");
+
+    assert!(
+        tr.path().join("README.md").exists(),
+        "discard deleted a conflicted file instead of restoring it"
+    );
+    // Restoring a conflicted path re-materializes the conflict from the index
+    // stages, which is `git checkout --merge` semantics: the user's edits are
+    // thrown away and the merge they still have to resolve comes back. Both
+    // sides must survive.
+    let restored = read_file(tr.path(), "README.md");
+    assert!(restored.contains("main branch content"), "ours missing: {restored:?}");
+    assert!(
+        restored.contains("feature branch content"),
+        "theirs missing: {restored:?}"
+    );
+    assert!(restored.contains("<<<<<<<"), "no conflict markers: {restored:?}");
+}
 
 #[test]
 fn discard_restores_worktree_from_index() {

@@ -99,11 +99,27 @@ jobs:
     steps:
       - name: Gate on the E2E result
         env:
+          FILTER: ${{ needs.changes.result }}
+          APP: ${{ needs.changes.outputs.app }}
           RESULT: ${{ needs.e2e.result }}
         run: |
-          echo "E2E job result: $RESULT"
+          echo "filter job: $FILTER / app touched: $APP / E2E job: $RESULT"
+          # A failed filter job skips `e2e` too. Without this check the gate
+          # would read that skip as "not required" and pass a PR whose suite
+          # never ran at all.
+          if [ "$FILTER" != "success" ]; then
+            echo "The change-filter job did not succeed, so the suite never ran."
+            exit 1
+          fi
           case "$RESULT" in
             success) echo "E2E suite passed." ;;
-            skipped) echo "No app code touched — E2E suite not required for this change." ;;
-            *)       echo "E2E suite did not pass."; exit 1 ;;
+            skipped)
+              # Only legitimate when the filter decided no app code was touched.
+              if [ "$APP" != "false" ]; then
+                echo "E2E suite was skipped even though app code changed."
+                exit 1
+              fi
+              echo "No app code touched — E2E suite not required for this change."
+              ;;
+            *) echo "E2E suite did not pass."; exit 1 ;;
           esac

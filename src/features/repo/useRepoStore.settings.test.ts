@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
 import { useRepoStore } from "./useRepoStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { useAuthStore } from "@/features/auth/useAuthStore";
 
 function mockRefreshAll() {
   mockInvoke("get_status", () => []);
@@ -97,6 +98,76 @@ describe("pull auto-stash", () => {
       kind: "Network",
       message: "diverged",
     });
+  });
+
+  // The stash must survive an auth challenge. The first attempt stashes and then
+  // fails on credentials; the retry used to re-enter the closure with a fresh
+  // `stashed = null`, find the tree clean (the work being in the stash), pull
+  // successfully and never pop — silently leaving the user's uncommitted work in
+  // a stash they were never told about.
+  it("pops the first attempt's stash after an auth retry succeeds", async () => {
+    let pullAttempts = 0;
+    let stashes = 0;
+    // Realistic: the first save stashes the dirty tree, and any later save finds
+    // a clean tree (the work is already stashed) and so returns null.
+    mockInvoke("stash_save", () => {
+      stashes += 1;
+      return stashes === 1 ? "stash-oid" : null;
+    });
+    mockInvoke("pull", () => {
+      pullAttempts += 1;
+      if (pullAttempts === 1) {
+        throw { kind: "Auth", message: { host: "github.com", kind: "Https" } };
+      }
+      return null;
+    });
+    mockInvoke("stash_pop", () => null);
+    mockInvoke("remember_credential", () => null);
+
+    await useRepoStore.getState().pull("origin", "main", "Merge");
+
+    // The challenge is raised rather than surfaced as an error.
+    const challenge = useAuthStore.getState().challenge;
+    expect(challenge).not.toBeNull();
+    expect(calls("stash_pop")).toHaveLength(0);
+
+    await challenge!.retry({ username: "ada", secret: "token" }, false);
+
+    expect(pullAttempts).toBe(2);
+    // Exactly one stash across both attempts, and it is popped.
+    expect(calls("stash_save")).toHaveLength(1);
+    expect(calls("stash_pop")).toHaveLength(1);
+    expect(useRepoStore.getState().error).toBeNull();
+  });
+
+  // `git credential approve` stores an HTTP(S) password. Remembering an SSH key
+  // passphrase there files the wrong secret under protocol=https for the host,
+  // and it would then be offered at the next HTTPS prompt.
+  it("never remembers an SSH passphrase with git's credential helper", async () => {
+    let attempts = 0;
+    mockInvoke("stash_save", () => null);
+    mockInvoke("pull", () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw {
+          kind: "Auth",
+          message: { host: "github.com", kind: "SshPassphrase" },
+        };
+      }
+      return null;
+    });
+    mockInvoke("remember_credential", () => null);
+
+    await useRepoStore.getState().pull("origin", "main", "Merge");
+    const challenge = useAuthStore.getState().challenge;
+    expect(challenge?.kind).toBe("SshPassphrase");
+
+    // Even with remember explicitly requested.
+    await challenge!.retry({ secret: "key-passphrase" }, true);
+
+    expect(attempts).toBe(2);
+    expect(calls("remember_credential")).toHaveLength(0);
+    expect(useRepoStore.getState().error).toBeNull();
   });
 });
 
