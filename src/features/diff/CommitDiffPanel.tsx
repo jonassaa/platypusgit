@@ -4,7 +4,54 @@ import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/key
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
 import { SignatureBadge } from "@/features/signing/SignatureBadge";
-import type { FileDiff } from "@/lib/types";
+import { useDiffSyntax, type DiffSyntax, type SideSource } from "@/lib/syntax";
+import { buildLineSpans } from "@/lib/lineSpans";
+import { pairChangedLines } from "@/lib/pairChangedLines";
+import type { WordSpan } from "@/lib/wordDiff";
+import type { DiffLine, FileDiff } from "@/lib/types";
+
+/**
+ * One diff row's text: syntax classes plus intra-line change marks, through the
+ * same tiling builder the design-system rows use.
+ *
+ * Side rule matches everywhere else: a removal reads the old file, an addition or
+ * context row the new one.
+ */
+function CommitDiffText({
+  line,
+  syntax,
+  spans,
+}: {
+  line: DiffLine;
+  syntax: DiffSyntax;
+  spans?: WordSpan[];
+}) {
+  const isRem = line.kind.kind === "Deletion";
+  const sideLines = isRem ? syntax.old : syntax.new;
+  const lineNo = isRem ? line.oldLineno : (line.newLineno ?? line.oldLineno);
+  const tokens = sideLines && lineNo ? (sideLines[lineNo - 1] ?? null) : null;
+  const rendered = buildLineSpans(line.content, tokens, spans);
+  if (rendered.length === 1 && !rendered[0].cls && !rendered[0].changed) {
+    return <>{line.content}</>;
+  }
+  const tint = isRem
+    ? "oklch(from var(--git-removed) l c h / 0.28)"
+    : "oklch(from var(--git-added) l c h / 0.28)";
+  return (
+    <>
+      {rendered.map((s, k) => (
+        <span
+          key={k}
+          className={s.cls}
+          data-testid={s.changed ? "word-change" : undefined}
+          style={s.changed ? { background: tint, borderRadius: 2 } : undefined}
+        >
+          {line.content.slice(s.start, s.end)}
+        </span>
+      ))}
+    </>
+  );
+}
 
 export interface CommitDiffPanelProps {
   diffs: FileDiff[];
@@ -26,6 +73,16 @@ export interface CommitDiffPanelProps {
    * or commit-vs-worktree, where "the" signature has no meaning.
    */
   verifyOid?: string;
+  /**
+   * Revisions to read whole-file text from, for syntax highlighting.
+   *
+   * The panel is presentational — the caller fetches the diffs and it never
+   * learns the repo or which revisions were compared — so callers that know them
+   * pass them here. A combined multi-commit diff, where "the" old side has no
+   * meaning, omits this and renders plain. The per-file `oldPath` for renames is
+   * filled in by the panel itself, which knows the selected file.
+   */
+  syntaxSides?: { repoId: string; old: SideSource; new: SideSource };
 }
 
 /**
@@ -42,6 +99,7 @@ export function CommitDiffPanel({
   paneIdPrefix,
   emptyLabel = "No changes in this commit.",
   verifyOid,
+  syntaxSides,
 }: CommitDiffPanelProps) {
   const filesPaneId = `${paneIdPrefix}.files`;
   const viewPaneId = `${paneIdPrefix}.view`;
@@ -78,6 +136,54 @@ export function CommitDiffPanel({
     count: current?.hunks.length ?? 0,
     resetKey: selected,
   });
+
+  const syntax = useDiffSyntax({
+    repoId: syntaxSides?.repoId ?? null,
+    path: syntaxSides ? (current?.path ?? null) : null,
+    // A rename's old side lives at its old path; the panel knows it per file.
+    old: syntaxSides
+      ? syntaxSides.old.kind === "rev"
+        ? { ...syntaxSides.old, path: current?.oldPath ?? null }
+        : syntaxSides.old
+      : { kind: "none" },
+    new: syntaxSides?.new ?? { kind: "none" },
+  });
+
+  /**
+   * Word spans for the selected file, keyed hunk index → line index within that
+   * hunk. Runs of removals and additions pair positionally through the shared
+   * rule; a run with no counterpart gets nothing.
+   */
+  const wordSpansByHunk = React.useMemo(() => {
+    return (current?.hunks ?? []).map((h) => {
+      const spans = new Map<number, WordSpan[]>();
+      let remIdx: number[] = [];
+      let addIdx: number[] = [];
+      const flush = () => {
+        if (remIdx.length && addIdx.length) {
+          const paired = pairChangedLines(
+            remIdx.map((i) => h.lines[i].content),
+            addIdx.map((i) => h.lines[i].content),
+          );
+          paired.forEach((p, k) => {
+            if (!p) return;
+            spans.set(remIdx[k], p.old);
+            spans.set(addIdx[k], p.new);
+          });
+        }
+        remIdx = [];
+        addIdx = [];
+      };
+      h.lines.forEach((ln, i) => {
+        const k = ln.kind.kind;
+        if (k === "Deletion") remIdx.push(i);
+        else if (k === "Addition") addIdx.push(i);
+        else flush();
+      });
+      flush();
+      return spans;
+    });
+  }, [current]);
 
   // Per mount site: History's bottom panel is wide and short, the full-screen
   // commit diff is not, so one shared width would fit neither.
@@ -270,7 +376,11 @@ export function CommitDiffPanel({
                       : ln.kind.kind === "Deletion"
                         ? "-"
                         : " "}
-                    {ln.content}
+                    <CommitDiffText
+                      line={ln}
+                      syntax={syntax}
+                      spans={wordSpansByHunk[i]?.get(j)}
+                    />
                   </div>
                 ))}
               </div>

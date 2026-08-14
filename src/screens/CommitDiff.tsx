@@ -105,6 +105,30 @@ export function CommitDiffScreen() {
         // Only a single commit has a signature — a range or a commit-vs-worktree
         // comparison does not (#61 D6).
         verifyOid={target.kind === "commit-self" ? target.oid : undefined}
+        // Mirrors the fetch above: a commit's own diff is against its parent
+        // (`^`, which simply fails and renders plain on a root commit, where
+        // there is no old side anyway); every other target is an explicit pair.
+        syntaxSides={
+          repo
+            ? target.kind === "commit-self"
+              ? {
+                  repoId: repo.id,
+                  old: { kind: "rev", rev: `${target.oid}^` },
+                  new: { kind: "rev", rev: target.oid },
+                }
+              : {
+                  repoId: repo.id,
+                  old: {
+                    kind: "rev",
+                    rev: target.kind === "commit-vs-commit" ? target.from : target.oid,
+                  },
+                  new: {
+                    kind: "rev",
+                    rev: target.kind === "commit-vs-commit" ? target.to : "HEAD",
+                  },
+                }
+            : undefined
+        }
       />
     </div>
   );
