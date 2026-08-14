@@ -176,6 +176,30 @@ export function rebaseConflictRepo(): TempRepo {
   // pick's result) to actually diverge.
 }
 
+/**
+ * A range with a merge commit in the middle:
+ *
+ *   root ── A ──── C ── M   (main)
+ *            \        /
+ *             ─── F ──      (feature)
+ *
+ * F and C touch different files, so M merges cleanly. `main` advances past the
+ * branch point before merging, so this is a real merge and not a fast-forward
+ * (`--no-ff` is belt-and-braces). Used by the interactive rebase spec: a rebase
+ * from A must flatten M away while keeping F's content.
+ */
+export function mergeRangeRepo(): TempRepo {
+  const r = new TempRepo();
+  r.commitFile("root.txt", "root\n", "feat: root");
+  r.commitFile("a.txt", "a\n", "feat: a on main");
+  r.git("checkout", "-b", "feature");
+  r.commitFile("f.txt", "f\n", "feat: f on feature");
+  r.git("checkout", "main");
+  r.commitFile("c.txt", "c\n", "feat: c on main");
+  r.git("merge", "--no-ff", "-m", "Merge branch 'feature'", "feature");
+  return r;
+}
+
 /** A bare repository with real commits, for driving the clone path against
  *  local disk only — no network, no credentials, no flake.
  *
