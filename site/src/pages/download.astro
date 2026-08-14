@@ -39,7 +39,9 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
     <div class="notice">
       <strong>Builds are early but usable.</strong> Every published release attaches prebuilt
       binaries for all three platforms — macOS <code>.dmg</code>, Windows <code>.msi</code>,
-      Linux <code>.deb</code> &amp; <code>.AppImage</code>. The download buttons above always
+      Linux <code>.deb</code> &amp; <code>.AppImage</code>. On macOS, prefer
+      <a href="#macos">Homebrew</a> — it handles Gatekeeper and updates for you.
+      The download buttons above always
       point at the <a href={site.releasesLatest} target="_blank" rel="noopener">latest release</a>;
       browse <a href={site.releases} target="_blank" rel="noopener">all releases</a>, or
       <a href="#build">build from source</a>.
@@ -50,25 +52,32 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   <section class="container install" id="macos" data-os-section="macos">
     <div class="install-head">
       <h2><OsIcon os="macos" size={22} /> macOS</h2>
-      <p>Apple Silicon &amp; Intel.</p>
+      <p>Apple Silicon &amp; Intel. Homebrew is the smoothest route — one command to install, one to update, no Gatekeeper detour.</p>
     </div>
 
-    <div class="method">
-      <h3>Homebrew</h3>
+    <div class="method method-primary">
+      <h3>Homebrew <span class="badge">Recommended</span></h3>
       <CodeBlock code={'brew install --cask jonassaa/platypusgit/platypusgit'} lang="bash" />
-      <p class="method-note">The app is ad-hoc signed but not notarized. The cask clears the macOS Gatekeeper quarantine flag on install, so it launches with no "unidentified developer" prompt.</p>
+      <p class="method-note">Taps the cask and installs the universal build straight into <code>/Applications</code>. The app is ad-hoc signed but not notarized — the cask clears the macOS Gatekeeper quarantine flag on install, so it launches with no "unidentified developer" prompt and there is nothing to run by hand.</p>
+    </div>
+
+    <div class="method method-primary">
+      <h3>Updating with Homebrew</h3>
+      <p class="method-note">Homebrew owns updates on macOS — there is no in-app self-update here. Every release bumps the cask, so upgrading is:</p>
+      <CodeBlock code={'brew update\nbrew upgrade --cask platypusgit'} lang="bash" />
+      <p class="method-note"><code>brew update</code> refreshes the tap, <code>brew upgrade</code> fetches the new build and replaces the app. Quit platypusgit first so the running app isn't swapped underneath it. Check what you have with <code>brew info --cask platypusgit</code>, and remove it with <code>brew uninstall --cask platypusgit</code>.</p>
     </div>
 
     <div class="method">
-      <h3>DMG</h3>
-      <p class="method-note">Download the universal <code>.dmg</code> and drag <code>platypusgit.app</code> into <code>/Applications</code>.</p>
+      <h3>DMG (manual)</h3>
+      <p class="method-note">No Homebrew? Download the universal <code>.dmg</code> and drag <code>PlatypusGit.app</code> into <code>/Applications</code>. Updates are then manual — repeat the download for every release.</p>
       <CTAButton href={assets.macosDmg} external>Download .dmg</CTAButton>
     </div>
 
     <div class="method">
-      <h3>First launch — DMG, unsigned build</h3>
-      <p class="method-note">DMG installs aren't notarized, so on first launch macOS may say the app is damaged or from an unidentified developer. Clear the quarantine flag (the Homebrew cask already handles this):</p>
-      <CodeBlock code={'xattr -cr /Applications/platypusgit.app'} lang="bash" />
+      <h3>First launch — DMG only</h3>
+      <p class="method-note">The <code>.dmg</code> isn't notarized, so on first launch macOS may say the app is damaged or from an unidentified developer. Clear the quarantine flag (Homebrew installs never hit this):</p>
+      <CodeBlock code={'xattr -cr /Applications/PlatypusGit.app'} lang="bash" />
       <p class="method-note">Or: <strong>System Settings → Privacy &amp; Security → Open Anyway</strong> for platypusgit.</p>
     </div>
   </section>
@@ -186,7 +195,11 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   .os-glyph { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); display: inline-block; }
 
   .method { margin-top: var(--s-7); max-width: 760px; }
-  .method h3 { font-size: 15px; margin: 0 0 var(--s-4); color: var(--fg-0); font-family: var(--font-sans); font-weight: 600; }
+  .method h3 { font-size: 15px; margin: 0 0 var(--s-4); color: var(--fg-0); font-family: var(--font-sans); font-weight: 600;
+    display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+  .method-primary { border-left: 2px solid var(--accent); padding-left: var(--s-6); }
+  .badge { background: var(--accent); color: var(--accent-ink); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; }
   .method-note { color: var(--fg-2); font-size: 14px; margin: 0 0 var(--s-4); line-height: 1.6; }
   .method-note code { background: var(--bg-2); border: 1px solid var(--border-0); border-radius: var(--r-2);
     padding: 1px 5px; font-size: 12px; color: var(--fg-1); }
