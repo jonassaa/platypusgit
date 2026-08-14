@@ -21,7 +21,7 @@
 - Run cargo/pnpm with `export PATH="$HOME/Library/pnpm:$HOME/.cargo/bin:$PATH"`.
 - E2E only ever runs through Docker: `pnpm test:e2e:docker`. This PR adds no e2e spec.
 - Do not write git's own `.git/rebase-merge/` directory. Our state file plus `ORIG_HEAD` is the contract.
-- The seven existing tests in `src-tauri/tests/rebase.rs` must stay green throughout; they are the regression net for the execution-model change.
+- The ten existing tests in `src-tauri/tests/rebase.rs` must stay green throughout; they are the regression net for the execution-model change.
 
 ## File Structure
 
@@ -517,12 +517,27 @@ fn paused_rebase_detaches_head_and_leaves_the_branch_alone() {
         "refs/heads/main",
         "HEAD should be reattached to the original branch"
     );
+    // The branch points at the replayed history. Do NOT assert the tip
+    // *changed*: replaying unchanged commits onto the same base reproduces them
+    // byte for byte (same tree, message, author, and same-second committer), so
+    // the oids legitimately match the originals. The invariant is that HEAD and
+    // the branch agree, and that every step landed.
     let tip_after = branch_tip(&tr, "main");
-    assert_ne!(tip_after, tip_before, "the branch should point at the replay");
     assert_eq!(
         tr.repo.head().unwrap().peel_to_commit().unwrap().id().to_string(),
         tip_after,
         "HEAD and the branch must agree once the rebase is done"
+    );
+    let summaries: Vec<String> = backend
+        .log(&handle.id, None, 10)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.summary)
+        .collect();
+    assert_eq!(
+        summaries,
+        vec!["commit 2", "commit 1", "commit 0", "initial"],
+        "every planned step must have been replayed onto the branch"
     );
 }
 
@@ -828,7 +843,9 @@ fn a_restarted_app_can_still_abort() {
         "the rebase must still be reported as in progress after a restart"
     );
     assert_eq!(status.total, 3);
-    assert_eq!(status.next_index, 1, "one step had completed before the pause");
+    // Two, not one: an Edit pauses *after* committing its step, so the pick and
+    // the edit have both landed by the time the rebase stops.
+    assert_eq!(status.next_index, 2, "the pick and the edit both landed");
 
     backend.rebase_abort(&handle.id).unwrap();
     assert_eq!(branch_tip(&tr, "main"), tip_before);
@@ -1236,6 +1253,13 @@ app still reports the rebase and can abort it."
 
 ### Task 4: One engine behind both Continue and Abort
 
+> **Land this together with Task 3.** Once the state file exists, the old
+> `abort_operation` (which removes only the in-memory entry) leaves a rebase that
+> `rebase_status` still reads as in progress off disk — so
+> `rebase.rs::abort_operation_clears_rebase_state_and_restores_pre_rebase_head`
+> fails between the two tasks. Implement Task 3, then Task 4, then commit once;
+> splitting them lands a knowingly-red commit.
+
 **Files:**
 - Modify: `src-tauri/src/git/libgit2.rs` (`continue_operation`, `abort_operation`)
 - Modify: `src-tauri/tests/rebase_durability.rs`
@@ -1277,8 +1301,20 @@ fn continue_operation_during_a_rebase_advances_the_plan() {
     ];
     let status = backend.rebase_start(&handle.id, plan).unwrap();
     assert_eq!(status.pause_reason.as_deref(), Some("edit"));
+
+    // What the UI does during an edit pause: AMEND the step's commit. Leaving
+    // the change merely staged is not a resolution — the next cherry-pick
+    // refuses with "1 uncommitted change would be overwritten by merge".
     write_file(tr.path(), "shared.txt", "diverged\n");
-    backend.stage(&handle.id, &[PathBuf::from("shared.txt")]).unwrap();
+    {
+        let mut index = tr.repo.index().unwrap();
+        index.add_path(std::path::Path::new("shared.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = tr.repo.find_tree(tree_oid).unwrap();
+        let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
+        head.amend(Some("HEAD"), None, None, None, None, Some(&tree)).unwrap();
+    }
 
     let status = backend.rebase_continue(&handle.id).unwrap();
     assert_eq!(
