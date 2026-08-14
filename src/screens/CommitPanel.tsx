@@ -74,6 +74,12 @@ import {
 import { useWholeFile } from "@/features/diff/useWholeFile";
 import { buildStatusTree, findStatusByTreeKey, treeKeyToPath } from "@/lib/tree";
 import { useTreeViewMode } from "@/lib/useTreeViewMode";
+import {
+  resolveStagingDrop,
+  useDragSource,
+  useDropZone,
+  type DragPayload,
+} from "@/features/dnd";
 import type {
   AuthorOverride,
   CommitInfo,
@@ -395,6 +401,84 @@ export function CommitPanelScreen() {
     }
     stage(togglePaths(f));
   };
+
+  // ── Drag to stage / unstage (#91) ─────────────────────────────────────────
+  //
+  // The gesture is delegated from the SECTION, resolving the grabbed row through
+  // `data-path` — an attribute PGChangeRow and PGFileTreeRow already carry. So no
+  // prop is threaded into either row component, and the tree⇄flat toggle needs no
+  // per-mode branch: in flat mode `data-path` is the file path, in tree mode it
+  // is the tree key minus its leading slash, and `findStatusByTreeKey` turns
+  // either into the same slot (`lib/tree.ts` emits the same row keys for both —
+  // that property is what makes this work).
+  const navKeyForRow = React.useCallback(
+    (side: FileSlot["side"], dataPath: string): string => {
+      const files: FileSlot[] = side === "staged" ? staged : unstaged;
+      const slot = findStatusByTreeKey(`/${dataPath}`, files);
+      // No slot behind it → a folder row, which acts on everything beneath it,
+      // exactly as its checkbox and its context menu do.
+      return slot ? keyOf(slot) : dirKeyOf(side, dataPath);
+    },
+    [staged, unstaged],
+  );
+
+  /**
+   * The payload for a drag starting on `target`, or null for a spot that carries
+   * no row. Paths come out of `splitFileSelection` with this screen's own
+   * `selectionSource` — the exact call the checkbox makes (see `togglePaths`), so
+   * folder expansion, multi-selection bucketing and the embedded-repo exclusion
+   * are shared with it rather than re-derived.
+   */
+  const dragPayloadFor = React.useCallback(
+    (side: FileSlot["side"], target: HTMLElement): DragPayload | null => {
+      const row = target.closest("[data-path]") as HTMLElement | null;
+      const dataPath = row?.getAttribute("data-path");
+      if (!dataPath) return null;
+      const navKey = navKeyForRow(side, dataPath);
+      const keys =
+        sel.keys.length > 1 && sel.keys.includes(navKey) ? sel.keys : [navKey];
+      const split = splitFileSelection(keys, selectionSource);
+      const paths = side === "staged" ? split.stagedPaths : split.unstagedPaths;
+      // Nothing actionable — an embedded repo is the usual reason. No drag, and
+      // no message either: this runs on pointerDOWN, so flashing here would fire
+      // on a plain click. A row that cannot be staged simply is not draggable,
+      // the same as empty space.
+      if (paths.length === 0) return null;
+      return {
+        kind: "files",
+        side,
+        paths,
+        label: paths.length === 1 ? paths[0] : `${paths.length} files`,
+      };
+    },
+    [navKeyForRow, sel.keys, selectionSource],
+  );
+
+  const applyStagingDrop = React.useCallback(
+    (payload: DragPayload, targetSide: FileSlot["side"]) => {
+      if (payload.kind !== "files") return;
+      const drop = resolveStagingDrop(payload, targetSide);
+      if (!drop) return;
+      // The store's stage/unstage already refresh STATUS only — an index-only
+      // mutation must not pull the whole log and branch list behind it.
+      if (drop.action === "stage") void stage(drop.paths);
+      else void unstage(drop.paths);
+    },
+    [stage, unstage],
+  );
+
+  const stagedSource = useDragSource((t) => dragPayloadFor("staged", t));
+  const unstagedSource = useDragSource((t) => dragPayloadFor("unstaged", t));
+  const stagedZone = useDropZone({
+    id: "commit.drop.staged",
+    accepts: (p) => p.kind === "files" && p.side !== "staged",
+    onDrop: (p) => applyStagingDrop(p, "staged"),
+  });
+  const unstagedZone = useDropZone({
+    id: "commit.drop.unstaged",
+    accepts: (p) => p.kind === "files" && p.side !== "unstaged",
+    onDrop: (p) => applyStagingDrop(p, "unstaged"),
+  });
 
   const primaryKey = primarySelectedKey(sel);
   const selected = React.useMemo(() => {
@@ -835,8 +919,14 @@ export function CommitPanelScreen() {
       >
         <div
           data-testid="staged-list"
-          style={{ borderBottom: "1px solid var(--border-0)" }}
+          ref={stagedZone.ref}
+          {...stagedSource}
+          style={{
+            borderBottom: "1px solid var(--border-0)",
+            position: "relative",
+          }}
         >
+          {stagedZone.isOver && <DropHint label="Drop to stage" />}
           <Header
             title="STAGED"
             badge={<PGBadge tone="success">{staged.length}</PGBadge>}
@@ -914,6 +1004,15 @@ export function CommitPanelScreen() {
           style={{ flex: 1 }}
           ariaLabel="Changed files"
         >
+          {/* The zone wraps the section INSIDE the scroller and claims its full
+              height, so the empty space under the last row is a drop target too
+              — "drop into CHANGES" must not require hitting a row. */}
+          <div
+            ref={unstagedZone.ref}
+            {...unstagedSource}
+            style={{ minHeight: "100%", position: "relative" }}
+          >
+          {unstagedZone.isOver && <DropHint label="Drop to unstage" />}
           <Header
             title="CHANGES"
             badge={<PGBadge tone="warn">{unstaged.length}</PGBadge>}
@@ -982,6 +1081,7 @@ export function CommitPanelScreen() {
               />
             ))
           )}
+          </div>
         </FocusableScroll>
       </PGPane>
       <PGResizeHandle onDrag={changesPane.resize} />
@@ -1368,6 +1468,36 @@ export function CommitPanelScreen() {
       </PGPane>
       {fileMenu}
       {folderMenu}
+    </div>
+  );
+}
+
+/**
+ * What a hovered staging zone will do, said in words. The accent ring from
+ * `[data-pg-drop-over]` already says "here"; this says "and this is what
+ * happens". Absolutely positioned and `pointerEvents: none` so hovering a zone
+ * neither shifts the rows under the cursor nor shadows the hit test.
+ */
+function DropHint({ label }: { label: string }) {
+  return (
+    <div
+      data-testid="drop-hint"
+      style={{
+        position: "absolute",
+        top: 4,
+        right: 8,
+        zIndex: 2,
+        pointerEvents: "none",
+        padding: "1px 6px",
+        borderRadius: "var(--r-2)",
+        border: "1px solid var(--accent)",
+        background: "var(--bg-2)",
+        color: "var(--accent)",
+        fontSize: "var(--fs-10)",
+        fontFamily: "var(--font-mono)",
+      }}
+    >
+      {label}
     </div>
   );
 }

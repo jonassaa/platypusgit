@@ -42,6 +42,14 @@ import { resolveHeadDecor } from "@/features/settings/headMarks";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
+import {
+  resolveGraphDrop,
+  useDragSource,
+  useDropZone,
+  type DragPayload,
+  type DropResolution,
+  type GraphDropTarget,
+} from "@/features/dnd";
 import { diffCommit } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
 import { currentBranch, mapCommitRefs, relativeTime, shortSha } from "@/lib/derive";
@@ -88,6 +96,9 @@ export function HistoryScreen() {
   );
   const searchCommits = useRepoStore((s) => s.searchCommits);
   const branches = useRepoStore((s) => s.branches);
+  // Gates the graph drag: no starting a merge or rebase on top of an operation
+  // the OperationBar is already showing (#91).
+  const repoState = useRepoStore((s) => s.repoState);
   const logRef = useRepoStore((s) => s.logRef);
   const setLogRef = useRepoStore((s) => s.setLogRef);
   const loading = useRepoStore((s) => s.loading);
@@ -547,6 +558,118 @@ export function HistoryScreen() {
     [byOid, multiSelected, selectedSet, sel, order, onCommitMulti, onCommitContext],
   );
 
+  // ── Graph drag (#91) ──────────────────────────────────────────────────────
+  //
+  // ONE source and ONE delegated zone for the whole list. Per-row hooks are not
+  // an option here: PGCommitRow is memoized and the list is windowed (#68 G9),
+  // so a store subscription per row would re-render the visible slice on every
+  // pointer move. Rows are found by attributes they already carry —
+  // `[data-pg-ref]` on a ref pill, `[data-sha]` on a row — and the hover ring is
+  // an attribute the controller writes, never React state.
+  const dragSource = useDragSource(
+    React.useCallback(
+      (target: HTMLElement): DragPayload | null => {
+        const pill = target.closest("[data-pg-ref]") as HTMLElement | null;
+        const ref = pill?.getAttribute("data-pg-ref");
+        // The pill wins over the row it sits in: grabbing a branch label means
+        // the branch, not the commit underneath it.
+        if (ref) {
+          return { kind: "ref", ref, isHead: ref === headName, label: ref };
+        }
+        const rowEl = target.closest("[data-sha]") as HTMLElement | null;
+        const shortOid = rowEl?.getAttribute("data-sha");
+        if (!shortOid) return null;
+        const c = visible.find((x) => x.shortOid === shortOid);
+        if (!c) return null;
+        return { kind: "commit", oid: c.oid, label: c.shortOid };
+      },
+      [headName, visible],
+    ),
+  );
+
+  /** The ref pill or commit row under the pointer, and what dropping there means. */
+  const resolveTarget = React.useCallback(
+    (el: HTMLElement, payload: DragPayload): DropResolution | null => {
+      const pill = el.closest("[data-pg-ref]") as HTMLElement | null;
+      const rowEl = el.closest("[data-sha]") as HTMLElement | null;
+      let target: GraphDropTarget | null = null;
+      let markEl: HTMLElement | null = null;
+      if (pill?.getAttribute("data-pg-ref")) {
+        target = { kind: "ref", ref: pill.getAttribute("data-pg-ref")! };
+        markEl = pill;
+      } else if (rowEl?.getAttribute("data-sha")) {
+        const c = visible.find((x) => x.shortOid === rowEl.getAttribute("data-sha"));
+        if (!c) return null;
+        target = { kind: "commit", oid: c.oid, shortOid: c.shortOid };
+        markEl = rowEl;
+      }
+      if (!target || !markEl) return null;
+      const drop = resolveGraphDrop(payload, target, { headBranch: headName, headOid });
+      if (!drop) return null;
+      if (drop.kind === "rejected")
+        return { key: "", el: markEl, reason: drop.reason };
+      // The key round-trips the decision so onDrop does not resolve twice — the
+      // pointer may have moved on by the time the confirm resolves.
+      return { key: JSON.stringify(drop), el: markEl };
+    },
+    [visible, headName, headOid],
+  );
+
+  const onGraphDrop = React.useCallback(
+    async (_payload: DragPayload, key: string) => {
+      if (!key) return;
+      const drop = JSON.parse(key) as ReturnType<typeof resolveGraphDrop>;
+      if (!drop || drop.kind === "rejected") return;
+      const store = useRepoStore.getState();
+      const head = headName ?? "the current branch";
+      if (drop.kind === "merge") {
+        if (
+          await pgConfirm({
+            title: `Merge ${drop.branch} into ${head}?`,
+            body: `A merge commit is created on ${head} unless the merge fast-forwards.`,
+            confirmLabel: "Merge",
+          })
+        )
+          void store.mergeBranch(drop.branch);
+        return;
+      }
+      if (drop.kind === "rebase") {
+        if (
+          await pgConfirm({
+            title: `Rebase ${head} onto ${drop.label}?`,
+            body: `${head}'s commits are replayed on top of ${drop.label} — their SHAs change.`,
+            confirmLabel: "Rebase",
+            danger: true,
+          })
+        )
+          void store.rebaseOnto(drop.upstream);
+        return;
+      }
+      if (
+        await pgConfirm({
+          title: `Cherry-pick ${drop.label} onto ${head}?`,
+          body: `The commit is copied onto ${head} as a new commit with a new SHA.`,
+          confirmLabel: "Cherry-pick",
+          danger: true,
+        })
+      )
+        void store.cherryPick(drop.oid);
+    },
+    [headName],
+  );
+
+  const graphZone = useDropZone({
+    id: "history.graph",
+    // No starting a merge or a rebase on top of an operation already open — the
+    // OperationBar owns that state and it must be finished or aborted first.
+    accepts: (p) => (p.kind === "ref" || p.kind === "commit") && repoState === "Clean",
+    resolve: resolveTarget,
+    onDrop: (p, key) => {
+      void onGraphDrop(p, key);
+    },
+    onReject: (_p, reason) => pgFlash(reason),
+  });
+
   if (!commits.length) {
     return (
       <>
@@ -636,7 +759,12 @@ export function HistoryScreen() {
         {/* Windowed: only the on-screen slice is mounted, with spacer divs
             above and below so scrollHeight stays exact — FocusableScroll's
             End/PageDn read scrollHeight and clientHeight (#68 G10). */}
-        <div data-testid="commit-list" data-total={visible.length}>
+        <div
+          data-testid="commit-list"
+          data-total={visible.length}
+          ref={graphZone.ref}
+          {...dragSource}
+        >
         <div style={{ height: win.topPad }} />
         {visible.slice(win.start, win.end).map((c, sliceIndex) => {
           const g = rows[win.start + sliceIndex];

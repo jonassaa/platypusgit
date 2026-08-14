@@ -110,16 +110,24 @@ export function remoteBranches(branches: BranchInfo[]): BranchInfo[] {
 export function mapCommitRefs(
   refs: string[],
   headBranch: string | null,
-): { name: string; tone: "accent" | "violet" | "green" | "amber"; remote?: string }[] {
+): {
+  name: string;
+  tone: "accent" | "violet" | "green" | "amber";
+  remote?: string;
+  ref: string;
+}[] {
+  // `ref` is the name git knows, carried alongside the display name because the
+  // display name is lossy: HEAD's pill reads "HEAD→main", and a remote ref is
+  // split into name + remote. A drag or any other op needs the original (#91).
   return refs.map((r) => {
     if (r.startsWith("origin/") || r.includes("/")) {
       const [remote, ...rest] = r.split("/");
-      return { name: rest.join("/"), tone: "violet" as const, remote };
+      return { name: rest.join("/"), tone: "violet" as const, remote, ref: r };
     }
     if (r === headBranch) {
-      return { name: `HEAD→${r}`, tone: "accent" as const };
+      return { name: `HEAD→${r}`, tone: "accent" as const, ref: r };
     }
-    return { name: r, tone: "green" as const };
+    return { name: r, tone: "green" as const, ref: r };
   });
 }
 

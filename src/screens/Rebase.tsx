@@ -14,8 +14,8 @@ import {
   type RebaseMergeMode,
 } from "@/features/rebase/useRebaseMergeMode";
 import { buildPreservePlan } from "@/features/commits/buildPreservePlan";
-import { useRowReorder } from "@/features/rebase/useRowReorder";
-import { PGPane, FocusableScroll } from "@/features/keymap";
+import { useRowReorder } from "@/features/dnd";
+import { PGPane, FocusableScroll, useAction, usePaneList } from "@/features/keymap";
 
 // ─── Plan row state ───────────────────────────────────────────────────────────
 
@@ -332,6 +332,48 @@ export function RebaseScreen() {
     planScrollRef,
   );
 
+  /**
+   * Reordering is not offered while preserving merges: git documents its own
+   * reorder bugs under `--rebase-merges`, and a reorder that silently produces
+   * the wrong topology is worse than no reorder.
+   *
+   * This gate must hold for EVERY entry point. The chevrons were hidden here
+   * from the start, but the pointer drag was wired unconditionally — so a
+   * preserve-mode plan was reorderable by drag while the buttons said it wasn't
+   * (#91).
+   */
+  const canReorder = mergeMode === "flatten";
+
+  // Keyboard parity for the drag (#91): a cursor row, moved by ↑/↓, reordered by
+  // Mod+Shift+↑/↓. Clamped rather than pruned — the plan is rebuilt wholesale
+  // when the merge mode flips, and a stale index would point past the end.
+  const [cursor, setCursor] = useState(0);
+  const cursorIdx = plan.length === 0 ? -1 : Math.min(cursor, plan.length - 1);
+  usePaneList({
+    paneId: "rebase.steps",
+    count: plan.length,
+    selectedIndex: cursorIdx,
+    onSelect: setCursor,
+    searchText: (i) => plan[i]?.subject ?? "",
+  });
+  const moveCursorRow = React.useCallback(
+    (direction: -1 | 1) => {
+      if (!canReorder) return false;
+      const to = cursorIdx + direction;
+      if (cursorIdx < 0 || to < 0 || to >= plan.length) return false;
+      moveRowTo(cursorIdx, to);
+      setCursor(to);
+      return true;
+    },
+    [canReorder, cursorIdx, plan.length, moveRowTo],
+  );
+  useAction("rebase.moveStepUp", () => moveCursorRow(-1), [moveCursorRow], {
+    paneId: "rebase.steps",
+  });
+  useAction("rebase.moveStepDown", () => moveCursorRow(1), [moveCursorRow], {
+    paneId: "rebase.steps",
+  });
+
   const handleStart = async () => {
     const steps: RebaseStep[] = plan.map((r) => ({
       oid: r.oid,
@@ -521,6 +563,27 @@ export function RebaseScreen() {
             </div>
           )}
 
+          {/* Preserve mode disables reordering, and it has to SAY so. The
+              merge-count banner above already does — but only when the range
+              contains a merge, so a merge-free range in preserve mode had dim
+              grips, dead chords and no explanation anywhere. */}
+          {!canReorder && plan.length > 0 && mergeCount === 0 && (
+            <div
+              data-testid="rebase-reorder-disabled"
+              style={{
+                padding: "6px 12px",
+                borderBottom: "1px solid var(--border-0)",
+                background: "var(--bg-1)",
+                color: "var(--fg-2)",
+                fontSize: "var(--fs-12)",
+              }}
+            >
+              Reordering is disabled while preserving merges — git&apos;s own{" "}
+              <code style={{ fontFamily: "var(--font-mono)" }}>--rebase-merges</code>{" "}
+              reorder is unreliable.
+            </div>
+          )}
+
           {/* Rows */}
           <PGPane
             id="rebase.steps"
@@ -551,10 +614,20 @@ export function RebaseScreen() {
                   key={row.oid}
                   ref={registerRow(row.oid)}
                   data-pg-plan-row={row.oid}
-                  onPointerDown={(e) => onRowPointerDown(row.oid, e)}
+                  onPointerDown={
+                    canReorder ? (e) => onRowPointerDown(row.oid, e) : undefined
+                  }
+                  onClick={() => setCursor(i)}
                   style={{
-                    cursor: draggingKey === row.oid ? "grabbing" : "grab",
-                    touchAction: "none",
+                    cursor: !canReorder
+                      ? "default"
+                      : draggingKey === row.oid
+                        ? "grabbing"
+                        : "grab",
+                    // Only suppress touch panning where a drag can actually
+                    // start; in preserve mode it would block touch-scrolling the
+                    // plan for a gesture that no longer exists.
+                    touchAction: canReorder ? "none" : undefined,
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -567,14 +640,14 @@ export function RebaseScreen() {
                         badge={row.isMerge ? "merge" : undefined}
                         options={row.isMerge ? mergeActionsFor(mergeMode) : undefined}
                         dragging={draggingKey === row.oid}
+                        selected={i === cursorIdx}
+                        reorderable={canReorder}
                         onActionChange={(v) => updateRow(i, { action: v })}
                       />
                     </div>
-                    {/* Reordering is not offered while preserving merges: git
-                        documents its own reorder bugs under --rebase-merges, and
-                        a reorder that silently produces the wrong topology is
-                        worse than no reorder. */}
-                    {mergeMode === "flatten" && (
+                    {/* Same gate as the drag and the keyboard chords — see
+                        canReorder. */}
+                    {canReorder && (
                       <div
                         style={{
                           display: "flex",

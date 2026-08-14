@@ -167,6 +167,22 @@ describe("interactive rebase", () => {
       },
     );
 
+    // Reordering is disabled in preserve mode, and the rows say so — the drag
+    // gate and the chevrons are one decision now (#91). Before that the pointer
+    // drag was still wired here while the buttons were already gone.
+    await browser.waitUntil(
+      async () =>
+        (await $('[data-testid="rebase-row"]').getAttribute(
+          "data-pg-reorderable",
+        )) === "false",
+      {
+        timeout: 10_000,
+        timeoutMsg: "rebase rows still advertised reordering in preserve mode",
+      },
+    );
+    await expect($('[data-testid="rebase-move-up"]')).not.toBeExisting();
+    await expect($('[data-testid="rebase-move-down"]')).not.toBeExisting();
+
     await $('[data-testid="rebase-start"]').click();
     await $('[data-testid="rebase-last-summary"]').waitForDisplayed({
       timeout: 20_000,

@@ -78,6 +78,12 @@ const COMMON = {
   // Find-in-tree (matches the ⌘⇧F chip on the Files tree). Component-handled
   // by RepoBrowser; a find, not a mutating op, so ⌘⇧F muscle-memory is safe.
   "tree.find": ["Mod+Shift+F"],
+  // Reorder a rebase step from the keyboard — the drag's equivalent (#91).
+  // Rider's Move-Statement chord (⌘⇧↑/↓), free here: Shift+Arrow alone is
+  // list.extend* and Alt+Arrow is pane traversal. Pane-scoped, so it only
+  // reaches the rebase plan; suppressInInput keeps it off a caret.
+  "rebase.moveStepUp": ["Mod+Shift+ArrowUp"],
+  "rebase.moveStepDown": ["Mod+Shift+ArrowDown"],
 } satisfies Partial<Record<ActionId, string[]>>;
 
 export const RIDER_PRESET: KeymapPreset = {
