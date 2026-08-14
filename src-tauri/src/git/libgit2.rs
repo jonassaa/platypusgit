@@ -40,6 +40,19 @@ pub struct RebaseState {
     /// this rather than just resetting to wherever the in-progress rebase
     /// happened to stop (see `rebase_abort` doc comment).
     pub orig_head: String,
+    /// Full ref name of the branch HEAD pointed at when the rebase started
+    /// (`refs/heads/…`), or `None` when it started from a detached HEAD. The
+    /// replay runs detached; this ref is moved exactly once, when the plan
+    /// completes.
+    pub head_name: Option<String>,
+    /// The commit the replay started from — the base every step sits on top of
+    /// unless it says otherwise. Recorded so a resumed session knows where the
+    /// replay began.
+    pub onto: String,
+    /// Original oid → rewritten oid for every step that has run. A dropped or
+    /// skipped step maps to the HEAD it left behind, so a later step that has
+    /// to sit on top of it still resolves to a real commit.
+    pub rewritten: HashMap<String, String>,
 }
 
 pub struct Libgit2Backend {
@@ -165,6 +178,46 @@ impl Libgit2Backend {
         Ok(())
     }
 
+    /// Record what a step's commit became, so a later step that has to sit on
+    /// top of it can resolve the rewritten oid. A dropped step maps to the HEAD
+    /// it left behind.
+    fn record_rewritten(&self, repo_id: &RepoId, old: &str) -> AppResult<()> {
+        let new = self.with_repo(repo_id, |repo| {
+            Ok(repo.head()?.peel_to_commit()?.id().to_string())
+        })?;
+        let mut rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        if let Some(state) = rebases.get_mut(repo_id) {
+            state.rewritten.insert(old.to_string(), new);
+        }
+        Ok(())
+    }
+
+    /// Point the original branch at the replayed history and reattach HEAD to
+    /// it. Called once, when the plan is exhausted. A rebase that started from
+    /// a detached HEAD just stays detached.
+    fn finish_rebase(&self, repo_id: &RepoId) -> AppResult<()> {
+        let head_name = {
+            let rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases.get(repo_id).and_then(|s| s.head_name.clone())
+        };
+        let Some(head_name) = head_name else {
+            return Ok(());
+        };
+
+        self.with_repo(repo_id, |repo| {
+            let tip = repo.head()?.peel_to_commit()?.id();
+            repo.reference(&head_name, tip, true, "rebase (finish)")?;
+            repo.set_head(&head_name)?;
+            Ok(())
+        })
+    }
+
     fn mark_paused(&self, repo_id: &RepoId, reason: &str) -> AppResult<RebaseStatus> {
         let mut rebases = self
             .rebases
@@ -205,7 +258,11 @@ impl Libgit2Backend {
             };
 
             let Some(step) = step else {
-                // Plan exhausted — rebase complete. Capture the final status
+                // Plan exhausted — move the branch to the replayed history and
+                // reattach HEAD before reporting, so the caller's refresh sees
+                // the finished state.
+                self.finish_rebase(repo_id)?;
+                // Rebase complete. Capture the final status
                 // before dropping the in-memory state so this call's caller
                 // still sees the completed count, but remove the entry so a
                 // later `rebase_status` poll (banner) or `abort_operation`
@@ -220,9 +277,12 @@ impl Libgit2Backend {
                 return Ok(status);
             };
 
-            // Drop is never cherry-picked, so it is never a resume step.
+            // Drop is never cherry-picked, so it is never a resume step. It
+            // still maps into `rewritten` — as the HEAD it left behind — so a
+            // later step whose base was dropped resolves to a real commit.
             if !resuming && step.action == RebaseAction::Drop {
                 self.bump_completed(repo_id)?;
+                self.record_rewritten(repo_id, &step.oid)?;
                 continue;
             }
 
@@ -277,6 +337,7 @@ impl Libgit2Backend {
 
                 RebaseAction::Edit => {
                     self.bump_completed(repo_id)?;
+                    self.record_rewritten(repo_id, &step.oid)?;
                     return self.mark_paused(repo_id, "edit");
                 }
 
@@ -321,6 +382,12 @@ impl Libgit2Backend {
                     self.bump_completed(repo_id)?;
                 }
             }
+
+            // Record what this step became AFTER the action's post-commit
+            // rewrite — reword amends, squash/fixup collapse — so the map holds
+            // the oid a later step should build on rather than the intermediate
+            // commit `finish_pick` wrote.
+            self.record_rewritten(repo_id, &step.oid)?;
         }
     }
 }
@@ -3249,9 +3316,12 @@ impl GitBackend for Libgit2Backend {
             })?;
         let first_oid_str = first_step.oid.clone();
 
-        // Verify worktree is clean, remember the pre-rebase tip (so an abort
-        // can restore it), and reset HEAD to the parent of the first commit.
-        let orig_head = self.with_repo(repo_id, |repo| {
+        // Verify worktree is clean, remember the branch and its pre-rebase tip
+        // (so an abort can put both back), then DETACH at the base and replay
+        // there. The branch ref is moved exactly once, when the plan completes:
+        // committing to an attached HEAD advanced the branch step by step,
+        // which left it mid-replay whenever a step failed or paused.
+        let (orig_head, head_name, onto) = self.with_repo(repo_id, |repo| {
             let statuses = repo.statuses(None)?;
             if statuses.iter().any(|s| {
                 let b = s.status();
@@ -3267,17 +3337,30 @@ impl GitBackend for Libgit2Backend {
                 ));
             }
 
-            let orig_head = repo.head()?.peel_to_commit()?.id().to_string();
+            let head_ref = repo.head()?;
+            let head_name = if repo.head_detached()? {
+                None
+            } else {
+                head_ref.name().map(|s| s.to_string())
+            };
+            let orig_head = head_ref.peel_to_commit()?.id().to_string();
 
             let first_commit = repo
                 .revparse_single(&first_oid_str)
                 .map_err(|_| AppError::InvalidRef(first_oid_str.clone()))?
                 .peel_to_commit()?;
             let parent = first_commit.parent(0).map_err(|_| {
-                AppError::InvalidRef("first rebase commit has no parent".into())
+                AppError::InvalidRebasePlan(format!(
+                    "{} has no parent to rebase onto",
+                    crate::git::rebase_plan::short(&first_oid_str)
+                ))
             })?;
+
+            // Detach first, then hard-reset: with HEAD attached, the reset
+            // would drag the branch ref along.
+            repo.set_head_detached(parent.id())?;
             repo.reset(parent.as_object(), git2::ResetType::Hard, None)?;
-            Ok(orig_head)
+            Ok((orig_head, head_name, parent.id().to_string()))
         })?;
 
         let total = plan.len();
@@ -3294,6 +3377,9 @@ impl GitBackend for Libgit2Backend {
                 pause_reason: None,
                 conflict_step: None,
                 orig_head,
+                head_name,
+                onto,
+                rewritten: HashMap::new(),
             },
         );
         drop(rebases);
@@ -3316,29 +3402,40 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn rebase_abort(&self, repo_id: &RepoId) -> AppResult<()> {
-        // Drop in-memory state, keeping the pre-rebase tip it recorded.
-        let mut rebases = self
-            .rebases
-            .lock()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let orig_head = rebases.remove(repo_id).map(|s| s.orig_head);
-        drop(rebases);
+        // Drop in-memory state, keeping the branch and pre-rebase tip it
+        // recorded.
+        let removed = {
+            let mut rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases.remove(repo_id)
+        };
+        let orig_head = removed.as_ref().map(|s| s.orig_head.clone());
+        let head_name = removed.and_then(|s| s.head_name);
 
         self.with_repo(repo_id, |repo| {
             repo.cleanup_state()?;
-            // Restore the branch to where it was before `rebase_start` moved
-            // it, not wherever the in-progress rebase happened to stop —
-            // `rebase_start` advances the branch tip commit-by-commit as
-            // picks land, so "current HEAD" at abort time is mid-rebase
-            // progress, not the pre-rebase position (mirrors `git rebase
-            // --abort` restoring ORIG_HEAD). Fall back to current HEAD only
-            // if we somehow have no recorded state (e.g. abort called
-            // without a matching start).
-            let target = match &orig_head {
-                Some(oid) => repo.revparse_single(oid)?.peel_to_commit()?,
-                None => repo.head()?.peel_to_commit()?,
-            };
-            repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
+            // The replay ran on a detached HEAD, so the branch never moved:
+            // abort is "put HEAD back on the branch and throw the replay away".
+            // A rebase started from a detached HEAD has no branch to return to,
+            // so it goes back to the tip it recorded.
+            match (&head_name, &orig_head) {
+                (Some(name), _) => {
+                    repo.set_head(name)?;
+                    let target = repo.head()?.peel_to_commit()?;
+                    repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
+                }
+                (None, Some(oid)) => {
+                    let target = repo.revparse_single(oid)?.peel_to_commit()?;
+                    repo.set_head_detached(target.id())?;
+                    repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
+                }
+                (None, None) => {
+                    let target = repo.head()?.peel_to_commit()?;
+                    repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
+                }
+            }
             Ok(())
         })
     }
