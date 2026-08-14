@@ -195,6 +195,93 @@ impl Libgit2Backend {
         Ok(())
     }
 
+    /// Mirror the in-memory rebase to the gitdir. Called after every state
+    /// transition; a missing in-memory entry means the rebase is over, so the
+    /// file goes away.
+    fn persist_rebase(&self, repo_id: &RepoId) -> AppResult<()> {
+        let snapshot = {
+            let rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases
+                .get(repo_id)
+                .map(|s| crate::git::rebase_state::PersistedRebase {
+                    version: crate::git::rebase_state::VERSION,
+                    head_name: s.head_name.clone(),
+                    orig_head: s.orig_head.clone(),
+                    onto: s.onto.clone(),
+                    total: s.total,
+                    completed: s.completed,
+                    remaining: s.plan.iter().cloned().collect(),
+                    pause_reason: s.pause_reason.clone(),
+                    current: s.conflict_step.clone().map(|step| {
+                        crate::git::rebase_state::PersistedCurrent {
+                            step,
+                            phase: s.pause_reason.clone().unwrap_or_else(|| "conflict".into()),
+                        }
+                    }),
+                    rewritten: s
+                        .rewritten
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                })
+        };
+
+        self.with_repo(repo_id, |repo| match &snapshot {
+            Some(state) => crate::git::rebase_state::save(repo, state),
+            None => crate::git::rebase_state::clear(repo),
+        })
+    }
+
+    /// Rebuild the in-memory rebase from the state file. Used when this process
+    /// did not start the rebase — the app was restarted mid-operation — so that
+    /// Continue and Abort work the same as they would have in the original
+    /// session. Returns false when there is no rebase on disk.
+    fn rehydrate_rebase(&self, repo_id: &RepoId) -> AppResult<bool> {
+        let Some(p) = self.with_repo(repo_id, crate::git::rebase_state::load)? else {
+            return Ok(false);
+        };
+        let mut rebases = self
+            .rebases
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        rebases.insert(
+            repo_id.clone(),
+            RebaseState {
+                plan: p.remaining.into_iter().collect(),
+                total: p.total,
+                completed: p.completed,
+                pause_reason: p.pause_reason,
+                conflict_step: p.current.map(|c| c.step),
+                orig_head: p.orig_head,
+                head_name: p.head_name,
+                onto: p.onto,
+                rewritten: p.rewritten.into_iter().collect(),
+            },
+        );
+        Ok(true)
+    }
+
+    /// True when a rebase this backend can drive is in progress — in memory, or
+    /// recorded on disk by an earlier session.
+    fn rebase_in_progress(&self, repo_id: &RepoId) -> AppResult<bool> {
+        let in_memory = {
+            let rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases.contains_key(repo_id)
+        };
+        if in_memory {
+            return Ok(true);
+        }
+        Ok(self
+            .with_repo(repo_id, crate::git::rebase_state::load)?
+            .is_some())
+    }
+
     /// Point the original branch at the replayed history and reattach HEAD to
     /// it. Called once, when the plan is exhausted. A rebase that started from
     /// a detached HEAD just stays detached.
@@ -227,6 +314,7 @@ impl Libgit2Backend {
             state.pause_reason = Some(reason.into());
         }
         drop(rebases);
+        self.persist_rebase(repo_id)?;
         self.rebase_status(repo_id)
     }
 
@@ -269,11 +357,16 @@ impl Libgit2Backend {
                 // call doesn't treat this finished rebase as still
                 // in-progress/abortable via its now-stale `orig_head`.
                 let status = self.rebase_status(repo_id)?;
-                let mut rebases = self
-                    .rebases
-                    .lock()
-                    .map_err(|e| AppError::Internal(e.to_string()))?;
-                rebases.remove(repo_id);
+                {
+                    let mut rebases = self
+                        .rebases
+                        .lock()
+                        .map_err(|e| AppError::Internal(e.to_string()))?;
+                    rebases.remove(repo_id);
+                }
+                // No in-memory entry any more, so this sweeps the state file
+                // too — the operation is over on disk as well.
+                self.persist_rebase(repo_id)?;
                 return Ok(status);
             };
 
@@ -283,6 +376,7 @@ impl Libgit2Backend {
             if !resuming && step.action == RebaseAction::Drop {
                 self.bump_completed(repo_id)?;
                 self.record_rewritten(repo_id, &step.oid)?;
+                self.persist_rebase(repo_id)?;
                 continue;
             }
 
@@ -388,6 +482,7 @@ impl Libgit2Backend {
             // the oid a later step should build on rather than the intermediate
             // commit `finish_pick` wrote.
             self.record_rewritten(repo_id, &step.oid)?;
+            self.persist_rebase(repo_id)?;
         }
     }
 }
@@ -3344,6 +3439,9 @@ impl GitBackend for Libgit2Backend {
                 head_ref.name().map(|s| s.to_string())
             };
             let orig_head = head_ref.peel_to_commit()?.id().to_string();
+            // Same escape hatch git leaves before rewriting history:
+            // `git reset --hard ORIG_HEAD` undoes this rebase from the CLI.
+            crate::git::rebase_state::write_orig_head(repo, &orig_head)?;
 
             let first_commit = repo
                 .revparse_single(&first_oid_str)
@@ -3384,10 +3482,27 @@ impl GitBackend for Libgit2Backend {
         );
         drop(rebases);
 
+        // Mirror to disk before the first step runs: a crash between here and
+        // the first commit must still be recoverable.
+        self.persist_rebase(repo_id)?;
+
         self.advance_rebase(repo_id)
     }
 
     fn rebase_continue(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
+        // A rebase started by an earlier session has no in-memory entry; its
+        // plan, progress, and rewritten map are all on disk.
+        let known = {
+            let rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases.contains_key(repo_id)
+        };
+        if !known && !self.rehydrate_rebase(repo_id)? {
+            return Err(AppError::InvalidRef("no rebase in progress".into()));
+        }
+
         // Verify no unresolved conflicts remain.
         self.with_repo(repo_id, |repo| {
             let statuses = repo.statuses(None)?;
@@ -3411,11 +3526,20 @@ impl GitBackend for Libgit2Backend {
                 .map_err(|e| AppError::Internal(e.to_string()))?;
             rebases.remove(repo_id)
         };
-        let orig_head = removed.as_ref().map(|s| s.orig_head.clone());
-        let head_name = removed.and_then(|s| s.head_name);
+        let (orig_head, head_name) = match removed {
+            Some(s) => (Some(s.orig_head), s.head_name),
+            None => {
+                // Restarted mid-rebase: the state file is all we have.
+                match self.with_repo(repo_id, crate::git::rebase_state::load)? {
+                    Some(p) => (Some(p.orig_head), p.head_name),
+                    None => (None, None),
+                }
+            }
+        };
 
         self.with_repo(repo_id, |repo| {
             repo.cleanup_state()?;
+            crate::git::rebase_state::clear(repo)?;
             // The replay ran on a detached HEAD, so the branch never moved:
             // abort is "put HEAD back on the branch and throw the replay away".
             // A rebase started from a detached HEAD has no branch to return to,
@@ -3441,24 +3565,41 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn rebase_status(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
-        let rebases = self
-            .rebases
-            .lock()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        match rebases.get(repo_id) {
-            Some(state) => Ok(RebaseStatus {
+        let in_memory = {
+            let rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            rebases.get(repo_id).map(|state| RebaseStatus {
                 in_progress: state.completed < state.total || state.pause_reason.is_some(),
                 next_index: state.completed,
                 total: state.total,
                 pause_reason: state.pause_reason.clone(),
-            }),
-            None => Ok(RebaseStatus {
-                in_progress: false,
-                next_index: 0,
-                total: 0,
-                pause_reason: None,
-            }),
+            })
+        };
+        if let Some(status) = in_memory {
+            return Ok(status);
         }
+
+        // No in-memory entry: either there is no rebase, or this process did
+        // not start it (the app was restarted mid-rebase). The state file is
+        // the authority in that case.
+        self.with_repo(repo_id, |repo| {
+            Ok(match crate::git::rebase_state::load(repo)? {
+                Some(state) => RebaseStatus {
+                    in_progress: true,
+                    next_index: state.completed,
+                    total: state.total,
+                    pause_reason: state.pause_reason,
+                },
+                None => RebaseStatus {
+                    in_progress: false,
+                    next_index: 0,
+                    total: 0,
+                    pause_reason: None,
+                },
+            })
+        })
     }
 
     fn verify_commit(
@@ -3525,6 +3666,12 @@ impl GitBackend for Libgit2Backend {
 
     fn repo_state(&self, repo_id: &RepoId) -> AppResult<RepoState> {
         self.with_repo(repo_id, |repo| {
+            // Our own rebase wins: libgit2 only sees the CHERRY_PICK_HEAD /
+            // MERGE_HEAD a paused step leaves behind, which would report the
+            // step's mechanism instead of the operation the user started.
+            if crate::git::rebase_state::load(repo)?.is_some() {
+                return Ok(RepoState::RebaseInteractive);
+            }
             use git2::RepositoryState as RS;
             Ok(match repo.state() {
                 RS::Clean => RepoState::Clean,
@@ -3658,31 +3805,20 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn abort_operation(&self, repo_id: &RepoId) -> AppResult<()> {
-        // If an interactive rebase is tracked for this repo, prefer its
-        // recorded pre-rebase tip (`orig_head`) as the reset target —
-        // converges this generic conflict-screen/palette abort with
-        // `rebase_abort`. Otherwise a mid-rebase abort here would hard-reset
-        // to "current HEAD", which during a paused rebase is wherever the
-        // in-progress rebase happened to stop, not the pre-rebase position.
-        // Remove the entry either way: leaving it behind would keep
-        // `rebase_status` reporting `in_progress` after this abort, and a
-        // later `rebase_abort` would then reuse the stale `orig_head` to
-        // hard-reset again — silently discarding commits made since.
-        let orig_head = {
-            let mut rebases = self
-                .rebases
-                .lock()
-                .map_err(|e| AppError::Internal(e.to_string()))?;
-            rebases.remove(repo_id).map(|s| s.orig_head)
-        };
+        // The Conflict screen and the palette both land here. When the paused
+        // operation is one of our rebases, hand it to the engine that owns it:
+        // `rebase_abort` puts HEAD back on the branch and sweeps the state file,
+        // while a plain hard reset here would leave both to guesswork — and
+        // would leave the on-disk state behind, so `rebase_status` would keep
+        // reporting a rebase that is over.
+        if self.rebase_in_progress(repo_id)? {
+            return self.rebase_abort(repo_id);
+        }
 
         self.with_repo(repo_id, |repo| {
-            let target = match &orig_head {
-                Some(oid) => repo.revparse_single(oid)?.peel_to_commit()?,
-                None => match repo.head() {
-                    Ok(h) => h.peel_to_commit()?,
-                    Err(_) => return Err(AppError::Unborn),
-                },
+            let target = match repo.head() {
+                Ok(h) => h.peel_to_commit()?,
+                Err(_) => return Err(AppError::Unborn),
             };
             repo.reset(target.as_object(), git2::ResetType::Hard, None)?;
             repo.cleanup_state()?;
@@ -3691,6 +3827,16 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn continue_operation(&self, repo_id: &RepoId) -> AppResult<String> {
+        // Same convergence as `abort_operation`: committing the resolved tree
+        // here would advance nothing and strand the rest of the plan, so a
+        // rebase in progress goes to the engine that owns the plan.
+        if self.rebase_in_progress(repo_id)? {
+            self.rebase_continue(repo_id)?;
+            return self.with_repo(repo_id, |repo| {
+                Ok(repo.head()?.peel_to_commit()?.id().to_string())
+            });
+        }
+
         self.with_repo(repo_id, |repo| {
             let statuses = repo.statuses(None)?;
             if statuses.iter().any(|s| s.status().is_conflicted()) {
