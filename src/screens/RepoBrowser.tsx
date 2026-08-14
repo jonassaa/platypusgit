@@ -49,6 +49,7 @@ import {
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { useSyntax } from "@/lib/syntax";
 import { buildLineSpans } from "@/lib/lineSpans";
+import { splitCodeLines } from "@/lib/codeLines";
 import { getDiff, readFileContent } from "@/lib/tauri";
 import {
   buildStatusList,
@@ -1175,7 +1176,7 @@ function EmbeddedRepoPanel({ path }: { path: string }) {
 }
 
 function FileContentView({ path, text }: { path: string; text: string }) {
-  const lines = React.useMemo(() => text.split("\n"), [text]);
+  const lines = React.useMemo(() => splitCodeLines(text), [text]);
   // Tokens arrive after first paint; until then the rows render plain, which is
   // why nothing here waits on them.
   const syntax = useSyntax(path, text);
