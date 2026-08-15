@@ -16,7 +16,9 @@ export type IconName =
   | "play" | "pause" | "star" | "copy" | "external"
   | "edit" | "trash" | "conflict" | "squash" | "drag" | "bell"
   | "diff" | "undo" | "fix" | "expandAll" | "collapseAll"
-  | "viewTree" | "viewList";
+  | "viewTree" | "viewList"
+  // #93 — submodules, linked worktrees, bisect, LFS.
+  | "submodule" | "worktree" | "bisect" | "lfs";
 
 const ICONS: Record<IconName, ReactNode> = {
   repo: <>
@@ -264,6 +266,33 @@ const ICONS: Record<IconName, ReactNode> = {
     <circle cx="3" cy="8" r=".9" fill="currentColor" stroke="none" />
     <circle cx="3" cy="12" r=".9" fill="currentColor" stroke="none" />
     <path d="M6 4h8M6 8h8M6 12h8" />
+  </>,
+  // #93. A repository inside a repository — the outer frame with an inner one
+  // pinned to its corner, which is what a gitlink is.
+  submodule: <>
+    <path d="M1.5 2.5h8a1 1 0 0 1 1 1v3" />
+    <path d="M1.5 2.5v9a1 1 0 0 0 1 1h4" />
+    <rect x="7.5" y="7.5" width="7" height="6" rx="1" />
+    <path d="M9.5 10.5h3" />
+  </>,
+  // Two checkouts of one history: a shared trunk splitting into two panels.
+  worktree: <>
+    <path d="M2.5 3.5v9M2.5 6h4M2.5 11h4" />
+    <rect x="7" y="3" width="7" height="5" rx="1" />
+    <rect x="7" y="9.5" width="7" height="4" rx="1" />
+  </>,
+  // Halving a range: a span with its midpoint marked.
+  bisect: <>
+    <path d="M2 12.5h12" />
+    <path d="M2 12.5V9M14 12.5V9" />
+    <circle cx="8" cy="12.5" r="1.8" fill="currentColor" stroke="none" />
+    <path d="M8 8V2.5M6 4.5L8 2.5l2 2" />
+  </>,
+  // Large-file storage: a stack with an arrow going out to it.
+  lfs: <>
+    <path d="M2.5 5c0-1 2.5-2 5.5-2s5.5 1 5.5 2-2.5 2-5.5 2S2.5 6 2.5 5z" />
+    <path d="M2.5 5v6c0 1 2.5 2 5.5 2s5.5-1 5.5-2V5" />
+    <path d="M2.5 8c0 1 2.5 2 5.5 2s5.5-1 5.5-2" />
   </>,
 };
 

@@ -34,11 +34,13 @@ import {
   currentBranch,
   isConflicted,
   isStaged,
+  isTextualDiff,
   isUnstaged,
   isUntracked,
   relativeTime,
   statusMark,
 } from "@/lib/derive";
+import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import {
   clickSelection,
   emptySelection,
@@ -560,6 +562,9 @@ export function RepoBrowserScreen() {
         embedded: !!st?.embedded,
         untracked: !!st && isUntracked(st),
         conflicted: !!st && isConflicted(st),
+        // A registered submodule gets its own menu (#93) — the ordinary file
+        // entries are all dead ends on a gitlink.
+        submodule: !!st?.submodule,
       });
     },
   );
@@ -619,7 +624,9 @@ export function RepoBrowserScreen() {
   const browserWholeFile = useWholeFile(browserSyntax);
   const diffRows = React.useMemo(
     () =>
-      flattenDiffRows(diff && !diff.binary ? diff.hunks : [], {
+      // `isTextualDiff` also excludes an LFS pointer diff (#93) — its hunks are
+      // three lines of pointer text, which must never reach a diff renderer.
+      flattenDiffRows(isTextualDiff(diff) && diff ? diff.hunks : [], {
         headerH: diffHeaderH,
         rowH: diffRowH,
         collapsed: collapsedHunks,
@@ -911,13 +918,14 @@ export function RepoBrowserScreen() {
               <>
                 <PGStatusMark kind={statusMark(selectedFile)} />
                 <span style={{ color: "var(--fg-0)" }}>{selectedFile.path}</span>
-                {diff && !diff.binary && (
+                {isTextualDiff(diff) && diff && (
                   <>
                     <PGBadge tone="success">+{diff.additions}</PGBadge>
                     <PGBadge tone="danger">−{diff.deletions}</PGBadge>
                   </>
                 )}
                 {diff?.binary && <PGBadge tone="muted">binary</PGBadge>}
+                {diff?.lfs && <PGBadge tone="accent">LFS</PGBadge>}
                 {fileContent?.binary && (
                   <PGBadge tone="muted">binary</PGBadge>
                 )}
@@ -1024,7 +1032,7 @@ export function RepoBrowserScreen() {
                 {previewError}
               </PGEmpty>
             )}
-            {selectedFile && !diffLoading && diff && !diff.binary && (
+            {selectedFile && !diffLoading && isTextualDiff(diff) && diff && (
               <PGWindowedDiff
                 rows={diffRows}
                 window={diffWin}
@@ -1058,6 +1066,9 @@ export function RepoBrowserScreen() {
                 Binary diffs aren&apos;t shown.
               </PGEmpty>
             )}
+            {selectedFile && !diffLoading && diff?.lfs && (
+              <LfsDiffNotice diff={diff} />
+            )}
             {selectedFile && !diffLoading && fileContent?.binary && (
               <PGEmpty icon="file" title="Binary file">
                 Binary contents aren&apos;t shown.
@@ -1072,7 +1083,7 @@ export function RepoBrowserScreen() {
               )}
             {selectedFile && !diffLoading && !selectedIsEmbedded && !previewError &&
               !fileContent &&
-              (!diff || diff.hunks.length === 0) && !diff?.binary && (
+              (!diff || diff.hunks.length === 0) && !diff?.binary && !diff?.lfs && (
                 <PGEmpty icon="file" title="No diff available">
                   Couldn&apos;t produce a diff for this file.
                 </PGEmpty>

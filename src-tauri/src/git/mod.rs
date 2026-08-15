@@ -1,21 +1,28 @@
 pub mod auth;
+pub mod bisect;
 pub mod cli;
 pub mod libgit2;
+pub mod lfs;
 pub mod ownership;
 pub mod rebase_plan;
 pub mod rebase_state;
 pub mod signature;
 pub mod signing;
+pub mod submodule;
 pub mod types;
+pub mod worktree;
 
 use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
 use types::{
-    BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffKind, FileContent,
-    FileDiff, FileStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry, RemoteInfo,
+    BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
+    DiffKind, FileContent,
+    FileDiff, FileStatus, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+    RemoteInfo,
     RepoHandle,
-    RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, TagInfo, TagTarget,
+    RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, SubmoduleInfo, TagInfo, TagTarget,
+    WorktreeBranch, WorktreeInfo,
 };
 
 
@@ -341,4 +348,73 @@ pub trait GitBackend: Send + Sync {
     /// Append a pattern to the repo's top-level `.gitignore`, creating the file
     /// if it doesn't exist. No-op if the pattern is already present on its own line.
     fn append_gitignore(&self, repo_id: &RepoId, pattern: &str) -> AppResult<()>;
+
+    // === submodules (#93) ===
+    // libgit2 for everything local; `update` shells out because it fetches and
+    // credentials only flow through the askpass subprocess env — see git/submodule.rs.
+    /// Every submodule `.gitmodules` declares, with its state.
+    fn submodules(&self, repo_id: &RepoId) -> AppResult<Vec<SubmoduleInfo>>;
+    /// Copy `.gitmodules`' URL for `path` into `.git/config` (`git submodule init`).
+    /// `path` is the worktree-relative submodule path; `None` inits all of them.
+    fn submodule_init(&self, repo_id: &RepoId, path: Option<&str>) -> AppResult<()>;
+    /// Re-copy `.gitmodules`' URLs into `.git/config` and the submodule's own
+    /// `origin` (`git submodule sync`). `None` syncs all.
+    fn submodule_sync(&self, repo_id: &RepoId, path: Option<&str>) -> AppResult<()>;
+    /// Check out the commit the superproject records, fetching it if missing
+    /// (`git submodule update`). Prompt-less: an authenticating submodule remote
+    /// fails fast with `Auth`, which the command layer retries with credentials.
+    fn submodule_update(
+        &self,
+        repo_id: &RepoId,
+        path: Option<&str>,
+        recursive: bool,
+        init: bool,
+    ) -> AppResult<()>;
+
+    // === linked worktrees (#93) ===
+    /// Every LINKED worktree (the main worktree is the repository itself).
+    fn worktrees(&self, repo_id: &RepoId) -> AppResult<Vec<WorktreeInfo>>;
+    /// Create a worktree at `path` on a new or existing branch. The git-visible
+    /// name comes from `path`'s basename, as `git worktree add` derives it.
+    fn worktree_add(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        branch: WorktreeBranch,
+    ) -> AppResult<WorktreeInfo>;
+    /// Delete a worktree and its admin files. Shells out to `git worktree remove`
+    /// for its dirty check — `DirtyWorktree` unless `force` (see git/worktree.rs).
+    fn worktree_remove(&self, repo_id: &RepoId, name: &str, force: bool) -> AppResult<()>;
+    fn worktree_lock(&self, repo_id: &RepoId, name: &str, reason: Option<&str>) -> AppResult<()>;
+    fn worktree_unlock(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
+    /// Prune every prunable worktree (`git worktree prune`), returning the names
+    /// that went. Never touches a valid or locked worktree.
+    fn worktree_prune(&self, repo_id: &RepoId) -> AppResult<Vec<String>>;
+
+    // === git-LFS (#93) ===
+    /// Whether the binary is present, whether the repo uses LFS, and the
+    /// pointer-vs-materialized state of every LFS path. `installed: false` is a
+    /// state, not an error — the ops below are what raise `LfsUnavailable`.
+    fn lfs_status(&self, repo_id: &RepoId) -> AppResult<LfsStatus>;
+    /// Materialize pointers whose objects are already downloaded
+    /// (`git lfs checkout`). Local, so no credentials.
+    fn lfs_checkout(&self, repo_id: &RepoId) -> AppResult<()>;
+
+    // === bisect (#93) ===
+    // All four shell out: libgit2 has no bisect API, and GIT's `.git/BISECT_*`
+    // files are the only state of record — see git/bisect.rs.
+    fn bisect_status(&self, repo_id: &RepoId) -> AppResult<BisectStatus>;
+    /// `git bisect start <bad> [good…]`. An empty `good` is legal — git then waits
+    /// for one, which is what "this commit is broken, I'll find a good one" needs.
+    fn bisect_start(&self, repo_id: &RepoId, bad: &str, good: &[String]) -> AppResult<BisectStatus>;
+    /// Mark `rev` (or HEAD) good/bad/skip and advance. `NoBisect` when none is open.
+    fn bisect_mark(
+        &self,
+        repo_id: &RepoId,
+        mark: BisectMark,
+        rev: Option<&str>,
+    ) -> AppResult<BisectStatus>;
+    /// `git bisect reset` — return to `BISECT_START`. NOT `abort_operation`, which
+    /// hard-resets to HEAD and mid-bisect that is a detached test commit.
+    fn bisect_reset(&self, repo_id: &RepoId) -> AppResult<()>;
 }

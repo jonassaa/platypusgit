@@ -157,9 +157,13 @@ describe("OperationBar", () => {
   });
 
   it("offers only abort for a state that cannot be committed forward", () => {
-    setup("Bisect", []);
+    // A mailbox application: in progress, not finishable by committing the index,
+    // and with nothing better than abort to offer. Bisect USED to land here too;
+    // since #93 it has its own bar (below), because the generic abort was
+    // actively wrong for it.
+    setup("ApplyMailbox", []);
     expect(screen.getByTestId("operation-title").textContent).toContain(
-      "Bisect",
+      "Patch application",
     );
     expect(screen.queryByTestId("operation-continue")).toBeNull();
     expect(screen.queryByTestId("operation-resolve")).toBeNull();

@@ -99,6 +99,19 @@ pub enum AppError {
     /// can confirm and retry with `force`.
     #[error("branch already exists: {0}")]
     BranchExists(String),
+
+    /// The `git-lfs` binary is missing or not runnable (#93). A **state**, not a
+    /// failure: the UI disables the LFS actions and says why. Distinct from
+    /// `Git`/`Network` precisely so git's `'lfs' is not a git command` can never
+    /// reach an error banner.
+    #[error("git-lfs is not available: {0}")]
+    LfsUnavailable(String),
+
+    /// An op that requires a bisect in progress found none (#93). Distinct from
+    /// `Git` because the usual cause is benign — another process reset the
+    /// bisect — so the UI refreshes rather than alarms.
+    #[error("no bisect in progress")]
+    NoBisect,
 }
 
 impl From<git2::Error> for AppError {

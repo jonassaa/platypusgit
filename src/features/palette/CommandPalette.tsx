@@ -59,6 +59,13 @@ const CHIPS: { kind: import("./types").ChipKind; label: string }[] = [
   { kind: "file", label: "Files" },
   { kind: "commit", label: "Commits" },
 ];
+// Per-type row cap, applied to PICK steps as well as the root — a pick step is
+// just a one-type source. So a row that exists is not necessarily a row that
+// renders: with an empty query every candidate ties on score, the sort is
+// stable, and everything past the cap in source order is dropped. An e2e spec
+// that clicks a commit row without typing is therefore asserting against the
+// newest 8 only, and passes purely by fixture size (bisect.e2e.ts hit this: a
+// 9-commit fixture whose GOOD end is the oldest commit). Type to filter.
 const CAP: Record<ResultType, number> = { command: 12, branch: 8, file: 12, commit: 8 };
 const QUICK_IDS = ["action:push-current", "action:pull-current", "screen:commit", "action:fetch-all"];
 const WIDTH = 560;

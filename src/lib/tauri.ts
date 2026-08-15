@@ -2,6 +2,8 @@ import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { debug as logDebug, warn as logWarn, error as logError } from "@tauri-apps/plugin-log";
 import type {
   AuthorOverride,
+  BisectMark,
+  BisectStatus,
   BlameLine,
   BranchInfo,
   CliInstallOutcome,
@@ -20,11 +22,12 @@ import type {
   ForgeRepo,
   ForgeTokenStatus,
   LaunchIntent,
-  NewPullRequest,
-  PullRequest,
+  LfsStatus,
   LogFilter,
   LogPage,
+  NewPullRequest,
   PullMode,
+  PullRequest,
   PushForce,
   RebaseStatus,
   RebaseStep,
@@ -34,9 +37,12 @@ import type {
   SignatureStatus,
   RepoState,
   StashInfo,
+  SubmoduleInfo,
   TagInfo,
   UpdateCapability,
   UpdateInfo,
+  WorktreeBranch,
+  WorktreeInfo,
 } from "./types";
 
 const SLOW_INVOKE_MS = 250;
@@ -956,4 +962,154 @@ export function forgeCheckoutPullRequest(
   credentials?: Credentials,
 ): Promise<void> {
   return invoke<void>("forge_checkout_pull_request", { request, credentials });
+}
+
+// ─── Submodules (#93) ─────────────────────────────────────────────────────────
+
+export async function listSubmodules(repoId: string): Promise<SubmoduleInfo[]> {
+  return invoke<SubmoduleInfo[]>("list_submodules", { repoId });
+}
+
+/** `git submodule init` — copy `.gitmodules`' url into `.git/config`. */
+export async function submoduleInit(
+  repoId: string,
+  path?: string | null,
+): Promise<void> {
+  return invoke<void>("submodule_init", { repoId, path });
+}
+
+/** `git submodule sync` — re-copy `.gitmodules`' urls over `.git/config`'s. */
+export async function submoduleSync(
+  repoId: string,
+  path?: string | null,
+): Promise<void> {
+  return invoke<void>("submodule_sync", { repoId, path });
+}
+
+/**
+ * `git submodule update` — check out the recorded commit, fetching it if needed.
+ *
+ * Can hit the network, so it follows the fetch/pull/push contract: the first
+ * attempt is prompt-less and an authenticating remote raises `Auth`, which
+ * `withAuthRetry` re-runs with credentials.
+ */
+export async function submoduleUpdate(
+  repoId: string,
+  path: string | null,
+  recursive: boolean,
+  init: boolean,
+  credentials?: Credentials,
+): Promise<void> {
+  return invoke<void>("submodule_update", {
+    repoId,
+    path,
+    recursive,
+    init,
+    credentials,
+  });
+}
+
+// ─── Linked worktrees (#93) ───────────────────────────────────────────────────
+
+export async function listWorktrees(repoId: string): Promise<WorktreeInfo[]> {
+  return invoke<WorktreeInfo[]>("list_worktrees", { repoId });
+}
+
+export async function worktreeAdd(
+  repoId: string,
+  path: string,
+  branch: WorktreeBranch,
+): Promise<WorktreeInfo> {
+  return invoke<WorktreeInfo>("worktree_add", { repoId, path, branch });
+}
+
+/**
+ * Remove a worktree. Without `force`, git refuses on uncommitted work and the
+ * rejection arrives as `DirtyWorktree` — only pass `force` behind a SECOND,
+ * explicit confirmation.
+ */
+export async function worktreeRemove(
+  repoId: string,
+  name: string,
+  force: boolean,
+): Promise<void> {
+  return invoke<void>("worktree_remove", { repoId, name, force });
+}
+
+export async function worktreeLock(
+  repoId: string,
+  name: string,
+  reason?: string | null,
+): Promise<void> {
+  return invoke<void>("worktree_lock", { repoId, name, reason });
+}
+
+export async function worktreeUnlock(
+  repoId: string,
+  name: string,
+): Promise<void> {
+  return invoke<void>("worktree_unlock", { repoId, name });
+}
+
+/** Prune every prunable worktree, resolving with the names that went. */
+export async function worktreePrune(repoId: string): Promise<string[]> {
+  return invoke<string[]>("worktree_prune", { repoId });
+}
+
+// ─── git-LFS (#93) ────────────────────────────────────────────────────────────
+
+export async function lfsStatus(repoId: string): Promise<LfsStatus> {
+  return invoke<LfsStatus>("lfs_status", { repoId });
+}
+
+/** Materialize pointers whose objects are already downloaded. Local. */
+export async function lfsCheckout(repoId: string): Promise<void> {
+  return invoke<void>("lfs_checkout", { repoId });
+}
+
+/** Download objects into `.git/lfs` without touching the worktree. */
+export async function lfsFetch(
+  repoId: string,
+  remote?: string | null,
+  credentials?: Credentials,
+): Promise<void> {
+  return invoke<void>("lfs_fetch", { repoId, remote, credentials });
+}
+
+/** Fetch AND materialize (`git lfs pull` = fetch + checkout). */
+export async function lfsPull(
+  repoId: string,
+  remote?: string | null,
+  credentials?: Credentials,
+): Promise<void> {
+  return invoke<void>("lfs_pull", { repoId, remote, credentials });
+}
+
+// ─── Bisect (#93) ─────────────────────────────────────────────────────────────
+
+export async function bisectStatus(repoId: string): Promise<BisectStatus> {
+  return invoke<BisectStatus>("bisect_status", { repoId });
+}
+
+/** `good` may be empty — git then waits for a good revision. */
+export async function bisectStart(
+  repoId: string,
+  bad: string,
+  good: string[],
+): Promise<BisectStatus> {
+  return invoke<BisectStatus>("bisect_start", { repoId, bad, good });
+}
+
+/** Mark `rev` (or HEAD when omitted) and let git pick the next revision. */
+export async function bisectMark(
+  repoId: string,
+  mark: BisectMark,
+  rev?: string | null,
+): Promise<BisectStatus> {
+  return invoke<BisectStatus>("bisect_mark", { repoId, mark, rev });
+}
+
+/** `git bisect reset` — return to where the bisect started. */
+export async function bisectReset(repoId: string): Promise<void> {
+  return invoke<void>("bisect_reset", { repoId });
 }

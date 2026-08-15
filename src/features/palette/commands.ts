@@ -2,10 +2,13 @@
 import { pgConfirm } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
+import { useLfsStore } from "@/features/lfs/useLfsStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useForgeStore } from "@/features/forge/useForgeStore";
 import { prNoun, prNumberLabel } from "@/features/forge/forgeLabels";
+import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
+import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
@@ -207,6 +210,8 @@ const SCREENS: [string, string, string, ActionId][] = [
   ["pulls", "Pull requests", "pullRequest", "nav.pulls"],
   ["diff", "Diff viewer", "fileCode", "nav.diff"],
   ["reflog", "Reflog", "clock", "nav.reflog"],
+  ["submodules", "Submodules", "submodule", "nav.submodules"],
+  ["worktrees", "Worktrees", "worktree", "nav.worktrees"],
   ["settings", "Settings", "settings", "nav.settings"],
 ];
 
@@ -620,6 +625,135 @@ export function buildCommands(): PaletteItem[] {
       run: direct(() => {
         resolveConflictsOp();
       }),
+    });
+  }
+
+  // -- submodules (#93) --
+  // Listed only for a repository that actually has some — rows that would always
+  // flash "no submodules" are noise in every other repository. Both feature stores
+  // hydrate on repo open (see their `subscribe` calls), so these gates are accurate
+  // without the user having visited the screen first.
+  if (useSubmodulesStore.getState().items.length > 0) {
+    items.push(
+      {
+        type: "command", id: "action:submodules-update-all",
+        search: "Submodule update all init recursive",
+        label: "Update all submodules", icon: "submodule",
+        run: direct(() => void useSubmodulesStore.getState().update()),
+      },
+      {
+        type: "command", id: "action:submodules-sync",
+        search: "Submodule sync urls gitmodules",
+        label: "Sync submodule URLs", icon: "link",
+        run: direct(() => void useSubmodulesStore.getState().sync()),
+      },
+    );
+  }
+
+  // -- worktrees (#93) --
+  const openableWorktrees = useWorktreesStore
+    .getState()
+    .items.filter((w) => !w.prunable && !w.isCurrent);
+  if (openableWorktrees.length > 0) {
+    items.push({
+      type: "command", id: "action:worktree-open",
+      search: "Open linked worktree switch", label: "Open linked worktree…",
+      icon: "worktree",
+      run: step(() => ({
+        kind: "pick", title: "Open worktree",
+        items: openableWorktrees.map((w) => ({
+          type: "command" as const,
+          id: `pick-worktree:${w.name}`,
+          search: `${w.name} ${w.branch ?? ""} ${w.path}`,
+          label: w.name,
+          detail: w.branch ?? w.path,
+          icon: "worktree",
+          run: () => {
+            palette().closePalette();
+            void useWorktreesStore.getState().openAsRepo(w.path);
+          },
+        })),
+      })),
+    });
+  }
+
+  // -- LFS (#93) --
+  // Only once the repository is known to use LFS: the store is populated by the
+  // Remote screen's panel, so an untouched repo simply has no rows here.
+  if (useLfsStore.getState().status?.inUse) {
+    items.push(
+      {
+        type: "command", id: "action:lfs-pull",
+        search: "LFS pull objects large files",
+        label: "LFS: pull objects", icon: "lfs",
+        run: direct(() => void useLfsStore.getState().pull()),
+      },
+      {
+        type: "command", id: "action:lfs-checkout",
+        search: "LFS checkout materialize pointers",
+        label: "LFS: checkout (materialize pointers)", icon: "lfs",
+        run: direct(() => void useLfsStore.getState().checkout()),
+      },
+    );
+  }
+
+  // -- bisect (#93) --
+  // Bisect has no keyboard chords on purpose (see actions.ts), so the palette is
+  // its keyboard route. Two different sets, because the same verbs mean different
+  // things before and during a search.
+  if (repo.bisectStatus.inProgress) {
+    const { goodTerm, badTerm } = repo.bisectStatus;
+    items.push(
+      {
+        type: "command", id: "action:bisect-good",
+        search: `Bisect mark current ${goodTerm}`,
+        label: `Bisect: mark current as ${goodTerm}`, icon: "check",
+        run: direct(() => void repo.bisectMark("Good")),
+      },
+      {
+        type: "command", id: "action:bisect-bad",
+        search: `Bisect mark current ${badTerm}`,
+        label: `Bisect: mark current as ${badTerm}`, icon: "warn",
+        run: direct(() => void repo.bisectMark("Bad")),
+      },
+      {
+        type: "command", id: "action:bisect-skip",
+        search: "Bisect skip current revision untestable",
+        label: "Bisect: skip current revision", icon: "chevronRight",
+        run: direct(() => void repo.bisectMark("Skip")),
+      },
+      {
+        type: "command", id: "action:bisect-reset",
+        search: "Bisect reset end stop", label: "Bisect: reset", danger: true,
+        icon: "undo",
+        run: direct(() => void repo.bisectReset()),
+      },
+    );
+  } else {
+    items.push({
+      type: "command", id: "action:bisect-start",
+      search: "Bisect start find first bad commit",
+      label: "Start bisect…", icon: "bisect",
+      // Bad first, then good: that is the order `git bisect start` takes them, and
+      // the order the user thinks in ("it's broken now, it worked then").
+      run: step(() => ({
+        kind: "pick", title: "Bisect: which commit is BAD?",
+        items: commitItems({
+          icon: "warn",
+          // Distinct id namespaces: the same commit is a different frecency row
+          // depending on which end of the range it is being picked for.
+          idPrefix: "pick-bisect-bad",
+          onPick: (bad: string) =>
+            palette().pushStep({
+              kind: "pick", title: "Bisect: which commit is GOOD?",
+              items: commitItems({
+                icon: "check",
+                idPrefix: "pick-bisect-good",
+                onPick: (good: string) => void repo.bisectStart(bad, [good]),
+              }),
+            }),
+        }),
+      })),
     });
   }
 

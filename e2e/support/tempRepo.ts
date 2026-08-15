@@ -294,3 +294,88 @@ export function makeDiverged(pair: RemotePair): void {
   pair.repo.git("reset", "--hard", "HEAD~1");
   pair.repo.commitFile("diverge.txt", "diverge\n", "feat: diverging local commit");
 }
+
+// ─── #93 fixtures: submodules, linked worktrees, bisect ───────────────────────
+
+/** An outer repo with a real submodule, plus the inner repo it points at. */
+export interface SubmodulePair {
+  /** The superproject — this is the repo the app opens. */
+  repo: TempRepo;
+  /** Worktree-relative path of the submodule. */
+  subPath: string;
+  dispose: () => void;
+}
+
+/**
+ * Superproject with a submodule at `vendor/inner`.
+ *
+ * `protocol.file.allow=always` is mandatory: git ≥ 2.38 refuses the `file`
+ * transport for submodules by default (CVE-2022-39253), so every local-path
+ * submodule fixture has to opt in — without it `submodule add` fails with
+ * "transport 'file' not allowed".
+ *
+ * `initialized: false` deinitializes it afterwards, which is the state a clone
+ * without `--recurse-submodules` leaves behind and the one where Init is the
+ * action the user needs.
+ */
+export function submoduleRepo(
+  opts: { initialized?: boolean } = {},
+): SubmodulePair {
+  const inner = new TempRepo();
+  inner.commitFile("lib.txt", "inner v1\n", "feat: inner");
+  const repo = basicRepo();
+  const subPath = "vendor/inner";
+  repo.git(
+    "-c",
+    "protocol.file.allow=always",
+    "submodule",
+    "add",
+    inner.path,
+    subPath,
+  );
+  repo.git("commit", "-m", "feat: add submodule");
+  if (opts.initialized === false) {
+    repo.git("submodule", "deinit", "-f", subPath);
+  }
+  return {
+    repo,
+    subPath,
+    dispose: () => {
+      repo.dispose();
+      inner.dispose();
+    },
+  };
+}
+
+/**
+ * An empty directory for linked worktrees to be created UNDER, outside the repo.
+ *
+ * A worktree must never be created inside the repository under test, and never
+ * anywhere near this project's own `.claude/worktrees/` — a `worktree remove`
+ * pointed at a live checkout would delete another session's work.
+ */
+export interface WorktreeParent {
+  readonly path: string;
+  dispose: () => void;
+}
+
+export function worktreeParent(): WorktreeParent {
+  const dir = mkdtempSync(path.join(tmpdir(), "pg-e2e-wt-"));
+  return { path: dir, dispose: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+/**
+ * Nine commits whose `flag.txt` reads "good …" up to `feat: step 4` and "bad …"
+ * from `feat: step 5` on, so the bisect has one right answer.
+ *
+ * Every commit writes DIFFERENT content: repeating a body would leave nothing to
+ * commit and `git commit` would fail the fixture.
+ */
+export function bisectRepo(): TempRepo {
+  const r = new TempRepo();
+  r.commitFile("flag.txt", "good 0\n", "feat: base");
+  for (let i = 1; i <= 8; i++) {
+    r.commitFile("flag.txt", `${i < 5 ? "good" : "bad"} ${i}\n`, `feat: step ${i}`);
+  }
+  return r;
+}

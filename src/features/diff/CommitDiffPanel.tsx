@@ -17,6 +17,8 @@ import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
 import type { FileDiff } from "@/lib/types";
+import { isTextualDiff } from "@/lib/derive";
+import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 
 /**
  * One diff row's text: syntax classes plus intra-line change marks, through the
@@ -171,7 +173,8 @@ export function CommitDiffPanel({
   const wholeFile = useWholeFile(syntax);
   const rows = React.useMemo(
     () =>
-      flattenDiffRows(current && !current.binary ? current.hunks : [], {
+      // `isTextualDiff` also excludes an LFS pointer diff (#93).
+      flattenDiffRows(isTextualDiff(current) && current ? current.hunks : [], {
         // This panel's hunk header is a plain text line rather than chrome with
         // buttons, so it is one code row tall, not density-sized.
         headerH: rowH,
@@ -352,6 +355,7 @@ export function CommitDiffPanel({
               Binary file — no textual diff.
             </div>
           )}
+          {current?.lfs && <LfsDiffNotice diff={current} />}
           {win.topPad > 0 && (
             <div data-pg-spacer="top" style={{ height: `${win.topPad}px` }} />
           )}

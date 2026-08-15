@@ -34,7 +34,15 @@ export type AppError =
   /** The token did not survive `git credential approve` → `fill` (#92). */
   | { kind: "ForgeTokenStore"; message: string }
   /** A local branch the operation would overwrite already exists. */
-  | { kind: "BranchExists"; message: string };
+  | { kind: "BranchExists"; message: string }
+  /**
+   * The `git-lfs` binary is missing or unrunnable (#93). A state the UI disables
+   * on, not a failure it reports — distinct from `Git`/`Network` so git's
+   * `'lfs' is not a git command` never reaches a banner.
+   */
+  | { kind: "LfsUnavailable"; message: string }
+  /** An op needed a bisect in progress and found none (#93). */
+  | { kind: "NoBisect"; message?: string };
 
 /** Which credential the remote is asking for. */
 export type AuthKind = "Https" | "SshPassphrase" | "SshKey";
@@ -159,3 +167,11 @@ export const DUBIOUS_OWNERSHIP_HELP =
 
 export const EMBEDDED_REPO_HELP =
   "This folder is a git repository of its own, so git can only record it as a bare pointer that nobody who clones this repo can resolve. Add it to .gitignore, or register it as a submodule.";
+
+/** Narrow to "git-lfs is not installed", so a surface can disable rather than error. */
+export function isLfsUnavailableError(e: unknown): boolean {
+  return isAppError(e) && e.kind === "LfsUnavailable";
+}
+
+export const LFS_UNAVAILABLE_HELP =
+  "Install git-lfs and run `git lfs install` once, then reopen the repository. Large files stay as pointer text until their objects are fetched.";

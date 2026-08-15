@@ -23,7 +23,8 @@ import {
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
 import { useWholeFile } from "@/features/diff/useWholeFile";
-import { statusMark } from "@/lib/derive";
+import { isTextualDiff, statusMark } from "@/lib/derive";
+import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
@@ -285,12 +286,13 @@ export function DiffViewerScreen() {
                 >
                   {current.path}
                 </span>
-                {diff && !diff.binary && (
+                {isTextualDiff(diff) && diff && (
                   <>
                     <PGBadge tone="success">+{diff.additions}</PGBadge>
                     <PGBadge tone="danger">−{diff.deletions}</PGBadge>
                   </>
                 )}
+                {diff?.lfs && <PGBadge tone="accent">LFS</PGBadge>}
               </>
             )}
           </>
@@ -451,7 +453,12 @@ export function DiffViewerScreen() {
           {!diffLoading && diff?.binary && (
             <PGEmpty icon="file" title="Binary file" />
           )}
-          {!diffLoading && findFiltered && !findFiltered.binary && mode === "unified" && (
+          {/* An LFS pointer is TEXT, so `binary` is honestly false — without this
+              the pane would render "2 lines changed" for a multi-megabyte asset
+              (#93). `isTextualDiff` is the shared gate; the notice is the shared
+              replacement. */}
+          {!diffLoading && diff?.lfs && <LfsDiffNotice diff={diff} />}
+          {!diffLoading && isTextualDiff(findFiltered) && findFiltered && mode === "unified" && (
             <FocusableScroll
               style={{ flex: 1 }}
               ariaLabel="Diff"
@@ -473,7 +480,7 @@ export function DiffViewerScreen() {
               />
             </FocusableScroll>
           )}
-          {!diffLoading && findFiltered && !findFiltered.binary && mode === "split" && (
+          {!diffLoading && isTextualDiff(findFiltered) && findFiltered && mode === "split" && (
             <PGSideBySideDiff
               left={splitWithSyntax.left}
               right={splitWithSyntax.right}

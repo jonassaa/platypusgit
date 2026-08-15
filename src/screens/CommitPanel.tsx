@@ -43,12 +43,14 @@ import {
   currentBranch,
   isConflicted,
   isStaged,
+  isTextualDiff,
   isUnstaged,
   isUntracked,
   sideAdditions,
   sideDeletions,
   statusMark,
 } from "@/lib/derive";
+import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import {
   clickSelection,
@@ -176,6 +178,7 @@ export function CommitPanelScreen() {
         embedded: f?.status.embedded,
         untracked: !!f && f.side === "unstaged" && isUntracked(f.status),
         conflicted: !!f && isConflicted(f.status),
+        submodule: !!f?.status.submodule,
       });
     },
   );
@@ -569,7 +572,8 @@ export function CommitPanelScreen() {
   const wholeFile = useWholeFile(syntax);
   const rows = React.useMemo(
     () =>
-      flattenDiffRows(diff && !diff.binary ? diff.hunks : [], {
+      // Also excludes an LFS pointer diff (#93): its "hunks" are pointer text.
+      flattenDiffRows(isTextualDiff(diff) && diff ? diff.hunks : [], {
         headerH,
         rowH,
         collapsed,
@@ -1172,13 +1176,14 @@ export function CommitPanelScreen() {
               Binary diffs aren&apos;t shown.
             </PGEmpty>
           )}
-          {!diffLoading && !diffError && diff && !diff.binary &&
+          {!diffLoading && !diffError && diff?.lfs && <LfsDiffNotice diff={diff} />}
+          {!diffLoading && !diffError && isTextualDiff(diff) && diff &&
             diff.hunks.length === 0 && (
               <PGEmpty icon="file" title="No diff">
                 File is tracked but no hunks were produced.
               </PGEmpty>
             )}
-          {!diffLoading && !diffError && diff && !diff.binary && diff.hunks.length > 0 &&
+          {!diffLoading && !diffError && isTextualDiff(diff) && diff && diff.hunks.length > 0 &&
             diffMode === "unified" && (
               <PGWindowedDiff
                 rows={rows}
@@ -1226,7 +1231,7 @@ export function CommitPanelScreen() {
                 })}
               />
             )}
-          {!diffLoading && !diffError && diff && !diff.binary && diff.hunks.length > 0 &&
+          {!diffLoading && !diffError && isTextualDiff(diff) && diff && diff.hunks.length > 0 &&
             diffMode === "split" && (
               <PGSideBySideDiff {...diffToSplit(diff)} />
             )}

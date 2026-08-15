@@ -52,6 +52,8 @@ export type ActionId =
   | "nav.pulls"
   | "nav.diff"
   | "nav.reflog"
+  | "nav.submodules"
+  | "nav.worktrees"
   | "nav.settings"
   | "palette.open"
   | "app.cheatSheet"
@@ -155,6 +157,13 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "nav.pulls": { id: "nav.pulls", title: "Go to Pull requests", category: "Navigation", scope: "global", run: navTo("pulls") },
   "nav.diff": { id: "nav.diff", title: "Go to Diff viewer", category: "Navigation", scope: "global", run: navTo("diff") },
   "nav.reflog": { id: "nav.reflog", title: "Go to Reflog", category: "Navigation", scope: "global", run: navTo("reflog") },
+  // #93. Screens only — the bisect ops deliberately get no chords: every action in
+  // the catalog must be bound in both presets, the number chords are full, and a
+  // bare-chord misfire mid-bisect silently corrupts the search with no undo short
+  // of a reset. Bisect is driven from the operation bar, the History commit menu
+  // and the palette, all of which name the commit they act on.
+  "nav.submodules": { id: "nav.submodules", title: "Go to Submodules", category: "Navigation", scope: "global", run: navTo("submodules") },
+  "nav.worktrees": { id: "nav.worktrees", title: "Go to Worktrees", category: "Navigation", scope: "global", run: navTo("worktrees") },
   "nav.settings": { id: "nav.settings", title: "Open Settings", category: "Navigation", scope: "global", run: navTo("settings") },
 
   "palette.open": {
