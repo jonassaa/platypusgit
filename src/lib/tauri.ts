@@ -5,6 +5,7 @@ import type {
   BlameLine,
   BranchInfo,
   CliInstallOutcome,
+  ChecksSummary,
   CliShimStatus,
   CommitInfo,
   ConflictSides,
@@ -12,7 +13,15 @@ import type {
   FileContent,
   FileDiff,
   FileStatus,
+  ForgeCheckoutRequest,
+  ForgeDetection,
+  ForgeIdentity,
+  ForgeKind,
+  ForgeRepo,
+  ForgeTokenStatus,
   LaunchIntent,
+  NewPullRequest,
+  PullRequest,
   LogFilter,
   LogPage,
   PullMode,
@@ -852,4 +861,99 @@ export async function cloneRepo(
     recurseSubmodules,
     credentials,
   });
+}
+
+// ─── Forge integration (GitHub / GitLab) — #92 ───────────────────────────────
+//
+// A forge API token is a DIFFERENT credential from the git-transport
+// `Credentials` above: it authenticates an HTTP header for a host's API, not
+// git's askpass prompt for one remote. The two share no type and no storage —
+// see `src-tauri/src/forge/token.rs`. Nothing here ever returns a token.
+
+/**
+ * What forge, if any, this repository's remotes point at.
+ *
+ * `hostKinds` is the user's per-host mapping for self-hosted instances (GitHub
+ * Enterprise and GitLab are indistinguishable from a URL). Resolves to `null`
+ * when no remote parses as a forge — a state the UI renders, not an error.
+ */
+export function forgeDetect(
+  repoId: string,
+  hostKinds: Record<string, ForgeKind>,
+): Promise<ForgeDetection | null> {
+  return invoke<ForgeDetection | null>("forge_detect", { repoId, hostKinds });
+}
+
+/**
+ * Validate `token` against `host`'s API and then store it, resolving with the
+ * identity it belongs to. Validation happens FIRST: storing on submit would
+ * persist a typo into the user's keychain.
+ */
+export function forgeSignIn(
+  host: string,
+  kind: ForgeKind,
+  token: string,
+): Promise<ForgeIdentity> {
+  return invoke<ForgeIdentity>("forge_sign_in", { host, kind, token });
+}
+
+/** Whether `host` has a stored token. Does NOT hit the network. */
+export function forgeTokenStatus(host: string): Promise<ForgeTokenStatus> {
+  return invoke<ForgeTokenStatus>("forge_token_status", { host });
+}
+
+/** Re-probe the stored token and report who it belongs to. */
+export function forgeValidateToken(
+  host: string,
+  kind: ForgeKind,
+): Promise<ForgeIdentity> {
+  return invoke<ForgeIdentity>("forge_validate_token", { host, kind });
+}
+
+/** Forget the token for `host`. */
+export function forgeSignOut(host: string): Promise<void> {
+  return invoke<void>("forge_sign_out", { host });
+}
+
+export function forgeListPullRequests(
+  forge: ForgeRepo,
+): Promise<PullRequest[]> {
+  return invoke<PullRequest[]>("forge_list_pull_requests", { forge });
+}
+
+/**
+ * CI verdict for one commit. Deliberately per-request rather than per-row:
+ * GitHub's PR list carries no status, so a column would cost one request per row
+ * on every refresh.
+ */
+export function forgePullRequestChecks(
+  forge: ForgeRepo,
+  sha: string,
+): Promise<ChecksSummary> {
+  return invoke<ChecksSummary>("forge_pull_request_checks", { forge, sha });
+}
+
+export function forgeCreatePullRequest(
+  forge: ForgeRepo,
+  request: NewPullRequest,
+): Promise<PullRequest> {
+  return invoke<PullRequest>("forge_create_pull_request", { forge, request });
+}
+
+/**
+ * Check out a pull request's head as a local branch.
+ *
+ * Fetches the ref the forge synthesises on the BASE repository
+ * (`refs/pull/N/head` / `refs/merge-requests/N/head`), so a fork request needs no
+ * knowledge of the fork. Rejects with `BranchExists` when `localBranch` already
+ * exists and `force` is false — confirm, then retry with `force: true`.
+ *
+ * The fetch uses an ordinary git-transport credential, so an `Auth` rejection is
+ * the existing credential-retry path's (#61 D5). The forge token is not used here.
+ */
+export function forgeCheckoutPullRequest(
+  request: ForgeCheckoutRequest,
+  credentials?: Credentials,
+): Promise<void> {
+  return invoke<void>("forge_checkout_pull_request", { request, credentials });
 }

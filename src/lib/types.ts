@@ -360,3 +360,95 @@ export interface CloneProgress {
   phase: string;
   percent: number;
 }
+
+// ── Forge integration (#92) ──────────────────────────────────────────────────
+// Mirrors `src-tauri/src/forge/mod.rs`. A forge token NEVER appears in any of
+// these: `forge_sign_in` takes one and returns an identity, and nothing hands
+// one back out.
+
+/** Which forge API dialect to speak. Mirrors Rust `ForgeKind`. */
+export type ForgeKind = "GitHub" | "GitLab";
+
+/** A repository on a forge whose kind is known — what every API call needs. */
+export interface ForgeRepo {
+  /** Lowercased host; may carry `:port` for a self-hosted HTTPS instance. */
+  host: string;
+  /** Owner / namespace. May contain `/` for a GitLab subgroup. */
+  owner: string;
+  name: string;
+  kind: ForgeKind;
+}
+
+/**
+ * What the repository's remotes point at. `kind` is null for a self-hosted host
+ * we cannot classify from its URL — a prompt ("which forge is this?"), not a
+ * failure. No detection at all (`null` from `forgeDetect`) means no parseable
+ * remote.
+ */
+export interface ForgeDetection {
+  /** Which remote it came from, so a checkout fetches from the same one. */
+  remote: string;
+  host: string;
+  owner: string;
+  name: string;
+  kind: ForgeKind | null;
+}
+
+export interface PullRequest {
+  /** GitHub's `number` / GitLab's `iid` — also what the head ref is keyed by. */
+  number: number;
+  title: string;
+  author: string;
+  sourceBranch: string;
+  targetBranch: string;
+  /** The forge's web page. Always opened through `openUrl`, which re-validates. */
+  url: string;
+  draft: boolean;
+  /** Source branch lives in a fork, so its name must not be reused locally. */
+  crossRepo: boolean;
+  sha: string | null;
+  updatedAt: string;
+}
+
+/** Normalised CI verdict, so one tone mapping covers both forges. */
+export type ChecksState = "Success" | "Pending" | "Failure" | "None";
+
+export interface ChecksSummary {
+  state: ChecksState;
+  total: number;
+  /** The forge's own word (`"success"`, `"running"`, …) for display. */
+  label: string;
+}
+
+export interface NewPullRequest {
+  title: string;
+  body: string;
+  sourceBranch: string;
+  targetBranch: string;
+  draft: boolean;
+}
+
+/** Who a stored token authenticates as. */
+export interface ForgeIdentity {
+  login: string;
+  name: string | null;
+}
+
+/** Whether a host has a token, and who it belongs to. Never the token. */
+export interface ForgeTokenStatus {
+  host: string;
+  signedIn: boolean;
+  /** Only set by a fresh identity probe; a presence check leaves it null. */
+  login: string | null;
+}
+
+/** Everything `forgeCheckoutPullRequest` needs, as one argument. */
+export interface ForgeCheckoutRequest {
+  repoId: string;
+  remoteName: string;
+  kind: ForgeKind;
+  number: number;
+  localBranch: string;
+  /** The caller confirmed overwriting an existing local branch. */
+  force: boolean;
+}

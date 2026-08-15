@@ -10,6 +10,7 @@
 // through to the browser.
 
 import { useCreateStore } from "@/features/create/useCreateStore";
+import { useForgeStore } from "@/features/forge/useForgeStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import {
@@ -48,6 +49,7 @@ export type ActionId =
   | "nav.branches"
   | "nav.rebase"
   | "nav.remote"
+  | "nav.pulls"
   | "nav.diff"
   | "nav.reflog"
   | "nav.settings"
@@ -92,7 +94,8 @@ export type ActionId =
   | "tree.find"
   | "repo.open"
   | "repo.clone"
-  | "repo.init";
+  | "repo.init"
+  | "forge.createPr";
 
 export interface ActionDef {
   id: ActionId;
@@ -149,6 +152,7 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "nav.branches": { id: "nav.branches", title: "Go to Branches", category: "Navigation", scope: "global", run: navTo("branches") },
   "nav.rebase": { id: "nav.rebase", title: "Go to Rebase", category: "Navigation", scope: "global", run: navTo("rebase") },
   "nav.remote": { id: "nav.remote", title: "Go to Remotes", category: "Navigation", scope: "global", run: navTo("remote") },
+  "nav.pulls": { id: "nav.pulls", title: "Go to Pull requests", category: "Navigation", scope: "global", run: navTo("pulls") },
   "nav.diff": { id: "nav.diff", title: "Go to Diff viewer", category: "Navigation", scope: "global", run: navTo("diff") },
   "nav.reflog": { id: "nav.reflog", title: "Go to Reflog", category: "Navigation", scope: "global", run: navTo("reflog") },
   "nav.settings": { id: "nav.settings", title: "Open Settings", category: "Navigation", scope: "global", run: navTo("settings") },
@@ -323,6 +327,23 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
     category: "Repository",
     scope: "pane",
     suppressInInput: true,
+  },
+
+  // Opens the create form for the detected forge (#92). Declines when there is
+  // no repo, or no forge with a token — the chord then falls through rather than
+  // popping a dialog that cannot submit.
+  "forge.createPr": {
+    id: "forge.createPr",
+    title: "Create pull request…",
+    category: "Repository",
+    scope: "global",
+    run: () => {
+      if (!useRepoStore.getState().current) return false;
+      if (useForgeStore.getState().gate() !== "ready") return false;
+      useForgeStore.getState().openCreate();
+      useNavStore.getState().setIntent({ kind: "switch-screen", screen: "pulls" });
+      return true;
+    },
   },
 
   // Component-handled: the Files tree registers a handler that focuses its

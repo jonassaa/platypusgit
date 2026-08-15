@@ -311,8 +311,13 @@ function toAppError(e: unknown): AppError {
  * helper or ssh-agent already answers) behaves exactly as it did before. A
  * cancelled dialog never calls `onError`, leaving the original error already
  * reported by the caller's own catch.
+ *
+ * Exported so a network op owned by ANOTHER feature store can reuse it rather
+ * than growing a second retry path — `useForgeStore.checkout` fetches a pull
+ * request's head ref, which needs a git-transport credential exactly like
+ * fetch/pull/push/pushTag do (#92). Keep it the only implementation.
  */
-async function withAuthRetry(
+export async function withAuthRetry(
   repoId: string,
   run: (creds?: Credentials) => Promise<void>,
   onError: (e: unknown) => void | Promise<void>,

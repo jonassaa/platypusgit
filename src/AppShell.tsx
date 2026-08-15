@@ -26,6 +26,7 @@ import { CommitDiffScreen } from "@/screens/CommitDiff";
 import { FileHistoryScreen } from "@/screens/FileHistory";
 import { BlameScreen } from "@/screens/Blame";
 import { SettingsScreen } from "@/screens/Settings";
+import { PullsScreen } from "@/screens/Pulls";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { headUpstream, openRepoDialog } from "@/features/repo/ops";
@@ -73,6 +74,7 @@ type ScreenId =
   | "branches"
   | "rebase"
   | "remote"
+  | "pulls"
   | "diff"
   | "reflog"
   | "commitDiff"
@@ -93,6 +95,7 @@ const ACTIVITY_ACTION: Record<string, ActionId> = {
   branches: "nav.branches",
   rebase: "nav.rebase",
   remote: "nav.remote",
+  pulls: "nav.pulls",
   diff: "nav.diff",
   reflog: "nav.reflog",
 };
@@ -107,6 +110,7 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "branches", icon: "branch", label: "Branches" },
   { id: "rebase", icon: "rebase", label: "Rebase" },
   { id: "remote", icon: "link", label: "Remotes" },
+  { id: "pulls", icon: "pullRequest", label: "Pull requests" },
   { id: "diff", icon: "fileCode", label: "Diff viewer" },
   { id: "reflog", icon: "clock", label: "Reflog" },
 ];
@@ -249,6 +253,7 @@ export function AppShell() {
     branches: <BranchesScreen />,
     rebase: <RebaseScreen />,
     remote: <RemoteScreen />,
+    pulls: <PullsScreen />,
     reflog: <ReflogScreen />,
     commitDiff: <CommitDiffScreen />,
     fileHistory: <FileHistoryScreen />,

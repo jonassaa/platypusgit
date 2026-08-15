@@ -74,6 +74,31 @@ pub enum AppError {
     /// frontend shows it.
     #[error("invalid rebase plan: {0}")]
     InvalidRebasePlan(String),
+
+    /// A forge (GitHub / GitLab) API call failed in a way we can describe
+    /// (#92). The message has been through `scrub_credentials` AND
+    /// `forge::token::redact`, so it never carries a token or a URL's userinfo.
+    #[error("forge error: {0}")]
+    Forge(String),
+
+    /// The forge API rejected our token (401/403). Carries the HOST, not the
+    /// token. Deliberately NOT `Auth`: `Auth` means "git needs a credential for
+    /// this remote, prompt and retry", and raising it here would pop the
+    /// transport-credential dialog for a problem only Settings can fix.
+    #[error("forge authentication required for {0}")]
+    ForgeAuth(String),
+
+    /// A forge token did not survive the `git credential approve` → `fill`
+    /// round trip — almost always "no credential helper is configured". Carries
+    /// the remedy, never the token.
+    #[error("could not store the forge token: {0}")]
+    ForgeTokenStore(String),
+
+    /// A branch that would have to be overwritten already exists locally.
+    /// Raised by the PR-checkout path before it touches any ref, so the caller
+    /// can confirm and retry with `force`.
+    #[error("branch already exists: {0}")]
+    BranchExists(String),
 }
 
 impl From<git2::Error> for AppError {

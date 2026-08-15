@@ -4,6 +4,7 @@ pub mod commits;
 pub mod conflict;
 pub mod create;
 pub mod diff;
+pub mod forge;
 pub mod history;
 pub mod net;
 pub mod rebase;

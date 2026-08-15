@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod commands;
 pub mod error;
+pub mod forge;
 pub mod git;
 pub mod opener;
 pub mod state;
@@ -132,6 +133,10 @@ pub fn run() {
             Ok(())
         })
         .manage(AppState::new(backend))
+        // Per-host forge API tokens, cached for this process only (#92). NOT the
+        // git-transport credential path — see forge/token.rs for why the two
+        // must never share storage.
+        .manage(commands::forge::ForgeTokens::default())
         .manage(commands::cli::CliLaunchState(Mutex::new(initial_intent)))
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
@@ -225,6 +230,15 @@ pub fn run() {
             commands::update::check_for_update,
             commands::update::get_update_capability,
             commands::update::open_url,
+            commands::forge::forge_detect,
+            commands::forge::forge_sign_in,
+            commands::forge::forge_sign_out,
+            commands::forge::forge_token_status,
+            commands::forge::forge_validate_token,
+            commands::forge::forge_list_pull_requests,
+            commands::forge::forge_pull_request_checks,
+            commands::forge::forge_create_pull_request,
+            commands::forge::forge_checkout_pull_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
