@@ -1,6 +1,6 @@
-// The All / Mine / This branch group scopes the BACKEND walk: "All" and "Mine"
-// walk every branch (LOG_REF_ALL), "This branch" walks HEAD alone. It used to
-// approximate "this branch" client-side by slicing the top `ahead` commits.
+// The All / This branch group scopes the BACKEND walk: "All" walks every
+// branch (LOG_REF_ALL), "This branch" walks HEAD alone. It used to approximate
+// "this branch" client-side by slicing the top `ahead` commits.
 import { describe, expect, it, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -123,15 +123,12 @@ describe("History scope selector", () => {
     expect(useRepoStore.getState().logRef).toBe("main");
   });
 
-  it('"Mine" filters by author without leaving the all-branches walk', async () => {
+  it("offers no author-scoped option", async () => {
     render(<HistoryScreen />);
     await waitFor(() =>
       expect(screen.getAllByTestId("commit-row").length).toBeGreaterThan(0),
     );
 
-    fireEvent.click(screen.getByText("Mine"));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(useRepoStore.getState().logRef).toBe(LOG_REF_ALL);
-    expect(logRefspecs()).toEqual([]);
+    expect(screen.queryByText("Mine")).toBeNull();
   });
 });

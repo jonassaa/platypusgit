@@ -63,7 +63,7 @@ import {
 import type { CommitInfo, FileDiff } from "@/lib/types";
 import { LOG_REF_ALL } from "@/lib/types";
 
-type HistoryFilterKind = "all" | "mine" | "branch";
+type HistoryFilterKind = "all" | "branch";
 type RefFilter = "all" | "local";
 type DiffLayout = "below" | "beside";
 
@@ -206,30 +206,14 @@ export function HistoryScreen() {
   const { onContextMenu: onCommitMulti, menu: commitMultiMenu } =
     useContextMenu<string[]>((oids) => commitMultiMenuItems(oids));
 
-  // Most-frequent author email in the loaded history — used as a "mine" heuristic
-  // until we expose git config (user.email) to the frontend.
-  const myEmail = React.useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const c of commits) counts.set(c.email, (counts.get(c.email) ?? 0) + 1);
-    let best: string | null = null;
-    let n = 0;
-    for (const [k, v] of counts) if (v > n) { best = k; n = v; }
-    return best;
-  }, [commits]);
-
-  // Text/author/path/date/sha filtering happens on the backend (baseCommits).
-  // The "mine"/"branch"/hide-merges toggles remain client-side refinements.
-  // "All"/"Mine" walk every branch, "This branch" walks HEAD alone — the scope
-  // is a backend concern (see the logRef effect below), so all that is left
-  // client-side is the author refinement and hide-merges.
+  // Text/author/path/date/sha filtering happens on the backend (baseCommits),
+  // and so is the "all"/"branch" scope (see the logRef effect below), so
+  // hide-merges is all that is left client-side.
   const visible = React.useMemo(() => {
     let list: CommitInfo[] = baseCommits;
-    if (filterKind === "mine" && myEmail) {
-      list = list.filter((c) => c.email === myEmail);
-    }
     if (hideMerges) list = list.filter((c) => c.parents.length <= 1);
     return list;
-  }, [baseCommits, filterKind, myEmail, hideMerges]);
+  }, [baseCommits, hideMerges]);
 
   // Ancestry pool for parent rewriting. The UNION matters: `searchResults` has
   // no intervening commits by construction, and `commits` may not reach as deep
@@ -262,8 +246,8 @@ export function HistoryScreen() {
   // of truth for "where the user is" (#68 G11 on top of G10).
   //
   // Bounded on purpose. `visible` is the CLIENT-side-filtered list, and a filter
-  // can hold it shorter than the window indefinitely — "mine" and hide-merges
-  // can starve it however many pages the walk yields. The
+  // can hold it shorter than the window indefinitely — hide-merges can starve
+  // it however many pages the walk yields. The
   // end-of-list condition is then satisfied at rest with no scrolling, and
   // `loadMoreCommits` toggling `loadingMore` re-arms this effect after every
   // page, so it would walk the entire repository a page at a time. Allow a few
@@ -417,8 +401,8 @@ export function HistoryScreen() {
     [branches],
   );
 
-  // The All / Mine / This branch group is a SCOPE, not a client-side sieve:
-  // "All" and "Mine" walk every branch, "This branch" walks HEAD alone.
+  // The All / This branch group is a SCOPE, not a client-side sieve: "All"
+  // walks every branch, "This branch" walks HEAD alone.
   //
   // Only a CHANGE of scope rescopes the walk. Reacting to `logRef` instead
   // would fight the ref selector next door: picking a branch (or HEAD) by hand
@@ -1340,7 +1324,6 @@ function HistoryToolbarLeft(props: HistoryToolbarLeftProps) {
         onChange={(v) => onFilterKind(v as HistoryFilterKind)}
         options={[
           { value: "all", label: "All" },
-          { value: "mine", label: "Mine" },
           { value: "branch", label: "This branch" },
         ]}
       />
