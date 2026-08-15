@@ -65,6 +65,11 @@ describe("bisect", () => {
       timeout: 10_000,
       timeoutMsg: "the good-commit pick step never appeared",
     });
+    // Type first: a pick step caps commit rows at CAP.commit (8) and this fixture
+    // has 9, so the oldest — the one a bisect's GOOD end always is — is off the
+    // list until the query narrows it. Search-first is the palette's contract,
+    // not a workaround; the bad end above needs no query because it is the tip.
+    await $(paletteInput).setValue("base");
     await clickPaletteRow("feat: base");
 
     // The bar is the standing signal, and `RepoState::Bisect` is read off
