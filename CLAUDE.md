@@ -125,6 +125,23 @@ host-port collisions. Different worktrees → run concurrently, no coordination.
 Same worktree → run one at a time (they'd share the target volume). Each agent
 just runs `pnpm test:e2e:docker …` from its own worktree.
 
+Expect this on a new worktree's first run, and ignore it — it is the shared
+caches working as designed, not a misconfiguration:
+
+```
+warning: volume "pgit-e2e-pnpm-store" already exists but was created for
+project "pgit-e2e-<some-other-worktree>" (expected "pgit-e2e-<yours>").
+Use `external: true` to use an existing volume
+```
+
+**One cold container build at a time across ALL worktrees, though.** The
+concurrency note above is about correctness (separate volumes), not memory: two
+worktrees compiling GTK/WebKit at once exceeds the ~8GB VM even at
+`CARGO_BUILD_JOBS=2` each, and rustc is SIGKILLed in *both* runs. Also note
+`compose run --build` creates no container until the image build finishes, so a
+build already in flight is invisible to `docker ps` — check `docker compose ls`
+too before assuming the slot is free.
+
 ## Testing
 
 Four layers, each run independently:
@@ -138,7 +155,8 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (22 files) drive the
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (24 files; count
+  them rather than trusting this number — it has been stale twice) drive the
   real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
