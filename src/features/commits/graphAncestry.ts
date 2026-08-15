@@ -16,9 +16,9 @@ import type { CommitInfo } from "@/lib/types";
  * links dashed, and terminate the lane when nothing resolves.
  *
  * Deliberately frontend-only. Only text/author/path/date/sha filtering happens
- * in the backend; `mine`, `branch`, and `hideMerges` are client-side
- * refinements over `baseCommits`, so a backend rewrite would leave all three
- * still emitting phantom lanes. The ancestry needed is already on the client —
+ * in the backend; `hideMerges` is a client-side refinement over `baseCommits`,
+ * so a backend rewrite would leave it still emitting phantom lanes. The
+ * ancestry needed is already on the client —
  * useRepoStore holds the unfiltered `commits` next to `searchResults`. See the
  * spec's "Corrections to #68".
  */
