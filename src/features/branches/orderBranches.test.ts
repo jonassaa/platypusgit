@@ -3,7 +3,11 @@
 // surfaces that call it.
 
 import { describe, it, expect } from "vitest";
-import { compareBranches, orderBranches } from "./orderBranches";
+import {
+  compareBranches,
+  orderBranches,
+  orderBranchesGrouped,
+} from "./orderBranches";
 import type { BranchInfo } from "@/lib/types";
 
 const b = (over: Partial<BranchInfo> & { name: string }): BranchInfo => ({
@@ -94,6 +98,36 @@ describe("orderBranches", () => {
     ]);
 
     expect(rows.map((r) => r.kind)).toEqual(["remote", "local"]);
+  });
+});
+
+describe("orderBranchesGrouped", () => {
+  it("keeps every local ahead of every remote, ordered within each group", () => {
+    const rows = orderBranchesGrouped([
+      b({ name: "origin/zzz", tipTime: 950, isRemote: true }),
+      b({ name: "zzz-local", tipTime: 900 }),
+      b({ name: "origin/main", tipTime: 100, isRemote: true, isDefault: true }),
+      b({ name: "main", tipTime: 100, isDefault: true }),
+    ]);
+
+    // Without the grouping both defaults would take rows 1-2 and the freshest
+    // remote would outrank every stale local.
+    expect(names(rows)).toEqual([
+      "main",
+      "zzz-local",
+      "origin/main",
+      "origin/zzz",
+    ]);
+  });
+
+  it("is still only a permutation", () => {
+    const input = [
+      b({ name: "a", tipTime: 1 }),
+      b({ name: "origin/b", tipTime: 2, isRemote: true }),
+    ];
+
+    expect(names(orderBranchesGrouped(input)).sort()).toEqual(["a", "origin/b"]);
+    expect(names(input)).toEqual(["a", "origin/b"]);
   });
 });
 

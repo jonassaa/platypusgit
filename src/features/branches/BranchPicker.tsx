@@ -67,8 +67,15 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
   );
 
   const flat = React.useMemo(() => [...local, ...remote], [local, remote]);
-  const flatRef = React.useRef(flat);
-  flatRef.current = flat;
+
+  // True once the user has aimed the cursor themselves (arrows or hover). The
+  // resting rule below must then stop moving it, or a late `list_branches`
+  // arrival would yank the cursor out from under them.
+  const aimed = React.useRef(false);
+  const aim = (next: number) => {
+    aimed.current = true;
+    setActiveIndex(next);
+  };
 
   React.useEffect(() => {
     if (!open) return;
@@ -77,24 +84,38 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
     return () => clearTimeout(t);
   }, [open]);
 
+  // The user's aim is dropped when the popover opens and whenever the query
+  // changes — both are moments where the row set is rebuilt under them. Runs
+  // before the resting effect below (effects fire in declaration order), so a
+  // query change re-parks the cursor in the same commit.
+  React.useEffect(() => {
+    aimed.current = false;
+  }, [open, query]);
+
   // Where the cursor rests before the user moves it. Enter checks out the
   // active row, so with an empty query it sits on the CURRENT branch — the one
   // row `checkout()` refuses to act on — rather than on whatever sorts first,
   // which since #135 is the pinned default branch. Once a query is typed the
   // top match IS the target, so it moves to row 0.
   //
+  // `flat` is in the deps on purpose: the popover can be opened before
+  // `list_branches` resolves, and an effect keyed only on [open, query] would
+  // run once against an EMPTY list, land on 0, and leave the cursor on the
+  // pinned default once the branches arrived — the exact accident this rule
+  // exists to prevent. `aimed` is what keeps re-running harmless.
+  //
   // Resetting on every query change also fixes a latent bug: the index used to
   // survive typing and was only clamped to the new length, leaving the cursor
   // on an unrelated row.
   React.useEffect(() => {
-    if (!open) return;
+    if (!open || aimed.current) return;
     if (query) {
       setActiveIndex(0);
       return;
     }
-    const head = flatRef.current.findIndex((r) => r.kind === "local" && r.isHead);
+    const head = flat.findIndex((r) => r.kind === "local" && r.isHead);
     setActiveIndex(head >= 0 ? head : 0);
-  }, [open, query]);
+  }, [open, query, flat]);
 
   React.useEffect(() => {
     if (activeIndex >= flat.length) setActiveIndex(Math.max(0, flat.length - 1));
@@ -154,12 +175,12 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((i) => Math.min(flat.length - 1, i + 1));
+      aim(Math.min(flat.length - 1, activeIndex + 1));
       return;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveIndex((i) => Math.max(0, i - 1));
+      aim(Math.max(0, activeIndex - 1));
       return;
     }
     if (e.key === "Enter") {
@@ -194,10 +215,10 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
       <div
         key={`${r.kind}:${r.name}`}
         data-branch-row
-        data-active={active ? "" : undefined}
+        data-active={active ? "true" : "false"}
         onClick={() => checkout(r)}
         onContextMenu={(e) => handler(e, r)}
-        onMouseEnter={() => setActiveIndex(idx)}
+        onMouseEnter={() => aim(idx)}
         style={{
           display: "flex",
           alignItems: "center",

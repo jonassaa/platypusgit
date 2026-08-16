@@ -35,3 +35,22 @@ export function compareBranches(a: BranchInfo, b: BranchInfo): number {
 export function orderBranches<T extends BranchInfo>(rows: readonly T[]): T[] {
   return [...rows].sort(compareBranches);
 }
+
+/**
+ * Order a MIXED list into one flat array, locals ahead of remotes and ordered
+ * within each group.
+ *
+ * The picker renders two labelled sections and the Branches screen splits by
+ * view, so both get this grouping structurally. A surface that renders one
+ * undivided list (the palette's branch steps) needs it done here instead —
+ * otherwise `main` and `origin/main` are both `isDefault` and take rows 1-2,
+ * and locals and remotes interleave by tip time below them.
+ */
+export function orderBranchesGrouped<T extends BranchInfo>(
+  rows: readonly T[],
+): T[] {
+  return [
+    ...orderBranches(rows.filter((r) => !r.isRemote)),
+    ...orderBranches(rows.filter((r) => r.isRemote)),
+  ];
+}

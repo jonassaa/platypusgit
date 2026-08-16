@@ -6,7 +6,7 @@
 // a correctness question, not a cosmetic one.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { BranchPicker } from "./BranchPicker";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { resetInvokeMock } from "@/test/invokeMock";
@@ -41,7 +41,7 @@ const rowNames = () =>
 
 const activeName = () =>
   document
-    .querySelector("[data-branch-row][data-active]")
+    .querySelector('[data-branch-row][data-active="true"]')
     ?.querySelector("span")?.textContent;
 
 beforeEach(() => {
@@ -123,6 +123,53 @@ describe("BranchPicker resting cursor", () => {
       branch({ name: "main", tipTime: 100, isDefault: true }),
       branch({ name: "feature/fresh", tipTime: 900 }),
     ]);
+
+    expect(activeName()).toBe("main");
+  });
+
+  // Regression: the popover can be opened before `list_branches` resolves. An
+  // effect keyed only on [open, query] ran once against an EMPTY list, landed
+  // on 0, and never re-ran — leaving the cursor on the pinned default once the
+  // branches arrived, which is the exact accident this rule exists to prevent.
+  it("re-parks on HEAD when the branch list arrives after the popover opened", () => {
+    setup([]);
+    expect(activeName()).toBeUndefined();
+
+    act(() => {
+      useRepoStore.setState({
+        branches: [
+          branch({ name: "main", tipTime: 100, isDefault: true }),
+          branch({ name: "feature/fresh", tipTime: 900, isHead: true }),
+        ],
+      } as never);
+    });
+
+    expect(rowNames()).toEqual(["main", "feature/fresh"]);
+    expect(activeName()).toBe("feature/fresh");
+  });
+
+  // ...but re-running must not undo the user's own aim, which is why the flag
+  // exists rather than a bare dependency-array change.
+  it("leaves a cursor the user moved alone when the list changes", () => {
+    setup([
+      branch({ name: "main", tipTime: 100, isDefault: true }),
+      branch({ name: "feature/fresh", tipTime: 900, isHead: true }),
+    ]);
+
+    fireEvent.keyDown(screen.getByPlaceholderText("Switch to branch…"), {
+      key: "ArrowUp",
+    });
+    expect(activeName()).toBe("main");
+
+    act(() => {
+      useRepoStore.setState({
+        branches: [
+          branch({ name: "main", tipTime: 100, isDefault: true }),
+          branch({ name: "feature/fresh", tipTime: 900, isHead: true }),
+          branch({ name: "chore/late", tipTime: 50 }),
+        ],
+      } as never);
+    });
 
     expect(activeName()).toBe("main");
   });

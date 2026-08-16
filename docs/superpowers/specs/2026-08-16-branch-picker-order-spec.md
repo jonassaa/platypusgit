@@ -77,15 +77,19 @@ set per row:
   slash is correct because git forbids `/` in a remote name while allowing it in
   a branch name, so `origin/feature/x` splits as `origin` + `feature/x`.
 
-Two consequences, both accepted:
+Two consequences:
 
 - With two remotes, `origin/main` **and** `upstream/main` are both flagged. They
   are both "the default branch, on a remote", they sit adjacent at the top of one
   section, and their relative order falls through to the ordinary rules. Carrying
   a per-remote default to avoid this would add a field nothing else wants.
-- A stale `origin/HEAD` pointing at a deleted branch names something no row
-  matches, so nothing is pinned. That degrades to case 3 with no error, which is
-  why detection deliberately does **not** verify the branch exists.
+- **A remote's `HEAD` is accepted only when the ref it names still exists.**
+  `git fetch --prune` does not rewrite the symref, so a repository cloned when
+  the default was `master` keeps pointing at `refs/remotes/origin/master` forever
+  after upstream renames it. Taking that name on trust would suppress case 2 as
+  well — the perfectly good local `main` would never be considered and nothing
+  would be pinned again, permanently and silently. A dangling symref therefore
+  falls **through** to the next remote and then to the local candidates.
 
 ### C. One pure comparator, three surfaces
 
@@ -115,9 +119,20 @@ Adopted by all three surfaces, so a second ordering cannot grow:
 | `screens/Branches.tsx` | the `rows` memo — local and remote ordered **within** their groups, locals still before remotes in the `all` view |
 | `features/palette/commands.ts` | `branchItems`, after the optional `filter` |
 
-The palette's root step re-scores rows by fuzzy match + frecency, but `Array#sort`
-is stable, so with an empty query — where every candidate ties — the order
-`branchItems` produced is the order shown.
+`orderBranchesGrouped` is the second export, for a surface that renders ONE
+undivided list: it orders locals and remotes separately and concatenates. The
+picker gets that grouping from its two labelled sections and the Branches screen
+from its view split; the palette's pick steps have neither, and without it `main`
+and `origin/main` (both `isDefault`) take rows 1-2 and everything below
+interleaves by tip time.
+
+**The pin is honoured in three places, and the palette's ROOT step is not one of
+them.** `CommandPalette` adds `frecencyScore(...)` to every candidate regardless
+of query and bumps frecency on every pick, so as soon as the user has picked any
+branch from the palette that branch outranks the pinned default there — sort
+stability is irrelevant. That is correct: the root step is a relevance ranking
+over four result types, not a branch list. The pick steps, the picker and the
+Branches screen are where the ordering is a contract.
 
 `RebaseBasePicker` is deliberately left alone. It builds a mixed
 branch/commit/freeform row list under its own relevance rules and is not one of
@@ -159,6 +174,34 @@ are plainly mapped, not windowed, so the DOM route is sound here — the
 `scrollTopForRow` rule applies to the windowed diff surfaces, not to this list.
 This also makes ArrowDown past the visible area work, which it never did.
 
+The rule re-runs as the row list changes, not only on open, because the popover
+can be opened before `list_branches` resolves; a flag records whether the user
+has aimed the cursor themselves (arrows or hover) so re-running never yanks it
+out from under them.
+
+**The same argument applies to the other two surfaces, and moving a plausible
+destructive target to row 0 is what makes it their problem too.**
+
+- **The Branches screen had a phantom selection.** `flatIndex` clamped
+  `findIndex` to 0 while `selection` starts `null`, so `usePaneList` was told row
+  0 was selected with NO row rendered as highlighted — and `branches.list` is the
+  screen's primary pane, so entering the screen focuses it. Enter checked out row
+  0. `flatIndex` now stays `-1`: arrowing either way lands on row 0, and
+  `onActivate(-1)` reads past the end of the list and no-ops.
+- **The palette's branch pick steps preselected row 0.** `activeIndex` resets to
+  0 on every `pushStep`, so "⌘P, delete branch, Enter, Enter" reached
+  `deleteBranch("main")` — and `delete_branch` refuses only *unmerged* branches,
+  so the default branch (an ancestor of HEAD) deleted, unconfirmed and
+  irreversible short of the reflog. A `pick` step may now declare
+  `cursor: "none"`, which rests on nothing while its query is empty; all five
+  branch steps use it. Typing still moves the cursor to the top match, on the
+  same reasoning as the picker.
+- **Deleting a branch from the palette now confirms.** It was the only delete
+  path without a `pgConfirm` — the row menu and the Branches inspector both had
+  one. Pinning a plausible branch at row 0 is what turned that from an oversight
+  into a hazard, and CLAUDE.md mandates the confirm for destructive ops
+  regardless.
+
 ### F. HEAD does not pin
 
 The current branch stays in recency order. It is already accent-coloured and
@@ -175,14 +218,24 @@ comparator whose value is that it has one.
   `origin/HEAD`'s symbolic target, including onto `origin/<name>`; falls back to
   local `main`/`master`; `master` wins over a non-existent `main`; no default
   when none of the three exist and there is no remote HEAD; `init.defaultBranch`
-  set to something else changes nothing.
+  set to something else changes nothing; a **stale** `origin/HEAD` falls through
+  to the local candidate, and pins nothing when there is none.
 - **Frontend unit** (`orderBranches.test.ts`): default first; recency descending;
   name tiebreak on equal `tipTime`; input is not mutated; a list without a
   default is a pure recency sort; the output is a permutation of the input (the
-  §D guarantee).
+  §D guarantee); `orderBranchesGrouped` keeps every local ahead of every remote.
+  `commands.test.ts` asserts `branchItems`' order directly — it is pure, unlike
+  the rendered palette, whose frecency scoring makes it fragile to pin.
 - **Component** (`BranchPicker.test.tsx`): rows render default-first then by
   recency; a query that excludes the default does not resurrect it; the cursor
-  starts on the HEAD row with an empty query and on row 0 once a query is typed.
+  starts on the HEAD row with an empty query and on row 0 once a query is typed;
+  a branch list that arrives AFTER the popover opened still re-parks the cursor
+  on HEAD, and one the user has aimed is left alone.
+  `Branches.activate.test.tsx`: Enter with nothing selected checks nothing out,
+  and still checks out once a row is genuinely selected.
+  `CommandPalette.branchStep.test.tsx`: the Delete step rests on no row, so the
+  Enter that opened it cannot fire row 0; aiming a row then confirms before
+  deleting. All four fail on the pre-fix code.
 - **E2E** (`branches.e2e.ts`): with `manyRefsRepo` (60 `feature/branch-NN`
   branches created from one commit, plus `main`) the first `[data-branch-row]` in
   the picker is `main` — which without the pin would be `feature/branch-00`,
