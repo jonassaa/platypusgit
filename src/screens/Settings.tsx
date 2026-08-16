@@ -636,6 +636,7 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
       />
 
       <Row
+        stacked
         label="Current position (HEAD)"
         hint="How History marks the commit you are on. Pick any combination of marks, then set how hard they hit — the preview is the real History row."
         control={<HeadMarksControl />}
@@ -1226,21 +1227,31 @@ function Section({
   );
 }
 
+/**
+ * `stacked` puts the control on its own full-width line under the label. The
+ * inline layout gives the control whatever width it asks for (`flexShrink: 0`),
+ * which is right for a button group or a select but crushes the label column to
+ * a word per line once the control is intrinsically wide — a live preview of a
+ * real History row, say.
+ */
 function Row({
   label,
   hint,
   control,
+  stacked,
 }: {
   label: string;
   hint?: React.ReactNode;
   control: React.ReactNode;
+  stacked?: boolean;
 }) {
   return (
     <div
       style={{
         display: "flex",
-        alignItems: "flex-start",
-        gap: 16,
+        flexDirection: stacked ? "column" : "row",
+        alignItems: stacked ? "stretch" : "flex-start",
+        gap: stacked ? 10 : 16,
         padding: "12px 16px",
         borderBottom: "1px solid var(--border-0)",
       }}
@@ -1268,7 +1279,7 @@ function Row({
           </div>
         )}
       </div>
-      <div style={{ flexShrink: 0, paddingTop: 2 }}>{control}</div>
+      <div style={stacked ? { minWidth: 0 } : { flexShrink: 0, paddingTop: 2 }}>{control}</div>
     </div>
   );
 }
