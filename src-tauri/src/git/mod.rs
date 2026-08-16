@@ -9,6 +9,7 @@ pub mod rebase_state;
 pub mod signature;
 pub mod signing;
 pub mod submodule;
+pub mod tag;
 pub mod types;
 pub mod worktree;
 

@@ -1060,8 +1060,6 @@ fn commit_signed(
     head: Option<&git2::Reference<'_>>,
     amend: bool,
 ) -> AppResult<String> {
-    use crate::git::signing::{resolve_signing, signing_args, SigFormat};
-
     // Parents: an amend replaces HEAD, so it inherits HEAD's parents rather than
     // chaining onto it.
     let tip = match head {
@@ -1080,28 +1078,7 @@ fn commit_signed(
     let buffer_str = std::str::from_utf8(&buffer)
         .map_err(|e| AppError::Internal(format!("commit buffer is not utf-8: {e}")))?;
 
-    let cfg = resolve_signing(repo)?;
-    let key_file = match cfg.format {
-        SigFormat::Ssh => {
-            let key = cfg.key.as_deref().ok_or_else(|| {
-                AppError::InvalidArgument("ssh signing needs user.signingkey".to_string())
-            })?;
-            // Only a key PATH is supported. git also accepts a literal key
-            // (`key::ssh-ed25519 …`), which would have to be written to a temp
-            // file first; rejecting it clearly beats writing key material to
-            // disk behind the user's back.
-            if key.starts_with("key::") || key.starts_with("ssh-") {
-                return Err(AppError::InvalidArgument(
-                    "user.signingkey must be a path to a key file for ssh signing".to_string(),
-                ));
-            }
-            Some(std::path::PathBuf::from(key))
-        }
-        _ => None,
-    };
-    let args = signing_args(&cfg, key_file.as_deref())?;
-
-    let signature = run_signer(&cfg.program, &args, buffer_str)?;
+    let signature = sign_payload(repo, buffer_str)?;
     let oid = repo.commit_signed(buffer_str, &signature, Some("gpgsig"))?;
 
     // Move the branch ourselves — commit_signed did not.
@@ -1125,6 +1102,22 @@ fn commit_signed(
     repo.reference(&ref_name, oid, true, &reflog_msg)?;
 
     Ok(oid.to_string())
+}
+
+/// Resolve the signing config and produce a detached signature over `payload`.
+///
+/// The whole chain in one place — `resolve_signing` → `resolve_key_file` →
+/// `signing_args` → `run_signer` — because a commit buffer and an annotated-tag
+/// body are the same kind of thing to a signer, and a second copy of these four
+/// lines is how the ssh key-path restriction would come to hold for commits and
+/// lapse for tags (#132).
+fn sign_payload(repo: &Repository, payload: &str) -> AppResult<String> {
+    use crate::git::signing::{resolve_key_file, resolve_signing, signing_args};
+
+    let cfg = resolve_signing(repo)?;
+    let key_file = resolve_key_file(&cfg)?;
+    let args = signing_args(&cfg, key_file.as_deref())?;
+    run_signer(&cfg.program, &args, payload)
 }
 
 /// Run the signing program over `payload`, returning its signature.
