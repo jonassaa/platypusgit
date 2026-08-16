@@ -168,6 +168,46 @@ fn a_path_beginning_with_a_dash_is_a_path_not_an_option() {
     assert_eq!(backend.stashes(&handle.id).unwrap().len(), 1);
 }
 
+/// **`GIT_LITERAL_PATHSPECS` is load-bearing, not hygiene.**
+///
+/// git reads a leading `:` as pathspec MAGIC. A file honestly named
+/// `:(exclude)weird.txt` — a legal POSIX filename, and a name `git status`
+/// hands us verbatim — reaches `git stash push -- ':(exclude)weird.txt'` as
+/// "everything EXCEPT weird.txt", so a request to stash one file stashes the
+/// **entire worktree** instead. The `--` separator does not help: it ends
+/// OPTION parsing, and everything after it is still parsed as a pathspec.
+///
+/// So the acceptance is the other files: they must still be dirty.
+#[test]
+fn a_pathspec_magic_filename_is_a_literal_path_not_an_exclusion() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    write_file(tr.path(), "keep.txt", "original\n");
+    tr.commit_all("add keep");
+    let (backend, handle) = tr.open_with_backend();
+
+    let magic = ":(exclude)weird.txt";
+    write_file(tr.path(), magic, "magic name\n");
+    write_file(tr.path(), "README.md", "dirty readme\n");
+    write_file(tr.path(), "keep.txt", "dirty keep\n");
+
+    backend
+        .stash_save_paths(&handle.id, opts("just the magic one", true), &paths(&[magic]))
+        .unwrap();
+
+    // Without the env var this stashes everything and both assertions below
+    // fail — which is exactly the regression this test exists to catch.
+    assert!(
+        !tr.path().join(magic).exists(),
+        "the named file should have been stashed"
+    );
+    assert_eq!(
+        read_file(tr.path(), "README.md"),
+        "dirty readme\n",
+        "an unnamed file must not be swept up by pathspec magic"
+    );
+    assert_eq!(read_file(tr.path(), "keep.txt"), "dirty keep\n");
+}
+
 #[test]
 fn a_message_with_a_line_break_is_refused_before_git_runs() {
     let tr = TempRepo::with_initial_commit("hello\n");
