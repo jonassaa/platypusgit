@@ -22,7 +22,18 @@ export type NavIntent =
   | { kind: "file-history"; path: string }
   | { kind: "blame"; path: string }
   | { kind: "rebase-plan"; plan: RebaseStep[] }
-  | { kind: "stash-diff"; oid: string }
+  /**
+   * A stash comparison (#133). Two targets, one screen.
+   *
+   * `oid` is the FULL stash-commit oid, never `stash@{N}` and never the index:
+   * an index is a reflog position that anything writing to `refs/stash` shifts
+   * (a rename included), so a stale one would silently compare a different
+   * entry. `label` is what the user calls it (`stash@{0}`), carried only for
+   * the header, and `untracked` says whether the entry has the `git stash -u`
+   * third parent — which the two targets treat differently on purpose.
+   */
+  | { kind: "stash-diff"; oid: string; label: string; untracked: boolean }
+  | { kind: "stash-vs-wt"; oid: string; label: string; untracked: boolean }
   | { kind: "switch-screen"; screen: string };
 
 interface NavState {

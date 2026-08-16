@@ -26,8 +26,18 @@ export const WORKDIR_LABEL = "Working tree";
  *  from `aheadBehind`, which is exact regardless of this cap. */
 export const COMPARE_COMMIT_LIMIT = 200;
 
+/**
+ * A rev that is a bare full oid, and therefore unreadable at 40 characters.
+ * A branch, a tag or `HEAD~2` is left exactly as typed — the point of keeping
+ * the spec rather than resolving it is that the chip reads `main`.
+ */
+const FULL_OID = /^[0-9a-f]{40}$/;
+
 export function sideLabel(side: CompareSide): string {
-  return side.kind === "workdir" ? WORKDIR_LABEL : side.rev;
+  if (side.kind === "workdir") return WORKDIR_LABEL;
+  // Shorten at the DISPLAY site, never at the source — the same rule
+  // `BranchInfo.tip` learned the hard way.
+  return FULL_OID.test(side.rev) ? side.rev.slice(0, 7) : side.rev;
 }
 
 /**

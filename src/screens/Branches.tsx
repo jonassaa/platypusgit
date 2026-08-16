@@ -15,12 +15,15 @@ import {
   pgPrompt,
   remoteBranchMenuItems,
   stashMenuItems,
+  openStashDiff,
+  openStashVsWorktree,
+  promptStashRename,
+  type StashMenuTarget,
   tagMenuItems,
   useContextMenu,
   usePaneWidth,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
-import { useNavStore } from "@/features/nav/useNavStore";
 import { orderBranches } from "@/features/branches/orderBranches";
 import { TagSignatureBadge } from "@/features/signing/TagSignatureBadge";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
@@ -88,10 +91,8 @@ export function BranchesScreen() {
   const { onContextMenu: onTagCtx, menu: tagMenu } = useContextMenu<TagInfo>(
     (t) => tagMenuItems({ name: t?.name, sha: t?.shortOid, oid: t?.oid }),
   );
-  const { onContextMenu: onStashCtx, menu: stashMenu } = useContextMenu<{
-    index: number;
-    name: string;
-  }>((s) => stashMenuItems(s));
+  const { onContextMenu: onStashCtx, menu: stashMenu } =
+    useContextMenu<StashMenuTarget>((s) => stashMenuItems(s));
 
   const [widths, setWidths] = React.useState(() => COLS.map((c) => c.initial));
   const gridTemplate = widths.map((w) => `${w}px`).join(" ");
@@ -563,9 +564,7 @@ export function BranchesScreen() {
                 key={`stash:${s.index}`}
                 data-stash-index={s.index}
                 onClick={() => setSelection({ kind: "stash", index: s.index })}
-                onContextMenu={(e) =>
-                  onStashCtx(e, { index: s.index, name: `stash@{${s.index}}` })
-                }
+                onContextMenu={(e) => onStashCtx(e, stashTarget(s))}
                 data-pg-row=""
                 data-selected={
                   selection?.kind === "stash" && selection.index === s.index
@@ -626,10 +625,7 @@ export function BranchesScreen() {
                     title="Actions"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onStashCtx(e, {
-                        index: s.index,
-                        name: `stash@{${s.index}}`,
-                      });
+                      onStashCtx(e, stashTarget(s));
                     }}
                   />
                 </div>
@@ -1005,6 +1001,20 @@ function TagActions({ tag }: { tag: TagInfo }) {
   );
 }
 
+/**
+ * A `StashInfo` as the shared menu addresses it (#133). The full `oid` is what
+ * makes the two comparisons safe to issue — see `StashMenuTarget`.
+ */
+function stashTarget(s: StashInfo): StashMenuTarget {
+  return {
+    index: s.index,
+    name: `stash@{${s.index}}`,
+    oid: s.oid,
+    message: s.message,
+    untracked: s.untracked,
+  };
+}
+
 function StashInspector({ stash }: { stash: StashInfo }) {
   return (
     <>
@@ -1031,13 +1041,15 @@ function StashInspector({ stash }: { stash: StashInfo }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <KV k="Oid" v={<span className="mono">{stash.shortOid}</span>} />
         <KV k="Message" v={stash.message} />
+        {stash.untracked && (
+          <KV k="Untracked" v="carries files git had no copy of" />
+        )}
       </div>
     </>
   );
 }
 
 function StashActions({ stash }: { stash: StashInfo }) {
-  const setIntent = useNavStore((s) => s.setIntent);
   return (
     <>
       <PGButton
@@ -1057,9 +1069,23 @@ function StashActions({ stash }: { stash: StashInfo }) {
       <PGButton
         variant="outline"
         icon="fileCode"
-        onClick={() => setIntent({ kind: "stash-diff", oid: stash.shortOid })}
+        onClick={() => openStashDiff(stashTarget(stash))}
       >
-        Show diff
+        Show what it changed
+      </PGButton>
+      <PGButton
+        variant="outline"
+        icon="diff"
+        onClick={() => openStashVsWorktree(stashTarget(stash))}
+      >
+        Compare with working tree
+      </PGButton>
+      <PGButton
+        variant="ghost"
+        icon="edit"
+        onClick={() => promptStashRename(stashTarget(stash))}
+      >
+        Rename
       </PGButton>
       <PGButton
         variant="ghost"

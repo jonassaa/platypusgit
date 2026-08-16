@@ -44,6 +44,21 @@ describe("sideLabel / sideKey", () => {
   it("gives two different revs two different keys", () => {
     expect(sideKey(rev("main"))).not.toBe(sideKey(rev("feature")));
   });
+
+  it("abbreviates a bare full oid, which nothing else makes readable", () => {
+    const oid = "a".repeat(40);
+    expect(sideLabel(rev(oid))).toBe("aaaaaaa");
+    // …but the KEY keeps the whole thing: two oids sharing a prefix are two
+    // different sides, and the key is what the fetch is fenced on.
+    expect(sideKey(rev(oid))).toBe(`rev:${oid}`);
+  });
+
+  it("leaves anything that is not a full oid exactly as typed", () => {
+    expect(sideLabel(rev("HEAD~2"))).toBe("HEAD~2");
+    expect(sideLabel(rev("abc1234"))).toBe("abc1234");
+    // 40 chars, but not hex — a branch name, not an oid.
+    expect(sideLabel(rev("z".repeat(40)))).toBe("z".repeat(40));
+  });
 });
 
 describe("compareHeader", () => {

@@ -1519,6 +1519,51 @@ export interface MultiFileMenuSelection {
  * own subset so mixed selections work; discard goes through the standard
  * confirm/danger flow before touching the worktree.
  */
+/**
+ * Stash a selection of paths (#133).
+ *
+ * `untrackedPaths` is not a preference the user is asked about: `git stash push
+ * -- <untracked path>` FAILS outright without `--include-untracked`, so the
+ * flag is derived from whether the selection contains one. Both lists come from
+ * the same `splitFileSelection` buckets Stage / Unstage / Discard already read.
+ *
+ * No confirm: the changes go INTO a stash, so nothing is lost — but staged
+ * paths in the selection are unstaged as part of the move, which the prompt
+ * says rather than leaving to be discovered.
+ */
+export async function promptStashPaths(
+  paths: string[],
+  untrackedPaths: string[],
+): Promise<void> {
+  if (!paths.length) return;
+  const n = paths.length;
+  const untracked = untrackedPaths.filter((p) => paths.includes(p));
+  const message = await pgPrompt({
+    title: `Stash ${n} file${n === 1 ? "" : "s"}`,
+    body:
+      "The selected paths are reverted to HEAD and kept in a new stash entry." +
+      (untracked.length
+        ? ` ${untracked.length} untracked file${
+            untracked.length === 1 ? " is" : "s are"
+          } included.`
+        : ""),
+    placeholder: "message (optional)",
+    confirmLabel: "Stash",
+  });
+  // `null` is dismissal; `""` is a deliberate empty message, and git is happy
+  // to write an entry without one — the same distinction pgPrompt inherits
+  // from window.prompt.
+  if (message == null) return;
+  await useRepoStore.getState().stashSavePaths(
+    {
+      message: message === "" ? null : message,
+      includeUntracked: untracked.length > 0,
+      keepIndex: false,
+    },
+    paths,
+  );
+}
+
 export function multiFileMenuItems(
   sel: MultiFileMenuSelection | null,
 ): ContextMenuItem[] {
@@ -1557,6 +1602,17 @@ export function multiFileMenuItems(
       onClick: () => {
         useRepoStore.getState().unstage(stagedPaths);
       },
+    });
+  }
+  // Partial stash (#133). Embedded repos are excluded for the same reason they
+  // cannot be staged — `git stash push -- <embedded repo>` has nothing to save
+  // and fails the whole pathspec.
+  const stashable = all.filter((p) => !embeddedPaths.includes(p));
+  if (stashable.length) {
+    items.push({
+      icon: "stash",
+      label: `Stash ${files(stashable.length)}…`,
+      onClick: () => promptStashPaths(stashable, sel?.untrackedPaths ?? []),
     });
   }
   items.push(
@@ -1601,10 +1657,67 @@ export function multiFileMenuItems(
   return items;
 }
 
-export function stashMenuItems(
-  stash: { name?: string; index?: number } | null,
-): ContextMenuItem[] {
+/**
+ * One stash entry, as the menu and the Branches detail pane both address it
+ * (#133). `oid` is the FULL commit oid — the comparisons take it, never the
+ * index, because an index is a reflog position that any write to `refs/stash`
+ * shifts (a rename included) and a stale one would compare a different entry.
+ */
+export interface StashMenuTarget {
+  name?: string;
+  index?: number;
+  oid?: string;
+  message?: string;
+  untracked?: boolean;
+}
+
+/** Ask to see what a stash changed — its own first parent against itself. */
+export function openStashDiff(stash: StashMenuTarget): void {
+  if (!stash.oid) return;
+  useNavStore.getState().setIntent({
+    kind: "stash-diff",
+    oid: stash.oid,
+    label: stash.name ?? `stash@{${stash.index ?? 0}}`,
+    untracked: !!stash.untracked,
+  });
+}
+
+/** Ask how a stash stands against what is on disk right now. */
+export function openStashVsWorktree(stash: StashMenuTarget): void {
+  if (!stash.oid) return;
+  useNavStore.getState().setIntent({
+    kind: "stash-vs-wt",
+    oid: stash.oid,
+    label: stash.name ?? `stash@{${stash.index ?? 0}}`,
+    untracked: !!stash.untracked,
+  });
+}
+
+/**
+ * Rename a stash entry. Prompts with the current message so the user edits
+ * rather than retypes — the whole displayed string is the name, `On main: `
+ * prefix included.
+ */
+export async function promptStashRename(stash: StashMenuTarget): Promise<void> {
+  if (stash.index == null) return;
+  const name = stash.name ?? `stash@{${stash.index}}`;
+  const message = await pgPrompt({
+    title: `Rename ${name}`,
+    // Said up front, because it is visible and would otherwise look like a bug:
+    // `refs/stash` is a reflog and git can only PREPEND to it, so a renamed
+    // entry necessarily ends up first.
+    body: "The renamed stash moves to the top of the list — git's stash reflog has no insert-in-place.",
+    initialValue: stash.message ?? "",
+    confirmLabel: "Rename",
+    requireValue: true,
+  });
+  if (message == null) return;
+  await useRepoStore.getState().stashRename(stash.index, message);
+}
+
+export function stashMenuItems(stash: StashMenuTarget | null): ContextMenuItem[] {
   const name = stash?.name ?? `stash@{${stash?.index ?? 0}}`;
+  const target: StashMenuTarget = { ...stash, name };
   return [
     { __menuTitle: name },
     {
@@ -1620,6 +1733,26 @@ export function stashMenuItems(
       onClick: () => {
         if (stash?.index != null) useRepoStore.getState().stashPop(stash.index);
       },
+    },
+    { divider: true },
+    {
+      icon: "diff",
+      label: "Show what it changed",
+      disabled: !stash?.oid,
+      onClick: () => openStashDiff(target),
+    },
+    {
+      icon: "diff",
+      label: "Compare with working tree",
+      disabled: !stash?.oid,
+      onClick: () => openStashVsWorktree(target),
+    },
+    { divider: true },
+    {
+      icon: "edit",
+      label: "Rename…",
+      disabled: stash?.index == null,
+      onClick: () => promptStashRename(target),
     },
     {
       icon: "branch",
