@@ -143,6 +143,33 @@ export interface SignatureStatus {
   key: string | null;
 }
 
+/**
+ * A whole-tree diff against the working tree (#131). Mirrors Rust `WorkdirDiff`.
+ *
+ * Not a bare `FileDiff[]`: this op walks the WHOLE tree (unlike `getDiff`, which
+ * pathspecs one file first), so its untracked side is capped and the number left
+ * out travels with the result for the UI to report.
+ */
+export interface WorkdirDiff {
+  files: FileDiff[];
+  untrackedOmitted: number;
+}
+
+/**
+ * How one revision stands relative to another (#131). Mirrors Rust
+ * `AheadBehind`.
+ *
+ * Both counts read FROM `a` TOWARD `b`: `ahead` is what `b` has that `a` does
+ * not, `behind` the mirror — the same direction `BranchInfo.ahead/behind` has
+ * for a branch against its upstream. `mergeBase` is null for unrelated
+ * histories, which is a state, not an error.
+ */
+export interface AheadBehind {
+  ahead: number;
+  behind: number;
+  mergeBase: string | null;
+}
+
 export interface BranchInfo {
   name: string;
   isHead: boolean;

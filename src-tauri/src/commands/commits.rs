@@ -2,7 +2,9 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{AuthorOverride, CommitInfo, CommitOptions, LogFilter, LogPage, RepoId},
+    git::types::{
+        AheadBehind, AuthorOverride, CommitInfo, CommitOptions, LogFilter, LogPage, RepoId,
+    },
     state::AppState,
 };
 
@@ -97,6 +99,40 @@ pub async fn commits_since(
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     tokio::task::spawn_blocking(move || backend.commits_since(&repo_id, &base))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// `base..tip`, newest-first (#131). Unlike `commits_since`, neither side has to
+/// be an ancestor of the other — two diverged branches is the case this exists
+/// for.
+#[tauri::command]
+pub async fn commits_between(
+    state: State<'_, AppState>,
+    repo_id: String,
+    base: String,
+    tip: String,
+    limit: Option<usize>,
+) -> AppResult<Vec<CommitInfo>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let limit = limit.unwrap_or(200);
+    tokio::task::spawn_blocking(move || backend.commits_between(&repo_id, &base, &tip, limit))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// How `b` stands relative to `a`, plus their merge base (#131).
+#[tauri::command]
+pub async fn ahead_behind(
+    state: State<'_, AppState>,
+    repo_id: String,
+    a: String,
+    b: String,
+) -> AppResult<AheadBehind> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.ahead_behind(&repo_id, &a, &b))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

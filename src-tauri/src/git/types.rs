@@ -92,6 +92,44 @@ pub struct LogPage {
     pub next_cursor: Option<Vec<String>>,
 }
 
+/// A whole-tree diff against the WORKING TREE (#131).
+///
+/// Not a bare `Vec<FileDiff>` because the untracked side has to be BOUNDED and
+/// the bound has to be visible: this op fans out over the entire tree, unlike
+/// `diff`, which sets a pathspec first and therefore only ever reads one
+/// untracked file's content. A repository with an untracked `dist/`, `.venv/`
+/// or a downloaded dataset that nobody `.gitignore`d would otherwise serialise
+/// all of it into one IPC payload and one `DiffRow` model per file in the
+/// webview. Silently truncating would be worse than the overflow, so the count
+/// travels with the result and the UI says so.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkdirDiff {
+    pub files: Vec<FileDiff>,
+    /// Untracked files left out because there were more than
+    /// `MAX_UNTRACKED_FILES` of them. Zero in every ordinary repository, and
+    /// always zero when `include_untracked` was false.
+    pub untracked_omitted: usize,
+}
+
+/// How one revision stands relative to another (#131).
+///
+/// Both counts are read FROM `a` TOWARD `b`: `ahead` is what `b` has that `a`
+/// does not, `behind` the mirror — the same reading `BranchInfo.ahead/behind`
+/// has for a branch against its upstream, so the two never mean opposite things.
+/// In git's own spelling that is `rev-list --left-right --count a...b`, left =
+/// `behind`, right = `ahead`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AheadBehind {
+    pub ahead: usize,
+    pub behind: usize,
+    /// Best common ancestor, or `None` for unrelated histories. It rides along
+    /// because it is the same graph query, and without it "no shared history"
+    /// is indistinguishable from "everything diverged".
+    pub merge_base: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {

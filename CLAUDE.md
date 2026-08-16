@@ -18,6 +18,9 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-16-branch-compare-*` — `compare` deep view: two mutable sides
+  (ref↔ref or ref↔working tree), ahead/behind + both commit lists, the file diff
+  through `CommitDiffPanel` (#131).
 - `2026-08-14-submodules-lfs-worktrees-bisect-*` — submodule/worktree screens, LFS panel + pointer-aware diffs, bisect in the operation bar (#93).
 - `2026-08-14-drag-and-drop-*` — one pointer-event drag primitive (`features/dnd/`); staging drag, graph ref/commit drops, rebase reorder gated + keyboard-paired (#91).
 - `2026-08-14-forge-integration-*` — PR/MR integration for GitHub + GitLab (#92 / #61 D11):
@@ -340,8 +343,13 @@ commands/        Thin Tauri handlers, one file per area:
 │                  rebase op must run it through `headAncestryOf` first (see
 │                  features/commits/headAncestry.ts) — a plan built from the raw
 │                  log replays another branch's commits onto the current one.
+│                  Also `commits_between` (`base..tip`, NO ancestry requirement —
+│                  `commits_since` refuses a non-ancestor base, which is right for
+│                  a rebase base and wrong for two diverged branches) and
+│                  `ahead_behind` (counts read FROM `a` TOWARD `b`, plus the merge
+│                  base; unrelated histories are `mergeBase: null`, not an error).
 ├── diff.rs        get_diff, stage/unstage/discard_paths, stage/unstage/discard_hunk,
-│                  diff_commits, blame_file
+│                  diff_commits, diff_ref_to_workdir, blame_file
 ├── branches.rs    list_branches/tags/stashes/remotes, checkout/create/delete/rename_branch,
 │                  fetch, fetch_all, pull, push, add/remove/rename/set_url/prune remote,
 │                  create/delete/push_tag, merge_branch, rebase_onto, checkout_ref,
@@ -397,8 +405,8 @@ design/              In-house design system (NOT components/ui/). Exports via de
 
 screens/             One screen per activity-bar item + modal-ish deep views:
   RepoBrowser, CommitPanel, History, DiffViewer, Branches, Rebase,
-  Remote, Pulls, Welcome, Reflog, CommitDiff, FileHistory, Blame, Submodules,
-  Worktrees, Settings
+  Remote, Pulls, Welcome, Reflog, CommitDiff, Compare, FileHistory, Blame,
+  Submodules, Worktrees, Settings
                      There is deliberately NO Conflict screen (#108): conflicts
                      are announced by OperationBar and resolved in the merge
                      window. Nothing restores a screen from localStorage any
@@ -492,6 +500,12 @@ features/            Per-feature: components + Zustand store colocated
 │                    CreatePullRequestDialog, ForgeSettings (rendered inside the
 │                    Settings screen; state lives here because an account list is
 │                    not a preference)
+├── compare/         Branch compare (#131): compareSides (PURE — CompareSide,
+│                    labels, the "workdir cannot be the left side" swap rule; the
+│                    nav store imports the TYPE from here, so nav never depends on
+│                    a feature store), useCompareStore (sides + results + the
+│                    compare mark, its own store so RepoSlice is untouched),
+│                    CompareSidePicker
 ├── diff/            CommitDiffPanel (shared commit-diff view) + WhitespaceToggle
 │                    (ignore-whitespace control; also owns
 │                    useHunkActionsDisabledReason — hunk staging is disabled
@@ -566,6 +580,26 @@ lib/
   `effStart`, or every filler number after such a hunk shifts by one.
 - **Hunk headers stay in whole-file mode.** They carry Stage/Discard, the
   collapse chevron, `data-hunk-index` for F7, and the e2e selectors.
+- **`diff_ref_to_workdir` is a shared primitive, not compare's helper** (#131).
+  Arbitrary revspec vs the working tree, with the same `context_lines` /
+  `ignore_whitespace` knobs the other diff ops take, plus an explicit
+  `include_untracked`. It uses `diff_tree_to_workdir_with_index`, NOT the plain
+  tree-to-workdir: without the index a file staged and then reverted in the
+  worktree reads as unchanged. The compare view passes `include_untracked: true`
+  — this backend's own worktree diff kinds already include untracked content, so
+  hiding a file you just wrote would make ref↔worktree the one worktree diff in
+  the app that lies by omission; `.gitignore`d files stay out either way.
+- **But its untracked SCOPE is nothing like `diff`'s, and that is why it is
+  bounded.** `diff` calls `opts.pathspec(path)` BEFORE turning untracked content
+  on, so it only ever reads one untracked file; `diff_ref_to_workdir` walks the
+  whole tree, and an untracked `dist/`, `.venv/` or downloaded dataset that
+  nobody `.gitignore`d would otherwise land in one IPC payload and one `DiffRow`
+  model per file. So it returns `WorkdirDiff { files, untracked_omitted }`, not a
+  bare `Vec<FileDiff>`: over `MAX_UNTRACKED_FILES` the untracked side is dropped
+  WHOLE and the count is reported (the compare screen renders it), and
+  `MAX_WORKDIR_BLOB` caps per-blob size so one enormous file reads as binary.
+  Truncating silently would be worse than the overflow — do not "simplify" the
+  return type back.
 - **Gate text rendering on `isTextualDiff(diff)`, not `!diff.binary`** (#93). A
   git-LFS pointer IS text, so `binary` is honestly false — rendering its hunks
   claims "2 lines changed" for a multi-megabyte asset. All four diff surfaces use
@@ -660,6 +694,14 @@ lib/
   be rebound apart. Register the pane handler as declining (`() => false`) when it
   has nothing to act on, or it swallows the chord from the other action.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
+- **Compare is a deep view, not an activity-bar screen** (#131). `ref-compare`
+  routes to `compare`; the intent carries the two sides for readability but the
+  SCREEN reads them from `useCompareStore`, because they stay mutable once you
+  are there — which is also why it is not a fifth `Target` in `CommitDiff.tsx`
+  (that union is oid-shaped and immutable once routed, and "working tree" has no
+  oid). A working-tree side is right-hand ONLY: it is not a commit, so
+  `left..workdir` is neither countable nor walkable, and the ahead/behind summary
+  and both commit lists are ABSENT rather than zeroed.
 - Settings is a screen too, reached via titlebar gear or activity-bar settings slot.
 - Conflicts are NOT a destination: `OperationBar` (driven by `repoState`), the
   status-bar conflict count, `⌘5`/`conflict.openResolver` and a conflicted row's

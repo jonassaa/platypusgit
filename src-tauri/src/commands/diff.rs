@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{BlameLine, DiffKind, FileDiff, RepoId},
+    git::types::{BlameLine, DiffKind, FileDiff, RepoId, WorkdirDiff},
     state::AppState,
 };
 
@@ -217,6 +217,30 @@ pub async fn diff_commit(
     tokio::task::spawn_blocking(move || backend.diff_commit(&repo_id, &oid, context_lines, iw))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Diff the tree at `revspec` against the working tree (#131).
+///
+/// `include_untracked` is optional so an older caller keeps git's own semantics;
+/// the compare screen passes `true` — see the `GitBackend` doc for why.
+#[tauri::command]
+pub async fn diff_ref_to_workdir(
+    state: State<'_, AppState>,
+    repo_id: String,
+    revspec: String,
+    context_lines: u32,
+    ignore_whitespace: Option<bool>,
+    include_untracked: Option<bool>,
+) -> AppResult<WorkdirDiff> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let iw = ignore_whitespace.unwrap_or(false);
+    let untracked = include_untracked.unwrap_or(false);
+    tokio::task::spawn_blocking(move || {
+        backend.diff_ref_to_workdir(&repo_id, &revspec, context_lines, iw, untracked)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]

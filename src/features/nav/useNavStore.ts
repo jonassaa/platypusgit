@@ -1,5 +1,8 @@
 import { create } from "zustand";
 import type { RebaseStep } from "@/lib/types";
+// A PURE module (no store, no IPC), so carrying a compare side here does not
+// make nav depend on the compare feature's store.
+import type { CompareSide } from "@/features/compare/compareSides";
 
 /**
  * Cross-screen navigation intent. A context menu item can ask the app
@@ -12,6 +15,10 @@ export type NavIntent =
   // A commit's own diff (vs its first parent) — "what this commit changed."
   | { kind: "commit-self"; oid: string }
   | { kind: "commit-vs-commit"; from: string; to: string }
+  // Compare two refs, or a ref against the working tree (#131). The sides ride
+  // along so the routing is self-describing, but the SCREEN reads them from
+  // `useCompareStore` — it owns them, and they stay mutable once you are there.
+  | { kind: "ref-compare"; left: CompareSide; right: CompareSide }
   | { kind: "file-history"; path: string }
   | { kind: "blame"; path: string }
   | { kind: "rebase-plan"; plan: RebaseStep[] }

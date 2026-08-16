@@ -4,12 +4,12 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
+        AheadBehind, BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
         DiffKind, FileContent,
         FileDiff, FileStatus, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
         SubmoduleInfo, TagInfo,
-        TagTarget, WorktreeBranch, WorktreeInfo,
+        TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo,
     },
     GitBackend,
 };
@@ -88,6 +88,18 @@ impl GitBackend for CliBackend {
     fn commits_since(&self, _repo_id: &RepoId, _base: &str) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
+    fn commits_between(
+        &self,
+        _repo_id: &RepoId,
+        _base: &str,
+        _tip: &str,
+        _limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
+        Err(AppError::NotImplemented)
+    }
+    fn ahead_behind(&self, _repo_id: &RepoId, _a: &str, _b: &str) -> AppResult<AheadBehind> {
+        Err(AppError::NotImplemented)
+    }
     fn file_history(
         &self,
         _repo_id: &RepoId,
@@ -144,6 +156,16 @@ impl GitBackend for CliBackend {
         _context_lines: u32,
         _ignore_whitespace: bool,
     ) -> AppResult<Vec<FileDiff>> {
+        Err(AppError::NotImplemented)
+    }
+    fn diff_ref_to_workdir(
+        &self,
+        _repo_id: &RepoId,
+        _revspec: &str,
+        _context_lines: u32,
+        _ignore_whitespace: bool,
+        _include_untracked: bool,
+    ) -> AppResult<WorkdirDiff> {
         Err(AppError::NotImplemented)
     }
     fn stage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
