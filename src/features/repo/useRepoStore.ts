@@ -250,10 +250,14 @@ interface RepoStoreState extends RepoSlice {
     paths: string[],
   ) => Promise<string | null>;
   /** Rename the entry at `index` (#133). Re-reads the list; see the action. */
-  stashRename: (index: number, message: string) => Promise<void>;
+  stashRename: (index: number, oid: string, message: string) => Promise<void>;
   stashApply: (index: number) => Promise<void>;
   stashPop: (index: number) => Promise<void>;
-  stashDrop: (index: number) => Promise<void>;
+  /**
+   * Drop a stash entry. `oid` is required and verified backend-side: an index
+   * is a reflog POSITION, so a stale one drops a stash nobody picked (#133).
+   */
+  stashDrop: (index: number, oid: string) => Promise<void>;
   stashBranch: (index: number, branch: string) => Promise<void>;
   // network
   fetch: (remote: string) => Promise<void>;
@@ -1093,11 +1097,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
-  async stashDrop(index) {
+  async stashDrop(index, oid) {
     const repo = get().current;
     if (!repo) return;
     try {
-      await stashDrop(repo.id, index);
+      await stashDrop(repo.id, index, oid);
       await get().refreshAll();
     } catch (e) {
       setErrorFor(repo.id, e);
@@ -1128,11 +1132,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
-  async stashRename(index, message) {
+  async stashRename(index, oid, message) {
     const repo = get().current;
     if (!repo) return;
     try {
-      await stashRenameFn(repo.id, index, message);
+      await stashRenameFn(repo.id, index, oid, message);
       // `refreshAll`, never a local patch of `stashes`: a rename is a store
       // followed by a drop and `refs/stash` can only be prepended to, so the
       // renamed entry lands at index 0 and everything between it and its old

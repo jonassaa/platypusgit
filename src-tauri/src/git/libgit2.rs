@@ -108,6 +108,57 @@ impl Libgit2Backend {
         f(&mut repo)
     }
 
+    /// Drop the entry at `index`, but only if it is still the one the caller
+    /// picked (#133).
+    ///
+    /// **Enumerate, verify and drop happen in ONE `with_repo_mut` closure, and
+    /// that is the entire point.** `with_repo_mut` holds the backend's `repos`
+    /// mutex only for its closure's duration, so a check in one acquisition and
+    /// a drop in the next is a TOCTOU: the map mutex serialises every backend
+    /// git op, which means a concurrent command already parked on it is
+    /// scheduled to run at exactly that boundary. Any write to `refs/stash`
+    /// landing there shifts every index, and the drop then deletes a DIFFERENT
+    /// entry — permanently, and one the user never touched. Nothing on the
+    /// frontend gates stash writes with a busy flag, and the reflog screen's
+    /// auto-stash is another live writer, so this is not a theoretical race.
+    fn stash_drop_at(&self, repo_id: &RepoId, index: usize, expect_oid: &str) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            let (oid, _) = stash_entry_at(repo, index)?;
+            if oid != expect_oid {
+                return Err(AppError::StaleStash(format!("stash@{{{index}}}")));
+            }
+            repo.stash_drop(index)?;
+            Ok(())
+        })
+    }
+
+    /// The post-store half of a rename: verify the list, then drop — in ONE
+    /// lock acquisition (#133).
+    ///
+    /// Same reasoning as `stash_drop_at`, and the reason the gate reads the
+    /// list *here* rather than in the caller: a `rename_store_landed` decision
+    /// taken under one acquisition and acted on under the next is a check about
+    /// a list that may no longer exist. Both halves have to see the same one.
+    fn stash_finish_rename(
+        &self,
+        repo_id: &RepoId,
+        index: usize,
+        before: &[(String, String)],
+        new_oid: &str,
+        message: &str,
+    ) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            let after = stash_pairs(repo)?;
+            if !crate::git::stash::rename_store_landed(before, &after, index, new_oid, message) {
+                return Err(AppError::Git(format!(
+                    "stash rename could not be verified; the original stash@{{{index}}} was left in place"
+                )));
+            }
+            repo.stash_drop(index + 1)?;
+            Ok(())
+        })
+    }
+
     /// What `refs/stash` points at right now, or `None` when the repository has
     /// no stash at all (#133).
     ///
@@ -1689,6 +1740,37 @@ const MAX_UNTRACKED_FILES: usize = 200;
 /// just sets it far below the 512MB default, because a 5MB "text" file is a
 /// generated artifact, not something anyone diffs in a GUI.
 const MAX_WORKDIR_BLOB: i64 = 5 * 1024 * 1024;
+
+/// Every stash entry as `(oid, reflog message)`, newest first (#133).
+///
+/// Takes an already-borrowed `&mut Repository` rather than a `RepoId` so it can
+/// run INSIDE a `with_repo_mut` closure: `Libgit2Backend::stashes` acquires the
+/// `repos` mutex itself, and std's `Mutex` is not reentrant, so calling it from
+/// inside a closure that holds the lock would deadlock. That constraint is why
+/// the verify-then-drop pair can be atomic at all.
+fn stash_pairs(repo: &mut Repository) -> AppResult<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    repo.stash_foreach(|_, message, oid| {
+        out.push((oid.to_string(), message.to_string()));
+        true
+    })?;
+    Ok(out)
+}
+
+/// The `(oid, message)` of the stash entry at `index`, or `StaleStash` when
+/// there is nothing there any more (#133).
+fn stash_entry_at(repo: &mut Repository, index: usize) -> AppResult<(String, String)> {
+    let mut found = None;
+    repo.stash_foreach(|i, message, oid| {
+        if i == index {
+            found = Some((oid.to_string(), message.to_string()));
+            false
+        } else {
+            true
+        }
+    })?;
+    found.ok_or_else(|| AppError::StaleStash(format!("stash@{{{index}}}")))
+}
 
 /// Resolve a revspec (branch, tag, short/full oid, `HEAD~2`, `tag^{}`, …) to
 /// its tree, mapping any resolution failure to `InvalidRef` so the UI gets a
@@ -4098,11 +4180,11 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn stash_drop(&self, repo_id: &RepoId, index: usize) -> AppResult<()> {
-        self.with_repo_mut(repo_id, |repo| {
-            repo.stash_drop(index)?;
-            Ok(())
-        })
+    fn stash_drop(&self, repo_id: &RepoId, index: usize, expect_oid: &str) -> AppResult<()> {
+        // Verified, and verified in the SAME lock acquisition as the drop —
+        // see `stash_drop_at`. A stash index is a reflog position, and dropping
+        // whatever moved into it is unrecoverable through the UI.
+        self.stash_drop_at(repo_id, index, expect_oid)
     }
     fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()> {
         self.with_repo_mut(repo_id, |repo| {
@@ -4165,14 +4247,27 @@ impl GitBackend for Libgit2Backend {
         Ok(if after == before { None } else { after })
     }
 
-    fn stash_rename(&self, repo_id: &RepoId, index: usize, message: &str) -> AppResult<()> {
+    fn stash_rename(
+        &self,
+        repo_id: &RepoId,
+        index: usize,
+        expect_oid: &str,
+        message: &str,
+    ) -> AppResult<()> {
         crate::git::stash::validate_message(message)?;
 
         let before = self.stashes(repo_id)?;
         let entry = before
             .get(index)
-            .ok_or_else(|| AppError::Git(format!("stash {index} not found")))?
+            .ok_or_else(|| AppError::StaleStash(format!("stash@{{{index}}}")))?
             .clone();
+        // The index alone is not enough to name an entry: it is a reflog
+        // position, so a list the caller read a moment ago may already have
+        // shifted. Renaming the wrong stash preserves its content but moves
+        // somebody else's entry to the top under a name they did not choose.
+        if entry.oid != expect_oid {
+            return Err(AppError::StaleStash(format!("stash@{{{index}}}")));
+        }
         // Renaming to what it is already called touches nothing. Worth an early
         // exit rather than a no-op round trip: the `store` below would be
         // elided by git (see the comment there) and the verification would then
@@ -4225,30 +4320,17 @@ impl GitBackend for Libgit2Backend {
         let args = crate::git::stash::stash_store_args(message, &new_oid);
         run_git_capture(&workdir, &args).map_err(AppError::Git)?;
 
-        // VERIFY BEFORE DROPPING. Everything above is additive — a failure so
-        // far leaves the original entry exactly where it was. The drop is not,
-        // and it is unrecoverable through the UI, so it only runs once the list
-        // says what it must say. See `stash::rename_store_landed` for the three
-        // conditions and why each is load-bearing.
-        let after = self.stashes(repo_id)?;
-        let pairs = |list: &[StashInfo]| -> Vec<(String, String)> {
-            list.iter()
-                .map(|s| (s.oid.clone(), s.message.clone()))
-                .collect()
-        };
-        if !crate::git::stash::rename_store_landed(
-            &pairs(&before),
-            &pairs(&after),
-            index,
-            &new_oid,
-            message,
-        ) {
-            return Err(AppError::Git(format!(
-                "stash rename could not be verified; the original stash@{{{index}}} was left in place"
-            )));
-        }
-
-        self.stash_drop(repo_id, index + 1)
+        // VERIFY BEFORE DROPPING, and do both under ONE lock. Everything above
+        // is additive — a failure so far leaves the original entry exactly
+        // where it was. The drop is not, and it is unrecoverable through the
+        // UI. See `stash::rename_store_landed` for the three conditions and
+        // `stash_finish_rename` for why the read cannot be a separate
+        // acquisition from the drop.
+        let before_pairs: Vec<(String, String)> = before
+            .iter()
+            .map(|s| (s.oid.clone(), s.message.clone()))
+            .collect();
+        self.stash_finish_rename(repo_id, index, &before_pairs, &new_oid, message)
     }
 
     fn stash_diff(

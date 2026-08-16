@@ -36,8 +36,9 @@ fn renames_the_top_entry() {
     let (backend, handle) = tr.open_with_backend();
     two_stashes(&tr, &backend, &handle.id);
 
+    let picked = backend.stashes(&handle.id).unwrap().remove(0);
     backend
-        .stash_rename(&handle.id, 0, "renamed top")
+        .stash_rename(&handle.id, 0, &picked.oid, "renamed top")
         .expect("rename");
 
     let after = backend.stashes(&handle.id).unwrap();
@@ -80,7 +81,7 @@ fn renaming_a_lower_entry_moves_it_to_the_top_and_disturbs_nothing_else() {
     let target_oid = before[1].oid.clone();
 
     backend
-        .stash_rename(&handle.id, 1, "renamed middle")
+        .stash_rename(&handle.id, 1, &target_oid, "renamed middle")
         .expect("rename");
 
     let after = backend.stashes(&handle.id).unwrap();
@@ -119,7 +120,9 @@ fn the_renamed_entry_keeps_its_tree_parents_and_time() {
         old.time().seconds(),
     );
 
-    backend.stash_rename(&handle.id, 0, "renamed").unwrap();
+    backend
+        .stash_rename(&handle.id, 0, &before.oid, "renamed")
+        .unwrap();
 
     let after = backend.stashes(&handle.id).unwrap().remove(0);
     let repo = git2::Repository::open(tr.path()).unwrap();
@@ -149,7 +152,7 @@ fn a_message_with_a_line_break_is_refused_and_nothing_changes() {
     let before = backend.stashes(&handle.id).unwrap();
 
     let err = backend
-        .stash_rename(&handle.id, 0, "two\nlines")
+        .stash_rename(&handle.id, 0, &before[0].oid, "two\nlines")
         .unwrap_err();
     assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
 
@@ -168,7 +171,7 @@ fn renaming_to_the_same_message_is_a_no_op() {
     let before = backend.stashes(&handle.id).unwrap();
 
     backend
-        .stash_rename(&handle.id, 0, &before[0].message)
+        .stash_rename(&handle.id, 0, &before[0].oid, &before[0].message)
         .expect("no-op rename");
 
     let after = backend.stashes(&handle.id).unwrap();
@@ -183,7 +186,86 @@ fn an_out_of_range_index_is_refused_before_anything_is_written() {
     write_file(tr.path(), "README.md", "stashed\n");
     backend.stash_save(&handle.id, opts("wip")).unwrap();
 
-    assert!(backend.stash_rename(&handle.id, 5, "nope").is_err());
+    let oid = backend.stashes(&handle.id).unwrap()[0].oid.clone();
+    assert!(backend.stash_rename(&handle.id, 5, &oid, "nope").is_err());
+    assert_eq!(backend.stashes(&handle.id).unwrap().len(), 1);
+}
+
+/// **The TOCTOU that a two-acquisition verify-then-drop would lose data to.**
+///
+/// The gate reads the list, the drop acts on `index + 1`. If those are separate
+/// `with_repo_mut` acquisitions, any write to `refs/stash` landing between them
+/// shifts every index and the drop deletes a DIFFERENT entry — permanently, and
+/// one the user never touched.
+///
+/// The injection is the write itself: this test simulates the intruder by
+/// stashing again *before* a rename that carries a now-stale index, which is
+/// the same shape the race produces. What must not happen is the destruction of
+/// an unrelated entry; what must happen is a refusal.
+#[test]
+fn a_stale_index_refuses_rather_than_renaming_the_wrong_entry() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    two_stashes(&tr, &backend, &handle.id);
+
+    // The caller reads the list and picks stash@{1} ("first").
+    let picked = backend.stashes(&handle.id).unwrap().remove(1);
+    assert_eq!(picked.message, "On main: first");
+
+    // An intruder stashes. Every index shifts by one: "first" is now at 2.
+    write_file(tr.path(), "README.md", "intruder\n");
+    backend.stash_save(&handle.id, opts("intruder")).unwrap();
+
+    // The rename still carries index 1 — which now names "second".
+    let err = backend
+        .stash_rename(&handle.id, 1, &picked.oid, "renamed")
+        .unwrap_err();
+    assert!(matches!(err, AppError::StaleStash(_)), "got {err:?}");
+
+    // Nothing renamed, nothing dropped, nothing reordered.
+    let after = backend.stashes(&handle.id).unwrap();
+    assert_eq!(after.len(), 3);
+    assert_eq!(
+        after
+            .iter()
+            .map(|s| s.message.as_str())
+            .collect::<Vec<_>>(),
+        ["On main: intruder", "On main: second", "On main: first"]
+    );
+}
+
+/// The same guard on the drop itself, which is where the loss would land.
+#[test]
+fn a_stale_index_refuses_rather_than_dropping_the_wrong_entry() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    two_stashes(&tr, &backend, &handle.id);
+
+    let picked = backend.stashes(&handle.id).unwrap().remove(1);
+    write_file(tr.path(), "README.md", "intruder\n");
+    backend.stash_save(&handle.id, opts("intruder")).unwrap();
+
+    let err = backend
+        .stash_drop(&handle.id, 1, &picked.oid)
+        .unwrap_err();
+    assert!(matches!(err, AppError::StaleStash(_)), "got {err:?}");
+
+    let after = backend.stashes(&handle.id).unwrap();
+    assert_eq!(after.len(), 3, "no entry was dropped, got {after:?}");
+    assert!(after.iter().any(|s| s.oid == picked.oid));
+}
+
+/// An index past the end of a shrunken list is the same class of staleness.
+#[test]
+fn an_index_past_the_end_of_the_list_is_stale_not_a_panic() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    write_file(tr.path(), "README.md", "dirty\n");
+    backend.stash_save(&handle.id, opts("only")).unwrap();
+    let oid = backend.stashes(&handle.id).unwrap()[0].oid.clone();
+
+    let err = backend.stash_drop(&handle.id, 4, &oid).unwrap_err();
+    assert!(matches!(err, AppError::StaleStash(_)), "got {err:?}");
     assert_eq!(backend.stashes(&handle.id).unwrap().len(), 1);
 }
 

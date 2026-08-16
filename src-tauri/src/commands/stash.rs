@@ -48,14 +48,19 @@ pub async fn stash_pop(
 }
 
 #[tauri::command]
+/// `oid` is REQUIRED: an index is a position in the `refs/stash` reflog, so any
+/// write to that ref shifts it and dropping whatever moved into the slot
+/// destroys a stash the user never selected (#133). The backend re-reads and
+/// compares under the same lock it drops from.
 pub async fn stash_drop(
     state: State<'_, AppState>,
     repo_id: String,
     index: usize,
+    oid: String,
 ) -> AppResult<()> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
-    tokio::task::spawn_blocking(move || backend.stash_drop(&repo_id, index))
+    tokio::task::spawn_blocking(move || backend.stash_drop(&repo_id, index, &oid))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
@@ -99,11 +104,12 @@ pub async fn stash_rename(
     state: State<'_, AppState>,
     repo_id: String,
     index: usize,
+    oid: String,
     message: String,
 ) -> AppResult<()> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
-    tokio::task::spawn_blocking(move || backend.stash_rename(&repo_id, index, &message))
+    tokio::task::spawn_blocking(move || backend.stash_rename(&repo_id, index, &oid, &message))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

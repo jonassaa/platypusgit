@@ -303,7 +303,7 @@ impl GitBackend for CliBackend {
     fn stash_pop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn stash_drop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
+    fn stash_drop(&self, _repo_id: &RepoId, _index: usize, _expect_oid: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
     fn stash_branch(&self, _repo_id: &RepoId, _index: usize, _branch: &str) -> AppResult<()> {
@@ -317,7 +317,13 @@ impl GitBackend for CliBackend {
     ) -> AppResult<Option<String>> {
         Err(AppError::NotImplemented)
     }
-    fn stash_rename(&self, _repo_id: &RepoId, _index: usize, _message: &str) -> AppResult<()> {
+    fn stash_rename(
+        &self,
+        _repo_id: &RepoId,
+        _index: usize,
+        _expect_oid: &str,
+        _message: &str,
+    ) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
     fn stash_diff(

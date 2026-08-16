@@ -661,8 +661,20 @@ export async function stashPop(repoId: string, index: number): Promise<void> {
   return invoke<void>("stash_pop", { repoId, index });
 }
 
-export async function stashDrop(repoId: string, index: number): Promise<void> {
-  return invoke<void>("stash_drop", { repoId, index });
+/**
+ * Drop the entry at `index`, refusing unless it is still `oid` (#133).
+ *
+ * The oid is not optional: an index is a position in the `refs/stash` reflog,
+ * so any write to that ref shifts it, and dropping whatever moved into the slot
+ * destroys a stash that was never selected. A `StaleStash` error means "the list
+ * changed, refresh and pick again".
+ */
+export async function stashDrop(
+  repoId: string,
+  index: number,
+  oid: string,
+): Promise<void> {
+  return invoke<void>("stash_drop", { repoId, index, oid });
 }
 
 export async function stashBranch(
@@ -694,17 +706,19 @@ export async function stashSavePaths(
 /**
  * Rename the entry at `index` (#133).
  *
- * The caller must RE-READ the stash list afterwards, never patch its own copy:
- * a rename is a store followed by a drop, and `refs/stash` can only be
- * prepended to, so the renamed entry ends up at index 0 and everything between
- * shifts down.
+ * `oid` proves the entry at `index` is still the one that was picked — see
+ * `stashDrop`. The caller must RE-READ the stash list afterwards, never patch
+ * its own copy: a rename is a store followed by a drop, and `refs/stash` can
+ * only be prepended to, so the renamed entry ends up at index 0 and everything
+ * between shifts down.
  */
 export async function stashRename(
   repoId: string,
   index: number,
+  oid: string,
   message: string,
 ): Promise<void> {
-  return invoke<void>("stash_rename", { repoId, index, message });
+  return invoke<void>("stash_rename", { repoId, index, oid, message });
 }
 
 /**

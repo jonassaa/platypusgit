@@ -1100,7 +1100,7 @@ function StashActions({ stash }: { stash: StashInfo }) {
               confirmLabel: "Drop",
             })
           )
-            useRepoStore.getState().stashDrop(stash.index);
+            useRepoStore.getState().stashDrop(stash.index, stash.oid);
         }}
       >
         Drop

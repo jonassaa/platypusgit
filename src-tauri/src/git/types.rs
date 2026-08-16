@@ -225,11 +225,12 @@ pub struct TagInfo {
 /// It carries BOTH addresses on purpose, because they answer different
 /// questions and are not interchangeable. `index` is a position in a reflog —
 /// every write to `refs/stash` shifts it, including a rename's own
-/// store-then-drop — so it is what the ops that EDIT the reflog
-/// (`stash_drop`, `stash_rename`) take, and they re-verify the oid before
-/// touching anything. `oid` names the commit and survives whatever happens to
-/// the reflog around it, so it is what a COMPARISON takes: a stale index would
-/// silently diff a different entry.
+/// store-then-drop — so the ops that EDIT the reflog (`stash_drop`,
+/// `stash_rename`) take BOTH: the index to address the entry and the oid to
+/// prove it is still the one that was picked, re-read and compared under the
+/// same lock they mutate from. `oid` alone names the commit and survives
+/// whatever happens to the reflog around it, so it is what a COMPARISON takes:
+/// a stale index would silently diff a different entry.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StashInfo {

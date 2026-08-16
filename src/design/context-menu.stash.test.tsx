@@ -11,7 +11,13 @@ import {
 } from "./context-menu";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { WithDialogs, acceptDialog, dismissDialog, resetDialogs } from "@/test/dialog";
+import {
+  WithDialogs,
+  acceptDialog,
+  dialogBody,
+  dismissDialog,
+  resetDialogs,
+} from "@/test/dialog";
 import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
 
 const OID = "a".repeat(40);
@@ -115,10 +121,19 @@ describe("stash rename", () => {
     await acceptDialog("a better name");
 
     await waitFor(() => expect(calls("stash_rename").length).toBe(1));
+    // The oid rides along with the index: an index is a reflog POSITION, so the
+    // backend needs the commit to prove the entry is still the one picked.
     expect(calls("stash_rename")[0].args).toMatchObject({
       index: 1,
+      oid: OID,
       message: "a better name",
     });
+  });
+
+  it("is disabled when the entry's oid is unknown", () => {
+    const items = stashMenuItems({ index: 0, name: "stash@{0}", message: "x" });
+    expect(labeled(items, /^Rename/).disabled).toBe(true);
+    expect(labeled(items, /^Drop/).disabled).toBe(true);
   });
 
   it("does nothing when the prompt is dismissed", async () => {
@@ -132,6 +147,23 @@ describe("stash rename", () => {
     await dismissDialog();
 
     expect(calls("stash_rename").length).toBe(0);
+  });
+});
+
+describe("stash drop", () => {
+  it("names the commit as well as the index", async () => {
+    mockInvoke("stash_drop", () => null);
+    render(
+      <WithDialogs>
+        <div />
+      </WithDialogs>,
+    );
+    void labeled(stashMenuItems(STASH), /^Drop/).onClick?.();
+    await screen.findByTestId("dialog-confirm");
+    await acceptDialog();
+
+    await waitFor(() => expect(calls("stash_drop").length).toBe(1));
+    expect(calls("stash_drop")[0].args).toMatchObject({ index: 1, oid: OID });
   });
 });
 
@@ -190,6 +222,36 @@ describe("partial stash from a selection", () => {
     expect(calls("stash_save_paths")[0].args).toMatchObject({
       opts: { includeUntracked: true },
     });
+  });
+
+  // `git stash push -- <path>` takes the index side too, so a staged file comes
+  // back UNSTAGED on pop. The prompt has to say so — a doc comment claiming it
+  // while the string omits it is how the next reader inherits the surprise.
+  it("warns that staged paths will be unstaged, and only when some are", async () => {
+    render(
+      <WithDialogs>
+        <div />
+      </WithDialogs>,
+    );
+    void labeled(
+      multiFileMenuItems(
+        sel({
+          paths: ["a.txt", "s.txt"],
+          unstagedPaths: ["a.txt"],
+          stagedPaths: ["s.txt"],
+        }),
+      ),
+      /^Stash 2 files/,
+    ).onClick?.();
+    await screen.findByTestId("dialog-input");
+    expect(dialogBody()).toMatch(/1 staged file will be unstaged/);
+    expect(dialogBody()).toMatch(/come back unstaged when you pop/);
+    await dismissDialog();
+
+    void labeled(multiFileMenuItems(sel()), /^Stash 1 file/).onClick?.();
+    await screen.findByTestId("dialog-input");
+    expect(dialogBody()).not.toMatch(/unstaged/);
+    await dismissDialog();
   });
 
   it("keeps an empty message distinct from a dismissal", async () => {

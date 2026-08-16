@@ -36,6 +36,12 @@ export type AppError =
   /** A local branch the operation would overwrite already exists. */
   | { kind: "BranchExists"; message: string }
   /**
+   * The stash entry at the given index is no longer the one that was selected
+   * (#133) — a stash index is a reflog POSITION and any write to `refs/stash`
+   * shifts it. Recoverable: refresh the list and pick again.
+   */
+  | { kind: "StaleStash"; message: string }
+  /**
    * The `git-lfs` binary is missing or unrunnable (#93). A state the UI disables
    * on, not a failure it reports — distinct from `Git`/`Network` so git's
    * `'lfs' is not a git command` never reaches a banner.
@@ -72,6 +78,10 @@ export function appErrorMessage(e: unknown): string {
     if (e.kind === "ForgeAuth") return forgeAuthMessage(e.message);
     if (e.kind === "BranchExists")
       return `A local branch named ${e.message} already exists.`;
+    // StaleStash carries a LABEL (`stash@{1}`) — rendered raw the banner would
+    // just read "stash@{1}" with no hint of what to do about it.
+    if (e.kind === "StaleStash")
+      return `${e.message} is no longer the entry you picked — the stash list changed. Refresh and try again.`;
     return e.message ?? e.kind;
   }
   if (e instanceof Error) return e.message;

@@ -390,7 +390,13 @@ pub trait GitBackend: Send + Sync {
     fn stash_save(&self, repo_id: &RepoId, opts: StashSaveOptions) -> AppResult<Option<String>>;
     fn stash_apply(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
     fn stash_pop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
-    fn stash_drop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
+    /// Drop the entry at `index`, refusing unless it is still `expect_oid`.
+    ///
+    /// The oid is REQUIRED, not a convenience: an index is a position in the
+    /// `refs/stash` reflog, so any write to that ref shifts it, and dropping
+    /// whatever moved into the slot destroys a stash the user never selected.
+    /// Implementations must verify and drop under the same lock (#133).
+    fn stash_drop(&self, repo_id: &RepoId, index: usize, expect_oid: &str) -> AppResult<()>;
     fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()>;
     /// Stash only `paths` (#133).
     ///
@@ -413,7 +419,15 @@ pub trait GitBackend: Send + Sync {
     /// `git::stash::stash_store_args` and the impl for why this stores a FRESH
     /// commit rather than the existing one, and why the drop is gated on a
     /// verification.
-    fn stash_rename(&self, repo_id: &RepoId, index: usize, message: &str) -> AppResult<()>;
+    /// Refuses unless the entry at `index` is still `expect_oid` — see
+    /// `stash_drop` for why an index alone cannot name an entry.
+    fn stash_rename(
+        &self,
+        repo_id: &RepoId,
+        index: usize,
+        expect_oid: &str,
+        message: &str,
+    ) -> AppResult<()>;
     /// What this stash changed: its first parent's tree against its own (#133).
     ///
     /// Addressed by OID, not index — see `StashInfo`. `include_untracked` folds

@@ -1449,7 +1449,10 @@ export function fileMenuItems(
       label: "Stash this file…",
       onClick: () => {
         if (!path) return;
-        return promptStashPaths([path], untracked ? [path] : []);
+        return promptStashPaths([path], {
+          untrackedPaths: untracked ? [path] : [],
+          stagedPaths: staged ? [path] : [],
+        });
       },
     },
     { divider: true },
@@ -1539,25 +1542,41 @@ export interface MultiFileMenuSelection {
  * the same `splitFileSelection` buckets Stage / Unstage / Discard already read.
  *
  * No confirm: the changes go INTO a stash, so nothing is lost — but staged
- * paths in the selection are unstaged as part of the move, which the prompt
- * says rather than leaving to be discovered.
+ * paths in the selection are unstaged as part of the move, and they come back
+ * unstaged on pop. The prompt body says both, rather than leaving either to be
+ * discovered.
  */
 export async function promptStashPaths(
   paths: string[],
-  untrackedPaths: string[],
+  opts: { untrackedPaths?: string[]; stagedPaths?: string[] } = {},
 ): Promise<void> {
   if (!paths.length) return;
   const n = paths.length;
-  const untracked = untrackedPaths.filter((p) => paths.includes(p));
+  const inSelection = (p: string) => paths.includes(p);
+  const untracked = (opts.untrackedPaths ?? []).filter(inSelection);
+  const staged = (opts.stagedPaths ?? []).filter(inSelection);
+  // Both clauses describe a real consequence the user cannot see coming.
+  // Staged ones especially: `git stash push -- <path>` takes the index side
+  // too, so a file that was staged comes back UNSTAGED on pop. Saying it here
+  // is the difference between a surprise and a choice.
+  const notes = [
+    untracked.length
+      ? `${untracked.length} untracked file${
+          untracked.length === 1 ? " is" : "s are"
+        } included.`
+      : null,
+    staged.length
+      ? `${staged.length} staged file${
+          staged.length === 1 ? "" : "s"
+        } will be unstaged, and come back unstaged when you pop.`
+      : null,
+  ].filter(Boolean);
   const message = await pgPrompt({
     title: `Stash ${n} file${n === 1 ? "" : "s"}`,
-    body:
-      "The selected paths are reverted to HEAD and kept in a new stash entry." +
-      (untracked.length
-        ? ` ${untracked.length} untracked file${
-            untracked.length === 1 ? " is" : "s are"
-          } included.`
-        : ""),
+    body: [
+      "The selected paths are reverted to HEAD and kept in a new stash entry.",
+      ...notes,
+    ].join(" "),
     placeholder: "message (optional)",
     confirmLabel: "Stash",
   });
@@ -1636,7 +1655,11 @@ export function multiFileMenuItems(
     items.push({
       icon: "stash",
       label: `Stash ${files(stashable.length)}…`,
-      onClick: () => promptStashPaths(stashable, sel?.untrackedPaths ?? []),
+      onClick: () =>
+        promptStashPaths(stashable, {
+          untrackedPaths: sel?.untrackedPaths ?? [],
+          stagedPaths,
+        }),
     });
   }
   items.push(
@@ -1723,7 +1746,9 @@ export function openStashVsWorktree(stash: StashMenuTarget): void {
  * prefix included.
  */
 export async function promptStashRename(stash: StashMenuTarget): Promise<void> {
-  if (stash.index == null) return;
+  // Both, not either: the index addresses the reflog entry and the oid proves
+  // it is still the one that was picked (#133).
+  if (stash.index == null || !stash.oid) return;
   const name = stash.name ?? `stash@{${stash.index}}`;
   const message = await pgPrompt({
     title: `Rename ${name}`,
@@ -1736,7 +1761,7 @@ export async function promptStashRename(stash: StashMenuTarget): Promise<void> {
     requireValue: true,
   });
   if (message == null) return;
-  await useRepoStore.getState().stashRename(stash.index, message);
+  await useRepoStore.getState().stashRename(stash.index, stash.oid, message);
 }
 
 export function stashMenuItems(stash: StashMenuTarget | null): ContextMenuItem[] {
@@ -1775,7 +1800,7 @@ export function stashMenuItems(stash: StashMenuTarget | null): ContextMenuItem[]
     {
       icon: "edit",
       label: "Rename…",
-      disabled: stash?.index == null,
+      disabled: stash?.index == null || !stash?.oid,
       onClick: () => promptStashRename(target),
     },
     {
@@ -1800,8 +1825,13 @@ export function stashMenuItems(stash: StashMenuTarget | null): ContextMenuItem[]
       icon: "trash",
       label: "Drop",
       danger: true,
+      // Both are required, and the entry is disabled without them rather than
+      // asserted past: dropping by a bare index deletes whatever has moved into
+      // that reflog slot, which is the one unrecoverable mistake here (#133).
+      disabled: stash?.index == null || !stash?.oid,
       onClick: async () => {
-        if (stash?.index == null) return;
+        const { index, oid } = stash ?? {};
+        if (index == null || !oid) return;
         if (
           await pgConfirm({
             title: `Drop ${name}?`,
@@ -1810,7 +1840,7 @@ export function stashMenuItems(stash: StashMenuTarget | null): ContextMenuItem[]
             confirmLabel: "Drop",
           })
         )
-          useRepoStore.getState().stashDrop(stash.index);
+          useRepoStore.getState().stashDrop(index, oid);
       },
     },
   ];
