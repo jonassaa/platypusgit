@@ -51,71 +51,71 @@ No new `GitBackend` method, no new command, no new IPC surface, no store field.
 
 ### Task 1: Backend fields + detection
 
-- [ ] `types.rs`: append `tip_time: i64` and `is_default: bool` to `BranchInfo`
+- [x] `types.rs`: append `tip_time: i64` and `is_default: bool` to `BranchInfo`
       (append only — the struct is shared with #132's neighbours).
-- [ ] `libgit2.rs`: `fn detect_default_branch(repo: &Repository) -> Option<String>`
+- [x] `libgit2.rs`: `fn detect_default_branch(repo: &Repository) -> Option<String>`
       — `origin` first then other remotes alphabetically, reading
       `refs/remotes/<remote>/HEAD`'s symbolic target and stripping the
       `refs/remotes/<remote>/` prefix; then local `main`/`master`/`trunk`; then
       `None`. Plus `fn is_default_branch_name(name: &str, is_remote: bool,
       default: Option<&str>) -> bool` — exact match for a local branch,
       `split_once('/').1` for a remote one.
-- [ ] `branches()`: call detection once before the loop; keep the tip oid in a
+- [x] `branches()`: call detection once before the loop; keep the tip oid in a
       binding so both `tip` (full string, unchanged) and `tip_time`
       (`find_commit(oid)?.time().seconds()`, `0` when unresolvable) come off it.
-- [ ] `branches_tags.rs`: `tip_time` reflects the tip's committer time and
+- [x] `branches_tags.rs`: `tip_time` reflects the tip's committer time and
       distinguishes two branches; `origin/HEAD` drives `is_default` on both the
       local and the `origin/<name>` row; local `main` fallback; `master` when
       `main` is absent; nothing marked when there is no candidate;
       `init.defaultBranch` is ignored.
-- [ ] `cargo check` + `cargo test --manifest-path src-tauri/Cargo.toml`.
+- [x] `cargo check` + `cargo test --manifest-path src-tauri/Cargo.toml`.
 
 ### Task 2: Mirror the type, unblock the frontend
 
-- [ ] `lib/types.ts`: `tipTime: number; isDefault: boolean;` on `BranchInfo`.
-- [ ] `pnpm tsc --noEmit` — every typed `BranchInfo` literal in the test suite
+- [x] `lib/types.ts`: `tipTime: number; isDefault: boolean;` on `BranchInfo`.
+- [x] `pnpm tsc --noEmit` — every typed `BranchInfo` literal in the test suite
       now errors; that list *is* the mirror's blast radius. Add the two fields to
       each, nothing else.
 
 ### Task 3: The comparator
 
-- [ ] `orderBranches.test.ts` first: default first regardless of `tipTime`;
+- [x] `orderBranches.test.ts` first: default first regardless of `tipTime`;
       recency descending; ASCII name tiebreak on equal `tipTime`; a defaultless
       list is a pure recency sort; the input array is not mutated; the output is
       a permutation of the input (same multiset of names) — the §D guarantee that
       the pin cannot resurrect a filtered-out row.
-- [ ] `orderBranches.ts`: `compareBranches` + a generic `orderBranches` that
+- [x] `orderBranches.ts`: `compareBranches` + a generic `orderBranches` that
       copies before sorting.
-- [ ] `pnpm test`.
+- [x] `pnpm test`.
 
 ### Task 4: The three surfaces
 
-- [ ] `BranchPicker.tsx`: wrap both memos' results in `orderBranches` (after the
+- [x] `BranchPicker.tsx`: wrap both memos' results in `orderBranches` (after the
       filter, never before).
-- [ ] `screens/Branches.tsx`: in the `rows` memo, order each kind separately and
+- [x] `screens/Branches.tsx`: in the `rows` memo, order each kind separately and
       keep locals before remotes in the `all` view.
-- [ ] `commands.ts`: `branchItems` orders after applying its optional `filter`.
-- [ ] `pnpm tsc --noEmit` + `pnpm test`.
+- [x] `commands.ts`: `branchItems` orders after applying its optional `filter`.
+- [x] `pnpm tsc --noEmit` + `pnpm test`.
 
 ### Task 5: Cursor rule + scroll-into-view (design §E)
 
-- [ ] `BranchPicker.test.tsx` first: rows come out default-first then by recency;
+- [x] `BranchPicker.test.tsx` first: rows come out default-first then by recency;
       a query excluding the default does not bring it back; the cursor starts on
       the HEAD row with an empty query; typing moves it to row 0.
-- [ ] `BranchPicker.tsx`: derive the resting index (`query === "" ? index of the
+- [x] `BranchPicker.tsx`: derive the resting index (`query === "" ? index of the
       local HEAD row : 0`, fallback 0) and apply it on open and on every query
       change; scroll the active row into view with `block: "nearest"` when
       `activeIndex` changes.
-- [ ] `pnpm test`.
+- [x] `pnpm test`.
 
 ### Task 6: E2E spec + full verification
 
-- [ ] `branches.e2e.ts`: in the `manyRefsRepo` describe, open the branch chip and
+- [x] `branches.e2e.ts`: in the `manyRefsRepo` describe, open the branch chip and
       assert the first `[data-branch-row]` reads `main` — 60 `feature/branch-NN`
       branches share one tip, so without the pin `feature/branch-00` would be
       first and `main` sixtieth. Every wait carries `timeout` + `timeoutMsg`.
-- [ ] `pnpm exec tsc -p e2e/tsconfig.json --noEmit`.
-- [ ] `pnpm tsc --noEmit`, `pnpm test`, `cargo check`, `cargo test`.
+- [x] `pnpm exec tsc -p e2e/tsconfig.json --noEmit`.
+- [x] `pnpm tsc --noEmit`, `pnpm test`, `cargo check`, `cargo test`.
 - [ ] **Not run here:** `pnpm test:e2e:docker`. Only one e2e container build may
       run at a time across all worktrees; the orchestrator runs it centrally.
-- [ ] Conventional commits, push, draft PR against #135.
+- [x] Conventional commits, push, draft PR against #135.
