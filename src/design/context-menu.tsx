@@ -13,7 +13,11 @@ import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import type { CommitInfo } from "@/lib/types";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
-import { openCompare, useCompareStore } from "@/features/compare/useCompareStore";
+import {
+  markedRefFor,
+  openCompare,
+  useCompareStore,
+} from "@/features/compare/useCompareStore";
 import { WORKDIR } from "@/features/compare/compareSides";
 import { currentBranch } from "@/lib/derive";
 import { chordFor } from "@/features/keymap";
@@ -885,7 +889,9 @@ export function compareMenuItems(opts: {
   isCurrent?: boolean;
 }): ContextMenuItem[] {
   const name = opts.name || "";
-  const marked = useCompareStore.getState().marked;
+  // Scoped to the open repository: a mark taken in another one names a ref this
+  // one may not have, and the entry would resolve to `InvalidRef` on click.
+  const marked = markedRefFor(useRepoStore.getState().current?.id);
   const current = currentBranch(useRepoStore.getState().branches)?.name ?? "HEAD";
 
   const items: ContextMenuItem[] = [
