@@ -1,6 +1,12 @@
 // src/features/palette/commands.test.ts
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { branchItems, buildCommands, commitItems, fileItems } from "./commands";
+import {
+  branchItems,
+  branchPickStep,
+  buildCommands,
+  commitItems,
+  fileItems,
+} from "./commands";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useRecentsStore } from "@/features/repo/useRecentsStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
@@ -369,6 +375,41 @@ describe("branchItems", () => {
     } as never);
     branchItems({ icon: "branch", onPick: (n) => order.push(`pick:${n}`) })[0].run();
     expect(order).toEqual(["close", "pick:feat/x"]);
+  });
+});
+
+// The structural half of #135's resting-cursor rule: one constructor sets
+// `cursor: "none"`, and every branch step in the catalog is built from it, so a
+// new one cannot silently default to preselecting the pinned default branch.
+describe("branchPickStep", () => {
+  beforeEach(resetStores);
+
+  it("always declines a resting cursor", () => {
+    setRepo({ branches: [mkBranch("main"), mkBranch("feat/x")] });
+    const s = branchPickStep({
+      title: "Do a thing",
+      icon: "branch",
+      onPick: () => {},
+    });
+    expect(s).toMatchObject({ kind: "pick", title: "Do a thing", cursor: "none" });
+    expect(s.kind === "pick" && s.items.map((i) => i.label)).toEqual([
+      "feat/x",
+      "main",
+    ]);
+  });
+
+  it("passes its row options straight through", () => {
+    setRepo({ branches: [mkBranch("main", true), mkBranch("feat/x")] });
+    const s = branchPickStep({
+      title: "T",
+      idPrefix: "pick-compare",
+      filter: (b) => !b.isHead,
+      icon: "diff",
+      onPick: () => {},
+    });
+    expect(s.kind === "pick" && s.items.map((i) => i.id)).toEqual([
+      "pick-compare:l:feat/x",
+    ]);
   });
 });
 

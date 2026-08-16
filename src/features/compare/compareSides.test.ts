@@ -26,6 +26,8 @@ const branch = (name: string, isHead = false): BranchInfo => ({
   ahead: 0,
   behind: 0,
   tip: "a".repeat(40),
+  tipTime: 0,
+  isDefault: false,
 });
 
 describe("sideLabel / sideKey", () => {

@@ -193,9 +193,15 @@ destructive target to row 0 is what makes it their problem too.**
   `deleteBranch("main")` — and `delete_branch` refuses only *unmerged* branches,
   so the default branch (an ancestor of HEAD) deleted, unconfirmed and
   irreversible short of the reflog. A `pick` step may now declare
-  `cursor: "none"`, which rests on nothing while its query is empty; all five
-  branch steps use it. Typing still moves the cursor to the top match, on the
-  same reasoning as the picker.
+  `cursor: "none"`, which rests on nothing while its query is empty. Typing still
+  moves the cursor to the top match, on the same reasoning as the picker.
+
+  **The flag is set in exactly one place**, `branchPickStep` — the constructor
+  every branch step in the catalog is built from (seven of them, including
+  #131's two compare steps). Enumerating `cursor: "none"` at each call site
+  would leave the rule to be remembered by whoever adds the eighth; a
+  constructor makes the natural way to write one correct. `branchItems` stays
+  exported for the ROOT step, which builds candidates rather than a step.
 - **Deleting a branch from the palette now confirms.** It was the only delete
   path without a `pgConfirm` — the row menu and the Branches inspector both had
   one. Pinning a plausible branch at row 0 is what turned that from an oversight
