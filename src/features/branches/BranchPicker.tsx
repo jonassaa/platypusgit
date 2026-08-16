@@ -10,6 +10,7 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import type { BranchInfo } from "@/lib/types";
+import { orderBranches } from "./orderBranches";
 
 interface BranchPickerProps {
   anchor: HTMLElement | null;
@@ -44,34 +45,71 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
       remoteBranchMenuItems({ name: b?.name }),
     );
 
+  // Filter FIRST, order SECOND (#135). `orderBranches` only permutes, so the
+  // pinned default can never come back once the query has excluded it.
   const local: Row[] = React.useMemo(
     () =>
-      branches
-        .filter((b) => !b.isRemote && b.name.includes(query))
-        .map((b) => ({ ...b, kind: "local" as const })),
+      orderBranches(
+        branches
+          .filter((b) => !b.isRemote && b.name.includes(query))
+          .map((b) => ({ ...b, kind: "local" as const })),
+      ),
     [branches, query],
   );
   const remote: Row[] = React.useMemo(
     () =>
-      branches
-        .filter((b) => b.isRemote && b.name.includes(query))
-        .map((b) => ({ ...b, kind: "remote" as const })),
+      orderBranches(
+        branches
+          .filter((b) => b.isRemote && b.name.includes(query))
+          .map((b) => ({ ...b, kind: "remote" as const })),
+      ),
     [branches, query],
   );
 
   const flat = React.useMemo(() => [...local, ...remote], [local, remote]);
+  const flatRef = React.useRef(flat);
+  flatRef.current = flat;
 
   React.useEffect(() => {
     if (!open) return;
     setQuery("");
-    setActiveIndex(0);
     const t = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(t);
   }, [open]);
 
+  // Where the cursor rests before the user moves it. Enter checks out the
+  // active row, so with an empty query it sits on the CURRENT branch — the one
+  // row `checkout()` refuses to act on — rather than on whatever sorts first,
+  // which since #135 is the pinned default branch. Once a query is typed the
+  // top match IS the target, so it moves to row 0.
+  //
+  // Resetting on every query change also fixes a latent bug: the index used to
+  // survive typing and was only clamped to the new length, leaving the cursor
+  // on an unrelated row.
+  React.useEffect(() => {
+    if (!open) return;
+    if (query) {
+      setActiveIndex(0);
+      return;
+    }
+    const head = flatRef.current.findIndex((r) => r.kind === "local" && r.isHead);
+    setActiveIndex(head >= 0 ? head : 0);
+  }, [open, query]);
+
   React.useEffect(() => {
     if (activeIndex >= flat.length) setActiveIndex(Math.max(0, flat.length - 1));
   }, [flat.length, activeIndex]);
+
+  // Keep the cursor visible. The resting position can start below the fold in a
+  // long list, and arrowing past the visible area never scrolled either. These
+  // rows are plainly mapped, not windowed, so the DOM route is sound here.
+  // Optional call: jsdom has no scrollIntoView, and this is presentation only.
+  React.useEffect(() => {
+    if (!open) return;
+    const rows =
+      popoverRef.current?.querySelectorAll<HTMLElement>("[data-branch-row]");
+    rows?.[activeIndex]?.scrollIntoView?.({ block: "nearest" });
+  }, [open, activeIndex, flat.length]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -156,6 +194,7 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
       <div
         key={`${r.kind}:${r.name}`}
         data-branch-row
+        data-active={active ? "" : undefined}
         onClick={() => checkout(r)}
         onContextMenu={(e) => handler(e, r)}
         onMouseEnter={() => setActiveIndex(idx)}

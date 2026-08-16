@@ -12,6 +12,7 @@ import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { openCompare } from "@/features/compare/useCompareStore";
 import { WORKDIR } from "@/features/compare/compareSides";
+import { orderBranches } from "@/features/branches/orderBranches";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
@@ -72,7 +73,10 @@ export function branchItems({
   onPick,
 }: BranchItemsOptions): PaletteItem[] {
   const rows = branches ?? repoState().branches;
-  return (filter ? rows.filter(filter) : rows).map((b) => ({
+  // Filter first, order second (#135). The root step re-scores rows by fuzzy
+  // match + frecency, but `Array#sort` is stable, so with an empty query — where
+  // every candidate ties — this is the order the user sees.
+  return orderBranches(filter ? rows.filter(filter) : rows).map((b) => ({
     type: "branch" as const,
     id: `${idPrefix}:${b.isRemote ? "r" : "l"}:${b.name}`,
     search: b.name,

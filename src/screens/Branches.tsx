@@ -21,6 +21,7 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
+import { orderBranches } from "@/features/branches/orderBranches";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { BranchInfo, StashInfo, TagInfo } from "@/lib/types";
 // `tip` is a full oid (see list_branches); these two rows show it short.
@@ -132,10 +133,16 @@ export function BranchesScreen() {
       ...b,
       kind: b.isRemote ? ("remote" as const) : ("local" as const),
     }));
+    // Filter first, order second (#135) — ordering only permutes, so the pinned
+    // default branch cannot reappear once the filter has excluded it. Each kind
+    // is ordered WITHIN its group so the `all` view still lists locals before
+    // remotes rather than interleaving them by tip time.
     const filtered = list.filter((b) => b.name.includes(filter));
-    if (view === "local") return filtered.filter((b) => b.kind === "local");
-    if (view === "remote") return filtered.filter((b) => b.kind === "remote");
-    return filtered;
+    const locals = orderBranches(filtered.filter((b) => b.kind === "local"));
+    const remotes = orderBranches(filtered.filter((b) => b.kind === "remote"));
+    if (view === "local") return locals;
+    if (view === "remote") return remotes;
+    return [...locals, ...remotes];
   }, [branches, filter, view]);
 
   const visibleTags = React.useMemo(() => {
