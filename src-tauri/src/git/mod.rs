@@ -360,8 +360,24 @@ pub trait GitBackend: Send + Sync {
         branch: &str,
         upstream: Option<&str>,
     ) -> AppResult<()>;
+    /// Create a tag. `target.annotation` picks lightweight vs annotated and
+    /// `target.sign` picks signed vs not, defaulting to `tag.gpgsign` (#132).
+    ///
+    /// A signing failure creates **no tag**: an unsigned fallback would leave
+    /// the user believing they had signed it.
     fn create_tag(&self, repo_id: &RepoId, name: &str, target: TagTarget) -> AppResult<()>;
     fn delete_tag(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
+    /// Signature status of ONE tag (#132).
+    ///
+    /// Lazy for the same reason `verify_commit` is: a verdict for every tag row
+    /// would be a signer process per row on every refresh. `TagInfo.signed`
+    /// carries the free half — whether a signature is there at all — so the
+    /// listing needs no subprocess.
+    fn verify_tag(
+        &self,
+        repo_id: &RepoId,
+        name: &str,
+    ) -> AppResult<crate::git::signing::SignatureStatus>;
 
     // === history manipulation ===
     fn checkout_detached(&self, repo_id: &RepoId, oid: &str) -> AppResult<()>;

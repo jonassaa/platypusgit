@@ -171,6 +171,7 @@ fn create_lightweight_tag() {
             TagTarget {
                 oid: head_oid,
                 annotation: None,
+                sign: None,
             },
         )
         .unwrap();
@@ -196,6 +197,7 @@ fn delete_tag_removes_it() {
             TagTarget {
                 oid: head_oid,
                 annotation: None,
+                sign: None,
             },
         )
         .unwrap();
@@ -216,7 +218,7 @@ fn create_tag_from_abbreviated_sha() {
         .create_tag(
             &handle.id,
             "v0.1.0-short",
-            TagTarget { oid: short_oid, annotation: None },
+            TagTarget { oid: short_oid, annotation: None, sign: None },
         )
         .expect("should resolve abbreviated sha");
 

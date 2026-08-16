@@ -394,6 +394,21 @@ pub async fn delete_tag(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Signature status of one tag (#132). Called lazily, for the selected tag —
+/// see the `verify_tag` doc comment on `GitBackend`.
+#[tauri::command]
+pub async fn verify_tag(
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+) -> AppResult<crate::git::signing::SignatureStatus> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.verify_tag(&repo_id, &name))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 // Higher-level operations implemented via the `git` CLI (same strategy as
 // fetch/pull/push). libgit2's native merge/rebase implementations don't
 // cover all the edge cases (recursive/ort strategies, hook integration),
