@@ -54,16 +54,16 @@ object serialization:
    produce a tag nothing can verify).
 5. `odb.write(ObjectType::Tag, bytes)` → `repo.reference("refs/tags/<name>", …)`.
 
-Why not `git tag -s`:
+Why not plain `git tag -s` (the issue's route b):
 
 - **It would bypass `signing.rs` entirely.** `git tag -s` does its own
   `gpg.format` / `user.signingkey` resolution, so `SigningConfig`,
   `signing_args`, `run_signer` and the SSH key-path restriction would all be
   unused on the tag path. The issue asks to reuse `signing.rs` wholesale, and the
   SSH restriction — `user.signingkey` must be a key *path*, `key::…` literals are
-  refused rather than written to a temp file — is **impossible to keep** through
-  `git tag -s`, which handles `key::` literals itself. Tags would silently accept
-  what commits refuse.
+  refused rather than written to a temp file — is **not kept** by `git tag -s`,
+  which handles `key::` literals itself. Tags would silently accept what commits
+  refuse.
 - **It would split the annotated path in two.** Signed and unsigned annotated
   tags would then differ in tagger resolution (`default_signature` vs git's own
   config read), in force semantics, and in what happens on a name collision.
@@ -71,6 +71,31 @@ Why not `git tag -s`:
   `append_signature`, `has_signature_block`, `validate_tag_name` and
   `parse_verify_tag` are all `#[cfg(test)]`-able with no keyring. Route (b) is
   one opaque subprocess.
+
+**Rejected alternative — route (c), a hybrid, which the issue's binary framing
+did not name.** Resolve the config *here* (`resolve_signing` + `resolve_key_file`,
+refusing `key::` and bare `ssh-…` exactly as commits do) and only then delegate
+the write:
+
+```
+git tag -s -u <resolved-key> -F - --cleanup=verbatim -- <name> <commit>
+```
+
+with the message on stdin. That preserves the whole justification above — the SSH
+restriction still holds, because we refuse before git is ever invoked — while
+removing both the hand-rolled object and the dangling one. It is a genuine
+option, and it means route (a) is chosen for **testability and payload purity**,
+not out of necessity:
+
+- the signed bytes are the ones libgit2 itself produced, so there is no second
+  serializer whose output could drift from the unsigned path's;
+- the failure modes stay ours (`AppError` from `run_signer`) instead of arriving
+  as `git tag`'s stderr needing classification;
+- the whole thing is exercisable with a stubbed signer, because we own the
+  invocation.
+
+Route (a) is what shipped; this is recorded so the next reader is not left with a
+false dichotomy.
 
 Route (a) costs one orphan object per signed tag: the unsigned annotation from
 step 1 is never referenced. It is unreachable and collected by `git gc` like any
@@ -87,6 +112,14 @@ falling back to an unsigned tag leaves the user believing they signed it. The
 ordering above is what enforces it — the ref is written **after** the signature
 exists, so every failure mode (no key, X509, missing program, non-zero exit,
 empty signature) returns an error with `refs/tags/<name>` absent.
+
+A **name collision is checked before the signer runs**, not only by the final
+`repo.reference(…, force = false)`. With `tag.gpgsign` on and a
+passphrase-protected key, re-creating an existing `v1.0.0` would otherwise raise
+pinentry, take the user's passphrase, and only then fail with "tag already
+exists" — having written two objects for nothing. The early check is an
+optimisation of the common case, not a replacement: the atomic `force = false`
+write stays, so a ref created between the two still fails.
 
 ### C. Signing implies annotated
 
@@ -181,10 +214,36 @@ git's own two shapes:
   compromising verdict wins if several appear. This mirrors git's own
   `sigcheck_gpg_status` table in `gpg-interface.c`.
 - **SSH.** `Good "git" signature for <principal> with <type> key <fp>` → `Good`
-  with signer + key; `Good "git" signature with <type> key <fp>` → also `Good`
-  (git grades it `U`, and `parse_verify_output` already maps `U` → `Good`, with
-  the nuance living in the signer line); a line naming revocation → `Revoked`;
-  `Could not verify signature.` / `Signature verification failed` → `Bad`.
+  with signer + key. `Good "git" signature with <type> key <fp>` → **`UnknownKey`**
+  (see below). `Could not verify signature.` / `Signature verification failed` →
+  `Bad`.
+
+There is deliberately **no SSH `Revoked` branch**. Measured against git 2.50.1 +
+OpenSSH 10.2, a key revoked through `gpg.ssh.revocationFile` produces exactly
+`Could not verify signature.` and exit 1 — ssh-keygen keeps the reason behind
+`debug3_fr`, so neither a `Good` line nor the word "revoked" ever reaches us. A
+`revoked`-substring branch would look prudent and be dead code. GPG revocation is
+still reported, from `REVKEYSIG`.
+
+**"No false Good" is a property of the parser, not of ssh-keygen's output
+order.** A `Good` line is refuted by a non-zero exit *plus* a
+`Could not verify signature` line, so a signer that printed its verdict before
+its checks cannot produce a green badge for a signature git rejected. The
+legitimate untrusted-key case never carries that line — an unmatched principal
+says `No principal matched.`, a missing allowed-signers file says
+`Unable to open allowed keys file …` — so the guard cannot misfire on it.
+
+**A key outside `allowedSignersFile` is `UnknownKey`, not `Good`.** The common
+SSH setup configures no allowed-signers file at all, which yields
+`Good "git" signature with ED25519 key SHA256:…` and exit 1: the signature is
+real, but nothing vouches for *whose* key made it. Rendering that as a green
+"Signed" on a release tag is precisely the claim this feature exists to make
+trustworthy, and the two shapes are distinguishable (`signature for ` names a
+principal, `signature with ` names only a fingerprint), so this is information we
+have rather than a guess. **The COMMIT path still reports it as `Good`**, because
+`parse_verify_output` maps git's `U` that way — a real gap, inherited rather than
+introduced, deliberately left for its own change rather than widened into this
+one.
 
 Unrecognized output falls back to `Good` when git exited 0 (it only does that for
 `G` and `U`) and to **`UnknownKey`** when it did not. `UnknownKey` renders as
@@ -192,6 +251,10 @@ Unrecognized output falls back to `Good` when git exited 0 (it only does that fo
 which would cry wolf, or `None`, which would show a real signature as absent.
 `SigState::None` is reserved for "there is no signature", which step 2 already
 decided.
+
+`ERRSIG` carries **no signer**: its tail is gpg's positional fields
+(`<pkalgo> <hashalgo> <sigclass> <time> <rc> <fpr>`), not a user id, and the badge
+joins the signer into its tooltip.
 
 ### F. `TagInfo.signed` is cheap; the verdict is lazy
 
@@ -234,10 +297,21 @@ existing `Git`, `InvalidArgument`, `InvalidRef`, `NotImplemented` or `Io`, so
   normalizes the trailing newline and appends exactly once;
   `has_signature_block` recognizes all four armor headers and rejects a message
   that merely mentions one mid-line; `validate_tag_name` refuses empty, leading
-  `-`, whitespace, control characters and `..`; `parse_verify_tag` maps every GPG
-  status token and both SSH "Good" shapes, plus the tamper and no-signature
-  cases — the SSH strings are **recorded from a real `git verify-tag --raw`**,
-  the GPG ones written against gpg's documented status protocol.
+  `-`, leading `.`, whitespace, control characters and `..`; `parse_verify_tag`
+  maps every GPG status token and both SSH "Good" shapes, plus the tamper,
+  refuted-Good and no-signature cases — the SSH strings are **recorded from a
+  real `git verify-tag --raw`**.
+- **Rust, GPG pipeline** (`tests/tag_signing_gpg.rs`). Hand-written status
+  fixtures under-constrain — that is how `ERRSIG`'s positional tail came to be
+  rendered as a signer name — so the OpenPGP side gets two layers. First, a
+  **stubbed `gpg.program`** (needs only `/bin/sh`, so it always runs): everything
+  but the cryptography is real — our `create_signed_tag` with the real OpenPGP
+  argv, a real tag object, a real `git verify-tag --raw`, the real parser. This
+  is what establishes the two facts the parser rests on and no unit test can:
+  git relays gpg's status lines **with** the `[GNUPG:] ` prefix, and on
+  **stderr**. Second, a **real-gpg** test against an ephemeral `GNUPGHOME` in a
+  temp dir (never the user's keyring), skipped with a printed note when gpg is
+  absent, covering `Good` end to end plus a tampered payload reading `Bad`.
 - **Rust, integration** (`tests/tag_signing.rs`): follows `tests/signing.rs`'s
   `ssh_signing_repo()` pattern — generate an ed25519 key with `ssh-keygen`, skip
   the test with a printed note when `ssh-keygen` is unavailable. Asserts a signed
@@ -260,8 +334,14 @@ existing `Git`, `InvalidArgument`, `InvalidRef`, `NotImplemented` or `Io`, so
 
 ## Out of scope
 
-Signing on the *push* path, tag verification in the History graph's ref labels, a
-`signTags` preference, X.509 (`SigFormat::X509` stays a clean `NotImplemented`,
+Bringing the COMMIT badge in line with §E's untrusted-key rule — `verify_commit`
+still grades git's `U` as `Good`, so a commit signed by a key outside
+`allowedSignersFile` shows a green "Signed". Same gap, one layer down, and
+changing `parse_verify_output` touches every commit badge; it gets its own issue
+rather than riding along here.
+
+Also out: signing on the *push* path, tag verification in the History graph's ref
+labels, a `signTags` preference, X.509 (`SigFormat::X509` stays a clean `NotImplemented`,
 as for commits), SSH `key::…` literals (still refused rather than written to
 disk), `gpg.ssh.allowedSignersFile` management, and re-signing or amending an
 existing tag.

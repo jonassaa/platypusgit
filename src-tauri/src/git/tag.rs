@@ -79,7 +79,14 @@ pub fn validate_tag_name(name: &str) -> AppResult<()> {
     if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
         return bad("a tag name cannot have an empty path component");
     }
-    if name.ends_with('.') || name.ends_with(".lock") || name.contains("/.") {
+    // A leading '.' is refused for the same reason "/." is: `check_refname_component`
+    // rejects a component beginning with a dot, and the leading one is not covered
+    // by the "/." test. `git check-ref-format refs/tags/.hidden` refuses it too.
+    if name.starts_with('.')
+        || name.ends_with('.')
+        || name.ends_with(".lock")
+        || name.contains("/.")
+    {
         return bad("invalid tag name");
     }
     if name.contains("..") || name.contains("@{") {
@@ -122,51 +129,73 @@ const GPG_STATUS: [(&str, SigState); 6] = [
 /// atom yields nothing for a tag object. `--raw` is the undigested signer output,
 /// in one of two shapes depending on `gpg.format`.
 ///
-/// `ok` is the subprocess's exit status. It is only consulted for output we do
+/// `ok` is the subprocess's exit status. It refutes an SSH `Good` line paired
+/// with an explicit failure (see below), and otherwise decides only output we do
 /// not recognize, where an exit of 0 is git's own statement that the signature
 /// graded `G` or `U`.
 pub fn parse_verify_tag(raw: &str, ok: bool) -> SignatureStatus {
     // ── GPG: [GNUPG:] <TOKEN> <keyid> <username> ──────────────────────────────
     for (token, state) in GPG_STATUS {
         if let Some(rest) = gpg_status_line(raw, token) {
-            let (key, signer) = split_key_and_signer(rest);
+            let (key, signer) = split_key_and_signer(rest, token);
             return SignatureStatus { state, signer, key };
         }
     }
 
+    // "No false Good" has to be a property of THIS function, not of the order a
+    // signer happens to print in. OpenSSH 10.2 never prints a `Good` line
+    // alongside a failure — but a build that emitted its verdict before its
+    // checks would otherwise render a green "Signed" for a signature git
+    // rejected. The legitimate untrusted-key case never carries this line: an
+    // unmatched principal says "No principal matched." and a missing
+    // allowed-signers file says "Unable to open allowed keys file …". So a failed
+    // exit PLUS this line overrides any `Good` below.
+    let refuted = !ok && raw.contains("Could not verify signature");
+
     // ── SSH: ssh-keygen's own wording, as git relays it ───────────────────────
-    for line in raw.lines() {
-        let line = line.trim();
-        // Valid signature from a principal in the allowed-signers file.
-        if let Some(rest) = line.strip_prefix("Good \"git\" signature for ") {
-            let (signer, key) = split_ssh_principal(rest);
-            return SignatureStatus {
-                state: SigState::Good,
-                signer,
-                key,
-            };
-        }
-        // Valid signature, but the key is not in the allowed-signers file. git
-        // grades this `U`, which parse_verify_output already reports as Good with
-        // the nuance in the signer line — same call here, so the two badges do
-        // not disagree about one signature.
-        if let Some(rest) = line.strip_prefix("Good \"git\" signature with ") {
-            return SignatureStatus {
-                state: SigState::Good,
-                signer: None,
-                key: ssh_key_fingerprint(rest),
-            };
+    if !refuted {
+        for line in raw.lines() {
+            let line = line.trim();
+            // Valid signature from a principal in the allowed-signers file.
+            if let Some(rest) = line.strip_prefix("Good \"git\" signature for ") {
+                let (signer, key) = split_ssh_principal(rest);
+                return SignatureStatus {
+                    state: SigState::Good,
+                    signer,
+                    key,
+                };
+            }
+            // Valid signature, but the key is in NO allowed-signers file — either
+            // none is configured (the common setup) or the principal did not
+            // match. git grades this `U`.
+            //
+            // Reported as `UnknownKey` ("Signed, key unavailable"), NOT `Good`:
+            // the signature is real but nothing here vouches for whose key made
+            // it, and a tag is what people verify before trusting a release. The
+            // two shapes are distinguishable — `signature for ` names a
+            // principal, `signature with ` names only a fingerprint — so this is
+            // information we have rather than a guess.
+            //
+            // NOTE: the COMMIT path still reports this as Good, because
+            // `parse_verify_output` maps git's `U` that way. That gap is real and
+            // deliberately not widened into this PR — see the spec.
+            if let Some(rest) = line.strip_prefix("Good \"git\" signature with ") {
+                return SignatureStatus {
+                    state: SigState::UnknownKey,
+                    signer: None,
+                    key: ssh_key_fingerprint(rest),
+                };
+            }
         }
     }
 
+    // No SSH `Revoked` branch on purpose. Measured against git 2.50.1 +
+    // OpenSSH 10.2: a key revoked through `gpg.ssh.revocationFile` produces
+    // exactly `Could not verify signature.` and exit 1 — ssh-keygen keeps the
+    // reason behind `debug3_fr`, so neither a `Good` line nor the word "revoked"
+    // ever reaches us. Matching on "revoked" looked safe and was simply dead.
+    // GPG revocation is still reported, from `REVKEYSIG` in the table above.
     let lowered = raw.to_ascii_lowercase();
-    if lowered.contains("revoked") {
-        return SignatureStatus {
-            state: SigState::Revoked,
-            signer: None,
-            key: None,
-        };
-    }
     if lowered.contains("could not verify signature")
         || lowered.contains("signature verification failed")
     {
@@ -193,26 +222,38 @@ pub fn parse_verify_tag(raw: &str, ok: bool) -> SignatureStatus {
 }
 
 /// The remainder of the first `[GNUPG:] <token>` line, if present.
+///
+/// The `[GNUPG:] ` prefix is REQUIRED, not optional. `git verify-tag --raw`
+/// relays gpg's status-fd output verbatim, so every status line carries it;
+/// accepting a bare `GOODSIG …` widened the match surface to any signer's
+/// free-text output for no benefit.
 fn gpg_status_line<'a>(raw: &'a str, token: &str) -> Option<&'a str> {
     raw.lines().find_map(|line| {
-        let line = line.trim();
-        let rest = line.strip_prefix("[GNUPG:] ").unwrap_or(line);
-        rest.strip_prefix(token)
+        line.trim()
+            .strip_prefix("[GNUPG:] ")
+            .and_then(|rest| rest.strip_prefix(token))
     })
 }
 
 /// `<keyid> <username>` → (key, signer). Either half may be absent.
-fn split_key_and_signer(rest: &str) -> (Option<String>, Option<String>) {
+///
+/// `ERRSIG` is the exception and must be passed as such: its tail is gpg's
+/// positional fields (`<pkalgo> <hashalgo> <sigclass> <time> <rc> <fpr>`), not a
+/// name, so splitting on the first space yielded `signer = "1 8 00 … 9 -"` — and
+/// `SignatureBadgeView` joins the signer into its tooltip, which then read
+/// "Signed, key unavailable — 1 8 00 1755302400 9 — 4AEE18F83AFDEB23".
+fn split_key_and_signer(rest: &str, token: &str) -> (Option<String>, Option<String>) {
     let rest = rest.trim();
-    match rest.split_once(' ') {
-        Some((key, signer)) => (
-            non_empty(key),
-            // ERRSIG's tail is positional fields, not a name; it has no spaces
-            // before them either way, so this stays a best-effort signer.
-            non_empty(signer.trim()),
-        ),
-        None => (non_empty(rest), None),
-    }
+    let (key, tail) = match rest.split_once(' ') {
+        Some((key, tail)) => (non_empty(key), tail.trim()),
+        None => (non_empty(rest), ""),
+    };
+    let signer = if token.starts_with("ERRSIG") {
+        None
+    } else {
+        non_empty(tail)
+    };
+    (key, signer)
 }
 
 /// `<principal> with <type> key <fingerprint>` → (signer, key).
@@ -316,6 +357,9 @@ mod tests {
         for bad in [
             "", "v1 0", "v1\n", "v1..v2", "v1~1", "v1^", "a:b", "v?", "v*", "a[b", "a\\b", "/v1",
             "v1/", "a//b", "v1.", "v1.lock", "a/.b", "HEAD@{0}",
+            // `git check-ref-format refs/tags/.hidden` refuses this; the "/."
+            // test above does not reach a LEADING dot.
+            ".hidden", ".v1",
         ] {
             assert!(
                 validate_tag_name(bad).is_err(),
@@ -359,6 +403,21 @@ mod tests {
         let s = parse_verify_tag(raw, false);
         assert_eq!(s.state, SigState::UnknownKey);
         assert_eq!(s.key.as_deref(), Some("4AEE18F83AFDEB23"));
+        // ERRSIG's tail is positional fields, NOT a name. Rendering it put
+        // "1 8 00 1755302400 9 -" in the badge tooltip where a signer belongs.
+        assert!(
+            s.signer.is_none(),
+            "ERRSIG has no signer, got {:?}",
+            s.signer
+        );
+    }
+
+    #[test]
+    fn a_bare_status_token_without_the_gnupg_prefix_is_not_a_verdict() {
+        // `--raw` relays gpg's status-fd lines, which always carry the prefix.
+        // Matching without it graded any signer's free text.
+        let s = parse_verify_tag("GOODSIG DEADBEEF Ada <ada@x>\n", false);
+        assert_eq!(s.state, SigState::UnknownKey, "must not grade Good");
     }
 
     #[test]
@@ -385,33 +444,57 @@ mod tests {
     }
 
     #[test]
-    fn an_ssh_key_outside_allowed_signers_is_still_a_good_signature() {
-        // git grades this `U`, which parse_verify_output maps to Good; the two
-        // badges must not disagree about one signature. Note git exits NON-ZERO
-        // here, which is why the exit status alone cannot classify.
-        let raw = "Good \"git\" signature with ED25519 key \
-                   SHA256:neE70xxhPefYQsf3pgAkuuDiavk0lCNXdE7HXGLzENI\n\
-                   No principal matched.\n";
-        let s = parse_verify_tag(raw, false);
-        assert_eq!(s.state, SigState::Good);
-        assert!(s.signer.is_none(), "no principal to name");
-        assert_eq!(
-            s.key.as_deref(),
-            Some("SHA256:neE70xxhPefYQsf3pgAkuuDiavk0lCNXdE7HXGLzENI")
-        );
+    fn an_ssh_key_outside_allowed_signers_is_not_reported_as_verified() {
+        // A real signature, but nothing vouches for whose key made it — and a tag
+        // is what people verify before trusting a release. Note git exits
+        // NON-ZERO here while grading `U`, which is why the exit status alone
+        // cannot classify either.
+        //
+        // Both spellings of "no principal": an allowed-signers file that does not
+        // list the key, and no allowed-signers file at all.
+        for raw in [
+            "Good \"git\" signature with ED25519 key \
+             SHA256:neE70xxhPefYQsf3pgAkuuDiavk0lCNXdE7HXGLzENI\n\
+             No principal matched.\n",
+            "Good \"git\" signature with ED25519 key \
+             SHA256:neE70xxhPefYQsf3pgAkuuDiavk0lCNXdE7HXGLzENI\n\
+             Unable to open allowed keys file \"\": No such file or directory\n\
+             sig_find_principals: sshsig_find_principal: No such file or directory\n\
+             No principal matched.\n",
+        ] {
+            let s = parse_verify_tag(raw, false);
+            assert_eq!(s.state, SigState::UnknownKey, "{raw}");
+            assert!(s.signer.is_none(), "no principal to name");
+            assert_eq!(
+                s.key.as_deref(),
+                Some("SHA256:neE70xxhPefYQsf3pgAkuuDiavk0lCNXdE7HXGLzENI")
+            );
+        }
     }
 
     #[test]
     fn a_tampered_ssh_signature_is_bad() {
+        // Also what a key revoked through gpg.ssh.revocationFile produces:
+        // measured against git 2.50.1 + OpenSSH 10.2, revocation yields exactly
+        // this line and exit 1 — no `Good` line and no "revoked" anywhere.
         let raw = "Could not verify signature.\n\
                    Signature verification failed: incorrect signature\n";
         assert_eq!(parse_verify_tag(raw, false).state, SigState::Bad);
+
+        let revoked = "Could not verify signature.\n";
+        assert_eq!(parse_verify_tag(revoked, false).state, SigState::Bad);
     }
 
     #[test]
-    fn a_revoked_ssh_key_reads_as_revoked_not_bad() {
-        let raw = "Signature verification failed: revoked key\n";
-        assert_eq!(parse_verify_tag(raw, false).state, SigState::Revoked);
+    fn an_explicit_failure_overrides_a_good_line_above_it() {
+        // Defence against a signer that printed its verdict before its checks:
+        // "no false Good" must hold in the parser, not in ssh-keygen's ordering.
+        let raw = "Good \"git\" signature for a@b.c with ED25519 key SHA256:abc\n\
+                   Could not verify signature.\n";
+        assert_eq!(parse_verify_tag(raw, false).state, SigState::Bad);
+        // …but a clean exit is still trusted, so the guard cannot misfire on
+        // output that merely mentions the phrase.
+        assert_eq!(parse_verify_tag(raw, true).state, SigState::Good);
     }
 
     // ─── verify parsing: fallbacks ───────────────────────────────────────────

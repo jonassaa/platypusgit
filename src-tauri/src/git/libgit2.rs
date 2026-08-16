@@ -1129,6 +1129,15 @@ fn create_signed_tag(
     tagger: &git2::Signature<'_>,
     message: &str,
 ) -> AppResult<()> {
+    // Refuse a name collision BEFORE running the signer. The final
+    // `repo.reference(…, force = false)` would catch it too, but only after
+    // pinentry had taken the user's GPG passphrase for a tag that then fails
+    // with "tag already exists" — and after two objects had been written.
+    let refname = format!("refs/tags/{name}");
+    if repo.find_reference(&refname).is_ok() {
+        return Err(AppError::Git(format!("tag '{name}' already exists")));
+    }
+
     // Normalize BEFORE the object is created: the signature is made over the
     // object's bytes, so normalizing afterwards would sign one body and store
     // another.
@@ -1144,12 +1153,13 @@ fn create_signed_tag(
     let signed = crate::git::tag::append_signature(&body, &signature);
     let oid = odb.write(git2::ObjectType::Tag, &signed)?;
 
-    // Force is false: a name collision must fail here exactly as it does on the
-    // unsigned path (`repo.tag(…, false)`).
+    // Force is still false: the check above is an early-out for the common case,
+    // not a substitute for the atomic one. A ref created between the two must
+    // fail here, exactly as it does on the unsigned path (`repo.tag(…, false)`).
     //
     // Empty reflog message because `git tag` writes none — core.logAllRefUpdates
     // does not cover refs/tags.
-    repo.reference(&format!("refs/tags/{name}"), oid, false, "")?;
+    repo.reference(&refname, oid, false, "")?;
     Ok(())
 }
 
@@ -3888,6 +3898,10 @@ impl GitBackend for Libgit2Backend {
                 }
                 Some(msg) => {
                     let sig = crate::git::signature::default_signature(repo)?;
+                    // Same normalization the signed path applies, so one dialog
+                    // input does not produce two different objects depending on
+                    // whether it was signed. `git tag` completes the line too.
+                    let msg = crate::git::tag::normalize_message(&msg);
                     repo.tag(name, &obj, &sig, &msg, false)?;
                 }
                 None => {

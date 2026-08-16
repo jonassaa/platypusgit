@@ -59,7 +59,20 @@ export const useCreateTagStore = create<CreateTagState>((set) => ({
   },
 }));
 
-/** Imperative opener for non-component call sites. */
+/**
+ * Imperative opener for non-component call sites.
+ *
+ * **Needs `<CreateTagDialog />` mounted in the window** — `AppShell` mounts it,
+ * the merge resolver window does not. With no dialog mounted nothing renders and
+ * nothing clears `target`, so the promise never settles and a second call would
+ * find the store already "open". Same contract `pgConfirm`/`pgPrompt` have with
+ * `PGDialogHost`, except those resolve `false`/`null` instead of hanging.
+ *
+ * No caller awaits this today (all three use `void`), so the hang is latent
+ * rather than live — but a future `await openCreateTag(…)` from the wrong window
+ * would stall silently, which is why it is written down here rather than left to
+ * be rediscovered.
+ */
 export function openCreateTag(target: CreateTagTarget): Promise<void> {
   return useCreateTagStore.getState().openCreateTag(target);
 }

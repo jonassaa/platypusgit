@@ -981,9 +981,15 @@ lib/
   Deliberately not hand-written serialization: the payload is then byte-for-byte
   what libgit2 would have stored, with no tagger formatting or timezone
   arithmetic of ours. Cost: the unsigned annotation is left unreferenced and
-  collected by `git gc`. **Shelling out to `git tag -s` was considered and
+  collected by `git gc`. **Shelling out to plain `git tag -s` was considered and
   rejected** — it does its own key resolution, so it would bypass `signing.rs`
-  entirely and silently accept the `key::` literals commits refuse.
+  entirely and silently accept the `key::` literals commits refuse. (A hybrid —
+  resolve here, then `git tag -s -u <key> -F -` — would keep the restriction; the
+  spec records why route (a) won anyway, so nobody re-derives a false dichotomy.)
+- **The ref write is not the only collision check.** `create_signed_tag`
+  early-returns on an existing `refs/tags/<name>` BEFORE signing: otherwise a
+  duplicate name pops pinentry, takes the passphrase, and only then fails. The
+  atomic `force = false` write stays as the real guarantee.
 - **Signing implies annotated.** A lightweight tag is a ref with no object to
   sign, so `sign: Some(true)` with no annotation is `InvalidArgument`, not a
   silent downgrade. A bare `tag.gpgsign`, though, does NOT promote a lightweight
@@ -999,6 +1005,17 @@ lib/
   parser, `tag::parse_verify_tag`, which returns the same `SignatureStatus`.
   Neither the exit status nor the text alone is sufficient: a valid signature
   from a key outside `allowedSignersFile` exits NON-ZERO while grading `G`/`U`.
+  The `[GNUPG:] ` prefix is REQUIRED when matching a gpg status token — git
+  relays gpg's status-fd output verbatim, on **stderr**, so read both streams.
+- **"No false Good" belongs to the parser.** An SSH `Good` line is refuted by a
+  non-zero exit plus `Could not verify signature`, so a signer that printed its
+  verdict before its checks cannot produce a green badge. And a key outside
+  `allowedSignersFile` (`Good "git" signature with …`, no principal) is
+  `UnknownKey` for a TAG, not `Good` — the COMMIT path still says `Good` via
+  `parse_verify_output`'s `U` mapping, which is a known gap with its own issue,
+  not something to copy. There is no SSH `Revoked` branch: git emits only
+  `Could not verify signature.` for a revoked key (measured, git 2.50.1 +
+  OpenSSH 10.2), so one would be dead code.
 - **Verdicts are lazy, presence is free.** `TagInfo.signed` is read off the tag
   object during the existing walk (no subprocess), so tag ROWS can mark a signed
   tag; the graded badge (`TagSignatureBadge`) verifies the SELECTED tag only.
