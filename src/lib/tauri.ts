@@ -1,6 +1,7 @@
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { debug as logDebug, warn as logWarn, error as logError } from "@tauri-apps/plugin-log";
 import type {
+  AheadBehind,
   AuthorOverride,
   BisectMark,
   BisectStatus,
@@ -222,6 +223,34 @@ export async function commitsSince(
   return invoke<CommitInfo[]>("commits_since", { repoId, base });
 }
 
+/**
+ * Commits in `base..tip` (reachable from `tip`, not from `base`), newest-first
+ * (#131). Both sides are any revspec, and — unlike `commitsSince` — neither has
+ * to be an ancestor of the other, which is what makes it usable for two
+ * diverged branches.
+ */
+export async function commitsBetween(
+  repoId: string,
+  base: string,
+  tip: string,
+  limit?: number,
+): Promise<CommitInfo[]> {
+  return invoke<CommitInfo[]>("commits_between", { repoId, base, tip, limit });
+}
+
+/**
+ * How `b` stands relative to `a`, plus their merge base (#131). `ahead` counts
+ * what `b` has and `a` does not; `behind` is the mirror. `mergeBase` is null for
+ * unrelated histories.
+ */
+export async function aheadBehind(
+  repoId: string,
+  a: string,
+  b: string,
+): Promise<AheadBehind> {
+  return invoke<AheadBehind>("ahead_behind", { repoId, a, b });
+}
+
 export async function listBranches(repoId: string): Promise<BranchInfo[]> {
   return invoke<BranchInfo[]>("list_branches", { repoId });
 }
@@ -303,6 +332,30 @@ export async function diffCommit(
     oid,
     contextLines,
     ignoreWhitespace,
+  });
+}
+
+/**
+ * The tree at `revspec` against the WORKING TREE (#131) — every changed file,
+ * not one path.
+ *
+ * `includeUntracked` is explicit: git's own `git diff <ref>` ignores untracked
+ * files, but this app's worktree diffs include them with content, so the compare
+ * screen passes `true`. `.gitignore`d files are excluded either way.
+ */
+export async function diffRefToWorkdir(
+  repoId: string,
+  revspec: string,
+  contextLines = 3,
+  ignoreWhitespace = false,
+  includeUntracked = false,
+): Promise<FileDiff[]> {
+  return invoke<FileDiff[]>("diff_ref_to_workdir", {
+    repoId,
+    revspec,
+    contextLines,
+    ignoreWhitespace,
+    includeUntracked,
   });
 }
 

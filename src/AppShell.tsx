@@ -23,6 +23,7 @@ import { RemoteScreen } from "@/screens/Remote";
 import { WelcomeScreen } from "@/screens/Welcome";
 import { ReflogScreen } from "@/screens/Reflog";
 import { CommitDiffScreen } from "@/screens/CommitDiff";
+import { CompareScreen } from "@/screens/Compare";
 import { FileHistoryScreen } from "@/screens/FileHistory";
 import { BlameScreen } from "@/screens/Blame";
 import { SettingsScreen } from "@/screens/Settings";
@@ -84,6 +85,7 @@ type ScreenId =
   | "diff"
   | "reflog"
   | "commitDiff"
+  | "compare"
   | "fileHistory"
   | "blame"
   | "submodules"
@@ -93,7 +95,12 @@ type ScreenId =
 // Deep views are reachable ONLY via a nav intent (no activity-bar entry). They
 // carry no valid payload after a reload and have no "you are here" anchor, so
 // they must not be restored from localStorage — see the reload-guard below.
-const DEEP_VIEWS = new Set<ScreenId>(["commitDiff", "fileHistory", "blame"]);
+const DEEP_VIEWS = new Set<ScreenId>([
+  "commitDiff",
+  "compare",
+  "fileHistory",
+  "blame",
+]);
 
 // Maps each activity-bar item id to the navigation action whose chord it shows.
 const ACTIVITY_ACTION: Record<string, ActionId> = {
@@ -283,6 +290,11 @@ export function AppShell() {
       case "commit-vs-commit":
         enterDeep("commitDiff");
         break;
+      case "ref-compare":
+        // The sides live in `useCompareStore` (the screen keeps them mutable);
+        // the intent only routes.
+        enterDeep("compare");
+        break;
       case "file-history":
         enterDeep("fileHistory");
         break;
@@ -315,6 +327,7 @@ export function AppShell() {
     pulls: <PullsScreen />,
     reflog: <ReflogScreen />,
     commitDiff: <CommitDiffScreen />,
+    compare: <CompareScreen />,
     fileHistory: <FileHistoryScreen />,
     blame: <BlameScreen />,
     submodules: <SubmodulesScreen />,

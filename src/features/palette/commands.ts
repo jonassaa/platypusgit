@@ -10,6 +10,8 @@ import { prNoun, prNumberLabel } from "@/features/forge/forgeLabels";
 import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
 import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
+import { openCompare } from "@/features/compare/useCompareStore";
+import { WORKDIR } from "@/features/compare/compareSides";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
@@ -416,6 +418,43 @@ export function buildCommands(): PaletteItem[] {
         filter: (b) => !b.isHead,
         icon: "rebase",
         onPick: (n) => void repo.rebaseOnto(n),
+      }),
+    })),
+  });
+  // -- compare (#131) --
+  //
+  // No keyboard chord on purpose: the ⌘1–9 row is full, every catalog action
+  // must be bound in BOTH presets, and compare is a considered action rather
+  // than a hot path.
+  items.push({
+    type: "command", id: "action:compare-refs",
+    search: "Compare branch diff against current branch",
+    label: "Compare with current branch…", icon: "diff",
+    run: step(() => ({
+      kind: "pick", title: "Compare with current",
+      items: branchItems({
+        idPrefix: "pick-compare",
+        filter: (b) => !b.isHead,
+        icon: "diff",
+        // Current on the LEFT, so the picked ref's own work reads as additions.
+        onPick: (n) =>
+          openCompare(
+            { kind: "rev", rev: currentBranch(repoState().branches)?.name ?? "HEAD" },
+            { kind: "rev", rev: n },
+          ),
+      }),
+    })),
+  });
+  items.push({
+    type: "command", id: "action:compare-workdir",
+    search: "Compare branch against working tree uncommitted",
+    label: "Compare with working tree…", icon: "diff",
+    run: step(() => ({
+      kind: "pick", title: "Compare against the working tree",
+      items: branchItems({
+        idPrefix: "pick-compare-wt",
+        icon: "diff",
+        onPick: (n) => openCompare({ kind: "rev", rev: n }, WORKDIR),
       }),
     })),
   });

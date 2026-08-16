@@ -13,6 +13,9 @@ import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import type { CommitInfo } from "@/lib/types";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
+import { openCompare, useCompareStore } from "@/features/compare/useCompareStore";
+import { WORKDIR } from "@/features/compare/compareSides";
+import { currentBranch } from "@/lib/derive";
 import { chordFor } from "@/features/keymap";
 
 export interface ContextMenuItem {
@@ -866,6 +869,58 @@ export function commitMultiMenuItems(oids: string[]): ContextMenuItem[] {
   ];
 }
 
+/**
+ * Compare entries for a ref's context menu (#131). Shared by the local and
+ * remote branch menus so the two cannot drift.
+ *
+ * The mark pair stands in for a two-row selection on the Branches screen: that
+ * screen holds a single `Selection`, not History's multi-select model, so
+ * mirroring it would be a selection-model change to a screen this feature does
+ * not otherwise touch — and marking works ACROSS the branch/tag lists, which a
+ * row range never would.
+ */
+export function compareMenuItems(opts: {
+  name?: string;
+  /** The ref is the checked-out branch — "compare with current" is a no-op. */
+  isCurrent?: boolean;
+}): ContextMenuItem[] {
+  const name = opts.name || "";
+  const marked = useCompareStore.getState().marked;
+  const current = currentBranch(useRepoStore.getState().branches)?.name ?? "HEAD";
+
+  const items: ContextMenuItem[] = [
+    {
+      icon: "diff",
+      label: `Compare with ${current}`,
+      disabled: !name || !!opts.isCurrent,
+      onClick: () =>
+        openCompare({ kind: "rev", rev: current }, { kind: "rev", rev: name }),
+    },
+    {
+      icon: "diff",
+      label: "Compare with working tree",
+      disabled: !name,
+      onClick: () => openCompare({ kind: "rev", rev: name }, WORKDIR),
+    },
+    {
+      icon: "commit",
+      label: marked === name ? "Marked for compare" : "Mark for compare",
+      disabled: !name || marked === name,
+      onClick: () => useCompareStore.getState().mark(name),
+    },
+  ];
+  if (marked && marked !== name) {
+    items.push({
+      icon: "diff",
+      label: `Compare with ${marked}`,
+      disabled: !name,
+      onClick: () =>
+        openCompare({ kind: "rev", rev: marked }, { kind: "rev", rev: name }),
+    });
+  }
+  return items;
+}
+
 export function branchMenuItems(
   branch: { name?: string; current?: boolean; upstream?: string | null } | null,
 ): ContextMenuItem[] {
@@ -913,6 +968,8 @@ export function branchMenuItems(
           useRepoStore.getState().rebaseOnto(name);
       },
     },
+    { divider: true },
+    ...compareMenuItems({ name, isCurrent }),
     { divider: true },
     {
       icon: "sync",
@@ -1080,21 +1137,11 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
           ? useRepoStore.getState().fetch(remoteName)
           : useRepoStore.getState().fetchAll(),
     },
-    {
-      icon: "diff",
-      label: "Compare with current",
-      onClick: () => {
-        const branches = useRepoStore.getState().branches;
-        const head = branches.find((b) => b.isHead);
-        const target = branches.find((b) => b.name === name);
-        if (!head?.tip || !target?.tip) return;
-        useNavStore.getState().setIntent({
-          kind: "commit-vs-commit",
-          from: head.tip,
-          to: target.tip,
-        });
-      },
-    },
+    { divider: true },
+    // Replaces the old oid-pair "Compare with current", which resolved both
+    // tips itself and silently did nothing when either was missing. The compare
+    // screen takes the REF names, so it also survives a fetch moving the tip.
+    ...compareMenuItems({ name }),
     { divider: true },
     {
       icon: "trash",

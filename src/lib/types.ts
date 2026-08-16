@@ -143,6 +143,21 @@ export interface SignatureStatus {
   key: string | null;
 }
 
+/**
+ * How one revision stands relative to another (#131). Mirrors Rust
+ * `AheadBehind`.
+ *
+ * Both counts read FROM `a` TOWARD `b`: `ahead` is what `b` has that `a` does
+ * not, `behind` the mirror — the same direction `BranchInfo.ahead/behind` has
+ * for a branch against its upstream. `mergeBase` is null for unrelated
+ * histories, which is a state, not an error.
+ */
+export interface AheadBehind {
+  ahead: number;
+  behind: number;
+  mergeBase: string | null;
+}
+
 export interface BranchInfo {
   name: string;
   isHead: boolean;
