@@ -185,6 +185,14 @@ describe("MergeWindow resolution flow", () => {
     mockInvoke("save_resolution", () => undefined);
     render(<MergeWindow />);
     await screen.findByTestId("merge-result");
+    // Same wait `setup` does, and for the same reason: this case builds its own
+    // fixture instead of calling it, so without this the chord below can land
+    // while regionStates is still empty and be dropped.
+    await waitFor(() =>
+      expect(screen.getByTestId("merge-conflict-counter")).toHaveTextContent(
+        /^0\//,
+      ),
+    );
     expect(screen.getByTestId("merge-apply")).toBeDisabled();
     // Accept ours on the multi-line region — pre-fix this threw a RangeError
     // (region `to` past the \r-stripped doc) so the counter never advanced.
