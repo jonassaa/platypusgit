@@ -9,6 +9,9 @@ export const heroFeatures = [
   { icon: 'merge', title: 'Conflict resolution', blurb: '3-way sides, accept ours/theirs, external mergetool, continue/abort.' },
   { icon: 'list', title: 'Interactive rebase', blurb: 'Pick/reword/edit/squash/fixup/drop, continue/abort, base picker.' },
   { icon: 'cloud', title: 'Remotes & network', blurb: 'Add/remove/rename/prune remotes, fetch/pull/push (with-lease/force), merge.' },
+  { icon: 'link', title: 'Pull requests', blurb: 'GitHub + GitLab: list, check CI, open, check out, and create — without leaving the app.' },
+  { icon: 'folder', title: 'Multi-repo tabs', blurb: 'Several repositories open at once in one window, each with its own screen and badges.' },
+  { icon: 'search', title: 'Submodules, LFS & bisect', blurb: 'Submodule + linked-worktree screens, git-LFS objects, and bisect in the operation bar.' },
 ];
 
 // Full grouped list (from implemented-features.md)
@@ -17,17 +20,21 @@ export const featureGroups = [
     'Stage / unstage / discard whole files',
     'Stage / unstage / discard individual hunks',
     'Stage / unstage / discard individual lines',
+    'Stage the focused diff line from the keyboard with Space',
+    'Drag files between Changes and Staged',
     'Commit with amend and author override',
   ]},
   { title: 'Diff & viewing', blurb: 'See exactly what changed, anywhere.', items: [
     'Worktree / index / HEAD diffs',
-    'Unified and side-by-side (split) diff views',
-    'Syntax highlighting on every diff, blame and preview surface',
+    'Whole-file diffs by default — the file reads continuously, each change block still stages on its own',
+    'Unified and side-by-side (split) diff views, with a persisted default',
+    'Syntax highlighting on every diff, blame and preview surface — tokenized off the main thread',
     'Word-level highlighting within a changed line',
     'Configurable diff context lines',
     'Commit-to-commit diffs',
     'Line-by-line blame',
     'Repo file browser at HEAD, or any revision',
+    'git-LFS pointers are shown as the objects they are, not as two lines of text',
   ]},
   { title: 'Branches & tags', blurb: 'Full ref management.', items: [
     'List / create / checkout / rename / delete branches',
@@ -41,11 +48,14 @@ export const featureGroups = [
     'Per-file history',
     'Reflog viewer',
     'Detached-HEAD checkout',
+    'Customizable HEAD indicator — six independent marks at three weights',
   ]},
   { title: 'History manipulation', blurb: 'Rewrite with care.', items: [
     'Reset — soft / mixed / hard',
     'Cherry-pick',
     'Revert',
+    'Bisect — good / bad / skip from the operation bar, with git\'s own progress estimate',
+    'Drag a ref or commit onto another to merge, rebase or cherry-pick',
   ]},
   { title: 'Stash', blurb: 'Park work in progress.', items: [
     'Save / apply / pop / drop',
@@ -63,15 +73,33 @@ export const featureGroups = [
     'Pick / reword / edit / squash / fixup / drop',
     'Merge commits — flatten (git default) or preserve topology',
     'Continue / abort, resumable after quitting the app',
+    'Reorder steps by drag, or with Mod+Shift+↑/↓',
     'Rebase base picker',
   ]},
   { title: 'Remotes & network', blurb: 'Sync with anywhere.', items: [
     'Add / remove / rename / prune remotes',
     'Fetch / fetch-all / pull',
     'Push with-lease and force',
+    'Authenticated remotes — every network op prompts and retries, tag pushes and branch deletes included',
     'Merge branches',
   ]},
+  { title: 'Pull requests', blurb: 'GitHub and GitLab, including self-hosted.', items: [
+    'List open pull / merge requests — author, source → target, draft and fork markers',
+    'CI / checks summary for the selected request',
+    'Check out a request locally, forks included',
+    'Create a request from the current branch, as a draft if you want',
+    'Open in the browser in one click',
+    'Per-host API token, stored by your own git credential helper under its own key',
+  ]},
+  { title: 'Submodules, LFS & worktrees', blurb: 'The parts of a repository that are also repositories.', items: [
+    'Submodule screen — init, update (recursive), sync URLs, open one as its own repository',
+    'Submodules are distinguished from embedded repositories in the file tree',
+    'git-LFS panel — fetch objects, pull objects, checkout, with pointer-aware diffs',
+    'Linked worktrees — list, add on a new or existing branch, lock / unlock, remove, prune',
+    'Removing a worktree with uncommitted work asks a second time before forcing',
+  ]},
   { title: 'Navigation & keyboard', blurb: 'Keyboard-first, fast everywhere.', items: [
+    'Multi-repo tabs — several repositories open at once, with ⌘E, ⌥1–⌥9 and Ctrl+Tab',
     'Command palette (⌘P) — branches, files, commits, and actions',
     'Rider-style default keymap, with a Classic preset',
     'Type-to-jump speed-search in lists',
@@ -85,13 +113,28 @@ export const featureGroups = [
 export const roadmap = [
   'Branch compare — branch↔branch and branch↔working tree',
   'GPG/SSH tag signing (commit signing shipped in 0.0.8)',
-  'Multi-repo tabs / fast recent-repo switcher',
   'Quick merge/rebase from the branch picker',
   'Partial/hunk-level stash + rename + compare to working tree',
   'Signed & notarized macOS / Windows builds',
 ];
 
 export const changelog = [
+  {
+    version: '0.0.10',
+    date: '2026-08-16',
+    status: 'feature',
+    notes: [
+      'Several repositories open at once. Repositories are tabs now, on their own strip below the titlebar: open as many as you like, each with its own screen, its own dirty and conflict badges, and a right-click menu to close one, the others, or all. Colliding names are disambiguated by their parent directory. `⌘E` opens a switcher, `⌥1`–`⌥9` jump straight to a tab, `Ctrl+Tab` cycles, `⌘W` closes. Your open set is restored on the next launch, and lazily — five persisted repositories cost one open, not five.',
+      'Pull requests and merge requests, GitHub and GitLab. A new Pulls screen lists the open requests for whichever forge your remote points at — number, title, author, source → target, draft and fork markers — with the CI/checks summary for the selected one. Open it in the browser, check it out locally (forks included, via the ref the forge publishes on the base repository), or create one from the current branch with a title, body, target and draft flag. Self-hosted GitHub Enterprise and GitLab work the same way. The API token is per host, entered in Settings → Integrations, and handed to your own git credential helper under a key that cannot collide with the credential you push with.',
+      'Submodules, git-LFS, linked worktrees and bisect. Submodules get a screen — init, update (recursively if you want), sync URLs, or open one as its own repository — and are told apart from merely embedded repositories in the file tree. Linked worktrees get a screen too: add on a new or existing branch, lock with a reason, remove, prune; removing one that holds uncommitted work asks a second time before it will force. git-LFS lives on the Remote screen (fetch objects, pull objects, checkout), and an LFS pointer now renders as the object it stands for rather than as a two-line text diff. Bisect runs from the operation bar with Good / Bad / Skip / Reset and git\'s own "N revisions left, ~M steps" estimate — including a bisect you started in a terminal, since git\'s files are the only record either of you reads.',
+      'Drag and drop where it earns its place. Drag files between Changes and Staged (both directions, tree or flat view); drag a ref or commit onto another in the graph to merge, rebase or cherry-pick, each behind a confirmation naming what it will do; drag rebase steps to reorder them. Illegal drops are refused with the reason on the cursor rather than silently ignored. Every gesture has a keyboard equivalent — reordering gained `Mod+Shift+↑/↓`, which it never had.',
+      'Whole-file diffs, by default, on every diff surface. A change is easier to judge with the rest of the file around it, so the whole file is what you see — while each change block keeps its own Stage and Discard, so nothing about staging gets coarser. Chunked context remains a setting. Inline vs. split is now a real persisted preference instead of resetting on every navigation, and the changed-word tint is stronger and calibrated per theme mode.',
+      'Highlighting moved off the main thread. Syntax tokenizing runs in a worker and returns packed token data, so clicking quickly between files no longer janks on the file you just left, and a commit warms its other files in the background. If the worker cannot start, it falls back to the old path rather than losing colour.',
+      'A HEAD indicator you can actually configure. The old four-value list had to name every combination; it is now six independent marks — edge bar, row tint, outline, HEAD badge, bold subject, graph ring — at subtle, strong or intense, with a live preview in Settings built from the real History row so it cannot drift from what you get. Existing settings are migrated to the nearest equivalent.',
+      '`Space` stages the focused diff line. The diff pane gained a line cursor beside the existing `F7` hunk cursor: arrow to a changed line, `Space` stages or unstages it — the same rule the checkbox follows, and switched off in exactly the cases the mouse is.',
+      'Fixes — tag pushes and remote-branch deletes ran without credentials, so against a private remote they simply failed with git\'s stderr and no way to answer; both now prompt and retry like every other network operation, and neither can any longer be talked into running a program named by a crafted branch or remote name. Every repository you opened stayed open behind your back for the life of the process, leaking its handles; closing a tab now closes it for real. On Linux the bottom of a long diff could render blank. Dragging a rebase step reordered plans that the buttons correctly said could not be reordered. The Files screen\'s Unstage drop target did nothing at all. Checking out a pull request misread every existing branch as absent, so a name collision surfaced as git\'s own failure instead of a question. History\'s "Mine" scope was a guess at your email that filtered nothing on your own repositories and someone else\'s commits on everyone else\'s — it is gone; the real author filter is in advanced search.',
+    ],
+  },
   {
     version: '0.0.9',
     date: '2026-08-14',
