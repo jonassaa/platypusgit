@@ -13,10 +13,12 @@ import type { BranchInfo, CommitInfo, FileStatus, StashInfo } from "@/lib/types"
 
 const mkBranch = (name: string, isHead = false, upstream: string | null = null): BranchInfo => ({
   name, isHead, isRemote: false, upstream, ahead: 0, behind: 0, tip: "deadbeef",
+  tipTime: 0, isDefault: false,
 });
 
 const mkRemoteBranch = (name: string): BranchInfo => ({
   name, isHead: false, isRemote: true, upstream: null, ahead: 0, behind: 0, tip: "deadbeef",
+  tipTime: 0, isDefault: false,
 });
 
 const mkCommit = (oid: string, summary: string): CommitInfo => ({

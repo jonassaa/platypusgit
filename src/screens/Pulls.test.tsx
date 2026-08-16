@@ -46,6 +46,8 @@ function branch(name: string, isHead = false): BranchInfo {
     ahead: 0,
     behind: 0,
     tip: "0".repeat(40),
+    tipTime: 0,
+    isDefault: false,
   };
 }
 

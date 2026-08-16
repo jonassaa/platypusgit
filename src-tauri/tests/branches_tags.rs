@@ -334,3 +334,191 @@ fn branch_tip_is_the_full_oid() {
     assert_eq!(head.tip.as_deref(), Some(head_oid.as_str()));
     assert_eq!(head_oid.len(), 40, "fixture sanity: oids are 40 chars");
 }
+
+// ---------------------------------------------------------------------------
+// Ordering data: `tip_time` + `is_default` (#135)
+//
+// The frontend sorts branch lists default-first then newest-tip-first, so both
+// fields are the only inputs to that ordering — they cannot be derived from
+// anything else `BranchInfo` carries.
+// ---------------------------------------------------------------------------
+
+/// `origin` with the given extra branches fetched, plus a symbolic
+/// `refs/remotes/origin/HEAD` pointing at `head` — what `git clone` and
+/// `git remote set-head` leave behind, which libgit2's own fetch does not.
+fn with_origin_head(extra: &[&str], head: &str) -> (TempRepo, TempRepo) {
+    let upstream = TempRepo::with_initial_commit("hello\n");
+    {
+        let tip = upstream.repo.head().unwrap().peel_to_commit().unwrap();
+        for name in extra {
+            upstream.repo.branch(name, &tip, false).unwrap();
+        }
+    }
+    let local = TempRepo::with_initial_commit("hello\n");
+    local
+        .repo
+        .remote("origin", upstream.path().to_str().unwrap())
+        .unwrap();
+    {
+        let mut remote = local.repo.find_remote("origin").unwrap();
+        remote
+            .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
+            .unwrap();
+    }
+    local
+        .repo
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            &format!("refs/remotes/origin/{head}"),
+            true,
+            "test fixture",
+        )
+        .unwrap();
+    (local, upstream)
+}
+
+/// Move HEAD onto `keep` and delete `main`, so the `main`/`master`/`trunk`
+/// fallback has to look past its first candidate.
+fn without_main(tr: &TempRepo, keep: &str) {
+    let (backend, handle) = tr.open_with_backend();
+    let tip = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    tr.repo.branch(keep, &tip, false).unwrap();
+    backend.checkout_branch(&handle.id, keep).unwrap();
+    backend.delete_branch(&handle.id, "main", false).unwrap();
+}
+
+fn default_names(branches: &[platypusgit_lib::git::types::BranchInfo]) -> Vec<String> {
+    branches
+        .iter()
+        .filter(|b| b.is_default)
+        .map(|b| b.name.clone())
+        .collect()
+}
+
+#[test]
+fn branch_tip_time_is_the_tip_committer_time() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let head_commit = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    let head_time = head_commit.time().seconds();
+
+    // A deliberately old tip: `Signature::now()` twice in a row would tie on a
+    // one-second clock and prove nothing about ordering.
+    let old_sig =
+        git2::Signature::new("Old", "old@example.com", &git2::Time::new(1_000_000_000, 0)).unwrap();
+    let tree = head_commit.tree().unwrap();
+    let old_oid = tr
+        .repo
+        .commit(None, &old_sig, &old_sig, "old", &tree, &[&head_commit])
+        .unwrap();
+    tr.repo
+        .branch("stale", &tr.repo.find_commit(old_oid).unwrap(), false)
+        .unwrap();
+
+    let (backend, handle) = tr.open_with_backend();
+    let branches = backend.branches(&handle.id).unwrap();
+
+    let head = branches.iter().find(|b| b.name == "main").expect("main");
+    let stale = branches.iter().find(|b| b.name == "stale").expect("stale");
+
+    assert_eq!(head.tip_time, head_time);
+    assert_eq!(stale.tip_time, 1_000_000_000);
+    assert!(
+        head.tip_time > stale.tip_time,
+        "fixture sanity: the stale branch must sort older",
+    );
+}
+
+#[test]
+fn default_branch_follows_remote_head_symbolic_target() {
+    let (tr, _up) = with_origin_head(&[], "main");
+    let (backend, handle) = tr.open_with_backend();
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let mut names = default_names(&branches);
+    names.sort();
+
+    // The local branch AND the remote's copy of it — the picker pins one at the
+    // top of each of its two sections.
+    assert_eq!(names, vec!["main".to_string(), "origin/main".to_string()]);
+}
+
+#[test]
+fn remote_head_outranks_the_local_main_fallback() {
+    // origin/HEAD names `release`, which exists only on the remote. `main`
+    // exists locally and must NOT be treated as the default anyway.
+    let (tr, _up) = with_origin_head(&["release"], "release");
+    let (backend, handle) = tr.open_with_backend();
+
+    let branches = backend.branches(&handle.id).unwrap();
+
+    assert_eq!(default_names(&branches), vec!["origin/release".to_string()]);
+}
+
+#[test]
+fn default_branch_falls_back_to_local_main() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let tip = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    tr.repo.branch("feature", &tip, false).unwrap();
+    let (backend, handle) = tr.open_with_backend();
+
+    let branches = backend.branches(&handle.id).unwrap();
+
+    assert_eq!(default_names(&branches), vec!["main".to_string()]);
+}
+
+/// Candidate order is `main`, `master`, `trunk` — and it is an ORDER, not a
+/// set: a repo carrying both `master` and `trunk` answers `master`. Also pins
+/// that `init.defaultBranch` is not consulted; if it were, this would answer
+/// `trunk`.
+#[test]
+fn default_branch_falls_back_to_master_before_trunk() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    without_main(&tr, "master");
+    let tip = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    tr.repo.branch("trunk", &tip, false).unwrap();
+    tr.repo
+        .config()
+        .unwrap()
+        .set_str("init.defaultBranch", "trunk")
+        .unwrap();
+
+    let (backend, handle) = tr.open_with_backend();
+    let branches = backend.branches(&handle.id).unwrap();
+
+    assert_eq!(default_names(&branches), vec!["master".to_string()]);
+}
+
+#[test]
+fn no_default_branch_when_nothing_answers() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    without_main(&tr, "dev");
+
+    let (backend, handle) = tr.open_with_backend();
+    let branches = backend.branches(&handle.id).unwrap();
+
+    assert!(
+        !branches.is_empty(),
+        "fixture sanity: the repo still has branches",
+    );
+    assert!(default_names(&branches).is_empty());
+}
+
+/// A stale `origin/HEAD` naming a branch nobody has must pin nothing rather
+/// than fail the listing — detection deliberately does not verify existence.
+#[test]
+fn stale_remote_head_pins_nothing() {
+    let (tr, _up) = with_origin_head(&[], "main");
+    tr.repo
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/deleted-long-ago",
+            true,
+            "test fixture",
+        )
+        .unwrap();
+
+    let (backend, handle) = tr.open_with_backend();
+    let branches = backend.branches(&handle.id).unwrap();
+
+    assert!(default_names(&branches).is_empty());
+}
