@@ -1,0 +1,207 @@
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Decides which of the two suites a change can possibly affect.
+  #
+  # Unlike the E2E filter — which rebuilds the whole binary and so has to care
+  # about src/, src-tauri/ and e2e/ together, under a single `app` output —
+  # these two suites have DISJOINT inputs, so they get an output each and skip
+  # independently:
+  #   * `js`   vitest + both typechecks. Read src/, e2e/ and the JS build
+  #            config. No amount of Rust can change their result.
+  #   * `rust` cargo test. Reads src-tauri/ only. It never compiles the
+  #            frontend: asset embedding is behind the `custom-protocol`
+  #            feature, so tauri-build is happy with no dist/ present.
+  #
+  # The filter runs for pull_request events only. On push and workflow_dispatch
+  # there is no reliable diff base, so both outputs fall back to 'true' (a
+  # skipped step has no outputs, and the `||` picks up the empty string) and
+  # both suites run — main is never left untested.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      js: ${{ steps.filter.outputs.js || 'true' }}
+      rust: ${{ steps.filter.outputs.rust || 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD)
+          echo "Changed files:"
+          echo "$changed" | sed 's/^/  /'
+
+          # e2e/ counts as frontend input because `tsc -p e2e/tsconfig.json`
+          # runs in the unit job — the root tsconfig excludes e2e/, so nothing
+          # else typechecks the specs.
+          if echo "$changed" | grep -qE '^(src/|e2e/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$|\.github/workflows/tests\.yml$)'; then
+            echo "js=true" >> "$GITHUB_OUTPUT"
+            echo "-> frontend sources touched, running the unit suite"
+          else
+            echo "js=false" >> "$GITHUB_OUTPUT"
+            echo "-> no frontend sources touched, skipping the unit suite"
+          fi
+
+          if echo "$changed" | grep -qE '^(src-tauri/|\.github/workflows/tests\.yml$)'; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "-> backend sources touched, running the Rust suite"
+          else
+            echo "rust=false" >> "$GITHUB_OUTPUT"
+            echo "-> no backend sources touched, skipping the Rust suite"
+          fi
+
+  # Frontend: both typechecks plus the vitest unit + component tests. Pure
+  # Node/jsdom — no Tauri system deps, no webview, no Rust toolchain.
+  unit:
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck src
+        run: pnpm tsc --noEmit
+
+      - name: Unit and component tests
+        run: pnpm test
+
+      # Separate command on purpose: the root tsconfig has `"exclude": ["e2e"]`,
+      # so the step above never sees the specs. This is the only place they are
+      # compiled anywhere in CI.
+      - name: Typecheck e2e specs
+        run: pnpm exec tsc -p e2e/tsconfig.json --noEmit
+
+  # Backend: the libgit2 integration suite in src-tauri/tests/, which drives
+  # every GitBackend op against real temp repos.
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same package list e2e.yml installs, minus xvfb: linking the crate pulls
+      # in the real Tauri stack, so the -dev packages are needed at BUILD time,
+      # but the tests themselves are headless (libgit2 against temp repos, no
+      # window, no network) and never need an X server at RUNTIME.
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Several fixtures shell out to real `git` (rebase, clone, submodules,
+      # LFS). A bare runner has no committer identity, so those calls would
+      # fail with "Please tell me who you are" before reaching any assertion.
+      - name: Configure git for fixtures
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@platypusgit.test"
+          git config --global init.defaultBranch main
+
+      - name: Cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # The two gate jobs below are the ones worth adding to the branch ruleset as
+  # required checks. They always run and always report, so a PR that legitimately
+  # skipped a suite is not left waiting forever on a check that never arrives —
+  # the trap that makes a path-filtered required check block a PR permanently.
+  # Equally, they fail rather than pass when a suite was skipped for any reason
+  # OTHER than the filter clearing it, so a green tick always means the suite
+  # either ran or could not have been affected.
+  unit-tests:
+    needs: [changes, unit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the unit result
+        env:
+          FILTER: ${{ needs.changes.result }}
+          TOUCHED: ${{ needs.changes.outputs.js }}
+          RESULT: ${{ needs.unit.result }}
+        run: |
+          echo "filter job: $FILTER / frontend touched: $TOUCHED / unit job: $RESULT"
+          # A failed filter job skips `unit` too. Without this check the gate
+          # would read that skip as "not required" and pass a PR whose suite
+          # never ran at all.
+          if [ "$FILTER" != "success" ]; then
+            echo "The change-filter job did not succeed, so the suite never ran."
+            exit 1
+          fi
+          case "$RESULT" in
+            success) echo "Unit suite passed." ;;
+            skipped)
+              # Only legitimate when the filter decided no frontend code was touched.
+              if [ "$TOUCHED" != "false" ]; then
+                echo "Unit suite was skipped even though frontend code changed."
+                exit 1
+              fi
+              echo "No frontend code touched — unit suite not required for this change."
+              ;;
+            *) echo "Unit suite did not pass."; exit 1 ;;
+          esac
+
+  rust-tests:
+    needs: [changes, rust]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the Rust result
+        env:
+          FILTER: ${{ needs.changes.result }}
+          TOUCHED: ${{ needs.changes.outputs.rust }}
+          RESULT: ${{ needs.rust.result }}
+        run: |
+          echo "filter job: $FILTER / backend touched: $TOUCHED / rust job: $RESULT"
+          if [ "$FILTER" != "success" ]; then
+            echo "The change-filter job did not succeed, so the suite never ran."
+            exit 1
+          fi
+          case "$RESULT" in
+            success) echo "Rust suite passed." ;;
+            skipped)
+              # Only legitimate when the filter decided no backend code was touched.
+              if [ "$TOUCHED" != "false" ]; then
+                echo "Rust suite was skipped even though backend code changed."
+                exit 1
+              fi
+              echo "No backend code touched — Rust suite not required for this change."
+              ;;
+            *) echo "Rust suite did not pass."; exit 1 ;;
+          esac
