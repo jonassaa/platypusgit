@@ -224,6 +224,29 @@ Four layers, each run independently:
     second window's open/transition/close (`switchWindow` → "No window could be
     found").
 
+### What CI runs
+
+Two workflows cover the four layers, both on PRs to `main`, pushes to `main`,
+and `workflow_dispatch`:
+
+- `.github/workflows/tests.yml` — the `unit` job (`pnpm tsc --noEmit`,
+  `pnpm test`, and `pnpm exec tsc -p e2e/tsconfig.json --noEmit`, which is the
+  ONLY place the e2e specs are typechecked since the root tsconfig excludes
+  `e2e/`) and the `rust` job (`cargo test`). The Rust job installs e2e.yml's
+  Tauri `-dev` packages because linking the crate needs them, but no xvfb: the
+  integration tests drive libgit2 against temp repos, with no window and no
+  network.
+- `.github/workflows/e2e.yml` — the webview suite.
+
+Each workflow front-loads a `changes` job that diffs against the PR base and
+skips suites the change cannot affect, then reports through an always-running
+gate job (`unit-tests`, `rust-tests`, `e2e-linux`). **The gate is what a branch
+ruleset should require, never the worker job** — a required check that gets
+skipped never reports and blocks the PR forever. The gate also fails on a skip
+it cannot explain, so a green tick means the suite ran or was provably
+irrelevant. On `push`/`workflow_dispatch` there is no reliable diff base, so
+every filter output falls back to `true` and `main` is never left untested.
+
 ## Architecture
 
 ### Backend (`src-tauri/src/`)
@@ -1097,7 +1120,6 @@ lib/
 ## Things deliberately NOT in codebase
 
 - Shell integration / Finder / Explorer overlays (out of scope).
-- CI config.
 - Custom icons — Tauri defaults for now. Replace before first release.
 - Code signing config for bundles.
 - Broad test suite — unit tests exist for pure logic (graphLayout, buildRebasePlan) + libgit2 smoke. Add tests alongside each feature as built.
