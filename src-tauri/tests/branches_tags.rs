@@ -503,10 +503,15 @@ fn no_default_branch_when_nothing_answers() {
     assert!(default_names(&branches).is_empty());
 }
 
-/// A stale `origin/HEAD` naming a branch nobody has must pin nothing rather
-/// than fail the listing — detection deliberately does not verify existence.
+/// A stale `origin/HEAD` must not suppress the local fallback.
+///
+/// The real-world shape: cloned when the default was `master`, upstream renamed
+/// it to `main` and deleted `master`. `git fetch --prune` does NOT rewrite
+/// `refs/remotes/origin/HEAD`, so the symref still names a ref nobody has. If
+/// detection took that name on trust nothing would ever be pinned again, with
+/// no error to explain it.
 #[test]
-fn stale_remote_head_pins_nothing() {
+fn stale_remote_head_falls_back_to_the_local_default() {
     let (tr, _up) = with_origin_head(&[], "main");
     tr.repo
         .reference_symbolic(
@@ -519,6 +524,35 @@ fn stale_remote_head_pins_nothing() {
 
     let (backend, handle) = tr.open_with_backend();
     let branches = backend.branches(&handle.id).unwrap();
+    let mut names = default_names(&branches);
+    names.sort();
 
+    assert_eq!(names, vec!["main".to_string(), "origin/main".to_string()]);
+}
+
+/// ...and when the local fallback has nothing to offer either, nothing is
+/// pinned. Both halves matter: the previous test proves the fall-through
+/// happens, this one proves it still terminates.
+#[test]
+fn stale_remote_head_with_no_local_candidate_pins_nothing() {
+    let (tr, _up) = with_origin_head(&[], "main");
+    tr.repo
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/deleted-long-ago",
+            true,
+            "test fixture",
+        )
+        .unwrap();
+    without_main(&tr, "dev");
+
+    let (backend, handle) = tr.open_with_backend();
+    let branches = backend.branches(&handle.id).unwrap();
+
+    // `origin/main` is still fetched, but nothing names it as the default.
+    assert!(
+        branches.iter().any(|b| b.name == "origin/main"),
+        "fixture sanity: the remote-tracking ref is still there",
+    );
     assert!(default_names(&branches).is_empty());
 }

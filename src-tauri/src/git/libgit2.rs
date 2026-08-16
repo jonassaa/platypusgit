@@ -1991,9 +1991,12 @@ const DEFAULT_BRANCH_CANDIDATES: [&str; 3] = ["main", "master", "trunk"];
 /// that describes branches which do not exist yet and would name `main` in a
 /// repository whose default is `master`.
 ///
-/// The name is deliberately NOT verified to exist. A stale `origin/HEAD`
-/// pointing at a deleted branch then matches no row, which degrades to case 3
-/// with no error rather than failing the whole listing.
+/// A remote's `HEAD` is only ACCEPTED when the ref it names still exists.
+/// `git fetch --prune` does not rewrite the symref, so a repository cloned when
+/// the default was `master` keeps pointing at `refs/remotes/origin/master`
+/// forever after upstream renames it — and taking that name on trust would
+/// suppress case 2 as well, leaving a perfectly good local `main` unpinned with
+/// nothing to explain why.
 pub fn detect_default_branch(repo: &Repository) -> Option<String> {
     let mut remotes: Vec<String> = match repo.remotes() {
         Ok(list) => list.iter().flatten().map(String::from).collect(),
@@ -2013,7 +2016,9 @@ pub fn detect_default_branch(repo: &Repository) -> Option<String> {
             continue;
         };
         if let Some(name) = target.strip_prefix(&prefix) {
-            if !name.is_empty() && name != "HEAD" {
+            // A dangling symref answers nothing. Fall through to the next
+            // remote and then to the local candidates.
+            if !name.is_empty() && name != "HEAD" && repo.find_reference(target).is_ok() {
                 return Some(name.to_string());
             }
         }
