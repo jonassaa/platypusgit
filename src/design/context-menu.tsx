@@ -1565,7 +1565,7 @@ export async function promptStashPaths(
   // to write an entry without one — the same distinction pgPrompt inherits
   // from window.prompt.
   if (message == null) return;
-  await useRepoStore.getState().stashSavePaths(
+  const oid = await useRepoStore.getState().stashSavePaths(
     {
       message: message === "" ? null : message,
       includeUntracked: untracked.length > 0,
@@ -1573,6 +1573,13 @@ export async function promptStashPaths(
     },
     paths,
   );
+  // `null` covers two outcomes: git found nothing to save (it exits 0 saying
+  // so) and the op failed. The second already has the error banner, so only the
+  // first needs a word — otherwise a click on "Stash 3 files" does nothing
+  // visible at all.
+  if (oid === null && !useRepoStore.getState().error) {
+    pgFlash("nothing to stash in those files");
+  }
 }
 
 export function multiFileMenuItems(
@@ -1615,10 +1622,16 @@ export function multiFileMenuItems(
       },
     });
   }
-  // Partial stash (#133). Embedded repos are excluded for the same reason they
-  // cannot be staged — `git stash push -- <embedded repo>` has nothing to save
-  // and fails the whole pathspec.
-  const stashable = all.filter((p) => !embeddedPaths.includes(p));
+  // Partial stash (#133).
+  //
+  // The set is the CHANGED paths, not every selected one: the repo browser's
+  // all-files view puts unmodified files in `paths` too, and a stash of only
+  // those is a click that does nothing (git exits 0 with "No local changes to
+  // save"). Embedded repos are excluded for the same reason they cannot be
+  // staged.
+  const stashable = Array.from(new Set([...stagedPaths, ...unstagedPaths])).filter(
+    (p) => !embeddedPaths.includes(p),
+  );
   if (stashable.length) {
     items.push({
       icon: "stash",

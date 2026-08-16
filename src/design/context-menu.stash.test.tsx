@@ -220,6 +220,41 @@ describe("partial stash from a selection", () => {
     labeled(items, /^Stash 1 file…$/);
   });
 
+  // The repo browser's all-files view puts unmodified files in `paths`, and a
+  // stash of only those is a click that does nothing at all.
+  it("counts only the CHANGED paths, not everything selected", async () => {
+    render(
+      <WithDialogs>
+        <div />
+      </WithDialogs>,
+    );
+    void labeled(
+      multiFileMenuItems(
+        sel({
+          paths: ["a.txt", "clean.txt", "staged.txt"],
+          unstagedPaths: ["a.txt"],
+          stagedPaths: ["staged.txt"],
+        }),
+      ),
+      /^Stash 2 files/,
+    ).onClick?.();
+
+    await screen.findByTestId("dialog-input");
+    await acceptDialog("changed only");
+
+    await waitFor(() => expect(calls("stash_save_paths").length).toBe(1));
+    expect(calls("stash_save_paths")[0].args.paths).toEqual(["staged.txt", "a.txt"]);
+  });
+
+  it("offers no stash entry when nothing in the selection has changed", () => {
+    const items = multiFileMenuItems(
+      sel({ paths: ["clean.txt"], unstagedPaths: [], stagedPaths: [] }),
+    );
+    expect(
+      items.find((i) => typeof i.label === "string" && /^Stash/.test(i.label)),
+    ).toBeUndefined();
+  });
+
   it("offers no stash entry when the selection is embedded repos only", () => {
     const items = multiFileMenuItems(
       sel({ paths: ["vendor/thing"], unstagedPaths: [], embeddedPaths: ["vendor/thing"] }),
