@@ -162,12 +162,21 @@ export function CommandPalette() {
     return { flat: flatOut, groups: groupsOut };
   }, [source, query, step.kind, activeChip]);
 
+  // Where the cursor rests before the user aims it. A pick step may decline a
+  // resting row (`cursor: "none"`) so Enter does nothing until they do — the
+  // branch steps use it, because #135 pins the default branch at row 0 and
+  // "⌘P, delete branch, Enter, Enter" would otherwise delete `main`. Only
+  // while the query is empty: once they type, the top match IS the target.
+  const restingIndex =
+    step.kind === "pick" && step.cursor === "none" && query === "" ? -1 : 0;
+
   React.useEffect(() => {
     if (!open) return;
-    setActiveIndex(0);
+    setActiveIndex(restingIndex);
     if (repoOpen) void useRepoStore.getState().refreshAllFiles();
     const t = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, repoOpen, stack.length]);
 
   // Home-screen rows (computed before early return so navRows is available for effects).
@@ -198,8 +207,9 @@ export function CommandPalette() {
       ? flat.filter((r) => r.item.type === activeChip)
       : flat;
 
-  React.useEffect(() => { setActiveIndex(0); }, [query, activeChip]);
+  React.useEffect(() => { setActiveIndex(restingIndex); }, [query, activeChip, restingIndex]);
   React.useEffect(() => {
+    // -1 (no resting row) is below every length, so this leaves it alone.
     if (activeIndex >= navRows.length) setActiveIndex(Math.max(0, navRows.length - 1));
   }, [navRows.length, activeIndex]);
   React.useEffect(() => {

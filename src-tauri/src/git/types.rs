@@ -198,6 +198,13 @@ pub struct BranchInfo {
     pub ahead: usize,
     pub behind: usize,
     pub tip: Option<String>,
+    /// Committer time of the tip commit, seconds since the epoch. `0` when the
+    /// tip cannot be resolved (unborn or broken ref) — which sorts last under
+    /// the frontend's newest-first ordering.
+    pub tip_time: i64,
+    /// Is this ref the repository's default branch (or a remote's copy of it)?
+    /// See `libgit2::detect_default_branch` for how that is decided.
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

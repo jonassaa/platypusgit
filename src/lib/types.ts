@@ -178,6 +178,13 @@ export interface BranchInfo {
   ahead: number;
   behind: number;
   tip: string | null;
+  /**
+   * Committer time of the tip commit, seconds since the epoch. `0` when the tip
+   * could not be resolved, which sorts last under newest-first ordering.
+   */
+  tipTime: number;
+  /** Is this the repository's default branch (or a remote's copy of it)? */
+  isDefault: boolean;
 }
 
 export interface TagInfo {

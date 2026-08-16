@@ -24,6 +24,8 @@ const branches: BranchInfo[] = [
     ahead: 0,
     behind: 0,
     tip: "a".repeat(40),
+    tipTime: 0,
+    isDefault: false,
   },
   {
     name: "feature",
@@ -33,6 +35,8 @@ const branches: BranchInfo[] = [
     ahead: 0,
     behind: 0,
     tip: "b".repeat(40),
+    tipTime: 0,
+    isDefault: false,
   },
 ];
 

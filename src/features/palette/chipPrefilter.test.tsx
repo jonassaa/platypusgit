@@ -28,6 +28,7 @@ vi.mock("./fuzzyMatch", async (importOriginal) => {
 
 const mkBranch = (name: string, isHead = false): BranchInfo => ({
   name, isHead, isRemote: false, upstream: null, ahead: 0, behind: 0, tip: "deadbeef",
+  tipTime: 0, isDefault: false,
 });
 const mkCommit = (oid: string, summary: string): CommitInfo => ({
   oid, shortOid: oid.slice(0, 7), summary, body: null, author: "Dev", email: "",

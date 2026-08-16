@@ -22,6 +22,8 @@ const mkBranch = (name: string, isHead = false): BranchInfo => ({
   ahead: 0,
   behind: 0,
   tip: null,
+  tipTime: 0,
+  isDefault: false,
 });
 
 const mkCommit = (oid: string, summary: string): CommitInfo => ({

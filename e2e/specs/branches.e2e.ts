@@ -1,4 +1,4 @@
-import { browser, $, expect } from "@wdio/globals";
+import { browser, $, $$, expect } from "@wdio/globals";
 import { basicRepo, manyRefsRepo, TempRepo } from "../support/tempRepo";
 import { openRepo, resetApp, switchScreen } from "../support/app";
 
@@ -120,5 +120,43 @@ describe("branches — many refs layout", () => {
 
     // Toolbar survives — filter input still visible at the top.
     await expect($('input[placeholder="Filter by name…"]')).toBeDisplayed();
+  });
+
+  // #135: the default branch pins to the top of the picker. This fixture is the
+  // sharpest case for it — all 61 branches were cut from one commit, so they
+  // tie on tip time and fall back to name order, which puts `feature/branch-00`
+  // first and `main` sixty rows below the fold.
+  it("pins the default branch to the top of the branch picker", async () => {
+    const chip = $('[data-testid="branch-chip"]');
+    await chip.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "branch chip never appeared",
+    });
+    await chip.click();
+
+    await $('input[placeholder="Switch to branch…"]').waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "branch search input never appeared",
+    });
+
+    // The store's branch fetch resolves after the popover mounts; wait for the
+    // full set rather than asserting against a partial list.
+    await browser.waitUntil(
+      async () => [...(await $$("[data-branch-row]"))].length > 60,
+      {
+        timeout: 20_000,
+        timeoutMsg: "picker never listed every branch",
+      },
+    );
+
+    // Read the name span directly: the row also renders a `HEAD` badge, and
+    // getText() joins the two differently across webviews.
+    const firstRow = await browser.execute(
+      () =>
+        document.querySelector("[data-branch-row]")?.querySelector("span")
+          ?.textContent ?? null,
+    );
+
+    expect(firstRow).toBe("main");
   });
 });

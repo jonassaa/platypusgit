@@ -48,6 +48,8 @@ const branch = (name: string, isHead: boolean, tip: string): BranchInfo => ({
   ahead: 0,
   behind: 0,
   tip,
+  tipTime: 0,
+  isDefault: false,
 });
 
 function setup(opts: { repoState?: RepoState } = {}) {

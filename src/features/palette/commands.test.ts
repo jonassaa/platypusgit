@@ -1,6 +1,12 @@
 // src/features/palette/commands.test.ts
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { branchItems, buildCommands, commitItems, fileItems } from "./commands";
+import {
+  branchItems,
+  branchPickStep,
+  buildCommands,
+  commitItems,
+  fileItems,
+} from "./commands";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useRecentsStore } from "@/features/repo/useRecentsStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
@@ -13,10 +19,12 @@ import type { BranchInfo, CommitInfo, FileStatus, StashInfo } from "@/lib/types"
 
 const mkBranch = (name: string, isHead = false, upstream: string | null = null): BranchInfo => ({
   name, isHead, isRemote: false, upstream, ahead: 0, behind: 0, tip: "deadbeef",
+  tipTime: 0, isDefault: false,
 });
 
 const mkRemoteBranch = (name: string): BranchInfo => ({
   name, isHead: false, isRemote: true, upstream: null, ahead: 0, behind: 0, tip: "deadbeef",
+  tipTime: 0, isDefault: false,
 });
 
 const mkCommit = (oid: string, summary: string): CommitInfo => ({
@@ -319,6 +327,46 @@ describe("branchItems", () => {
     expect(items[0].icon).toBe("merge");
   });
 
+  // #135. Nothing pinned this before: the old fixture happened to order the
+  // same way with and without the comparator, so a broken ordering would have
+  // gone unnoticed here. Assert it on `branchItems` itself — it is pure. The
+  // RENDERED palette order is deliberately not asserted anywhere: the root step
+  // adds `frecencyScore` (Date.now() + localStorage) and caps each group, so
+  // pinning that would be fragile by construction.
+  it("pins the default branch and orders the rest by recency", () => {
+    setRepo({
+      branches: [
+        { ...mkBranch("chore/old"), tipTime: 50 },
+        { ...mkBranch("main"), tipTime: 100, isDefault: true },
+        { ...mkBranch("feat/fresh"), tipTime: 900 },
+      ],
+    });
+    const items = branchItems({ icon: "branch", onPick: () => {} });
+    expect(items.map((i) => i.label)).toEqual(["main", "feat/fresh", "chore/old"]);
+  });
+
+  // The picker renders two labelled sections and the Branches screen splits by
+  // view; a pick step renders ONE list, so the grouping has to happen here or
+  // `main` and `origin/main` (both `isDefault`) take rows 1-2 and the rest
+  // interleave by tip time.
+  it("keeps locals ahead of remotes, ordering within each group", () => {
+    setRepo({
+      branches: [
+        { ...mkRemoteBranch("origin/zzz"), tipTime: 950 },
+        { ...mkBranch("zzz-local"), tipTime: 900 },
+        { ...mkRemoteBranch("origin/main"), tipTime: 100, isDefault: true },
+        { ...mkBranch("main"), tipTime: 100, isDefault: true },
+      ],
+    });
+    const items = branchItems({ icon: "branch", onPick: () => {} });
+    expect(items.map((i) => i.label)).toEqual([
+      "main",
+      "zzz-local",
+      "origin/main",
+      "origin/zzz",
+    ]);
+  });
+
   it("run() closes the palette, then calls onPick with the branch name", () => {
     setRepo({ branches: [mkBranch("feat/x")] });
     const order: string[] = [];
@@ -327,6 +375,41 @@ describe("branchItems", () => {
     } as never);
     branchItems({ icon: "branch", onPick: (n) => order.push(`pick:${n}`) })[0].run();
     expect(order).toEqual(["close", "pick:feat/x"]);
+  });
+});
+
+// The structural half of #135's resting-cursor rule: one constructor sets
+// `cursor: "none"`, and every branch step in the catalog is built from it, so a
+// new one cannot silently default to preselecting the pinned default branch.
+describe("branchPickStep", () => {
+  beforeEach(resetStores);
+
+  it("always declines a resting cursor", () => {
+    setRepo({ branches: [mkBranch("main"), mkBranch("feat/x")] });
+    const s = branchPickStep({
+      title: "Do a thing",
+      icon: "branch",
+      onPick: () => {},
+    });
+    expect(s).toMatchObject({ kind: "pick", title: "Do a thing", cursor: "none" });
+    expect(s.kind === "pick" && s.items.map((i) => i.label)).toEqual([
+      "feat/x",
+      "main",
+    ]);
+  });
+
+  it("passes its row options straight through", () => {
+    setRepo({ branches: [mkBranch("main", true), mkBranch("feat/x")] });
+    const s = branchPickStep({
+      title: "T",
+      idPrefix: "pick-compare",
+      filter: (b) => !b.isHead,
+      icon: "diff",
+      onPick: () => {},
+    });
+    expect(s.kind === "pick" && s.items.map((i) => i.id)).toEqual([
+      "pick-compare:l:feat/x",
+    ]);
   });
 });
 

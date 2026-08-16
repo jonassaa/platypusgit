@@ -24,6 +24,8 @@ const branch = (over: Partial<BranchInfo> = {}): BranchInfo => ({
   ahead: 0,
   behind: 0,
   tip: "abc1234",
+  tipTime: 0,
+  isDefault: false,
   ...over,
 });
 

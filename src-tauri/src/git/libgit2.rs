@@ -1971,6 +1971,84 @@ pub fn default_branch_name() -> String {
         .unwrap_or_else(|| "main".to_string())
 }
 
+/// Local branch names tried, in order, when no remote tells us what the
+/// default is.
+const DEFAULT_BRANCH_CANDIDATES: [&str; 3] = ["main", "master", "trunk"];
+
+/// The default branch of an OPEN repository, as a short branch name (`main`),
+/// or `None` when nothing answers.
+///
+/// Priority, per the #135 spec:
+///
+/// 1. `refs/remotes/<remote>/HEAD`'s symbolic target — git's own answer, set by
+///    `git clone` and `git remote set-head`. `origin` is tried first, then the
+///    remaining remotes alphabetically, so a repo with several answers
+///    deterministically. A non-symbolic `…/HEAD` names no branch and is skipped.
+/// 2. The first of `main`, `master`, `trunk` that exists as a local branch.
+/// 3. Nothing.
+///
+/// Deliberately NOT `init.defaultBranch` (see `default_branch_name` above):
+/// that describes branches which do not exist yet and would name `main` in a
+/// repository whose default is `master`.
+///
+/// A remote's `HEAD` is only ACCEPTED when the ref it names still exists.
+/// `git fetch --prune` does not rewrite the symref, so a repository cloned when
+/// the default was `master` keeps pointing at `refs/remotes/origin/master`
+/// forever after upstream renames it — and taking that name on trust would
+/// suppress case 2 as well, leaving a perfectly good local `main` unpinned with
+/// nothing to explain why.
+pub fn detect_default_branch(repo: &Repository) -> Option<String> {
+    let mut remotes: Vec<String> = match repo.remotes() {
+        Ok(list) => list.iter().flatten().map(String::from).collect(),
+        Err(_) => Vec::new(),
+    };
+    // `false` sorts before `true`, so `origin` leads and the rest follow
+    // alphabetically.
+    remotes.sort_by(|a, b| (a != "origin", a).cmp(&(b != "origin", b)));
+
+    for remote in &remotes {
+        let prefix = format!("refs/remotes/{remote}/");
+        let head_ref = format!("{prefix}HEAD");
+        let Ok(reference) = repo.find_reference(&head_ref) else {
+            continue;
+        };
+        let Some(target) = reference.symbolic_target() else {
+            continue;
+        };
+        if let Some(name) = target.strip_prefix(&prefix) {
+            // A dangling symref answers nothing. Fall through to the next
+            // remote and then to the local candidates.
+            if !name.is_empty() && name != "HEAD" && repo.find_reference(target).is_ok() {
+                return Some(name.to_string());
+            }
+        }
+    }
+
+    DEFAULT_BRANCH_CANDIDATES
+        .iter()
+        .find(|name| repo.find_branch(name, BranchType::Local).is_ok())
+        .map(|name| (*name).to_string())
+}
+
+/// Does this branch row carry the repository's default branch?
+///
+/// A local branch matches by name. A remote branch matches on the part after
+/// the FIRST `/`: git forbids `/` in a remote name but allows it in a branch
+/// name, so `origin/feature/x` splits as `origin` + `feature/x`. With two
+/// remotes both `origin/main` and `upstream/main` match — they are both "the
+/// default branch, on a remote", and they sit adjacent at the top of the same
+/// section.
+fn is_default_branch_name(name: &str, is_remote: bool, default: Option<&str>) -> bool {
+    let Some(default) = default else {
+        return false;
+    };
+    if is_remote {
+        name.split_once('/').map(|(_, rest)| rest) == Some(default)
+    } else {
+        name == default
+    }
+}
+
 impl GitBackend for Libgit2Backend {
     fn open(&self, path: &Path) -> AppResult<RepoHandle> {
         if !path.exists() {
@@ -3500,6 +3578,9 @@ impl GitBackend for Libgit2Backend {
             let head_ref = repo.head().ok();
             let head_name = head_ref.as_ref().and_then(|r| r.shorthand()).map(String::from);
 
+            // Detected once per listing, not per branch: it walks the remotes.
+            let default_branch = detect_default_branch(repo);
+
             let mut out = Vec::new();
             let branches = repo.branches(None)?;
             for b in branches {
@@ -3517,7 +3598,16 @@ impl GitBackend for Libgit2Backend {
                 // truncated value silently never matches — no error, just a
                 // feature that quietly does nothing. Display sites shorten it
                 // themselves via `shortSha`.
-                let tip = branch.get().target().map(|o| o.to_string());
+                let tip_oid = branch.get().target();
+                let tip = tip_oid.map(|o| o.to_string());
+                // Recency for the frontend's ordering (#135). One `find_commit`
+                // off the oid just read — same cost class as the
+                // `graph_ahead_behind` below. An unresolvable tip yields 0,
+                // which sorts last under newest-first.
+                let tip_time = tip_oid
+                    .and_then(|o| repo.find_commit(o).ok())
+                    .map(|c| c.time().seconds())
+                    .unwrap_or(0);
 
                 let (upstream, ahead, behind) = if !is_remote {
                     match branch.upstream() {
@@ -3537,6 +3627,9 @@ impl GitBackend for Libgit2Backend {
                     (None, 0, 0)
                 };
 
+                let is_default =
+                    is_default_branch_name(&name, is_remote, default_branch.as_deref());
+
                 out.push(BranchInfo {
                     name,
                     is_head,
@@ -3545,6 +3638,8 @@ impl GitBackend for Libgit2Backend {
                     ahead,
                     behind,
                     tip,
+                    tip_time,
+                    is_default,
                 });
             }
             Ok(out)
