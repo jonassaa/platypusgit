@@ -22,6 +22,7 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { orderBranches } from "@/features/branches/orderBranches";
+import { TagSignatureBadge } from "@/features/signing/TagSignatureBadge";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { BranchInfo, StashInfo, TagInfo } from "@/lib/types";
 // `tip` is a full oid (see list_branches); these two rows show it short.
@@ -512,7 +513,21 @@ export function BranchesScreen() {
                   {t.shortOid}
                 </div>
                 <div style={{ ...cellStyle, color: "var(--fg-3)" }}>—</div>
-                <div style={{ ...cellStyle, color: "var(--fg-3)" }}>tag</div>
+                <div style={{ ...cellStyle, color: "var(--fg-3)", gap: 4 }}>
+                  {t.signed ? "signed tag" : "tag"}
+                  {/* Read off the tag object, so it costs nothing per row and
+                      claims no verdict. The graded badge is in the inspector,
+                      where exactly one tag is verified at a time (#132). */}
+                  {t.signed && (
+                    <span
+                      data-testid="tag-signed-glyph"
+                      title="This tag carries a signature"
+                      style={{ display: "inline-flex", color: "var(--fg-2)" }}
+                    >
+                      <PGIcon name="lock" size={11} />
+                    </span>
+                  )}
+                </div>
                 <div
                   style={{ ...cellStyle, justifyContent: "center", padding: 0 }}
                 >
@@ -934,6 +949,11 @@ function TagInspector({ tag }: { tag: TagInfo }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <KV k="Oid" v={<span className="mono">{tag.shortOid}</span>} />
+        {/* Verified lazily, for this one selected tag (#132) — see
+            TagSignatureBadge for why it is not on every row. */}
+        {tag.signed && (
+          <KV k="Signature" v={<TagSignatureBadge name={tag.name} />} />
+        )}
       </div>
     </>
   );

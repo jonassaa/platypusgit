@@ -27,47 +27,23 @@ const LOOK: Record<
  * Settle time before verifying, matching the inline commit diff rendered beside
  * this badge in the same panel (History's INLINE_DIFF_DEBOUNCE_MS).
  *
- * `verify_commit` shells out to `git show`, so without this, arrowing through the
- * log spawns one process per row passed over — all of them still queued behind
+ * Verification shells out to git, so without this, arrowing through the log
+ * spawns one process per row passed over — all of them still queued behind
  * `spawn_blocking` after the user has stopped moving.
  */
-const VERIFY_DEBOUNCE_MS = 100;
+export const VERIFY_DEBOUNCE_MS = 100;
 
 /**
- * Signature status of one commit (#61 D6).
- *
- * Verifies **lazily, for this commit only** — a badge on every log row would
- * mean a gpg/ssh-keygen process per walked commit, which fights the paginated
- * log walk and the windowed list.
+ * The rendering half of a signature badge, shared by the commit and tag badges
+ * (#132) so one set of states cannot acquire two vocabularies.
  */
-export function SignatureBadge({ oid }: { oid: string }) {
-  const repoId = useRepoStore((s) => s.current?.id ?? null);
-  const [status, setStatus] = React.useState<SignatureStatus | null>(null);
-
-  React.useEffect(() => {
-    if (!repoId || !oid) {
-      setStatus(null);
-      return;
-    }
-    let cancelled = false;
-    setStatus(null);
-    const handle = window.setTimeout(() => {
-      verifyCommit(repoId, oid)
-        .then((s) => {
-          if (!cancelled) setStatus(s);
-        })
-        .catch(() => {
-          // A verification failure is not worth an error banner: the commit and
-          // its diff are still perfectly viewable.
-          if (!cancelled) setStatus(null);
-        });
-    }, VERIFY_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [repoId, oid]);
-
+export function SignatureBadgeView({
+  status,
+  testId = "signature-badge",
+}: {
+  status: SignatureStatus | null;
+  testId?: string;
+}) {
   const look = status ? LOOK[status.state] : null;
   if (!look) return null;
 
@@ -77,7 +53,8 @@ export function SignatureBadge({ oid }: { oid: string }) {
 
   return (
     <span
-      data-testid="signature-badge"
+      data-testid={testId}
+      data-sig-state={status?.state}
       title={title}
       style={{
         display: "inline-flex",
@@ -92,4 +69,63 @@ export function SignatureBadge({ oid }: { oid: string }) {
       {look.label}
     </span>
   );
+}
+
+/**
+ * Debounced lazy verification, shared by both badges. `verify` is re-run
+ * whenever the key it closes over changes; a failure clears the status rather
+ * than raising a banner.
+ */
+export function useLazyVerification(
+  key: string | null,
+  verify: (() => Promise<SignatureStatus>) | null,
+): SignatureStatus | null {
+  const [status, setStatus] = React.useState<SignatureStatus | null>(null);
+  // Read through a ref so a caller need not memoize the closure: the effect
+  // keys on the identifier, which is what actually decides the answer.
+  const verifyRef = React.useRef(verify);
+  verifyRef.current = verify;
+
+  React.useEffect(() => {
+    const run = verifyRef.current;
+    if (!key || !run) {
+      setStatus(null);
+      return;
+    }
+    let cancelled = false;
+    setStatus(null);
+    const handle = window.setTimeout(() => {
+      run()
+        .then((s) => {
+          if (!cancelled) setStatus(s);
+        })
+        .catch(() => {
+          // A verification failure is not worth an error banner: the object and
+          // everything around it are still perfectly viewable.
+          if (!cancelled) setStatus(null);
+        });
+    }, VERIFY_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [key]);
+
+  return status;
+}
+
+/**
+ * Signature status of one commit (#61 D6).
+ *
+ * Verifies **lazily, for this commit only** — a badge on every log row would
+ * mean a gpg/ssh-keygen process per walked commit, which fights the paginated
+ * log walk and the windowed list.
+ */
+export function SignatureBadge({ oid }: { oid: string }) {
+  const repoId = useRepoStore((s) => s.current?.id ?? null);
+  const status = useLazyVerification(
+    repoId && oid ? `${repoId}:${oid}` : null,
+    repoId && oid ? () => verifyCommit(repoId, oid) : null,
+  );
+  return <SignatureBadgeView status={status} />;
 }

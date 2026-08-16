@@ -52,6 +52,7 @@ import { BranchChip } from "@/features/branches/BranchChip";
 import { CloneDialog } from "@/features/create/CloneDialog";
 import { CredentialDialog } from "@/features/auth/CredentialDialog";
 import { InitDialog } from "@/features/create/InitDialog";
+import { CreateTagDialog } from "@/features/tags/CreateTagDialog";
 import { OperationBar } from "@/features/repo/OperationBar";
 import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
 import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
@@ -361,6 +362,10 @@ export function AppShell() {
       <CheatSheet />
       <CloneDialog />
       <InitDialog />
+      {/* Create tag (#132). Mounted here rather than in a screen because two of
+          its three call sites — a context-menu item builder and a palette step —
+          are not React components. Renders nothing until one opens it. */}
+      <CreateTagDialog />
       {error && (
         <div
           role="alert"

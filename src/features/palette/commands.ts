@@ -13,6 +13,7 @@ import { useTabsStore } from "@/features/repo/useTabsStore";
 import { openCompare } from "@/features/compare/useCompareStore";
 import { WORKDIR } from "@/features/compare/compareSides";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
+import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
@@ -595,18 +596,19 @@ export function buildCommands(): PaletteItem[] {
   });
 
   // -- tag ops --
-  items.push({
-    type: "command", id: "action:create-tag",
-    search: "Create tag", label: "Create tag…", icon: "tag",
-    run: step(() => ({
-      kind: "input", title: "Create tag (at HEAD)", placeholder: "v1.2.3",
-      validate: (v) => (!v.trim() ? "Tag name required" : headTip ? null : "No commit to tag"),
-      onSubmit: (v) => {
+  // Hands off to the create-tag dialog rather than taking a name inline: a tag
+  // carries three values now (name, annotation, signing), and a palette input
+  // step takes one (#132).
+  if (headTip) {
+    items.push({
+      type: "command", id: "action:create-tag",
+      search: "Create tag", label: "Create tag (at HEAD)…", icon: "tag",
+      run: () => {
         palette().closePalette();
-        if (headTip) void repo.createTag(v.trim(), { oid: headTip, annotation: null });
+        void openCreateTag({ oid: headTip });
       },
-    })),
-  });
+    });
+  }
   if (repo.tags.length) {
     items.push({
       type: "command", id: "action:delete-tag",

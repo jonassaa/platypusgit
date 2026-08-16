@@ -558,7 +558,17 @@ export async function setUpstream(
 
 export interface TagTarget {
   oid: string;
+  /** null = lightweight tag; a string = annotated tag with this message. */
   annotation: string | null;
+  /**
+   * Sign this tag (#132). `null` follows `tag.gpgsign`; a boolean overrides it
+   * for this tag — the same contract `CommitOptions.sign` has.
+   *
+   * Signing requires an annotation: `true` with `annotation: null` is refused
+   * by the backend rather than silently dropped, because a lightweight tag is a
+   * ref with no object to sign.
+   */
+  sign?: boolean | null;
 }
 
 export async function createTag(
@@ -571,6 +581,21 @@ export async function createTag(
 
 export async function deleteTag(repoId: string, name: string): Promise<void> {
   return invoke<void>("delete_tag", { repoId, name });
+}
+
+/**
+ * Signature status of ONE tag (#132).
+ *
+ * Lazy for the same reason `verifyCommit` is: the Branches screen renders every
+ * tag at once, so a verdict per row would be a signer process per row on every
+ * refresh. `TagInfo.signed` carries the free half — whether a signature is
+ * there at all.
+ */
+export async function verifyTag(
+  repoId: string,
+  name: string,
+): Promise<SignatureStatus> {
+  return invoke<SignatureStatus>("verify_tag", { repoId, name });
 }
 
 export async function mergeBranch(repoId: string, name: string): Promise<void> {

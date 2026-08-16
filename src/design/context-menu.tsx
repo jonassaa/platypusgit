@@ -20,6 +20,7 @@ import {
 } from "@/features/compare/useCompareStore";
 import { WORKDIR } from "@/features/compare/compareSides";
 import { currentBranch } from "@/lib/derive";
+import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { chordFor } from "@/features/keymap";
 
 export interface ContextMenuItem {
@@ -411,20 +412,10 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
     {
       icon: "tag",
       label: "Create tag here…",
-      onClick: async () => {
-        const name = await pgPrompt({
-          title: "Create tag here",
-          body: `Tagging ${sha.slice(0, 7)}.`,
-          placeholder: "v1.0.0",
-          confirmLabel: "Create tag",
-          requireValue: true,
-          mono: true,
-        });
-        if (!name || !commit) return;
-        useRepoStore.getState().createTag(name, {
-          oid: commit.sha ?? "",
-          annotation: null,
-        });
+      onClick: () => {
+        // The dialog carries name + annotation + signing (#132); a single-value
+        // prompt could only ever make a lightweight one.
+        if (commit?.sha) void openCreateTag({ oid: commit.sha });
       },
     },
     { divider: true },

@@ -36,6 +36,7 @@ import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
 import { resolveHeadDecor } from "@/features/settings/headMarks";
@@ -1175,29 +1176,12 @@ function CommitActionRow({ commit }: { commit: CommitInfo }) {
     if (!name) return;
     store.getState().createBranch(name, commit.oid);
   }, [commit, store]);
-  const tagHere = React.useCallback(async () => {
-    const name = await pgPrompt({
-      title: "Create tag here",
-      body: `Tagging ${commit.shortOid}.`,
-      placeholder: "v1.0.0",
-      confirmLabel: "Next",
-      requireValue: true,
-      mono: true,
-    });
-    if (!name) return;
-    // An empty annotation is meaningful — it makes a lightweight tag — so a
-    // blank answer must still create the tag; only a dismissal aborts.
-    const annotation = await pgPrompt({
-      title: `Annotation for ${name}`,
-      body: "Leave blank for a lightweight tag.",
-      confirmLabel: "Create tag",
-    });
-    if (annotation === null) return;
-    store.getState().createTag(name, {
-      oid: commit.oid,
-      annotation: annotation ? annotation : null,
-    });
-  }, [commit, store]);
+  // One dialog rather than two chained prompts: signing is a third value, and a
+  // prompt chain cannot express "blank annotation means lightweight, which is
+  // also why signing is unavailable" while you are answering it (#132).
+  const tagHere = React.useCallback(() => {
+    void openCreateTag({ oid: commit.oid, shortOid: commit.shortOid });
+  }, [commit]);
   const cherryPick = React.useCallback(async () => {
     if (
       !(await pgConfirm({
