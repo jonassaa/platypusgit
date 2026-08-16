@@ -105,6 +105,25 @@ const COMMON = {
   // failure rather than a silent shadow — which is the intended outcome.
   "nav.submodules": ["Mod+Shift+6"],
   "nav.worktrees": ["Mod+Shift+7"],
+  // Repository tabs (#90). Each of the first three carries BOTH the literal-Ctrl
+  // and the Mod form on purpose, and that makes them correct on every platform
+  // with one table: on macOS `Mod+Tab`/`Mod+W` are ⌘Tab (taken by the OS app
+  // switcher, never delivered) and ⌘W (Tauri's default window menu may claim
+  // it), so ⌃Tab/⌃W are the ones that reach us; on Windows/Linux physical Ctrl
+  // normalizes to `Mod`, so the `Ctrl+…` spellings are never produced and the
+  // `Mod+…` ones are the conventional chords. Same construction as the Ctrl+V
+  // palette nod above.
+  "tab.next": ["Ctrl+Tab", "Mod+Tab"],
+  "tab.prev": ["Ctrl+Shift+Tab", "Mod+Shift+Tab"],
+  "tab.close": ["Ctrl+W", "Mod+W"],
+  // NOT Mod+1..9 (screen navigation) and NOT Mod+Alt+<digit> — Ctrl+Alt is
+  // AltGr on Windows, and AltGr+2 / AltGr+4 type characters on Nordic layouts,
+  // exactly the hazard presets.test.ts polices for letters. Plain Alt+<digit>
+  // is unbound in both presets and Alt is already this keymap's second
+  // modifier (Alt+Arrow moves panes).
+  "tab.select": ["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6", "Alt+7", "Alt+8", "Alt+9"],
+  // Rider's ⌘E ("Recent files") — the palette's repository switcher.
+  "tab.switch": ["Mod+E"],
 } satisfies Partial<Record<ActionId, string[]>>;
 
 export const RIDER_PRESET: KeymapPreset = {

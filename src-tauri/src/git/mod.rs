@@ -42,6 +42,19 @@ pub trait GitBackend: Send + Sync {
     /// confirmed. Shaped like `open` rather than the `repo_id` methods: by
     /// definition there is no open repository to address.
     fn trust_path(&self, path: &Path) -> AppResult<()>;
+    /// Forget an opened repository, releasing its `git2::Repository` (and with
+    /// it every file handle and odb cache it holds).
+    ///
+    /// `open` mints a fresh `RepoId` on every call and nothing else ever
+    /// removes an entry, so without this each open — a re-open of the same path
+    /// included — costs one repository for the lifetime of the process. Called
+    /// when a repository tab is closed.
+    ///
+    /// **Idempotent, and an unknown id is not an error.** The frontend may
+    /// close a tab whose open never completed; turning that into an error
+    /// banner would be noise. Using a closed id still answers `UnknownRepo`,
+    /// which is the honest response to a real mistake.
+    fn close(&self, repo_id: &RepoId) -> AppResult<()>;
     fn status(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>>;
     /// Like `status`, but also includes tracked-but-unmodified files so UIs
     /// can browse the whole worktree (ignored files are still excluded).

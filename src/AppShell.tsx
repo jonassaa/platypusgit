@@ -31,6 +31,8 @@ import { SubmodulesScreen } from "@/screens/Submodules";
 import { WorktreesScreen } from "@/screens/Worktrees";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
+import { RepoTabs } from "@/features/repo/RepoTabs";
 import { headUpstream, openRepoDialog } from "@/features/repo/ops";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useCliLaunch } from "@/features/cli/useCliLaunch";
@@ -144,8 +146,17 @@ export function AppShell() {
   // going on in this repo", so it is worth more than restoring wherever the
   // last session happened to end (a deep view or Settings, most annoyingly).
   // The old localStorage["pg-screen"] restore is gone with its write; nothing
-  // else reads the key.
+  // else reads the key. Tabs do not resurrect it: a restored tab is created on
+  // History too — the per-tab screen below is remembered within a session only.
   const [screen, setScreen] = React.useState<ScreenId>("history");
+
+  // Reopen last session's repositories (#90). Lazy: only the tab that was
+  // active is actually opened; the rest open when first activated. Runs before
+  // useCliLaunch's intent lands, so a forwarded `pgit <path>` focuses the
+  // restored tab for that path instead of adding a duplicate.
+  React.useEffect(() => {
+    void useTabsStore.getState().restoreSession();
+  }, []);
 
   // Latest screen, readable synchronously from the intent effect below without
   // making it a dependency (so origin capture sees the pre-switch screen).
@@ -228,10 +239,27 @@ export function AppShell() {
   const enterScreen = React.useCallback((id: ScreenId) => {
     setScreen(id);
     setEntryTick((t) => t + 1);
+    // Per-tab screen: remember where THIS repository is, so switching away and
+    // back does not dump you on History with your place lost.
+    useTabsStore.getState().rememberScreen(id);
   }, []);
   React.useEffect(() => {
     useFocusStore.getState().requestContentFocus();
   }, [screen, entryTick]);
+
+  // Restore the incoming tab's screen on every switch. Skipped on first mount
+  // so launch still lands on History (a restored tab remembers nothing).
+  const activePath = useTabsStore((s) => s.activePath);
+  const firstTabEffect = React.useRef(true);
+  React.useEffect(() => {
+    if (firstTabEffect.current) {
+      firstTabEffect.current = false;
+      return;
+    }
+    const remembered = useTabsStore.getState().activeScreen();
+    setScreen((remembered as ScreenId | null) ?? "history");
+    setEntryTick((t) => t + 1);
+  }, [activePath]);
 
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
@@ -307,6 +335,9 @@ export function AppShell() {
       }}
     >
       <AppTitlebar onOpenSettings={() => enterScreen("settings")} />
+      {/* Open repositories. Its own row: the titlebar has no space left, and
+          keeping it out of there preserves the drag region. */}
+      <RepoTabs />
       {/* Styled confirm/prompt host — pgConfirm/pgPrompt resolve false/null
           unless one of these is mounted. */}
       <PGDialogHost />
@@ -369,8 +400,18 @@ export function AppShell() {
           all need to know): the standing "a merge/rebase is open" signal, and
           the only route to the resolver now that the Conflicts tab is gone. */}
       <OperationBar />
-      {repo || screen === "settings" ? (
+      {/* A tab whose repository is not loaded yet (session restore is lazy) is
+          neither "a repo is open" nor "no repo at all" — showing Welcome there
+          would flash the landing screen on every switch into a pending tab. */}
+      {!repo && screen !== "settings" && activePath ? (
+        <TabLoadingScreen path={activePath} />
+      ) : repo || screen === "settings" ? (
         <AppBody
+          // Keyed by the active repository: a tab switch REMOUNTS the screen, so
+          // History's selected commit, RepoBrowser's selected file and every
+          // windowed list's scroll reset instead of carrying another
+          // repository's oids and paths into this one.
+          key={activePath ?? "no-repo"}
           screen={screen}
           screens={screens}
           setScreen={enterScreen}
@@ -380,6 +421,60 @@ export function AppShell() {
       )}
       <AppStatusBar />
       <CommandPalette />
+    </div>
+  );
+}
+
+/** The body while the active tab's repository is opening, or after its open was
+ *  refused. The error banner above carries the reason; this carries the way out. */
+function TabLoadingScreen({ path }: { path: string }) {
+  const failed = useTabsStore(
+    (s) => s.tabs.find((t) => t.path === path)?.status === "failed",
+  );
+  const name = path.split("/").filter(Boolean).pop() ?? path;
+  return (
+    <div
+      data-testid="tab-loading"
+      data-failed={failed ? "true" : "false"}
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
+        background: "var(--bg-0)",
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--fs-12)",
+        color: "var(--fg-2)",
+      }}
+    >
+      {failed ? (
+        <>
+          <div style={{ color: "var(--fg-0)" }}>Could not open {name}</div>
+          <div style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>{path}</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <PGButton
+              size="sm"
+              variant="default"
+              icon="sync"
+              onClick={() => void useTabsStore.getState().activate(path)}
+            >
+              Retry
+            </PGButton>
+            <PGButton
+              size="sm"
+              variant="ghost"
+              onClick={() => void useTabsStore.getState().close(path)}
+            >
+              Close tab
+            </PGButton>
+          </div>
+        </>
+      ) : (
+        <div>Opening {name}…</div>
+      )}
     </div>
   );
 }
@@ -475,7 +570,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const status = useRepoStore((s) => s.status);
   const activity = useRepoStore((s) => s.activity);
   const refresh = useRepoStore((s) => s.refreshAll);
-  const close = useRepoStore((s) => s.closeRepo);
+  const activePath = useTabsStore((s) => s.activePath);
   const store = useRepoStore();
   const defaultPullMode = useSettingsStore((s) => s.defaultPullMode);
 
@@ -579,7 +674,13 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                     margin: "0 4px",
                   }}
                 />
-                <PGButton size="sm" variant="ghost" onClick={close}>
+                <PGButton
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    if (activePath) void useTabsStore.getState().close(activePath);
+                  }}
+                >
                   Close repo
                 </PGButton>
               </>

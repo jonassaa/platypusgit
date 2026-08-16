@@ -1955,9 +1955,15 @@ impl GitBackend for Libgit2Backend {
         };
 
         let id = RepoId(Uuid::new_v4().to_string());
+        // `workdir()` hands back a path WITH a trailing separator. That makes
+        // `/repo` and `/repo/` two different strings for anything that keys on
+        // the handle's path — repository tabs (#90) dedupe by it, recents store
+        // it, and a `pgit <path>` launch forwards the slashless form — so the
+        // same repository could open twice under two spellings. Normalize once,
+        // here, rather than at every comparison.
         let workdir = repo
             .workdir()
-            .map(PathBuf::from)
+            .map(strip_trailing_slash)
             .unwrap_or_else(|| path.to_path_buf());
 
         let mut map = self
@@ -1975,6 +1981,21 @@ impl GitBackend for Libgit2Backend {
 
     fn trust_path(&self, path: &Path) -> AppResult<()> {
         ownership::trust_path(path)
+    }
+
+    fn close(&self, repo_id: &RepoId) -> AppResult<()> {
+        let mut map = self
+            .repos
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        // Dropping the removed Mutex<Repository> here releases libgit2's file
+        // handles. An absent id is success on purpose (see the trait doc).
+        map.remove(repo_id);
+        // `rebases` is deliberately left alone: its entries are bytes, not
+        // handles, they are keyed by an id a re-open can never mint again, and
+        // an in-progress rebase rehydrates from `.git/platypusgit-rebase.json`
+        // — the same path a restarted app takes.
+        Ok(())
     }
 
     fn init(&self, path: &Path, initial_branch: Option<&str>) -> AppResult<RepoHandle> {

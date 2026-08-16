@@ -26,9 +26,10 @@ import {
   unstageAllOp,
 } from "@/features/repo/ops";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
-import { createBranchInputStep } from "@/features/palette/steps";
+import { createBranchInputStep, switchRepoStep } from "@/features/palette/steps";
 import { useFocusStore } from "./useFocusStore";
 import { useOverlayStore } from "./useOverlayStore";
 
@@ -97,7 +98,12 @@ export type ActionId =
   | "repo.open"
   | "repo.clone"
   | "repo.init"
-  | "forge.createPr";
+  | "forge.createPr"
+  | "tab.next"
+  | "tab.prev"
+  | "tab.close"
+  | "tab.select"
+  | "tab.switch";
 
 export interface ActionDef {
   id: ActionId;
@@ -112,8 +118,12 @@ export interface ActionDef {
    *  the caret (Alt+Arrow is word/paragraph movement on macOS). */
   suppressInInput?: boolean;
   /** Default runner, used when no mounted handler claims the action.
-   *  Return `false` to decline. */
-  run?: () => boolean | void;
+   *  Return `false` to decline.
+   *
+   *  Receives the chord that resolved to this action, so ONE action can serve a
+   *  family of chords (`tab.select` on Alt+1…Alt+9) instead of needing nine
+   *  catalog entries and nine cheat-sheet rows. Almost every runner ignores it. */
+  run?: (chord?: string) => boolean | void;
 }
 
 function navTo(screen: string): () => boolean {
@@ -137,6 +147,13 @@ function onInteractiveElement(): boolean {
     (tag === "A" && el.hasAttribute("href")) ||
     el.isContentEditable === true
   );
+}
+
+/** Cycle repository tabs, declining when there is nothing to cycle to. */
+function stepTab(delta: 1 | -1): boolean {
+  if (useTabsStore.getState().tabs.length < 2) return false;
+  void useTabsStore.getState().step(delta);
+  return true;
 }
 
 function cyclePane(delta: 1 | -1): () => boolean {
@@ -351,6 +368,70 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
       if (useForgeStore.getState().gate() !== "ready") return false;
       useForgeStore.getState().openCreate();
       useNavStore.getState().setIntent({ kind: "switch-screen", screen: "pulls" });
+      return true;
+    },
+  },
+
+  // ── repository tabs (#90) ────────────────────────────────────────────────
+  // `repo.open` above is the "open in a new tab" action: openRepo means "open a
+  // tab" everywhere now, so a second action for the same key would be two
+  // cheat-sheet rows for one behavior.
+  "tab.next": {
+    id: "tab.next",
+    title: "Next repository tab",
+    category: "Repository",
+    scope: "global",
+    run: () => stepTab(1),
+  },
+  "tab.prev": {
+    id: "tab.prev",
+    title: "Previous repository tab",
+    category: "Repository",
+    scope: "global",
+    run: () => stepTab(-1),
+  },
+  "tab.close": {
+    id: "tab.close",
+    title: "Close repository tab",
+    category: "Repository",
+    scope: "global",
+    run: () => {
+      const path = useTabsStore.getState().activePath;
+      if (!path) return false;
+      void useTabsStore.getState().close(path);
+      return true;
+    },
+  },
+  "tab.select": {
+    id: "tab.select",
+    title: "Switch to repository 1–9",
+    category: "Repository",
+    scope: "global",
+    // suppressInInput, for the same reason Alt+Arrow carries it: ⌥+digit is a
+    // CHARACTER on macOS, and on Nordic layouts it is one people type (⌥1 "¡",
+    // and the range covers ", @, £, $ neighbours). Claiming it while a commit
+    // message, a filter box or the resolver's CodeMirror pane has focus would
+    // silently eat the keystroke. `isEditable` in the dispatcher covers input,
+    // textarea and contentEditable (CM6's editor), so all three are safe.
+    suppressInInput: true,
+    run: (chord) => {
+      // Bound to Alt+1…Alt+9; the digit IS the argument. `eventToChord` takes
+      // digits from `e.code`, so this is layout-independent. Optional because
+      // the catalog's runners are also callable directly (tests, the palette).
+      const n = Number((chord ?? "").slice((chord ?? "").lastIndexOf("+") + 1));
+      if (!Number.isInteger(n) || n < 1 || n > 9) return false;
+      if (!useTabsStore.getState().tabs[n - 1]) return false;
+      void useTabsStore.getState().selectIndex(n);
+      return true;
+    },
+  },
+  "tab.switch": {
+    id: "tab.switch",
+    title: "Switch repository…",
+    category: "Repository",
+    scope: "global",
+    run: () => {
+      usePaletteStore.getState().pushStep(switchRepoStep());
       return true;
     },
   },

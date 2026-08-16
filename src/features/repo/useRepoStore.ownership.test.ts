@@ -42,7 +42,7 @@ describe("useRepoStore.openRepo — dubious ownership", () => {
     armOpen(1);
     confirmTrust.mockResolvedValue(true);
 
-    await useRepoStore.getState().openRepo("/mnt/c/dev/reponame");
+    await useRepoStore.getState().openRepoAt("/mnt/c/dev/reponame");
 
     expect(confirmTrust).toHaveBeenCalledWith("/mnt/c/dev/reponame");
     expect(calls("trust_repo_path")).toHaveLength(1);
@@ -65,7 +65,7 @@ describe("useRepoStore.openRepo — dubious ownership", () => {
     });
     confirmTrust.mockResolvedValue(true);
 
-    await useRepoStore.getState().openRepo("/mnt/c/dev/reponame/");
+    await useRepoStore.getState().openRepoAt("/mnt/c/dev/reponame/");
 
     expect(confirmTrust).toHaveBeenCalledWith("/mnt/c/dev/reponame");
     expect(calls("trust_repo_path")[0]?.args).toMatchObject({
@@ -77,7 +77,7 @@ describe("useRepoStore.openRepo — dubious ownership", () => {
     armOpen(1);
     confirmTrust.mockResolvedValue(false);
 
-    await useRepoStore.getState().openRepo("/mnt/c/dev/reponame");
+    await useRepoStore.getState().openRepoAt("/mnt/c/dev/reponame");
 
     expect(calls("trust_repo_path")).toHaveLength(0);
     expect(useRepoStore.getState().error?.kind).toBe("DubiousOwnership");
@@ -89,7 +89,7 @@ describe("useRepoStore.openRepo — dubious ownership", () => {
     armOpen(99);
     confirmTrust.mockResolvedValue(true);
 
-    await useRepoStore.getState().openRepo("/mnt/c/dev/reponame");
+    await useRepoStore.getState().openRepoAt("/mnt/c/dev/reponame");
 
     // One prompt, one retry — never a second round.
     expect(confirmTrust).toHaveBeenCalledTimes(1);
@@ -105,7 +105,7 @@ describe("useRepoStore.openRepo — dubious ownership", () => {
       throw { kind: "Io", message: "permission denied" };
     });
 
-    await useRepoStore.getState().openRepo("/mnt/c/dev/reponame");
+    await useRepoStore.getState().openRepoAt("/mnt/c/dev/reponame");
 
     expect(useRepoStore.getState().error?.kind).toBe("Io");
     expect(useRepoStore.getState().loading).toBe(false);
@@ -116,7 +116,7 @@ describe("useRepoStore.openRepo — dubious ownership", () => {
       throw { kind: "NotARepo", message: "path is not a git repository: /tmp/x" };
     });
 
-    await useRepoStore.getState().openRepo("/tmp/x");
+    await useRepoStore.getState().openRepoAt("/tmp/x");
 
     expect(confirmTrust).not.toHaveBeenCalled();
     expect(useRepoStore.getState().error?.kind).toBe("NotARepo");

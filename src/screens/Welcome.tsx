@@ -2,10 +2,11 @@ import { PGButton, PGIcon, PGIconButton, PGLogo, PGSpinner } from "@/design";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useRecentsStore } from "@/features/repo/useRecentsStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
 import { openRepoDialog } from "@/features/repo/ops";
 
 export function WelcomeScreen() {
-  const openRepo = useRepoStore((s) => s.openRepo);
+  const openRepo = useTabsStore((s) => s.openRepo);
   const loading = useRepoStore((s) => s.loading);
   const recents = useRecentsStore((s) => s.recents);
   const removeRecent = useRecentsStore((s) => s.removeRecent);

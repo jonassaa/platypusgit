@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import { confirmTrust } from "@/features/repo/ownership";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useAuthStore } from "@/features/auth/useAuthStore";
 import {
@@ -79,7 +80,7 @@ export const useCreateStore = create<CreateState>((set, get) => ({
       // busy false BEFORE close(), which refuses to close while busy.
       set({ busy: false, progress: null });
       set({ open: "none" });
-      await useRepoStore.getState().openRepo(dest);
+      await useTabsStore.getState().openRepo(dest);
     };
 
     try {
@@ -138,7 +139,7 @@ export const useCreateStore = create<CreateState>((set, get) => ({
     const finish = async (handle: RepoHandle) => {
       useSettingsStore.getState().set("lastCreateDir", parentDir);
       set({ busy: false, open: "none" });
-      await useRepoStore.getState().openRepo(handle.path);
+      await useTabsStore.getState().openRepo(handle.path);
     };
     try {
       await finish(await initRepo(path, branch));

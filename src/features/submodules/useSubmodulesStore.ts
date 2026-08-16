@@ -13,6 +13,7 @@ import {
   submoduleUpdate,
 } from "@/lib/tauri";
 import { useRepoStore, withAuthRetry } from "@/features/repo/useRepoStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
 
 const RECURSIVE_KEY = "pg-submodule-recursive";
 
@@ -151,6 +152,6 @@ export const useSubmodulesStore = create<SubmodulesState>((set, get) => ({
     const repo = useRepoStore.getState().current;
     if (!repo) return;
     // No new backend op needed: a submodule checkout IS a repository.
-    await useRepoStore.getState().openRepo(submoduleAbsPath(repo.path, path));
+    await useTabsStore.getState().openRepo(submoduleAbsPath(repo.path, path));
   },
 }));

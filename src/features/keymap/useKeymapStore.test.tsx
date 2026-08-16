@@ -302,3 +302,64 @@ describe("dispatch", () => {
     });
   });
 });
+
+// ⌥+digit is a character on macOS — and on Nordic layouts one people actually
+// type — so repository-tab selection must not claim it while text has focus
+// (#90 follow-up).
+describe("tab.select input policy", () => {
+  beforeEach(resetStores);
+
+  const altDigit = (target?: EventTarget) =>
+    key(
+      { key: "1", code: "Digit1", metaKey: false, altKey: true },
+      target ?? document.body,
+    );
+
+  it("fires outside a text field", () => {
+    const spy = vi.fn();
+    const un = useKeymapStore.getState().register("tab.select", spy);
+    expect(useKeymapStore.getState().dispatch(altDigit())).toBe(true);
+    expect(spy).toHaveBeenCalledOnce();
+    un();
+  });
+
+  it("is suppressed inside an input, a textarea and a contentEditable", () => {
+    const spy = vi.fn();
+    const un = useKeymapStore.getState().register("tab.select", spy);
+    const editable = document.createElement("div");
+    // jsdom does not derive isContentEditable from the attribute.
+    Object.defineProperty(editable, "isContentEditable", { value: true });
+
+    for (const target of [
+      document.createElement("input"),
+      document.createElement("textarea"),
+      editable,
+    ]) {
+      const prevent = vi.fn();
+      const handled = useKeymapStore
+        .getState()
+        .dispatch({ ...altDigit(target), preventDefault: prevent } as never);
+      // Unhandled AND not prevented — the character has to reach the field.
+      expect(handled).toBe(false);
+      expect(prevent).not.toHaveBeenCalled();
+    }
+    expect(spy).not.toHaveBeenCalled();
+    un();
+  });
+
+  it("leaves the tab cycling chords live while typing (they type nothing)", () => {
+    const spy = vi.fn();
+    const un = useKeymapStore.getState().register("tab.next", spy);
+    const handled = useKeymapStore
+      .getState()
+      .dispatch(
+        key(
+          { key: "Tab", code: "", metaKey: false, ctrlKey: true },
+          document.createElement("textarea"),
+        ),
+      );
+    expect(handled).toBe(true);
+    expect(spy).toHaveBeenCalledOnce();
+    un();
+  });
+});

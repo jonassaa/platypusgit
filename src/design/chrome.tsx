@@ -95,6 +95,216 @@ export function PGTitlebar({
 }
 
 // ═════════════════════════════════════════════════════════
+// REPOSITORY TAB STRIP
+// ═════════════════════════════════════════════════════════
+
+export interface PGTabItem {
+  /** Stable key — the repository's workdir path. */
+  id: string;
+  label: string;
+  /** Full path, shown as the row's tooltip. */
+  title?: string;
+  active?: boolean;
+  /** Uncommitted-change count; renders a dot + number. */
+  dirty?: number;
+  /** Conflicted-file count; renders a conflict glyph + number. */
+  conflicts?: number;
+  /** True while this tab's repository is being opened. */
+  loading?: boolean;
+  /** The tab's open was rejected (path moved, deleted, refused). */
+  failed?: boolean;
+}
+
+/**
+ * The open-repository strip (#90). Its own row BELOW the titlebar, not inside
+ * it: the titlebar already carries the logo, repo name, branch chip, dirty
+ * badge, the drag region and five right-hand controls, and squeezing a
+ * scrolling strip in there would eat `data-tauri-drag-region` on a narrow
+ * window.
+ *
+ * Chrome, so a FIXED height — the UI-density token deliberately does not apply
+ * (see CLAUDE.md's density rule). The strip owns its own `overflow-x`, and each
+ * tab is `flexShrink: 0` with a max width, so a long tab list scrolls INSIDE
+ * the strip and can never widen the window (the shell is a fixed frame).
+ */
+export function PGTabStrip({
+  tabs,
+  onSelect,
+  onClose,
+  onNew,
+  onTabContextMenu,
+}: {
+  tabs: PGTabItem[];
+  onSelect?: (id: string) => void;
+  onClose?: (id: string) => void;
+  onNew?: () => void;
+  onTabContextMenu?: (id: string, e: React.MouseEvent) => void;
+}) {
+  const activeRef = React.useRef<HTMLDivElement | null>(null);
+  const activeId = tabs.find((t) => t.active)?.id ?? null;
+  // Keep the active tab reachable after a keyboard switch into an off-screen
+  // tab. `inline: "nearest"` scrolls the strip, never the page.
+  React.useEffect(() => {
+    // Optional call: jsdom has no scrollIntoView, and this is presentation —
+    // unlike a viewport MEASUREMENT, skipping it changes nothing but the scroll
+    // position (see CLAUDE.md on why measurements must not be guarded).
+    activeRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeId]);
+
+  return (
+    <div
+      data-testid="repo-tab-strip"
+      style={{
+        height: 28,
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "stretch",
+        background: "var(--bg-titlebar)",
+        borderBottom: "1px solid var(--border-0)",
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--fs-11)",
+        userSelect: "none",
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          alignItems: "stretch",
+          overflowX: "auto",
+          overflowY: "hidden",
+          scrollbarWidth: "none",
+        }}
+      >
+        {tabs.map((t) => (
+          <div
+            key={t.id}
+            ref={t.active ? activeRef : undefined}
+            data-testid="repo-tab"
+            data-path={t.id}
+            data-active={t.active ? "true" : "false"}
+            data-dirty={t.dirty ?? 0}
+            title={t.title ?? t.label}
+            onClick={() => onSelect?.(t.id)}
+            onAuxClick={(e) => {
+              // Middle-click closes, as in every tabbed thing.
+              if (e.button === 1) onClose?.(t.id);
+            }}
+            onContextMenu={(e) => onTabContextMenu?.(t.id, e)}
+            style={{
+              flexShrink: 0,
+              maxWidth: 220,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "0 8px",
+              cursor: "pointer",
+              position: "relative",
+              background: t.active ? "var(--bg-0)" : "transparent",
+              color: t.active ? "var(--fg-0)" : "var(--fg-2)",
+              borderRight: "1px solid var(--border-0)",
+              opacity: t.failed ? 0.55 : 1,
+            }}
+          >
+            {t.active && (
+              <span
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: 2,
+                  background: "var(--accent)",
+                }}
+              />
+            )}
+            <PGIcon
+              name={t.failed ? "warn" : "repo"}
+              size={11}
+              style={{
+                color: t.failed
+                  ? "var(--git-removed)"
+                  : t.active
+                    ? "var(--accent)"
+                    : "var(--fg-3)",
+              }}
+            />
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {t.label}
+            </span>
+            {!!t.conflicts && (
+              <span
+                title={`${t.conflicts} conflict${t.conflicts === 1 ? "" : "s"}`}
+                style={{ color: "var(--git-conflict)", fontSize: "var(--fs-10)" }}
+              >
+                ✕{t.conflicts}
+              </span>
+            )}
+            {!t.conflicts && !!t.dirty && (
+              <span
+                title={`${t.dirty} changed`}
+                style={{ color: "var(--git-modified)", fontSize: "var(--fs-10)" }}
+              >
+                ●{t.dirty}
+              </span>
+            )}
+            <button
+              data-testid="repo-tab-close"
+              data-path={t.id}
+              title="Close repository"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose?.(t.id);
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--fg-3)",
+                cursor: "pointer",
+                padding: 0,
+                lineHeight: 1,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <PGIcon name="x" size={10} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        data-testid="repo-tab-new"
+        title="Open repository…"
+        onClick={onNew}
+        style={{
+          flexShrink: 0,
+          width: 28,
+          background: "transparent",
+          border: "none",
+          borderLeft: "1px solid var(--border-0)",
+          color: "var(--fg-2)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <PGIcon name="plus" size={12} />
+      </button>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════
 // STATUS BAR
 // ═════════════════════════════════════════════════════════
 

@@ -2,21 +2,13 @@ import { create } from "zustand";
 import type {
   AuthorOverride,
   BisectMark,
-  BisectStatus,
-  BranchInfo,
-  CommitInfo,
   FileContent,
   FileStatus,
   LogFilter,
   RebaseStatus,
   RebaseStep,
-  RemoteInfo,
   RepoHandle,
-  RepoState as GitRepoState,
-  StashInfo,
-  TagInfo,
 } from "@/lib/types";
-import { LOG_REF_ALL } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
 import {
   dubiousOwnershipPath,
@@ -108,20 +100,16 @@ import {
 import { isFilterEmpty } from "@/features/commits/logFilter";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useRecentsStore } from "./useRecentsStore";
+import {
+  DEFAULT_BISECT_STATUS,
+  DEFAULT_REBASE_STATUS,
+  emptySlice,
+  sliceOf,
+  type RepoSlice,
+} from "./repoSlice";
+import type { RepoActivity } from "./repoActivity";
 
-/**
- * Active long-running operations, keyed by operation kind. Value is the
- * user-visible label (e.g. "Fetching origin…"). Consumers can flip button
- * spinners with `!!activity.fetch` and render a status-bar line from the
- * first truthy entry.
- */
-export interface RepoActivity {
-  fetch?: string;
-  pull?: string;
-  push?: string;
-  stash?: string;
-  branch?: string;
-}
+export type { RepoActivity } from "./repoActivity";
 
 /**
  * Commits per log page (#68 G11). Was a `500` literal repeated at four call
@@ -130,70 +118,38 @@ export interface RepoActivity {
  */
 const PAGE_SIZE = 500;
 
-interface RepoStoreState {
-  current: RepoHandle | null;
-  status: FileStatus[];
-  /** Every (non-ignored) file in the worktree, populated lazily by listAllFiles. */
-  allFiles: FileStatus[];
-  branches: BranchInfo[];
-  tags: TagInfo[];
-  stashes: StashInfo[];
-  remotes: RemoteInfo[];
-  commits: CommitInfo[];
+/**
+ * The repository store: exactly ONE repository's live state — the ACTIVE tab's
+ * (#90). Every per-repo field comes from `RepoSlice`, which `useTabsStore`
+ * freezes on the way out of a tab and hydrates on the way in. Screens keep
+ * reading `s.status` / `s.commits` / `s.branches` and calling the same actions;
+ * they never learn that there is more than one repository open.
+ *
+ * Two rules keep a tab switch from leaking:
+ *   - hydration is a TOTAL write of `RepoSlice` (see repoSlice.ts), and
+ *   - every fetch/error write goes through `setFor`/`setErrorFor`, which drop a
+ *     response that resolved after the user moved to another repository.
+ */
+interface RepoStoreState extends RepoSlice {
   /**
-   * Backend-filtered commit log, or null when no search is active. Kept
-   * separate from `commits` (the full HEAD log) so the History screen can fall
-   * back to the unfiltered set and apply its own client-side toggles.
-   */
-  searchResults: CommitInfo[] | null;
-  /** The active backend log filter (empty object when none). */
-  commitFilter: LogFilter;
-  /**
-   * Revspec the log walk starts from: `LOG_REF_ALL` (the default — every branch
-   * in one graph), null for HEAD only, or any revspec. Scoping applies to
-   * `commits` AND backend searches, so every consumer of the log (History,
-   * palette pickers, context menus) sees the browsed scope's commits.
-   */
-  logRef: string | null;
-  /** True while a backend search is in flight. */
-  searching: boolean;
-  /**
-   * Resume points for the paginated log walk (#68 G11) — the frontier of every
-   * lane still awaiting a parent, NOT a single oid. null means that walk has
-   * reached the end of history.
+   * Open `path` into the ACTIVE slice and refresh it, returning the handle (or
+   * null on failure, with the error already on the store).
    *
-   * Two cursors, because clearing a search must restore the unfiltered walk's
-   * resume point: `searchCursor` belongs to `searchResults`, `commitCursor` to
-   * `commits`, and `loadMoreCommits` extends whichever list is active.
+   * The low-level half of opening a repository: it knows nothing about tabs.
+   * `useTabsStore.openRepo` is the entry point everything else calls — it
+   * dedupes by path, creates the tab, and snapshots the outgoing one.
    */
-  commitCursor: string[] | null;
-  searchCursor: string[] | null;
-  /** True while an additional page is being fetched. */
-  loadingMore: boolean;
-  loading: boolean;
-  error: AppError | null;
-  repoState: GitRepoState;
-  /**
-   * The bisect git itself is running, if any (#93).
-   *
-   * Lives beside `repoState`/`rebaseStatus` rather than in a feature store because
-   * `OperationBar` needs it on every screen, and because — unlike `rebaseStatus`,
-   * which is an in-process map — this is read from GIT's own `.git/BISECT_*`
-   * files, so it survives a restart and picks up a bisect started in a terminal.
-   * Polled on every refresh: the backend short-circuits on one `Path::exists()`,
-   * so a repository with no bisect pays nothing.
-   */
-  bisectStatus: BisectStatus;
-  /**
-   * Live rebase progress AND, once a plan finishes, its retained
-   * `lastCompleted` summary — the backend keeps that until acknowledged, so the
-   * "N steps completed" line no longer needs a frontend cache that every abort
-   * and start path had to clear by hand (#47).
-   */
-  rebaseStatus: RebaseStatus;
-  /** Active long-running ops keyed by op kind. */
-  activity: RepoActivity;
-  openRepo: (path: string) => Promise<void>;
+  openRepoAt: (path: string) => Promise<RepoHandle | null>;
+  /** Replace every per-repo field with `slice` (activating a tab). Total write
+   *  by contract — see repoSlice.ts. */
+  hydrate: (slice: RepoSlice) => void;
+  /** Freeze the live per-repo fields (leaving a tab). */
+  snapshot: () => RepoSlice;
+  /** Put an error back on the banner. Needed because a rollback (a failed open
+   *  re-activating the tab you were on) runs a `refreshAll`, which clears
+   *  `error` as its first act — same hazard as the refresh-first-error-last
+   *  convention in the catch arms. */
+  setError: (e: AppError | null) => void;
   /**
    * Run a backend commit-log search. An empty filter clears the search and
    * falls back to the full log. Sets `searchResults` + `commitFilter`.
@@ -388,29 +344,26 @@ export async function withAuthRetry(
   }
 }
 
-const DEFAULT_REBASE_STATUS: RebaseStatus = {
-  inProgress: false,
-  nextIndex: 0,
-  total: 0,
-  pauseReason: null,
-};
-
-/** No bisect, with git's default terms. Mirrors Rust `BisectStatus::idle()`. */
-const DEFAULT_BISECT_STATUS: BisectStatus = {
-  inProgress: false,
-  startRef: null,
-  badTerm: "bad",
-  goodTerm: "good",
-  currentOid: null,
-  remaining: null,
-  steps: null,
-  firstBadOid: null,
-  goodCount: 0,
-  badCount: 0,
-  skippedCount: 0,
-};
-
 export const useRepoStore = create<RepoStoreState>((set, get) => {
+  /**
+   * Apply `patch` only while `repoId` is still the open repository (#90).
+   *
+   * A tab switch is atomic, but the fetches already in flight are not: a
+   * `refreshAll` for repo A can resolve after the user moved to B and would
+   * write A's status, log and branches into B's slice. This is the same
+   * staleness guard `logRef` and `commitFilter` already carry, on repo identity.
+   */
+  const setFor = (repoId: string, patch: Partial<RepoStoreState>) => {
+    if (get().current?.id !== repoId) return;
+    set(patch);
+  };
+  /** `setFor` for the error banner: a failure in a repository you have left
+   *  must not raise a banner over the one you are in. Keeps the
+   *  refresh-first-error-last ordering — it is still just a guarded set. */
+  const setErrorFor = (repoId: string, e: unknown) => {
+    if (get().current?.id !== repoId) return;
+    set({ error: toAppError(e) });
+  };
   const setActivity = (key: keyof RepoActivity, label: string | null) => {
     set((s) => {
       const next = { ...s.activity };
@@ -419,55 +372,23 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       return { activity: next };
     });
   };
-  /** Open `path` and reset every per-repo slice. Throws on failure. */
+  /** Open `path` into a freshly reset slice. Throws on failure. */
   const applyOpenedRepo = async (path: string) => {
     const handle = await openRepo(path);
     useRecentsStore.getState().addRecent(handle.path);
-    set({
-      current: handle,
-      status: [],
-      allFiles: [],
-      branches: [],
-      tags: [],
-      stashes: [],
-      remotes: [],
-      commits: [],
-      searchResults: null,
-      commitFilter: {},
-      bisectStatus: DEFAULT_BISECT_STATUS,
-      logRef: LOG_REF_ALL,
-      commitCursor: null,
-      searchCursor: null,
-    });
+    // Total write: every per-repo field is reset, so nothing of the previously
+    // open repository can survive into this one (see repoSlice.ts).
+    set({ ...emptySlice(), current: handle });
     await get().refreshAll();
   };
   return ({
-  current: null,
-  status: [],
-  allFiles: [],
-  branches: [],
-  tags: [],
-  stashes: [],
-  remotes: [],
-  commits: [],
-  searchResults: null,
-  commitFilter: {},
-  logRef: LOG_REF_ALL,
-  searching: false,
-  commitCursor: null,
-  searchCursor: null,
-  loadingMore: false,
-  loading: false,
-  error: null,
-  repoState: "Clean",
-  rebaseStatus: DEFAULT_REBASE_STATUS,
-  bisectStatus: DEFAULT_BISECT_STATUS,
-  activity: {},
+  ...emptySlice(),
 
-  async openRepo(path) {
+  async openRepoAt(path) {
     set({ loading: true, error: null });
     try {
       await applyOpenedRepo(path);
+      return get().current;
     } catch (e) {
       // git refuses a repository owned by another user, which a Windows drive
       // mounted under WSL routinely looks like. That refusal is remediable,
@@ -483,15 +404,31 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
             // Deliberately not recursive: one retry. If the exception did not
             // help, show the error rather than asking again forever.
             await applyOpenedRepo(path);
-            return;
+            return get().current;
           } catch (retryError) {
             set({ loading: false, error: toAppError(retryError) });
-            return;
+            return null;
           }
         }
       }
+      // A failed open leaves the slice alone: whatever tab the user was on is
+      // still there with its data, and only `loading`/`error` moved.
       set({ loading: false, error: toAppError(e) });
+      return null;
     }
+  },
+
+  hydrate(slice) {
+    // Total write, never a patch — that is the whole anti-leak contract.
+    set(slice);
+  },
+
+  snapshot() {
+    return sliceOf(get());
+  },
+
+  setError(e) {
+    set({ error: e });
   },
 
   async searchCommits(filter) {
@@ -515,13 +452,13 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       const page = await getLogFilteredPage(repo.id, filter, null, PAGE_SIZE, refspec);
       // Guard against a stale response overwriting a newer filter or scope.
       if (get().commitFilter !== filter || get().logRef !== refspec) return;
-      set({
+      setFor(repo.id, {
         searchResults: page.commits,
         searchCursor: page.nextCursor,
         searching: false,
       });
     } catch (e) {
-      set({ searching: false, error: toAppError(e) });
+      setFor(repo.id, { searching: false, error: toAppError(e) });
     }
   },
 
@@ -542,7 +479,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         : await getLogPage(current.id, cursor, PAGE_SIZE, refspec);
       // The list may have been replaced while the page was in flight (repo
       // switch, ref change, new search) — dropping a stale page is correct.
-      if (get().logRef !== refspec) return;
+      // A repo switch also invalidates the page: `current` is the repo this
+      // walk belongs to, not necessarily the one now open.
+      if (get().current?.id !== current.id || get().logRef !== refspec) return;
       if (searching) {
         if (get().commitFilter !== filter || get().searchResults === null) return;
         set((s) => ({
@@ -557,7 +496,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         }));
       }
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(current.id, e);
     } finally {
       set({ loadingMore: false });
     }
@@ -574,7 +513,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       const page = await getLogPage(repo.id, null, PAGE_SIZE, refspec);
       // Guard against a stale response overwriting a newer scope.
       if (get().logRef !== refspec) return;
-      set({ commits: page.commits, commitCursor: page.nextCursor, loading: false });
+      setFor(repo.id, {
+        commits: page.commits,
+        commitCursor: page.nextCursor,
+        loading: false,
+      });
       // Re-run an active search under the new scope.
       const activeFilter = get().commitFilter;
       if (!isFilterEmpty(activeFilter)) {
@@ -582,7 +525,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       }
     } catch (e) {
       if (get().logRef !== refspec) return;
-      set({ loading: false, error: toAppError(e) });
+      setFor(repo.id, { loading: false, error: toAppError(e) });
     }
   },
 
@@ -613,7 +556,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
             // the branch was deleted) — fall back to HEAD instead of failing
             // the whole refresh.
             if (logRef === null) throw e;
-            set({ logRef: null });
+            setFor(repo.id, { logRef: null });
             return getLogPage(repo.id, null, PAGE_SIZE);
           }),
           repoStateFn(repo.id),
@@ -625,7 +568,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           // fallback is a bar without step counts, not a broken screen.
           bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
         ]);
-      set({
+      setFor(repo.id, {
         status,
         branches,
         tags,
@@ -645,7 +588,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         void get().searchCommits(activeFilter);
       }
     } catch (e) {
-      set({ loading: false, error: toAppError(e) });
+      setFor(repo.id, { loading: false, error: toAppError(e) });
     }
   },
 
@@ -663,9 +606,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         // Same degrade-don't-fail policy as `refreshAll`.
         bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
       ]);
-      set({ status, repoState, bisectStatus });
+      setFor(repo.id, { status, repoState, bisectStatus });
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -674,22 +617,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   },
 
   closeRepo() {
-    set({
-      current: null,
-      status: [],
-      allFiles: [],
-      branches: [],
-      tags: [],
-      stashes: [],
-      remotes: [],
-      commits: [],
-      searchResults: null,
-      commitFilter: {},
-      logRef: LOG_REF_ALL,
-      searching: false,
-      bisectStatus: DEFAULT_BISECT_STATUS,
-      error: null,
-    });
+    // Total write via emptySlice(), so a later hydrate of another tab starts
+    // from a genuinely empty slice rather than this repo's leftovers.
+    set(emptySlice());
   },
 
   async refreshAllFiles() {
@@ -697,9 +627,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       const allFiles = await listAllFiles(repo.id);
-      set({ allFiles });
+      setFor(repo.id, { allFiles });
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -709,7 +639,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       return await listFilesAtRevFn(repo.id, revspec);
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       return null;
     }
   },
@@ -720,7 +650,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       return await readFileContentAtRevFn(repo.id, revspec, path);
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       return null;
     }
   },
@@ -732,7 +662,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await stagePaths(repo.id, paths);
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -743,7 +673,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await unstagePaths(repo.id, paths);
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -754,7 +684,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await discardPaths(repo.id, paths);
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -767,7 +697,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await stageHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -778,7 +708,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await unstageHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -789,7 +719,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await discardHunk(repo.id, path, hunkIndex, useSettingsStore.getState().diffContextLines);
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -806,7 +736,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       );
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -823,7 +753,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       );
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -840,7 +770,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       );
       await get().refreshStatus();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -851,7 +781,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await resetFn(repo.id, target, mode);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -876,7 +806,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await get().refreshAll();
       return oid;
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       return null;
     }
   },
@@ -904,7 +834,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       }
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       await get().refreshAll();
     } finally {
       setActivity("branch", null);
@@ -918,7 +848,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await checkoutRef(repo.id, reference);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -933,7 +863,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // recording the error — otherwise the two synchronous `set()` calls
       // land in the same React batch and the error is wiped before render.
       await get().refreshAll();
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -947,7 +877,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // See mergeBranch's catch: refresh first, error last, so it isn't
       // batched away by refreshAll's own `error: null` reset.
       await get().refreshAll();
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -964,7 +894,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         await pushTagFn(repo.id, remote, name, creds);
         await get().refreshAll();
       },
-      (e) => set({ error: toAppError(e) }),
+      (e) => setErrorFor(repo.id, e),
     );
   },
 
@@ -977,7 +907,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         await pushDeleteBranchFn(repo.id, remote, name, creds);
         await get().refreshAll();
       },
-      (e) => set({ error: toAppError(e) }),
+      (e) => setErrorFor(repo.id, e),
     );
   },
 
@@ -988,7 +918,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await createBranch(repo.id, name, from);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -999,7 +929,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       await createBranch(repo.id, name, opts?.from);
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       setActivity("branch", null);
       await get().refreshAll();
       return false;
@@ -1017,7 +947,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       await deleteBranch(repo.id, name, force);
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       return;
     }
     await get().refreshAll();
@@ -1030,7 +960,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await renameBranch(repo.id, from, to);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1041,7 +971,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await setUpstreamFn(repo.id, branch, upstream);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1052,7 +982,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await createTag(repo.id, name, target);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1063,7 +993,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await deleteTag(repo.id, name);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1077,7 +1007,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // See mergeBranch's catch: refresh first, error last, so it isn't
       // batched away by refreshAll's own `error: null` reset.
       await get().refreshAll();
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1098,7 +1028,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // See mergeBranch's catch: refresh first, error last, so it isn't
       // batched away by refreshAll's own `error: null` reset.
       await get().refreshAll();
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1112,7 +1042,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // See mergeBranch's catch: refresh first, error last, so it isn't
       // batched away by refreshAll's own `error: null` reset.
       await get().refreshAll();
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1124,7 +1054,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await get().refreshAll();
       return oid;
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       return null;
     }
   },
@@ -1136,7 +1066,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await stashApply(repo.id, index);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1147,7 +1077,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await stashPop(repo.id, index);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1158,7 +1088,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await stashDrop(repo.id, index);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1169,7 +1099,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await stashBranchFn(repo.id, index, branch);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1189,7 +1119,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           );
           await get().refreshAll();
         },
-        (e) => set({ error: toAppError(e) }),
+        (e) => setErrorFor(repo.id, e),
       );
     } finally {
       setActivity("fetch", null);
@@ -1207,7 +1137,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           await fetchAll(repo.id, useSettingsStore.getState().pruneOnFetch, creds);
           await get().refreshAll();
         },
-        (e) => set({ error: toAppError(e) }),
+        (e) => setErrorFor(repo.id, e),
       );
     } finally {
       setActivity("fetch", null);
@@ -1261,7 +1191,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         // See mergeBranch's catch: refresh first, error last, so it isn't
         // batched away by refreshAll's own `error: null` reset.
         await get().refreshAll();
-        set({ error: toAppError(e) });
+        setErrorFor(repo.id, e);
       },
     );
   },
@@ -1277,7 +1207,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           await pushRemote(repo.id, remote, branch, force, creds);
           await get().refreshAll();
         },
-        (e) => set({ error: toAppError(e) }),
+        (e) => setErrorFor(repo.id, e),
       );
     } finally {
       setActivity("push", null);
@@ -1291,7 +1221,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await addRemote(repo.id, name, url);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1302,7 +1232,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await removeRemote(repo.id, name);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1313,7 +1243,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await renameRemote(repo.id, from, to);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1324,7 +1254,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await setRemoteUrl(repo.id, name, url);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1335,7 +1265,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await pruneRemote(repo.id, name);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1346,7 +1276,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await acceptOurs(repo.id, path);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1357,7 +1287,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await acceptTheirs(repo.id, path);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1368,7 +1298,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await markResolved(repo.id, paths);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1386,7 +1316,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await abortOperation(repo.id);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1411,7 +1341,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // rebase --continue` that stops on the NEXT conflict fails here with the
       // repository already moved on, so the operation bar must re-read disk.
       await get().refreshAll();
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       return null;
     }
   },
@@ -1423,7 +1353,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await runMergetoolFn(repo.id, path);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1434,7 +1364,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await restartConflictFn(repo.id, path);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1443,11 +1373,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return null;
     try {
       const status = await rebaseStartFn(repo.id, plan);
-      set({ rebaseStatus: status });
+      setFor(repo.id, { rebaseStatus: status });
       await get().refreshAll();
       return status;
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       return null;
     }
   },
@@ -1457,11 +1387,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return null;
     try {
       const status = await rebaseContinueFn(repo.id);
-      set({ rebaseStatus: status });
+      setFor(repo.id, { rebaseStatus: status });
       await get().refreshAll();
       return status;
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
       return null;
     }
   },
@@ -1471,10 +1401,10 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await rebaseAbort(repo.id);
-      set({ rebaseStatus: DEFAULT_REBASE_STATUS });
+      setFor(repo.id, { rebaseStatus: DEFAULT_REBASE_STATUS });
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1486,9 +1416,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // Mirror the drop locally instead of a full refreshAll: acknowledging is
       // a notice being dismissed, not a change to the repository, and a refresh
       // here would re-walk the log on every visit to the Rebase screen.
-      set((s) => ({ rebaseStatus: { ...s.rebaseStatus, lastCompleted: null } }));
+      setFor(repo.id, {
+        rebaseStatus: { ...get().rebaseStatus, lastCompleted: null },
+      });
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1541,7 +1473,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await appendGitignoreFn(repo.id, pattern);
       await get().refreshAll();
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
 
@@ -1551,7 +1483,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       await openInEditorFn(repo.id, relativePath);
     } catch (e) {
-      set({ error: toAppError(e) });
+      setErrorFor(repo.id, e);
     }
   },
   });

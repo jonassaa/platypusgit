@@ -223,7 +223,11 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
           }
         }
         if (!handled && def.scope === "global" && def.run) {
-          handled = def.run() !== false;
+          // The chord is passed so one action can serve a FAMILY of chords —
+          // `tab.select` is bound to Alt+1…Alt+9 and reads its digit from here
+          // rather than needing nine catalog entries. Every other runner
+          // ignores the argument.
+          handled = def.run(chord) !== false;
         }
         if (handled) {
           e.preventDefault();
