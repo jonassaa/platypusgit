@@ -13,6 +13,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
+import { settleDiff } from "@/test/settle";
 import { WithDialogs } from "@/test/dialog";
 import type { FileStatus } from "@/lib/types";
 
@@ -89,28 +90,6 @@ function press(k: string): boolean {
 const changedRows = () => screen.getAllByTestId("diff-line-changed");
 const focusedRowIndex = () =>
   changedRows().findIndex((r) => r.hasAttribute("data-focused"));
-
-/**
- * Wait until the pane has stopped refetching its diff.
- *
- * Mounting produces more than one `get_diff`, and EVERY new diff resets the line
- * cursor and clears the line selection by design — the indices would otherwise
- * address a diff that no longer exists. Driving the keyboard before that settles
- * lets a late resolution wipe the cursor mid-test, which is the shape of flake
- * that bit `CommitPanel.lineStaging.test.tsx`.
- */
-async function settleDiff() {
-  const count = () => getInvokeCalls().filter((c) => c.cmd === "get_diff").length;
-  let prev = -1;
-  while (prev !== count()) {
-    prev = count();
-    // One macrotask turn per pass: enough for a pending fetch to resolve and for
-    // the effect its result triggers to queue another.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-  }
-}
 
 /** `status` seeds the store AND answers get_status, so the two cannot disagree. */
 async function setup(status: FileStatus[]) {

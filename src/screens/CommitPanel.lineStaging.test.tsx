@@ -6,11 +6,12 @@
 // additions must not shift the indices sent to the backend.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CommitPanelScreen } from "./CommitPanel";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
+import { settleDiff } from "@/test/settle";
 import { WithDialogs } from "@/test/dialog";
 import type { FileStatus } from "@/lib/types";
 
@@ -56,33 +57,6 @@ const stageLinesCall = () =>
   [...getInvokeCalls()].reverse().find((c) => c.cmd === "stage_lines");
 const stageHunkCall = () =>
   [...getInvokeCalls()].reverse().find((c) => c.cmd === "stage_hunk");
-
-/**
- * Wait until the pane has stopped refetching its diff AND React has run the
- * effects that arrival scheduled. Same helper as `CommitPanel.lineFocus.test.tsx`
- * — keep the two in step.
- *
- * `findAllByTestId` resolves the moment the rows are in the DOM, which is the
- * COMMIT of the diff render, not the end of it: React posts passive effects on
- * its own task queue, and RTL's async helpers only drain a timer task, so under
- * load the timer can win and `clearLineSel` — the effect that drops the line
- * selection whenever `diff` changes — is still pending. `fireEvent` then flushes
- * that stale clear and the click's own update into ONE render, in queue order,
- * so the clear lands last and the selection silently never happens. `act` queues
- * behind React's own task instead, so the effects are flushed before the click.
- */
-async function settleDiff() {
-  const count = () => getInvokeCalls().filter((c) => c.cmd === "get_diff").length;
-  let prev = -1;
-  while (prev !== count()) {
-    prev = count();
-    // One macrotask turn per pass: enough for a pending fetch to resolve and for
-    // the effect its result triggers to queue another.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-  }
-}
 
 async function setup() {
   resetInvokeMock();
