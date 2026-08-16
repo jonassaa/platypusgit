@@ -40,6 +40,7 @@ export const featureGroups = [
     'List / create / checkout / rename / delete branches',
     'Merge or rebase onto any branch — local or remote — straight from the branch picker, the titlebar chip or the Branches screen',
     'Lightweight and annotated tags',
+    'GPG/SSH signed tags — defaults from `tag.gpgsign`, overridable per tag, with a verification badge on the tag you select',
     'Push and delete tags',
   ]},
   { title: 'History', blurb: 'Navigate the past.', items: [
@@ -113,7 +114,6 @@ export const featureGroups = [
 // Roadmap teaser (from features.md P0/P1 — clearly "planned")
 export const roadmap = [
   'Branch compare — branch↔branch and branch↔working tree',
-  'GPG/SSH tag signing (commit signing shipped in 0.0.8)',
   'Partial/hunk-level stash + rename + compare to working tree',
   'Signed & notarized macOS / Windows builds',
 ];
