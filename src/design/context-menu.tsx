@@ -1441,6 +1441,17 @@ export function fileMenuItems(
         useRepoStore.getState().openInEditor(path);
       },
     },
+    // Partial stash of one file (#133). Here as well as in the multi-selection
+    // menu because one row IS the common selection — reaching it only by
+    // selecting two files first would be a shortcut nobody finds.
+    {
+      icon: "stash",
+      label: "Stash this file…",
+      onClick: () => {
+        if (!path) return;
+        return promptStashPaths([path], untracked ? [path] : []);
+      },
+    },
     { divider: true },
     {
       icon: "copy",
