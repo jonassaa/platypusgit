@@ -27,13 +27,15 @@ import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useCompareStore } from "@/features/compare/useCompareStore";
 import { CompareSidePicker } from "@/features/compare/CompareSidePicker";
 import {
+  COMPARE_COMMIT_LIMIT,
+  WORKDIR,
   canSwap,
   commitListHeading,
   compareHeader,
+  defaultLeftSide,
   hasCommitLists,
   sideKey,
   sideLabel,
-  COMPARE_COMMIT_LIMIT,
 } from "@/features/compare/compareSides";
 import { relativeTime, shortSha } from "@/lib/derive";
 import type { CommitInfo } from "@/lib/types";
@@ -174,6 +176,19 @@ export function CompareScreen() {
   const setRight = useCompareStore((s) => s.setRight);
   const swap = useCompareStore((s) => s.swap);
   const refresh = useCompareStore((s) => s.refresh);
+
+  // First visit for this repository — or a tab switch since the last one — gets
+  // the app's own `git diff`: the current branch against what is on disk. An
+  // entry point that named a pair already stamped `repoId`, so this leaves it
+  // alone; a pair left over from ANOTHER repository would name refs this one may
+  // not even have.
+  const branches = useRepoStore((s) => s.branches);
+  React.useLayoutEffect(() => {
+    if (!repo) return;
+    if (useCompareStore.getState().repoId === repo.id) return;
+    useCompareStore.getState().open(defaultLeftSide(branches), WORKDIR);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo?.id]);
 
   // Primitive deps only: the side objects are rebuilt on every render, so
   // depending on their identity would refetch forever.

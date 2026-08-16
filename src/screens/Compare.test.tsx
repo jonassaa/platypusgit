@@ -93,12 +93,20 @@ function wire() {
 }
 
 function mount() {
-  useRepoStore.setState({ current: handle, branches, tags: [] } as never);
   render(<CompareScreen />);
 }
 
 beforeEach(() => {
   wire();
+  // BEFORE any `open(...)` below: the store stamps the active repo id when a
+  // pair is opened, and the screen resets to its default pair when that stamp
+  // does not match the repository on screen.
+  useRepoStore.setState({
+    current: handle,
+    branches,
+    tags: [],
+    error: null,
+  } as never);
   useCompareStore.setState({
     repoId: null,
     left: { kind: "rev", rev: "main" },
@@ -246,6 +254,36 @@ describe("rev ↔ working tree", () => {
     expect(screen.getByTestId("compare-swap")).toBeDisabled();
     fireEvent.click(screen.getByTestId("compare-swap"));
     expect(useCompareStore.getState().left).toEqual({ kind: "rev", rev: "main" });
+    expect(useCompareStore.getState().right).toEqual(WORKDIR);
+  });
+});
+
+describe("entering the screen without a named pair", () => {
+  it("defaults to the current branch against the working tree", async () => {
+    // Nothing called `open` — `repoId` is still null.
+    mount();
+
+    await waitFor(() =>
+      expect(
+        getInvokeCalls().some((c) => c.cmd === "diff_ref_to_workdir"),
+      ).toBe(true),
+    );
+    expect(useCompareStore.getState().left).toEqual({ kind: "rev", rev: "main" });
+    expect(useCompareStore.getState().right).toEqual(WORKDIR);
+  });
+
+  it("discards a pair left over from another repository", async () => {
+    useCompareStore
+      .getState()
+      .open({ kind: "rev", rev: "other-repo-branch" }, { kind: "rev", rev: "x" });
+    // Same page, different repository — those ref names may not exist here.
+    useCompareStore.setState({ repoId: "repo-2" });
+
+    mount();
+
+    await waitFor(() =>
+      expect(useCompareStore.getState().left).toEqual({ kind: "rev", rev: "main" }),
+    );
     expect(useCompareStore.getState().right).toEqual(WORKDIR);
   });
 });
