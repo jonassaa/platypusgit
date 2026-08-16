@@ -33,6 +33,8 @@ import {
   commitListHeading,
   compareHeader,
   defaultLeftSide,
+  diffBasisHelp,
+  diffBasisNote,
   hasCommitLists,
   sideKey,
   sideLabel,
@@ -170,6 +172,7 @@ export function CompareScreen() {
   const summary = useCompareStore((s) => s.summary);
   const aheadCommits = useCompareStore((s) => s.aheadCommits);
   const behindCommits = useCompareStore((s) => s.behindCommits);
+  const untrackedOmitted = useCompareStore((s) => s.untrackedOmitted);
   const loading = useCompareStore((s) => s.loading);
   const error = useCompareStore((s) => s.error);
   const setLeft = useCompareStore((s) => s.setLeft);
@@ -284,6 +287,17 @@ export function CompareScreen() {
               {summary.mergeBase
                 ? ` · base ${shortSha(summary.mergeBase)}`
                 : " · unrelated histories"}
+              {/* The lists are two-dot each way, the diff is tree-vs-tree.
+                  Without this the screen contradicts itself in silence. */}
+              {diffBasisNote(left, summary.behind) && (
+                <span
+                  data-testid="compare-diff-basis"
+                  title={diffBasisHelp(left, right)}
+                  style={{ color: "var(--git-modified)" }}
+                >
+                  {` · ${diffBasisNote(left, summary.behind)}`}
+                </span>
+              )}
             </>
           ) : showLists ? (
             ""
@@ -298,6 +312,25 @@ export function CompareScreen() {
           onClick={() => void refresh(diffContextLines, ignoreWhitespace)}
         />
       </div>
+
+      {untrackedOmitted > 0 && (
+        // The backend capped the untracked side rather than serialising an
+        // untracked `dist/` whole. Saying so is the point of the cap — a short
+        // file list with no explanation would be the very failure it prevents.
+        <div
+          data-testid="compare-untracked-omitted"
+          style={{
+            padding: "6px 10px",
+            color: "var(--git-modified)",
+            fontSize: "var(--fs-12)",
+            borderBottom: "1px solid var(--border-0)",
+            flexShrink: 0,
+          }}
+        >
+          {untrackedOmitted} untracked files omitted — too many to diff at once.
+          Commit or ignore them to see them here.
+        </div>
+      )}
 
       {error && (
         <div
@@ -351,7 +384,9 @@ export function CompareScreen() {
             {/* Same vertical-split idiom History uses for its detail panel. */}
             <PGResizeHandle
               orientation="vertical"
-              side="top"
+              // The handle sits BELOW the pane it sizes, so its
+              // -2px overlap belongs on its top edge.
+              side="bottom"
               testId="compare-lists-resize"
               onDrag={(d) => listsHeight.resize(d)}
             />

@@ -7,6 +7,8 @@ import { useTabsStore } from "@/features/repo/useTabsStore";
 import { newTab } from "@/features/repo/tabs";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { paletteInitial, usePaletteStore } from "./usePaletteStore";
+import { useCompareStore } from "@/features/compare/useCompareStore";
+import type { PaletteStep } from "./types";
 import type { BranchInfo, CommitInfo, FileStatus, StashInfo } from "@/lib/types";
 
 const mkBranch = (name: string, isHead = false, upstream: string | null = null): BranchInfo => ({
@@ -224,6 +226,33 @@ describe("buildCommands", () => {
       ]);
       expect(step.items[0].detail).toBe("current");
     });
+  });
+
+  it("compare commands are in the catalog and open the compare screen (#131)", () => {
+    setRepo({ branches: [mkBranch("main", true), mkBranch("feature")] });
+    expect(ids()).toEqual(
+      expect.arrayContaining(["action:compare-refs", "action:compare-workdir"]),
+    );
+
+    // Same narrowing the merge-command test uses: `PaletteStep` is a union and
+    // only its "pick" arm has `items`.
+    const steps: { items: { label: string; run: () => void }[] }[] = [];
+    usePaletteStore.setState({
+      pushStep: (s: PaletteStep) =>
+        steps.push(s as unknown as { items: { label: string; run: () => void }[] }),
+    } as never);
+
+    // Current branch on the LEFT, so the picked ref's own work reads as additions.
+    buildCommands().find((i) => i.id === "action:compare-refs")!.run();
+    steps[0].items.find((i) => i.label === "feature")!.run();
+    expect(useCompareStore.getState().left).toEqual({ kind: "rev", rev: "main" });
+    expect(useCompareStore.getState().right).toEqual({ kind: "rev", rev: "feature" });
+
+    // The working-tree command puts the picked ref on the left instead.
+    buildCommands().find((i) => i.id === "action:compare-workdir")!.run();
+    steps[1].items.find((i) => i.label === "feature")!.run();
+    expect(useCompareStore.getState().left).toEqual({ kind: "rev", rev: "feature" });
+    expect(useCompareStore.getState().right).toEqual({ kind: "workdir" });
   });
 
   it("action:checkout-ref is always in the catalog", () => {

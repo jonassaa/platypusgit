@@ -117,6 +117,15 @@ The flag stays on the trait because #133 (stash work) inherits this primitive an
 may want git's exact semantics for a stash comparison; that is a caller's
 decision, not the primitive's.
 
+**And the untracked side is bounded, because its scope is not `diff`'s.** The
+consistency argument above is true but incomplete on its own: `diff` sets
+`opts.pathspec(path)` *before* enabling untracked content, so it only ever reads
+one file. This op walks the whole tree. So it returns
+`WorkdirDiff { files, untracked_omitted }` — over `MAX_UNTRACKED_FILES` (200) the
+untracked side is dropped whole and the count is reported, and `MAX_WORKDIR_BLOB`
+(5 MiB) caps per-blob size. The decision is made from a names-only counting pass,
+before any blob is read, so the files that get dropped are never loaded.
+
 ### D. Backend: three additive ops, no rewrites
 
 Standard path each (trait → `Libgit2Backend` → `CliBackend` stub → thin command →
@@ -203,6 +212,13 @@ is a considered action, not a hot path.
 - **No auto-refresh.** The working-tree side goes stale the moment the user saves
   a file; a manual refresh button says so honestly, where a poll would fight the
   windowed diff.
+- **No three-dot diff — but the screen says so.** The commit lists are two-dot
+  each way while the file diff is `diff_commits`, tree against tree, so the base
+  side's exclusive work appears as deletions that nothing deleted. Leaving that
+  unsaid made the screen contradict itself, so the bar carries a
+  `diffBasisNote` whenever `behind > 0`, with the full explanation on its
+  tooltip. Three-dot remains out of scope; being silent about the difference
+  does not.
 
 ## Testing
 

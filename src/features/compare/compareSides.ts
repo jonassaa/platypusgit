@@ -83,6 +83,36 @@ export function defaultLeftSide(branches: BranchInfo[]): CompareSide {
 }
 
 /**
+ * Why the file diff can list files neither commit list explains.
+ *
+ * The lists are two-dot each way ("what is exclusively on this side"), but the
+ * diff is `diff_commits` — tree against tree. So the LEFT side's exclusive work
+ * shows up as deletions: fork, `main` adds `docs/release.md`, `feature` adds
+ * `src/x.ts`, compare `main → feature`, and the file list reads `src/x.ts`
+ * added AND `docs/release.md` deleted. Nothing deleted it; it just does not
+ * exist on `feature` yet.
+ *
+ * Returns null when `behind` is 0 — the left side then has no exclusive work,
+ * so there is nothing to be confused by and the note would be noise.
+ */
+export function diffBasisNote(
+  left: CompareSide,
+  behind: number,
+): string | null {
+  if (behind <= 0) return null;
+  return `includes ${sideLabel(left)}-only files as deletions`;
+}
+
+/** The long form, for the note's tooltip. */
+export function diffBasisHelp(left: CompareSide, right: CompareSide): string {
+  return (
+    `The commit lists are two-dot each way. The file diff is the ${sideLabel(left)} ` +
+    `tree against the ${sideLabel(right)} tree, so anything that exists only on ` +
+    `${sideLabel(left)} appears as a deletion even though nothing deleted it.`
+  );
+}
+
+/**
  * Heading for one of the two commit lists: "3 commits on `feature` not on
  * `main`". Singular/plural matters here — these are read as counts, not labels.
  */

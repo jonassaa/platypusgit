@@ -6,6 +6,8 @@ import {
   commitListHeading,
   compareHeader,
   defaultLeftSide,
+  diffBasisHelp,
+  diffBasisNote,
   hasCommitLists,
   sideKey,
   sideLabel,
@@ -87,6 +89,22 @@ describe("defaultLeftSide", () => {
   it("falls back to HEAD when nothing is checked out (detached / unborn)", () => {
     expect(defaultLeftSide([branch("main")])).toEqual(rev("HEAD"));
     expect(defaultLeftSide([])).toEqual(rev("HEAD"));
+  });
+});
+
+describe("diffBasisNote", () => {
+  it("warns only when the base side has exclusive work to show as deletions", () => {
+    expect(diffBasisNote(rev("main"), 0)).toBeNull();
+    expect(diffBasisNote(rev("main"), 2)).toBe(
+      "includes main-only files as deletions",
+    );
+  });
+
+  it("names both trees in the long form", () => {
+    const help = diffBasisHelp(rev("main"), rev("feature"));
+    expect(help).toContain("main");
+    expect(help).toContain("feature");
+    expect(help).toContain("two-dot");
   });
 });
 

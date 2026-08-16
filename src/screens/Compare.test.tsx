@@ -75,7 +75,12 @@ function wire() {
       : [commit("2".repeat(40), "main work")],
   );
   mockInvoke("diff_commits", () => DIFF);
-  mockInvoke("diff_ref_to_workdir", () => DIFF);
+  // `WorkdirDiff`, not a bare array: the untracked side is capped and the
+  // count travels with the result.
+  mockInvoke("diff_ref_to_workdir", () => ({
+    files: DIFF,
+    untrackedOmitted: 0,
+  }));
   mockInvoke("read_file_content_at_rev", () => ({
     path: "src/a.ts",
     binary: false,
@@ -117,6 +122,7 @@ beforeEach(() => {
     behindCommits: [],
     loading: false,
     error: null,
+    untrackedOmitted: 0,
     marked: null,
   });
 });
@@ -152,6 +158,27 @@ describe("rev ↔ rev", () => {
     expect(screen.getByTestId("compare-behind-list").textContent).toContain(
       "main work",
     );
+  });
+
+  it("admits the diff and the counts use different bases", async () => {
+    // The lists are two-dot each way; the diff is tree-vs-tree, so `main`-only
+    // files show as deletions. Silence there makes the screen contradict itself.
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId("compare-diff-basis")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("compare-diff-basis").textContent).toContain(
+      "main-only files as deletions",
+    );
+  });
+
+  it("stays quiet when the base side has no exclusive work", async () => {
+    mockInvoke("ahead_behind", () => ({ ...SUMMARY, behind: 0 }));
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId("compare-summary").textContent).toContain("↓0"),
+    );
+    expect(screen.queryByTestId("compare-diff-basis")).toBeNull();
   });
 
   it("diffs the pair tree-to-tree, never through the workdir op", async () => {
@@ -241,6 +268,31 @@ describe("rev ↔ working tree", () => {
     expect(screen.getByTestId("compare-side-right").textContent).toContain(
       "untracked",
     );
+  });
+
+  it("reports untracked files the backend had to omit", async () => {
+    mockInvoke("diff_ref_to_workdir", () => ({
+      files: DIFF,
+      untrackedOmitted: 412,
+    }));
+    mount();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("compare-untracked-omitted")).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByTestId("compare-untracked-omitted").textContent,
+    ).toContain("412 untracked files omitted");
+  });
+
+  it("says nothing when nothing was omitted", async () => {
+    mount();
+    await waitFor(() =>
+      expect(
+        getInvokeCalls().some((c) => c.cmd === "diff_ref_to_workdir"),
+      ).toBe(true),
+    );
+    expect(screen.queryByTestId("compare-untracked-omitted")).toBeNull();
   });
 
   it("refuses to swap the working tree onto the base side", async () => {

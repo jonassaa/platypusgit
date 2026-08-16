@@ -589,6 +589,17 @@ lib/
   — this backend's own worktree diff kinds already include untracked content, so
   hiding a file you just wrote would make ref↔worktree the one worktree diff in
   the app that lies by omission; `.gitignore`d files stay out either way.
+- **But its untracked SCOPE is nothing like `diff`'s, and that is why it is
+  bounded.** `diff` calls `opts.pathspec(path)` BEFORE turning untracked content
+  on, so it only ever reads one untracked file; `diff_ref_to_workdir` walks the
+  whole tree, and an untracked `dist/`, `.venv/` or downloaded dataset that
+  nobody `.gitignore`d would otherwise land in one IPC payload and one `DiffRow`
+  model per file. So it returns `WorkdirDiff { files, untracked_omitted }`, not a
+  bare `Vec<FileDiff>`: over `MAX_UNTRACKED_FILES` the untracked side is dropped
+  WHOLE and the count is reported (the compare screen renders it), and
+  `MAX_WORKDIR_BLOB` caps per-blob size so one enormous file reads as binary.
+  Truncating silently would be worse than the overflow — do not "simplify" the
+  return type back.
 - **Gate text rendering on `isTextualDiff(diff)`, not `!diff.binary`** (#93). A
   git-LFS pointer IS text, so `binary` is honestly false — rendering its hunks
   claims "2 lines changed" for a multi-megabyte asset. All four diff surfaces use
