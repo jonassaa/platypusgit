@@ -38,6 +38,7 @@ export const featureGroups = [
   ]},
   { title: 'Branches & tags', blurb: 'Full ref management.', items: [
     'List / create / checkout / rename / delete branches',
+    'Merge or rebase onto any branch — local or remote — straight from the branch picker, the titlebar chip or the Branches screen',
     'Lightweight and annotated tags',
     'Push and delete tags',
   ]},
@@ -113,7 +114,6 @@ export const featureGroups = [
 export const roadmap = [
   'Branch compare — branch↔branch and branch↔working tree',
   'GPG/SSH tag signing (commit signing shipped in 0.0.8)',
-  'Quick merge/rebase from the branch picker',
   'Partial/hunk-level stash + rename + compare to working tree',
   'Signed & notarized macOS / Windows builds',
 ];
