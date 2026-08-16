@@ -201,10 +201,21 @@ export interface TagInfo {
   signed: boolean;
 }
 
+/**
+ * One entry on the `refs/stash` reflog (#133). Mirrors Rust `StashInfo`.
+ *
+ * `index` and `oid` are both here because they answer different questions:
+ * `index` is a reflog POSITION (anything written to `refs/stash` shifts it, a
+ * rename included), so it addresses the ops that edit the reflog; `oid` names
+ * the commit and is what a comparison addresses.
+ */
 export interface StashInfo {
   index: number;
   shortOid: string;
+  oid: string;
   message: string;
+  /** The entry carries untracked files (`git stash -u` — a third parent). */
+  untracked: boolean;
 }
 
 export interface RemoteInfo {

@@ -163,10 +163,19 @@ Full sequence, with the guard rails that make each step recoverable:
    worst outcome of skipping this check is a stash that no longer exists.
 6. `stash_drop(index + 1)`.
 
-The frontend must **re-read the list** rather than patch it: every index above
-the renamed one is unchanged only because store-then-drop is net zero, and
-relying on that arithmetic in two places is how the two get to disagree.
-`useRepoStore.stashRename` calls `refreshAll()` like its neighbours.
+**A renamed entry moves to the top, and that is accepted, not a defect.**
+`refs/stash` is a reflog and `store` can only *prepend* — git has no
+insert-at-position. Restoring the previous order would mean dropping and
+re-storing every entry above the renamed one, turning a one-entry edit into N
+unrecoverable drops. Editing `.git/logs/refs/stash` in place would preserve the
+order but bypasses git's ref locking, so a concurrent git process could
+interleave with it. The entry keeps its identity, its content and its time;
+everything else keeps its message and its relative order. Pinned by a test.
+
+That reorder is also the sharpest reason the frontend must **re-read the list**
+rather than patch it: the indices genuinely change, and a UI that assumed
+store-then-drop was net zero would address the wrong entry on the very next
+click. `useRepoStore.stashRename` calls `refreshAll()` like its neighbours.
 
 ### D. Partial stash — path level ships, hunk level is deferred on purpose
 

@@ -220,12 +220,31 @@ pub struct TagInfo {
     pub signed: bool,
 }
 
+/// One entry on the `refs/stash` reflog (#133).
+///
+/// It carries BOTH addresses on purpose, because they answer different
+/// questions and are not interchangeable. `index` is a position in a reflog —
+/// every write to `refs/stash` shifts it, including a rename's own
+/// store-then-drop — so it is what the ops that EDIT the reflog
+/// (`stash_drop`, `stash_rename`) take, and they re-verify the oid before
+/// touching anything. `oid` names the commit and survives whatever happens to
+/// the reflog around it, so it is what a COMPARISON takes: a stale index would
+/// silently diff a different entry.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StashInfo {
     pub index: usize,
     pub short_oid: String,
+    pub oid: String,
     pub message: String,
+    /// The entry carries files git had no copy of — `git stash -u`.
+    ///
+    /// git's stash layout is: parent 0 = the commit it was taken on, parent 1 =
+    /// the index state, parent 2 = the untracked files, present only for `-u`.
+    /// So this is `parent_count() > 2`, an O(1) read, and it is the only way
+    /// anything in the app can tell that a comparison against the stash's TREE
+    /// is leaving part of the entry out.
+    pub untracked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
