@@ -45,10 +45,26 @@ they are not interchangeable:
 - **`oid` names the commit**, and it survives anything that happens to the
   reflog around it.
 
-So the ops split on which one is honest: `stash_diff` takes the **oid** (a
+So the ops split on which one is honest: `stash_diff` takes the **oid** alone (a
 comparison is about a commit, and a stale index would silently diff a different
-entry), while `stash_rename` and `stash_drop` take the **index** (a reflog entry
-is what they edit) *and* re-verify the oid before they touch anything.
+entry), while `stash_rename` and `stash_drop` take **both** — the index to
+address the reflog entry they edit, and the oid to prove it is still the one the
+caller picked. The oid is **required**, not optional: they re-read the entry and
+compare before mutating, raising `StaleStash` on a mismatch.
+
+**And that check must share a lock acquisition with the mutation it guards.**
+`with_repo_mut` holds the backend's `repos` mutex only for the duration of its
+closure, so verifying in one acquisition and dropping in the next is a TOCTOU —
+and not a narrow one. That mutex serialises *every* backend git op, so a
+concurrent command already parked on it is scheduled to acquire it at exactly
+that boundary; nothing on the frontend gates stash writes with a busy flag, and
+the reflog screen's `DirtyTreeDialog` auto-stash is another live writer. A write
+landing in that window shifts every index, and the drop then deletes an entry
+the user never selected. `stash_drop_at` and `stash_finish_rename` therefore do
+enumerate → verify → drop inside one closure, over the free helpers
+`stash_pairs` / `stash_entry_at`, which take an already-borrowed
+`&mut Repository` (calling `stashes()` there would deadlock — it acquires the
+lock itself and std's `Mutex` is not reentrant).
 
 `untracked` is `parent_count() > 2`, an O(1) read. git's stash layout is: parent
 0 = the commit the stash was taken on, parent 1 = the index state, parent 2 =
@@ -161,7 +177,8 @@ Full sequence, with the guard rails that make each step recoverable:
    the original message. Any mismatch → error, **nothing dropped**. The worst
    outcome of a half-failure is a duplicate entry, which the user can drop; the
    worst outcome of skipping this check is a stash that no longer exists.
-6. `stash_drop(index + 1)`.
+6. `stash_drop(index + 1)` — **inside the same closure as step 5**, per the
+   TOCTOU note in §A.
 
 **A renamed entry moves to the top, and that is accepted, not a defect.**
 `refs/stash` is a reflog and `store` can only *prepend* — git has no
@@ -259,25 +276,39 @@ A new pure module `git/stash.rs` holds the two argv builders
 placement and the flag derivation are asserted without a repository — the same
 split `forge/checkout.rs` uses.
 
-**No new `AppError` variants.** Every failure here is already covered:
-`InvalidArgument` (newline in a message, an empty path list), `InvalidRef` (an
-oid that is not a stash commit), `Git` (a verification that did not hold).
+**One new `AppError` variant, `StaleStash(String)`.** It carries the label
+(`stash@{1}`), not prose, so `appErrorMessage` renders it — the `BranchExists`
+shape. It is deliberately not `Git`: "the entry you picked moved" is
+recoverable and its remedy is specific (refresh and pick again), where a `Git`
+banner reads as a failure the user can do nothing about. Everything else is
+already covered: `InvalidArgument` (newline in a message, an empty path list),
+`InvalidRef` (an oid that is not a stash commit), `Git` (a store that did not
+land).
 
 ## Testing
 
 - **Rust — `tests/stash_partial.rs`**: `stash_save_paths` stashes only the named
   path and leaves the other dirty; returns `None` and changes nothing when the
   pathspec matches no changes; carries an untracked path when the selection has
-  one; rejects an empty path list. Plus argv-builder unit tests in
+  one; rejects an empty path list; treats a leading-dash filename as a path.
+  And the one that earns its keep: a file honestly named `:(exclude)weird.txt`
+  must stash **only itself**. Without `GIT_LITERAL_PATHSPECS` that name means
+  "everything except weird.txt" and the call stashes the whole worktree —
+  verified by removing the env var and watching the test fail. Plus argv-builder unit tests in
   `git/stash.rs` pinning `--` before the paths and the flag derivation.
 - **Rust — `tests/stash_rename.rs`**: renames `stash@{0}` — **the case a naive
   store-then-drop destroys** — and asserts the entry count is unchanged, the new
   message shows, and the stash still applies to the same content; renames a
   middle entry and asserts the others keep their messages and order; a newline
   message is refused with the entry untouched; a rename to the identical message
-  is a no-op; and **an injected failure between store and drop leaves the
-  original entry present** (driven by pointing the verification at a mutated
-  list — the assertion is that nothing is dropped when the check does not hold).
+  is a no-op; `git stash store`'s elision is asserted **directly**, against real
+  git, so a future change to it is visible rather than silent. And the
+  **staleness injection**: an intruding stash lands between the caller reading
+  the list and the op running, and both `stash_rename` and `stash_drop` must
+  raise `StaleStash` with nothing renamed, dropped or reordered — the assertion
+  is on the *unrelated* entry still being there. The gate itself
+  (`rename_store_landed`) is unit-tested in `git/stash.rs` against hand-built
+  lists, including the elision case, which is the window a test cannot enter.
 - **Rust — `tests/stash_diff.rs`**: a stash's diff is against its own first
   parent and not HEAD (a commit landed *after* the stash must not appear);
   direction is parent → stash, so stashed work is additions; `include_untracked`

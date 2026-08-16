@@ -1065,10 +1065,23 @@ lib/
 
 - **`StashInfo` carries `index` AND `oid`, and they are not interchangeable.**
   `index` is a position in the `refs/stash` reflog, so ANY write to that ref
-  shifts it — a rename shifts it itself. Ops that EDIT the reflog (`stash_drop`,
-  `stash_rename`) take the index and re-verify the oid before touching
-  anything; a COMPARISON takes the oid, because a stale index would silently
-  diff a different entry.
+  shifts it — a rename shifts it itself. So `stash_drop` and `stash_rename` take
+  BOTH, and the oid is REQUIRED, not a convenience: they re-read the entry and
+  compare before mutating, raising `StaleStash` on a mismatch. A COMPARISON
+  takes the oid alone, because a stale index would silently diff a different
+  entry. Every UI path already has the oid (`StashMenuTarget`, the palette's
+  `stashItems`) — thread it, never assert past it.
+- **Verify and mutate under ONE lock acquisition.** `with_repo_mut` holds the
+  backend's `repos` mutex only for its closure, so a check in one acquisition
+  and a drop in the next is a TOCTOU — and because that mutex serialises every
+  backend git op, a concurrent command parked on it is scheduled to run at
+  exactly that boundary. A write to `refs/stash` landing there shifts every
+  index and the drop deletes an unrelated entry, permanently. `stash_drop_at`
+  and `stash_finish_rename` exist for this; `stash_pairs` / `stash_entry_at`
+  take an already-borrowed `&mut Repository` because `Libgit2Backend::stashes`
+  takes the lock itself and std's `Mutex` is not reentrant. Nothing on the
+  frontend gates stash writes with a busy flag, and the reflog screen's
+  auto-stash is another live writer, so this is not theoretical.
 - **`git stash store <oid>` is a SILENT no-op when `refs/stash` already points
   at `<oid>`.** git elides a value-identical ref update, writes no reflog entry,
   and still exits 0 — and that is exactly `stash@{0}`, the entry a user is most
@@ -1092,11 +1105,15 @@ lib/
   against the EMPTY tree, so exactly the untracked files, all added);
   `stash-vs-wt` cannot, so it excludes untracked on BOTH sides and says so. Any
   new stash comparison must make that decision out loud, not by default.
-- **Pathspec ops set `GIT_LITERAL_PATHSPECS=1`** on top of the `--` rule. A path
-  is data from `git status`, but git reads a leading `:` as pathspec magic, so a
-  file honestly named `:(exclude)x` would otherwise select a different set. This
-  is the only shell-out in the app that passes a pathspec — do not turn the flag
-  on globally.
+- **Pathspec ops set `GIT_LITERAL_PATHSPECS=1`** on top of the `--` rule, and
+  the `--` alone does NOT cover it: that ends option parsing, and everything
+  after it is still parsed as a pathspec. A path is data from `git status`, but
+  git reads a leading `:` as magic, so a file honestly named
+  `:(exclude)weird.txt` means "everything EXCEPT weird.txt" — a request to stash
+  one file stashes the **whole worktree**. Pinned by
+  `a_pathspec_magic_filename_is_a_literal_path_not_an_exclusion`, which was
+  confirmed to fail without the env var. This is the only shell-out in the app
+  that passes a pathspec — do not turn the flag on globally.
 - **`git stash push` exits 0 when it saves nothing** ("No local changes to
   save"), so "was an entry created" is read off `refs/stash` before and after,
   never off the exit status. `Ok(None)` is a state, not a failure.
