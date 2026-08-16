@@ -15,7 +15,7 @@ use crate::opener::safe_workdir_path;
 
 use super::{
     types::{
-        BisectMark, BisectStatus,
+        AheadBehind, BisectMark, BisectStatus,
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
         DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LfsStatus, LogFilter, LogPage,
         RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
@@ -2490,6 +2490,67 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
+    fn commits_between(
+        &self,
+        repo_id: &RepoId,
+        base: &str,
+        tip: &str,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>> {
+        self.with_repo(repo_id, |repo| {
+            let ref_map = collect_ref_map(repo);
+            // `resolve_commit` maps a failure to InvalidRef with the offending
+            // spec, so the UI can name the side the user typed wrong.
+            let base_oid = resolve_commit(repo, base)?.id();
+            let tip_oid = resolve_commit(repo, tip)?.id();
+
+            // No ancestry requirement on purpose — see the trait doc. A pair
+            // that has diverged is the whole point.
+            let mut walk = repo.revwalk()?;
+            walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
+            walk.push(tip_oid)?;
+            walk.hide(base_oid)?;
+
+            let mut out = Vec::new();
+            for oid in walk {
+                if out.len() >= limit {
+                    break;
+                }
+                let oid = oid?;
+                let commit = repo.find_commit(oid)?;
+                let refs: Vec<String> = ref_map
+                    .iter()
+                    .filter(|(o, _)| *o == oid)
+                    .map(|(_, name)| name.clone())
+                    .collect();
+                let mut info = commit_to_info(&commit);
+                info.refs = refs;
+                out.push(info);
+            }
+            Ok(out)
+        })
+    }
+
+    fn ahead_behind(&self, repo_id: &RepoId, a: &str, b: &str) -> AppResult<AheadBehind> {
+        self.with_repo(repo_id, |repo| {
+            let a_oid = resolve_commit(repo, a)?.id();
+            let b_oid = resolve_commit(repo, b)?.id();
+
+            // git2's argument order is (local, upstream) → (ahead, behind) of
+            // LOCAL. Here `b` plays the local role: `ahead` must mean "on b, not
+            // on a" (see AheadBehind).
+            let (ahead, behind) = repo.graph_ahead_behind(b_oid, a_oid)?;
+            // Unrelated histories are a state, not a failure.
+            let merge_base = repo.merge_base(a_oid, b_oid).ok().map(|o| o.to_string());
+
+            Ok(AheadBehind {
+                ahead,
+                behind,
+                merge_base,
+            })
+        })
+    }
+
     fn diff(
         &self,
         repo_id: &RepoId,
@@ -2910,6 +2971,46 @@ impl GitBackend for Libgit2Backend {
                 Some(&to_tree),
                 Some(&mut opts),
             )?;
+
+            let mut find_opts = DiffFindOptions::new();
+            find_opts.renames(true).copies(false);
+            diff.find_similar(Some(&mut find_opts)).ok();
+
+            diff_to_file_diffs(&diff)
+        })
+    }
+
+    fn diff_ref_to_workdir(
+        &self,
+        repo_id: &RepoId,
+        revspec: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        include_untracked: bool,
+    ) -> AppResult<Vec<FileDiff>> {
+        self.with_repo(repo_id, |repo| {
+            // `peel_to_tree` so a tag, a branch, a commit or a tree all work —
+            // the same reach `list_files_at_rev` gives the tree browser.
+            let tree = repo
+                .revparse_single(revspec)
+                .and_then(|obj| obj.peel_to_tree())
+                .map_err(|_| AppError::InvalidRef(revspec.to_string()))?;
+
+            let mut opts = DiffOptions::new();
+            opts.context_lines(context_lines);
+            opts.ignore_whitespace(ignore_whitespace);
+            if include_untracked {
+                // Same triple `diff`'s worktree kinds use, so a brand-new file
+                // has readable content rather than a bare name. `include_ignored`
+                // stays off, so `.gitignore`d files never appear.
+                opts.include_untracked(true)
+                    .recurse_untracked_dirs(true)
+                    .show_untracked_content(true);
+            }
+
+            // `_with_index`, not the plain tree-to-workdir: without the index a
+            // file staged and then reverted in the worktree reads as unchanged.
+            let mut diff = repo.diff_tree_to_workdir_with_index(Some(&tree), Some(&mut opts))?;
 
             let mut find_opts = DiffFindOptions::new();
             find_opts.renames(true).copies(false);

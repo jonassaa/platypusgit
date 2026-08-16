@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
 use types::{
+    AheadBehind,
     BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
     DiffKind, FileContent,
     FileDiff, FileStatus, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
@@ -111,6 +112,28 @@ pub trait GitBackend: Send + Sync {
     /// Errors with `InvalidRef` if `base` can't be resolved or is not an
     /// ancestor of HEAD (a rebase base must be reachable from HEAD).
     fn commits_since(&self, repo_id: &RepoId, base: &str) -> AppResult<Vec<CommitInfo>>;
+    /// Commits reachable from `tip` but not from `base` — git's `base..tip` —
+    /// newest-first, capped at `limit`. Both sides are any revspec; either one
+    /// that cannot be resolved is `InvalidRef`.
+    ///
+    /// Deliberately NOT `commits_since`, which requires `base` to be an ancestor
+    /// of HEAD and errors otherwise: that is right for a rebase base and exactly
+    /// wrong for two diverged branches, which is the case branch compare exists
+    /// to show. Deliberately NOT `log` with a range refspec either — `log`
+    /// resolves through `revparse_single`, and libgit2 rejects a range spec
+    /// there (`GIT_EINVALIDSPEC`), so `"main..feature"` can never reach a walk.
+    fn commits_between(
+        &self,
+        repo_id: &RepoId,
+        base: &str,
+        tip: &str,
+        limit: usize,
+    ) -> AppResult<Vec<CommitInfo>>;
+    /// How `b` stands relative to `a`, plus their merge base (#131). See
+    /// `AheadBehind` for the direction convention. `InvalidRef` if either
+    /// revspec cannot be resolved to a commit; unrelated histories are a
+    /// `merge_base: None`, not an error.
+    fn ahead_behind(&self, repo_id: &RepoId, a: &str, b: &str) -> AppResult<AheadBehind>;
     /// Commits that touched `path`, newest first, up to `limit`.
     fn file_history(
         &self,
@@ -196,6 +219,30 @@ pub trait GitBackend: Send + Sync {
         oid: &str,
         context_lines: u32,
         ignore_whitespace: bool,
+    ) -> AppResult<Vec<FileDiff>>;
+    /// Diff the tree at `revspec` against the WORKING TREE — the whole tree, not
+    /// one path. A general primitive: arbitrary revspec (branch, remote branch,
+    /// tag, oid), with the same `context_lines` / `ignore_whitespace` knobs the
+    /// other diff ops take. `InvalidRef` when the revspec cannot be peeled to a
+    /// tree.
+    ///
+    /// Uses `diff_tree_to_workdir_with_index`, NOT `diff_tree_to_workdir`: the
+    /// latter ignores the index, so a file staged and then reverted in the
+    /// worktree would read as unchanged against the ref.
+    ///
+    /// `include_untracked` is explicit rather than hardcoded. Git's own
+    /// `git diff <ref>` ignores untracked files, but `diff`'s worktree kinds in
+    /// this backend already include them with content, so the compare view
+    /// passes `true` — hiding a file you just wrote is the silent failure, and
+    /// `.gitignore`d files are excluded either way. Callers that want git's
+    /// exact semantics pass `false`.
+    fn diff_ref_to_workdir(
+        &self,
+        repo_id: &RepoId,
+        revspec: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        include_untracked: bool,
     ) -> AppResult<Vec<FileDiff>>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>>;

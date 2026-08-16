@@ -92,6 +92,24 @@ pub struct LogPage {
     pub next_cursor: Option<Vec<String>>,
 }
 
+/// How one revision stands relative to another (#131).
+///
+/// Both counts are read FROM `a` TOWARD `b`: `ahead` is what `b` has that `a`
+/// does not, `behind` the mirror — the same reading `BranchInfo.ahead/behind`
+/// has for a branch against its upstream, so the two never mean opposite things.
+/// In git's own spelling that is `rev-list --left-right --count a...b`, left =
+/// `behind`, right = `ahead`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AheadBehind {
+    pub ahead: usize,
+    pub behind: usize,
+    /// Best common ancestor, or `None` for unrelated histories. It rides along
+    /// because it is the same graph query, and without it "no shared history"
+    /// is indistinguishable from "everything diverged".
+    pub merge_base: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {
