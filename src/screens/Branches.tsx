@@ -171,16 +171,20 @@ export function BranchesScreen() {
     ],
     [rows, visibleTags, visibleStashes],
   );
-  const flatIndex = Math.max(
-    0,
-    flatRefs.findIndex(
-      (r) =>
-        selection &&
-        r.kind === selection.kind &&
-        (r.kind === "stash"
-          ? selection.kind === "stash" && r.index === selection.index
-          : selection.kind !== "stash" && r.name === selection.name),
-    ),
+  // -1 when nothing is selected, and it must STAY -1: this used to clamp to 0,
+  // so `list.activate` checked out row 0 while no row had ever appeared
+  // highlighted. `branches.list` is the screen's primary pane, so entering the
+  // screen focuses it — Enter was one keystroke away from checking out
+  // whatever sorted first, which since #135 is the pinned default branch.
+  // `usePaneList` handles -1: arrowing either way lands on row 0, and
+  // `onActivate(-1)` reads past the end of `flatRefs` and no-ops.
+  const flatIndex = flatRefs.findIndex(
+    (r) =>
+      selection &&
+      r.kind === selection.kind &&
+      (r.kind === "stash"
+        ? selection.kind === "stash" && r.index === selection.index
+        : selection.kind !== "stash" && r.name === selection.name),
   );
   usePaneList({
     paneId: "branches.list",
