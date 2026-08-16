@@ -42,6 +42,7 @@ import type {
   TagInfo,
   UpdateCapability,
   UpdateInfo,
+  WorkdirDiff,
   WorktreeBranch,
   WorktreeInfo,
 } from "./types";
@@ -342,6 +343,10 @@ export async function diffCommit(
  * `includeUntracked` is explicit: git's own `git diff <ref>` ignores untracked
  * files, but this app's worktree diffs include them with content, so the compare
  * screen passes `true`. `.gitignore`d files are excluded either way.
+ *
+ * The untracked side is BOUNDED — over the backend's ceiling it is dropped
+ * whole and the count comes back as `untrackedOmitted`. Render that; a short
+ * file list with no explanation is the failure the cap exists to prevent.
  */
 export async function diffRefToWorkdir(
   repoId: string,
@@ -349,8 +354,8 @@ export async function diffRefToWorkdir(
   contextLines = 3,
   ignoreWhitespace = false,
   includeUntracked = false,
-): Promise<FileDiff[]> {
-  return invoke<FileDiff[]>("diff_ref_to_workdir", {
+): Promise<WorkdirDiff> {
+  return invoke<WorkdirDiff>("diff_ref_to_workdir", {
     repoId,
     revspec,
     contextLines,

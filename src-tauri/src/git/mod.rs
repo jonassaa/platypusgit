@@ -23,7 +23,7 @@ use types::{
     RemoteInfo,
     RepoHandle,
     RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, SubmoduleInfo, TagInfo, TagTarget,
-    WorktreeBranch, WorktreeInfo,
+    WorkdirDiff, WorktreeBranch, WorktreeInfo,
 };
 
 
@@ -236,6 +236,14 @@ pub trait GitBackend: Send + Sync {
     /// passes `true` — hiding a file you just wrote is the silent failure, and
     /// `.gitignore`d files are excluded either way. Callers that want git's
     /// exact semantics pass `false`.
+    ///
+    /// **The untracked side is BOUNDED, and `diff`'s is not comparable.** `diff`
+    /// sets a pathspec before turning untracked content on, so it only ever
+    /// reads one file; this walks the whole tree. Over `MAX_UNTRACKED_FILES`
+    /// untracked entries the untracked side is dropped entirely and the count
+    /// comes back as `WorkdirDiff::untracked_omitted` for the UI to report.
+    /// Per-blob size is capped too (`MAX_WORKDIR_BLOB`), so one enormous file
+    /// reports as binary rather than being serialised.
     fn diff_ref_to_workdir(
         &self,
         repo_id: &RepoId,
@@ -243,7 +251,7 @@ pub trait GitBackend: Send + Sync {
         context_lines: u32,
         ignore_whitespace: bool,
         include_untracked: bool,
-    ) -> AppResult<Vec<FileDiff>>;
+    ) -> AppResult<WorkdirDiff>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>>;
     fn stashes(&self, repo_id: &RepoId) -> AppResult<Vec<StashInfo>>;

@@ -144,6 +144,18 @@ export interface SignatureStatus {
 }
 
 /**
+ * A whole-tree diff against the working tree (#131). Mirrors Rust `WorkdirDiff`.
+ *
+ * Not a bare `FileDiff[]`: this op walks the WHOLE tree (unlike `getDiff`, which
+ * pathspecs one file first), so its untracked side is capped and the number left
+ * out travels with the result for the UI to report.
+ */
+export interface WorkdirDiff {
+  files: FileDiff[];
+  untrackedOmitted: number;
+}
+
+/**
  * How one revision stands relative to another (#131). Mirrors Rust
  * `AheadBehind`.
  *

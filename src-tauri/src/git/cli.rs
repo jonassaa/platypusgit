@@ -9,7 +9,7 @@ use super::{
         FileDiff, FileStatus, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
         SubmoduleInfo, TagInfo,
-        TagTarget, WorktreeBranch, WorktreeInfo,
+        TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo,
     },
     GitBackend,
 };
@@ -165,7 +165,7 @@ impl GitBackend for CliBackend {
         _context_lines: u32,
         _ignore_whitespace: bool,
         _include_untracked: bool,
-    ) -> AppResult<Vec<FileDiff>> {
+    ) -> AppResult<WorkdirDiff> {
         Err(AppError::NotImplemented)
     }
     fn stage(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {

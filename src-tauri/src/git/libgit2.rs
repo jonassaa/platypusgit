@@ -20,7 +20,7 @@ use super::{
         DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LfsStatus, LogFilter, LogPage,
         RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag,
-        SubmoduleInfo, TagInfo, TagTarget, WorktreeBranch, WorktreeInfo, REFSPEC_ALL,
+        SubmoduleInfo, TagInfo, TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo, REFSPEC_ALL,
     },
     GitBackend,
 };
@@ -1467,7 +1467,14 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
             .path()
             .map(|p| p.display().to_string())
             .filter(|p| p != &new_path);
-        let binary = delta.new_file().is_binary() || delta.old_file().is_binary();
+        // `is_binary()` reads a flag libgit2 only sets once it has EXAMINED the
+        // blob, and for a workdir-side delta (an untracked file, #131) that has
+        // not happened yet when we read it here — the content is loaded during
+        // `print` below. So seed from the flags we have and OR in what `print`
+        // learns; the callback can only ever turn this true, never back.
+        // Without it an untracked PNG came through as N added lines of
+        // `from_utf8(...).unwrap_or("")` mojibake instead of "binary file".
+        let mut binary = delta.new_file().is_binary() || delta.old_file().is_binary();
 
         let mut hunks: Vec<DiffHunk> = Vec::new();
         let mut current: Option<DiffHunk> = None;
@@ -1481,6 +1488,10 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
                 .unwrap_or_default()
                 != new_path
             {
+                return true;
+            }
+            if d.flags().contains(git2::DiffFlags::BINARY) {
+                binary = true;
                 return true;
             }
             if let Some(h) = hunk {
@@ -1585,6 +1596,30 @@ fn git_apply(repo_path: &Path, extra_args: &[&str], patch_text: &str) -> AppResu
     }
     Ok(())
 }
+
+/// Untracked handling for `diff_ref_to_workdir`'s two passes (#131).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UntrackedMode {
+    /// Tracked changes only — git's own `git diff <ref>` shape.
+    Off,
+    /// Untracked files listed but their content not read. The counting pass.
+    NamesOnly,
+    /// Untracked files as all-added with content, like `diff`'s worktree kinds.
+    WithContent,
+}
+
+/// Ceiling on untracked files in one `diff_ref_to_workdir` (#131). Above it the
+/// untracked side is dropped whole and the count is reported, rather than
+/// serialising an untracked `dist/` or `.venv/` into one IPC payload. Same order
+/// as the compare screen's commit-list cap — a file list this long is not one a
+/// reviewer reads either.
+const MAX_UNTRACKED_FILES: usize = 200;
+
+/// Per-blob ceiling for the same op. Larger blobs report as binary, which is
+/// what libgit2 does for anything over `DiffOptions::max_size` anyway — this
+/// just sets it far below the 512MB default, because a 5MB "text" file is a
+/// generated artifact, not something anyone diffs in a GUI.
+const MAX_WORKDIR_BLOB: i64 = 5 * 1024 * 1024;
 
 /// Resolve a revspec (branch, tag, short/full oid, `HEAD~2`, `tag^{}`, …) to
 /// its tree, mapping any resolution failure to `InvalidRef` so the UI gets a
@@ -2928,8 +2963,14 @@ impl GitBackend for Libgit2Backend {
         ignore_whitespace: bool,
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
-            let from = repo.revparse_single(from_oid)?.peel_to_commit()?.id();
-            let to = repo.revparse_single(to_oid)?.peel_to_commit()?.id();
+            // `resolve_commit`, not a bare `?`: both sides are USER-TYPED
+            // revspecs since #131 (the compare screen's pickers accept any), and
+            // a typo must answer `InvalidRef(spec)` like every other revspec op
+            // rather than a stringified libgit2 message. The compare screen
+            // fires four of these in one `Promise.all`, so an inconsistent
+            // variant here makes the same typo report differently run to run.
+            let from = resolve_commit(repo, from_oid)?.id();
+            let to = resolve_commit(repo, to_oid)?.id();
             let from_tree = repo.find_commit(from)?.tree()?;
             let to_tree = repo.find_commit(to)?.tree()?;
 
@@ -2987,36 +3028,70 @@ impl GitBackend for Libgit2Backend {
         context_lines: u32,
         ignore_whitespace: bool,
         include_untracked: bool,
-    ) -> AppResult<Vec<FileDiff>> {
+    ) -> AppResult<WorkdirDiff> {
         self.with_repo(repo_id, |repo| {
-            // `peel_to_tree` so a tag, a branch, a commit or a tree all work —
-            // the same reach `list_files_at_rev` gives the tree browser.
-            let tree = repo
-                .revparse_single(revspec)
-                .and_then(|obj| obj.peel_to_tree())
-                .map_err(|_| AppError::InvalidRef(revspec.to_string()))?;
+            // `resolve_tree` so a tag, a branch, a commit or a tree all work —
+            // the same reach `list_files_at_rev` gives the tree browser — and so
+            // a bad spec is `InvalidRef`, not a stringified libgit2 message.
+            let tree = resolve_tree(repo, revspec)?;
 
-            let mut opts = DiffOptions::new();
-            opts.context_lines(context_lines);
-            opts.ignore_whitespace(ignore_whitespace);
-            if include_untracked {
-                // Same triple `diff`'s worktree kinds use, so a brand-new file
-                // has readable content rather than a bare name. `include_ignored`
-                // stays off, so `.gitignore`d files never appear.
-                opts.include_untracked(true)
-                    .recurse_untracked_dirs(true)
-                    .show_untracked_content(true);
-            }
+            // One builder, three call shapes, so the knobs cannot drift between
+            // the counting pass and the real one.
+            let build = |untracked: UntrackedMode| -> AppResult<git2::Diff<'_>> {
+                let mut opts = DiffOptions::new();
+                opts.context_lines(context_lines);
+                opts.ignore_whitespace(ignore_whitespace);
+                // This op fans out over the WHOLE tree, unlike `diff`, which
+                // pathspecs one file first. Cap per-blob size so a single huge
+                // artifact reports as binary instead of being serialised.
+                opts.max_size(MAX_WORKDIR_BLOB);
+                match untracked {
+                    UntrackedMode::Off => {}
+                    // `include_ignored` stays off in both, so `.gitignore`d
+                    // files never appear either way.
+                    UntrackedMode::NamesOnly => {
+                        opts.include_untracked(true).recurse_untracked_dirs(true);
+                    }
+                    UntrackedMode::WithContent => {
+                        opts.include_untracked(true)
+                            .recurse_untracked_dirs(true)
+                            .show_untracked_content(true);
+                    }
+                }
+                // `_with_index`, not the plain tree-to-workdir: without the index
+                // a file staged and then reverted in the worktree reads as
+                // unchanged.
+                Ok(repo.diff_tree_to_workdir_with_index(Some(&tree), Some(&mut opts))?)
+            };
 
-            // `_with_index`, not the plain tree-to-workdir: without the index a
-            // file staged and then reverted in the worktree reads as unchanged.
-            let mut diff = repo.diff_tree_to_workdir_with_index(Some(&tree), Some(&mut opts))?;
+            // Decide the untracked side BEFORE any blob is read. The names-only
+            // pass is the same directory walk without the content, so this costs
+            // a second walk and never a second read of the files we then drop.
+            let (mode, untracked_omitted) = if include_untracked {
+                let counted = build(UntrackedMode::NamesOnly)?;
+                let untracked = counted
+                    .deltas()
+                    .filter(|d| d.status() == git2::Delta::Untracked)
+                    .count();
+                if untracked > MAX_UNTRACKED_FILES {
+                    (UntrackedMode::Off, untracked)
+                } else {
+                    (UntrackedMode::WithContent, 0)
+                }
+            } else {
+                (UntrackedMode::Off, 0)
+            };
+
+            let mut diff = build(mode)?;
 
             let mut find_opts = DiffFindOptions::new();
             find_opts.renames(true).copies(false);
             diff.find_similar(Some(&mut find_opts)).ok();
 
-            diff_to_file_diffs(&diff)
+            Ok(WorkdirDiff {
+                files: diff_to_file_diffs(&diff)?,
+                untracked_omitted,
+            })
         })
     }
 

@@ -65,7 +65,8 @@ fn ref_to_workdir_sees_staged_unstaged_and_untracked() {
 
     let with_untracked = backend
         .diff_ref_to_workdir(&handle.id, "HEAD", 3, false, true)
-        .unwrap();
+        .unwrap()
+        .files;
     let paths: Vec<&str> = with_untracked.iter().map(|d| d.path.as_str()).collect();
     assert!(paths.contains(&"staged.txt"), "staged edit missing: {paths:?}");
     assert!(
@@ -91,7 +92,8 @@ fn ref_to_workdir_sees_staged_unstaged_and_untracked() {
 
     let without = backend
         .diff_ref_to_workdir(&handle.id, "HEAD", 3, false, false)
-        .unwrap();
+        .unwrap()
+        .files;
     let paths: Vec<&str> = without.iter().map(|d| d.path.as_str()).collect();
     assert!(paths.contains(&"staged.txt"));
     assert!(paths.contains(&"unstaged.txt"));
@@ -123,7 +125,8 @@ fn ref_to_workdir_accepts_branch_and_tag_revspecs() {
 
     let by_branch = backend
         .diff_ref_to_workdir(&handle.id, "feature", 3, false, false)
-        .unwrap();
+        .unwrap()
+        .files;
     let paths: Vec<&str> = by_branch.iter().map(|d| d.path.as_str()).collect();
     // `feature.txt` exists on feature and not in the worktree → a deletion.
     assert!(paths.contains(&"feature.txt"), "{paths:?}");
@@ -133,7 +136,8 @@ fn ref_to_workdir_accepts_branch_and_tag_revspecs() {
     // legal left side of a comparison.
     let by_tag = backend
         .diff_ref_to_workdir(&handle.id, "v1", 3, false, false)
-        .unwrap();
+        .unwrap()
+        .files;
     let paths: Vec<&str> = by_tag.iter().map(|d| d.path.as_str()).collect();
     assert!(paths.contains(&"main.txt"), "{paths:?}");
 }
@@ -150,6 +154,85 @@ fn ref_to_workdir_rejects_an_unresolvable_revspec() {
         matches!(err, AppError::InvalidRef(ref s) if s == "no-such-ref"),
         "expected InvalidRef, got {err:?}"
     );
+}
+
+#[test]
+fn ref_to_workdir_drops_the_untracked_side_wholesale_past_the_ceiling() {
+    // The defect this guards: `diff` pathspecs ONE file before turning untracked
+    // content on, so it can never fan out. This op walks the whole tree, so an
+    // untracked `dist/` nobody gitignored would otherwise be serialised entire.
+    let tr = TempRepo::with_initial_commit("base\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    // MAX_UNTRACKED_FILES is 200; go one over so the ceiling, not the count, is
+    // what the assertion is about.
+    for i in 0..201 {
+        write_file(tr.path(), &format!("dist/chunk-{i}.js"), "console.log(1)\n");
+    }
+
+    let over = backend
+        .diff_ref_to_workdir(&handle.id, "HEAD", 3, false, true)
+        .unwrap();
+    assert_eq!(
+        over.untracked_omitted, 201,
+        "the count must be reported, not silently truncated"
+    );
+    assert!(
+        over.files.is_empty(),
+        "nothing tracked changed, so the untracked side being dropped leaves nothing: {:?}",
+        over.files.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
+
+    // One under the ceiling and every file comes through with its content.
+    std::fs::remove_file(tr.path().join("dist/chunk-200.js")).unwrap();
+    let under = backend
+        .diff_ref_to_workdir(&handle.id, "HEAD", 3, false, true)
+        .unwrap();
+    assert_eq!(under.untracked_omitted, 0);
+    assert_eq!(under.files.len(), 200);
+    assert!(under.files.iter().all(|f| f.additions > 0));
+}
+
+#[test]
+fn ref_to_workdir_never_omits_when_untracked_are_not_requested() {
+    let tr = TempRepo::with_initial_commit("base\n");
+    let (backend, handle) = tr.open_with_backend();
+    for i in 0..250 {
+        write_file(tr.path(), &format!("dist/chunk-{i}.js"), "x\n");
+    }
+
+    let out = backend
+        .diff_ref_to_workdir(&handle.id, "HEAD", 3, false, false)
+        .unwrap();
+    assert_eq!(out.untracked_omitted, 0, "nothing was asked for, nothing omitted");
+    assert!(out.files.is_empty());
+}
+
+#[test]
+fn an_untracked_binary_reads_as_binary_not_as_mojibake_lines() {
+    // `diff_to_file_diffs` samples `is_binary()` BEFORE `diff.print` runs, and
+    // for a workdir-side delta libgit2 has not examined the blob by then. Left
+    // alone, a new PNG came through as added lines of
+    // `from_utf8(...).unwrap_or("")` — i.e. blank ones.
+    let tr = TempRepo::with_initial_commit("base\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    // A PNG header plus NULs — binary by git's own NUL-in-first-8k rule.
+    let mut bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    bytes.extend_from_slice(&[0u8; 64]);
+    std::fs::write(tr.path().join("logo.png"), &bytes).unwrap();
+
+    let out = backend
+        .diff_ref_to_workdir(&handle.id, "HEAD", 3, false, true)
+        .unwrap();
+    let png = out
+        .files
+        .iter()
+        .find(|f| f.path == "logo.png")
+        .expect("untracked binary should still be listed");
+    assert!(png.binary, "untracked PNG must be flagged binary");
+    assert_eq!(png.additions, 0, "a binary file has no added LINES");
+    assert!(png.hunks.is_empty());
 }
 
 // --- ahead_behind ----------------------------------------------------------
@@ -273,6 +356,28 @@ fn commits_between_honours_the_limit_and_is_empty_for_an_ancestor() {
         .commits_between(&handle.id, "feature", "feature", 50)
         .unwrap();
     assert!(none.is_empty());
+}
+
+// --- diff_commits now takes user-typed revspecs too ------------------------
+
+#[test]
+fn diff_commits_rejects_an_unresolvable_revspec_as_invalid_ref() {
+    // The compare screen fires `ahead_behind`, two `commits_between` and this
+    // one in a single `Promise.all`, and the rejection the user sees is
+    // whichever lands first. A bare `?` here made the SAME typo report either
+    // `InvalidRef` or a stringified libgit2 message depending on the race.
+    let tr = TempRepo::with_initial_commit("base\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    for (from, to) in [("zzz", "HEAD"), ("HEAD", "zzz")] {
+        let err = backend
+            .diff_commits(&handle.id, from, to, 3, false)
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::InvalidRef(ref s) if s == "zzz"),
+            "expected InvalidRef(\"zzz\") for {from}..{to}, got {err:?}"
+        );
+    }
 }
 
 #[test]

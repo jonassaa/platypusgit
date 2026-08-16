@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{BlameLine, DiffKind, FileDiff, RepoId},
+    git::types::{BlameLine, DiffKind, FileDiff, RepoId, WorkdirDiff},
     state::AppState,
 };
 
@@ -231,7 +231,7 @@ pub async fn diff_ref_to_workdir(
     context_lines: u32,
     ignore_whitespace: Option<bool>,
     include_untracked: Option<bool>,
-) -> AppResult<Vec<FileDiff>> {
+) -> AppResult<WorkdirDiff> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let iw = ignore_whitespace.unwrap_or(false);
