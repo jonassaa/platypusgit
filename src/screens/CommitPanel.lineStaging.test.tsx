@@ -6,7 +6,7 @@
 // additions must not shift the indices sent to the backend.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CommitPanelScreen } from "./CommitPanel";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -50,12 +50,41 @@ const diffWithThreeAdditions = (path: string) => ({
 /** The hunk button's label, which is how a line selection becomes observable. */
 const selCountLabel = () => screen.getByTestId("hunk-stage").textContent ?? "";
 
+const changedRows = () => screen.getAllByTestId("diff-line-changed");
+
 const stageLinesCall = () =>
   [...getInvokeCalls()].reverse().find((c) => c.cmd === "stage_lines");
 const stageHunkCall = () =>
   [...getInvokeCalls()].reverse().find((c) => c.cmd === "stage_hunk");
 
-function setup() {
+/**
+ * Wait until the pane has stopped refetching its diff AND React has run the
+ * effects that arrival scheduled. Same helper as `CommitPanel.lineFocus.test.tsx`
+ * — keep the two in step.
+ *
+ * `findAllByTestId` resolves the moment the rows are in the DOM, which is the
+ * COMMIT of the diff render, not the end of it: React posts passive effects on
+ * its own task queue, and RTL's async helpers only drain a timer task, so under
+ * load the timer can win and `clearLineSel` — the effect that drops the line
+ * selection whenever `diff` changes — is still pending. `fireEvent` then flushes
+ * that stale clear and the click's own update into ONE render, in queue order,
+ * so the clear lands last and the selection silently never happens. `act` queues
+ * behind React's own task instead, so the effects are flushed before the click.
+ */
+async function settleDiff() {
+  const count = () => getInvokeCalls().filter((c) => c.cmd === "get_diff").length;
+  let prev = -1;
+  while (prev !== count()) {
+    prev = count();
+    // One macrotask turn per pass: enough for a pending fetch to resolve and for
+    // the effect its result triggers to queue another.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+}
+
+async function setup() {
   resetInvokeMock();
   useSettingsStore.setState({ ignoreWhitespaceInDiff: false });
   useRepoStore.setState({
@@ -75,21 +104,22 @@ function setup() {
       <CommitPanelScreen />
     </WithDialogs>,
   );
+  await screen.findAllByTestId("diff-line-changed");
+  await settleDiff();
 }
 
 describe("CommitPanel line-level staging (#61 D7)", () => {
   beforeEach(setup);
 
   it("stages only the clicked line, numbered among changed lines", async () => {
-    const rows = await screen.findAllByTestId("diff-line-changed");
+    const rows = changedRows();
     expect(rows).toHaveLength(3); // the context line is not selectable
 
     fireEvent.click(rows[1]); // second addition → changed index 1
-    // Wait for the selection to be observable before acting on it. The selection
-    // deliberately clears whenever `diff` changes, and the mount's diff fetch can
-    // still settle here; clicking Stage in the same tick then finds an empty
-    // selection and falls back to stage_hunk, so stage_lines is never called.
-    // Same reason the toggle-off case below waits between its two clicks.
+    // Wait for the selection to be observable before acting on it: clicking Stage
+    // while the selection is still empty falls back to stage_hunk, so stage_lines
+    // would never be called. Same reason the toggle-off case below waits between
+    // its two clicks.
     await waitFor(() => expect(selCountLabel()).toMatch(/1 line/i));
     fireEvent.click(screen.getByTestId("hunk-stage"));
 
@@ -103,7 +133,7 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
   });
 
   it("shows the selection count on the stage button", async () => {
-    const rows = await screen.findAllByTestId("diff-line-changed");
+    const rows = changedRows();
     fireEvent.click(rows[0]);
     await waitFor(() => expect(selCountLabel()).toMatch(/1 line/i));
     fireEvent.click(screen.getAllByTestId("diff-line-changed")[2]);
@@ -111,7 +141,7 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
   });
 
   it("extends a range on shift-click", async () => {
-    const rows = await screen.findAllByTestId("diff-line-changed");
+    const rows = changedRows();
     fireEvent.click(rows[0]);
     // Waiting for the anchor click to land, for the same reason the toggle-off
     // case below does: the selection deliberately clears when `diff` changes, and
@@ -135,7 +165,7 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
   });
 
   it("toggles a line off when clicked twice", async () => {
-    const rows = await screen.findAllByTestId("diff-line-changed");
+    const rows = changedRows();
 
     // Waiting for the selected state between the clicks, rather than firing both
     // synchronously: the selection deliberately clears when `diff` changes, so a
@@ -153,7 +183,6 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
   });
 
   it("falls back to whole-hunk staging with no selection", async () => {
-    await screen.findAllByTestId("diff-line-changed");
     fireEvent.click(screen.getByTestId("hunk-stage"));
 
     await waitFor(() => expect(stageHunkCall()).toBeDefined());
@@ -170,8 +199,8 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
     // or it fails and never publishes the new status.
     mockInvoke("repo_state", () => "Clean");
     const diffCalls = () => getInvokeCalls().filter((c) => c.cmd === "get_diff");
-    const rows = await screen.findAllByTestId("diff-line-changed");
-    await waitFor(() => expect(diffCalls().length).toBeGreaterThan(0));
+    const rows = changedRows();
+    expect(diffCalls().length).toBeGreaterThan(0);
     const before = diffCalls().length;
 
     fireEvent.click(rows[0]);
@@ -183,7 +212,6 @@ describe("CommitPanel line-level staging (#61 D7)", () => {
   });
 
   it("does not offer line selection while whitespace is ignored", async () => {
-    await screen.findAllByTestId("diff-line-changed");
     fireEvent.click(screen.getByTitle("Ignore whitespace-only changes"));
 
     // Same reason hunk staging is disabled: ignore-whitespace rewrites hunk
