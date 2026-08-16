@@ -321,6 +321,46 @@ describe("branchItems", () => {
     expect(items[0].icon).toBe("merge");
   });
 
+  // #135. Nothing pinned this before: the old fixture happened to order the
+  // same way with and without the comparator, so a broken ordering would have
+  // gone unnoticed here. Assert it on `branchItems` itself — it is pure. The
+  // RENDERED palette order is deliberately not asserted anywhere: the root step
+  // adds `frecencyScore` (Date.now() + localStorage) and caps each group, so
+  // pinning that would be fragile by construction.
+  it("pins the default branch and orders the rest by recency", () => {
+    setRepo({
+      branches: [
+        { ...mkBranch("chore/old"), tipTime: 50 },
+        { ...mkBranch("main"), tipTime: 100, isDefault: true },
+        { ...mkBranch("feat/fresh"), tipTime: 900 },
+      ],
+    });
+    const items = branchItems({ icon: "branch", onPick: () => {} });
+    expect(items.map((i) => i.label)).toEqual(["main", "feat/fresh", "chore/old"]);
+  });
+
+  // The picker renders two labelled sections and the Branches screen splits by
+  // view; a pick step renders ONE list, so the grouping has to happen here or
+  // `main` and `origin/main` (both `isDefault`) take rows 1-2 and the rest
+  // interleave by tip time.
+  it("keeps locals ahead of remotes, ordering within each group", () => {
+    setRepo({
+      branches: [
+        { ...mkRemoteBranch("origin/zzz"), tipTime: 950 },
+        { ...mkBranch("zzz-local"), tipTime: 900 },
+        { ...mkRemoteBranch("origin/main"), tipTime: 100, isDefault: true },
+        { ...mkBranch("main"), tipTime: 100, isDefault: true },
+      ],
+    });
+    const items = branchItems({ icon: "branch", onPick: () => {} });
+    expect(items.map((i) => i.label)).toEqual([
+      "main",
+      "zzz-local",
+      "origin/main",
+      "origin/zzz",
+    ]);
+  });
+
   it("run() closes the palette, then calls onPick with the branch name", () => {
     setRepo({ branches: [mkBranch("feat/x")] });
     const order: string[] = [];

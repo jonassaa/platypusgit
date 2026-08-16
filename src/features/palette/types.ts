@@ -34,7 +34,23 @@ export interface PaletteItem {
 /** One screen of the palette state machine. */
 export type PaletteStep =
   | { kind: "root" }
-  | { kind: "pick"; title: string; items: PaletteItem[] }
+  | {
+      kind: "pick";
+      title: string;
+      items: PaletteItem[];
+      /**
+       * Where the cursor rests while the step's query is empty. `"first"` (the
+       * default) preselects row 0, so Enter activates it immediately; `"none"`
+       * preselects nothing, so Enter does nothing until the user aims.
+       *
+       * Steps whose row 0 is a plausible, destructive target use `"none"` —
+       * the branch steps, since #135 pins the default branch there and
+       * "⌘P, delete branch, Enter, Enter" would otherwise land on `main`.
+       * Once a query is typed the top match IS the target and the cursor
+       * moves to row 0 either way.
+       */
+      cursor?: "first" | "none";
+    }
   | {
       kind: "input";
       title: string;

@@ -12,7 +12,7 @@ import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { openCompare } from "@/features/compare/useCompareStore";
 import { WORKDIR } from "@/features/compare/compareSides";
-import { orderBranches } from "@/features/branches/orderBranches";
+import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
@@ -73,10 +73,17 @@ export function branchItems({
   onPick,
 }: BranchItemsOptions): PaletteItem[] {
   const rows = branches ?? repoState().branches;
-  // Filter first, order second (#135). The root step re-scores rows by fuzzy
-  // match + frecency, but `Array#sort` is stable, so with an empty query — where
-  // every candidate ties — this is the order the user sees.
-  return orderBranches(filter ? rows.filter(filter) : rows).map((b) => ({
+  // Filter first, order second (#135), locals ahead of remotes — the sections
+  // the picker and Branches screen render structurally, flattened for a step
+  // that lists one undivided set.
+  //
+  // This is the order a PICK STEP shows. It is NOT what the root step shows:
+  // `CommandPalette` adds `frecencyScore` to every row regardless of query, so
+  // as soon as the user has picked any branch from the palette that branch
+  // outranks the pinned default there. The pin is honoured in the picker, the
+  // Branches screen and the pick steps; the root step is a relevance ranking
+  // and deliberately stays one.
+  return orderBranchesGrouped(filter ? rows.filter(filter) : rows).map((b) => ({
     type: "branch" as const,
     id: `${idPrefix}:${b.isRemote ? "r" : "l"}:${b.name}`,
     search: b.name,
@@ -88,6 +95,25 @@ export function branchItems({
       onPick(b.name);
     },
   }));
+}
+
+/**
+ * A pick step over BRANCH rows — the one way the catalog builds one.
+ *
+ * It exists so the resting-cursor rule cannot be forgotten at a new call site:
+ * #135 pins the default branch at row 0 of every branch list, and the palette
+ * resets `activeIndex` to 0 on every `pushStep`, so a step that preselected row
+ * 0 put `main` one Enter after the Enter that opened it — which for the Delete
+ * step reached an unconfirmed, irreversible `deleteBranch("main")`.
+ *
+ * `branchItems` stays exported for the ROOT step, which builds candidates
+ * rather than a step and has its own cursor rules.
+ */
+export function branchPickStep({
+  title,
+  ...rows
+}: BranchItemsOptions & { title: string }): PaletteStep {
+  return { kind: "pick", title, cursor: "none", items: branchItems(rows) };
 }
 
 export interface CommitItemsOptions extends RowOptions {
@@ -386,14 +412,14 @@ export function buildCommands(): PaletteItem[] {
   items.push({
     type: "command", id: "action:checkout-branch",
     search: "Checkout branch switch", label: "Checkout branch…", icon: "branch",
-    run: step(() => ({
-      kind: "pick", title: "Checkout branch",
-      items: branchItems({
+    run: step(() =>
+      branchPickStep({
+        title: "Checkout branch",
         filter: (b) => !b.isHead,
         icon: "branch",
         onPick: (n) => void repo.checkoutBranch(n),
       }),
-    })),
+    ),
   });
   items.push({
     type: "command", id: "action:create-branch",
@@ -404,26 +430,26 @@ export function buildCommands(): PaletteItem[] {
   items.push({
     type: "command", id: "action:merge",
     search: "Merge branch into current", label: "Merge branch into current…", icon: "merge",
-    run: step(() => ({
-      kind: "pick", title: "Merge into current",
-      items: branchItems({
+    run: step(() =>
+      branchPickStep({
+        title: "Merge into current",
         filter: (b) => !b.isHead,
         icon: "merge",
         onPick: (n) => void repo.mergeBranch(n),
       }),
-    })),
+    ),
   });
   items.push({
     type: "command", id: "action:rebase-onto",
     search: "Rebase current onto branch", label: "Rebase current onto…", icon: "rebase",
-    run: step(() => ({
-      kind: "pick", title: "Rebase onto",
-      items: branchItems({
+    run: step(() =>
+      branchPickStep({
+        title: "Rebase onto",
         filter: (b) => !b.isHead,
         icon: "rebase",
         onPick: (n) => void repo.rebaseOnto(n),
       }),
-    })),
+    ),
   });
   // -- compare (#131) --
   //
@@ -434,9 +460,9 @@ export function buildCommands(): PaletteItem[] {
     type: "command", id: "action:compare-refs",
     search: "Compare branch diff against current branch",
     label: "Compare with current branch…", icon: "diff",
-    run: step(() => ({
-      kind: "pick", title: "Compare with current",
-      items: branchItems({
+    run: step(() =>
+      branchPickStep({
+        title: "Compare with current",
         idPrefix: "pick-compare",
         filter: (b) => !b.isHead,
         icon: "diff",
@@ -447,39 +473,53 @@ export function buildCommands(): PaletteItem[] {
             { kind: "rev", rev: n },
           ),
       }),
-    })),
+    ),
   });
   items.push({
     type: "command", id: "action:compare-workdir",
     search: "Compare branch against working tree uncommitted",
     label: "Compare with working tree…", icon: "diff",
-    run: step(() => ({
-      kind: "pick", title: "Compare against the working tree",
-      items: branchItems({
+    run: step(() =>
+      branchPickStep({
+        title: "Compare against the working tree",
         idPrefix: "pick-compare-wt",
         icon: "diff",
         onPick: (n) => openCompare({ kind: "rev", rev: n }, WORKDIR),
       }),
-    })),
+    ),
   });
   items.push({
     type: "command", id: "action:delete-branch",
     search: "Delete branch", label: "Delete branch…", danger: true, icon: "trash",
-    run: step(() => ({
-      kind: "pick", title: "Delete branch",
-      items: branchItems({
+    run: step(() =>
+      branchPickStep({
+        title: "Delete branch",
         filter: (b) => !b.isHead && !b.isRemote,
         icon: "trash",
-        onPick: (n) => void repo.deleteBranch(n),
+        // The only delete path that did not confirm — the row menu and the
+        // Branches screen inspector both already do. Deleting a branch is
+        // irreversible short of the reflog, and `delete_branch` refuses only
+        // UNMERGED branches, so the default branch (an ancestor of HEAD) goes
+        // without a murmur.
+        onPick: async (n) => {
+          if (
+            await pgConfirm({
+              title: `Delete branch ${n}?`,
+              danger: true,
+              confirmLabel: "Delete",
+            })
+          )
+            void repo.deleteBranch(n);
+        },
       }),
-    })),
+    ),
   });
   items.push({
     type: "command", id: "action:rename-branch",
     search: "Rename branch", label: "Rename branch…", icon: "branch",
-    run: step(() => ({
-      kind: "pick", title: "Rename branch",
-      items: branchItems({
+    run: step(() =>
+      branchPickStep({
+        title: "Rename branch",
         filter: (b) => !b.isRemote,
         icon: "branch",
         onPick: (oldName) =>
@@ -493,7 +533,7 @@ export function buildCommands(): PaletteItem[] {
             },
           }),
       }),
-    })),
+    ),
   });
 
   items.push({
