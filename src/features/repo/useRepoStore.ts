@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
 import {
+  describeError,
   dubiousOwnershipPath,
   isAppError,
   isAuthError,
@@ -299,7 +300,10 @@ interface RepoStoreState extends RepoSlice {
 }
 
 function toAppError(e: unknown): AppError {
-  return isAppError(e) ? e : { kind: "Internal", message: String(e) };
+  // `describeError`, not `String(e)`: this message is what the error banner
+  // renders, so a thrown plain object used to reach the user as
+  // "[object Object]" (#146).
+  return isAppError(e) ? e : { kind: "Internal", message: describeError(e) };
 }
 
 /**

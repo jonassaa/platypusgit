@@ -68,24 +68,82 @@ export function isAppError(e: unknown): e is AppError {
   );
 }
 
-export function appErrorMessage(e: unknown): string {
-  if (isAppError(e)) {
-    // Auth's payload is structured, not a sentence — render it here rather than
-    // letting an object reach the UI as "[object Object]".
-    if (e.kind === "Auth") return authChallengeMessage(e.message);
-    // ForgeAuth carries a HOST and BranchExists carries a BRANCH NAME, not
-    // prose. Rendered raw, the banner would just read "github.com".
-    if (e.kind === "ForgeAuth") return forgeAuthMessage(e.message);
-    if (e.kind === "BranchExists")
-      return `A local branch named ${e.message} already exists.`;
-    // StaleStash carries a LABEL (`stash@{1}`) — rendered raw the banner would
-    // just read "stash@{1}" with no hint of what to do about it.
-    if (e.kind === "StaleStash")
-      return `${e.message} is no longer the entry you picked — the stash list changed. Refresh and try again.`;
-    return e.message ?? e.kind;
+/**
+ * The prose half of an `AppError` — what a human reads, with no discriminant.
+ *
+ * Empty when the variant carries no message at all (`Unborn`, `NoBisect`, …), so
+ * callers decide what to show instead: a banner falls back to the kind, a log
+ * line already has it.
+ */
+function appErrorDetail(e: AppError): string {
+  // Auth's payload is structured, not a sentence — render it here rather than
+  // letting an object reach the UI as "[object Object]".
+  if (e.kind === "Auth") return authChallengeMessage(e.message);
+  // ForgeAuth carries a HOST and BranchExists carries a BRANCH NAME, not
+  // prose. Rendered raw, the banner would just read "github.com".
+  if (e.kind === "ForgeAuth") return forgeAuthMessage(e.message);
+  if (e.kind === "BranchExists")
+    return `A local branch named ${e.message} already exists.`;
+  // StaleStash carries a LABEL (`stash@{1}`) — rendered raw the banner would
+  // just read "stash@{1}" with no hint of what to do about it.
+  if (e.kind === "StaleStash")
+    return `${e.message} is no longer the entry you picked — the stash list changed. Refresh and try again.`;
+  return e.message ?? "";
+}
+
+/**
+ * Anything that is NOT an `AppError`, rendered without ever reaching
+ * `[object Object]` (#146).
+ *
+ * `String(x)` is the trap: it is correct for every primitive and wrong for
+ * exactly the case that matters, an object carrying the reason.
+ */
+function describeUnknown(e: unknown): string {
+  if (e === undefined) return "undefined";
+  if (e === null) return "null";
+  if (typeof e === "string") return e === "" ? "<empty string>" : e;
+  if (e instanceof Error) return `${e.name}: ${e.message}`;
+  if (typeof e === "object") {
+    try {
+      const json = JSON.stringify(e);
+      // `undefined` for a non-serialisable value, "{}" when every own property
+      // was dropped — neither says more than the constructor name does.
+      if (json && json !== "{}") return json;
+    } catch {
+      // Circular. Fall through: a name beats a thrown logger.
+    }
+    const name = (e as { constructor?: { name?: string } }).constructor?.name;
+    return name ? `<${name}>` : "<object>";
   }
-  if (e instanceof Error) return e.message;
   return String(e);
+}
+
+export function appErrorMessage(e: unknown): string {
+  if (isAppError(e)) return appErrorDetail(e) || e.kind;
+  if (e instanceof Error) return e.message;
+  return describeUnknown(e);
+}
+
+/**
+ * One failure rendered for the LOG FILE, not for a banner (#146).
+ *
+ * Differs from `appErrorMessage` on purpose: a log line leads with the `kind`,
+ * because that discriminant is the greppable half and it is the first thing you
+ * need when a user hands over a log — `InvalidPath` and `Network` want entirely
+ * different follow-up questions. A banner, by contrast, must never show the
+ * enum's spelling to a user.
+ *
+ * Total over every input shape: `AppError`, `Error`, string, `undefined`,
+ * `null`, a bare object, a primitive. It never returns an empty string and
+ * never returns `[object Object]`, which is what v0.0.11 logged for every
+ * backend failure and what cost us the diagnosis in #146.
+ */
+export function describeError(e: unknown): string {
+  if (isAppError(e)) {
+    const detail = appErrorDetail(e);
+    return detail ? `${e.kind}: ${detail}` : e.kind;
+  }
+  return describeUnknown(e);
 }
 
 /** One-line description of an auth challenge, for banners and fallbacks. */

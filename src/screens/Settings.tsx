@@ -25,6 +25,7 @@ import {
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { ForgeSettings } from "@/features/forge/ForgeSettings";
 import { cliShimStatus, installCliShim, type PullMode } from "@/lib/tauri";
+import { appErrorMessage } from "@/lib/errors";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import type { CliShimStatus } from "@/lib/types";
 import { BUILTIN_PRESETS, useKeymapStore } from "@/features/keymap";
@@ -510,8 +511,7 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
       const theme = s.importThemeJson(text);
       pgFlash(`Imported "${theme.name}"`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      pgFlash(`Import failed: ${msg}`);
+      pgFlash(`Import failed: ${appErrorMessage(err)}`);
     }
   };
 

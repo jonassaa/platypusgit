@@ -1,5 +1,6 @@
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { debug as logDebug, warn as logWarn, error as logError } from "@tauri-apps/plugin-log";
+import { describeError } from "./errors";
 import type {
   AheadBehind,
   AuthorOverride,
@@ -62,7 +63,10 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
     return result;
   } catch (err) {
     const ms = Math.round(performance.now() - start);
-    logError(`invoke ${cmd} failed after ${ms}ms: ${String(err)}`);
+    // `describeError`, never `String(err)`: an AppError is an object, so the
+    // template read `[object Object]` and every backend failure in a
+    // user-supplied log carried no reason at all (#146).
+    logError(`invoke ${cmd} failed after ${ms}ms: ${describeError(err)}`);
     throw err;
   }
 }
