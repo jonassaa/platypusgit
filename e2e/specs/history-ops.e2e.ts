@@ -3,7 +3,7 @@ import { cherryRepo, multiCherryRepo, TempRepo } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
   jsContextMenu, jsHoverMenuItem, jsClickMenuItem, jsSelectValue, jsChord,
-  scrollCommitListTo,
+  scrollCommitListTo, waitHeadMarkerOn,
 } from "../support/app";
 
 describe("history danger ops", () => {
@@ -41,10 +41,16 @@ describe("history danger ops", () => {
     await jsContextMenu('[data-testid="commit-row"]', { text: "feat: add b.txt" });
     await jsHoverMenuItem("Reset current branch to here");
     await jsClickMenuItem("Hard (discard changes)");
-    await browser.waitUntil(
-      async () => repo.git("rev-parse", "HEAD").trim() === parent,
-      { timeout: 20_000, timeoutMsg: "hard reset did not move HEAD" },
-    );
+    // The UI, not `rev-parse HEAD` — unlike the soft case above, this reset has
+    // work left to do after the ref moves. libgit2 writes in the order
+    // checkout → HEAD → index (`reset.c`), so the branch ref is readable while
+    // the INDEX still holds the old tree, and `git status` compares against
+    // HEAD: it would report a.txt as staged and lose the race with the
+    // clean-tree assertion below. The HEAD marker moving to the parent's row
+    // can only paint after `refreshAll` re-read the branch tip, which is
+    // strictly after the whole reset call returned.
+    await waitHeadMarkerOn("feat: add b.txt");
+    expect(repo.git("rev-parse", "HEAD").trim()).toBe(parent);
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 
@@ -92,19 +98,44 @@ describe("history danger ops", () => {
     await $("div*=2 commits selected").waitForDisplayed({
       timeout: 10_000, timeoutMsg: "multi-select detail never appeared",
     });
-    await $("button*=View combined diff").click();
     // Oldest selected = "feat: add b.txt" (parent "feat: add a.txt"); newest =
-    // "fix: update a.txt". The combined diff therefore introduces b.txt.
-    // 25s, not the 15s the rest of this file uses for UI waits: this is the
-    // only assertion here that spans BOTH a screen transition AND a backend
-    // diff_commits round-trip, and it is the suite's most frequent CI failure
-    // (three times across unrelated branches, always under parallel-spec load,
-    // never when the spec runs alone). The operation is genuinely slower than
-    // the old budget under contention — the deadline was wrong, not the app.
-    await $('[data-pg-row]*=b.txt').waitForDisplayed({
-      timeout: 25_000,
-      timeoutMsg:
-        "combined diff never listed b.txt (CommitDiff mounts before diff_commits resolves, so this waits on the fetch)",
+    // "fix: update a.txt". The combined diff therefore runs
+    // parent-of-oldest → newest and introduces b.txt. Both shas come from repo
+    // truth, sliced to 7 the way `targetHeader` renders them.
+    const from = repo.git("rev-parse", "HEAD~2").trim().slice(0, 7);
+    const to = repo.git("rev-parse", "HEAD").trim().slice(0, 7);
+    await $("button*=View combined diff").click();
+
+    // TWO waits, in this order, and neither is redundant.
+    //
+    // First the DESTINATION screen's own header — a signal that exists only
+    // after the transition, and one that names the pair that was routed, so a
+    // mis-routed selection fails HERE saying so, instead of as a mute timeout
+    // on a file row further down.
+    await $(`div*=Diff ${from} → ${to}`).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: `the commit-diff header never showed ${from} → ${to}`,
+    });
+    // Then the file row, as a PURE CSS selector scoped to the commit-diff file
+    // pane. This used to be `[data-pg-row]*=b.txt`, which ALSO matches
+    // History's commit row for "feat: add b.txt" — and that is what made this
+    // the suite's most frequent CI failure. Resolved a moment too early (more
+    // likely the busier the machine), the handle binds to a row the screen
+    // switch is about to unmount, and `waitForDisplayed` cannot recover from
+    // that: `isDisplayed` is a `browser.execute(checkVisibility, elem)` with the
+    // element passed as an argument, and a DETACHED node answers honestly
+    // (`false`, and `getComputedStyle` returns empty rather than throwing), so no
+    // stale-element error is ever raised and WebdriverIO's refetch never fires.
+    // Measured: 4 failures in 10 under CPU contention with the old selector,
+    // 0 in 10 with this pair of waits, and 1/1 when the binding is forced
+    // deliberately — in every failure the real b.txt row was on screen for the
+    // whole 25s. Raising the deadline (15s → 25s, which was tried) could never
+    // have helped.
+    await $(
+      '[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]',
+    ).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the combined diff never listed b.txt",
     });
   });
 

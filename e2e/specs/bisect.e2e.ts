@@ -91,14 +91,26 @@ describe("bisect", () => {
 
     // One mark, and git records it.
     const before = repo.git("bisect", "log").split("\n").length;
+    const detailBefore = await $('[data-testid="operation-detail"]').getText();
     await $('[data-testid="bisect-bad"]').click();
+    // The UI, not `git bisect log`. `git bisect <term>` writes BISECT_LOG and
+    // only THEN checks out the next revision, and `bisect_mark` runs that
+    // subprocess OUTSIDE the backend's repo mutex — so resuming on the log
+    // would let the Reset below start a second `git` in this worktree while the
+    // first is still checking out, and one of them loses `.git/index.lock`. The
+    // bar's progress numbers come from the mark command's own return value, so
+    // they cannot change until the whole call returned. A fresh `$()` per poll
+    // rather than a handle taken before the click, so the read cannot depend on
+    // WebdriverIO's stale-element refetch behaving a particular way.
     await browser.waitUntil(
-      async () => repo!.git("bisect", "log").split("\n").length > before,
+      async () =>
+        (await $('[data-testid="operation-detail"]').getText()) !== detailBefore,
       {
         timeout: 20_000,
-        timeoutMsg: "git bisect log never grew after marking a revision",
+        timeoutMsg: "the bisect progress never advanced after marking a revision",
       },
     );
+    expect(repo.git("bisect", "log").split("\n").length).toBeGreaterThan(before);
 
     // Reset — NOT the generic abort, which hard-resets to the detached commit
     // being tested. It confirms first.

@@ -54,14 +54,20 @@ describe("remote operations", () => {
     makeBehind(pair);
     await openRepo(pair.repo.path);
     await $("button*=Pull").click(); // titlebar
-    // repo-truth wait: the pulled file landing on disk is the outcome.
-    await browser.waitUntil(
-      async () => {
-        try { return pair!.repo.read("remote.txt") === "remote\n"; }
-        catch { return false; }
-      },
-      { timeout: 20_000, timeoutMsg: "pull never delivered remote.txt" },
-    );
+    // The UI, not the pulled file on disk. A fast-forward writes the worktree
+    // and the index FIRST and moves the ref LAST (git's `checkout_fast_forward`
+    // then `update_ref`), so remote.txt is readable while HEAD is still on the
+    // old commit — and BOTH assertions below read the ref: `git status`
+    // compares the index against HEAD (it would report remote.txt as a staged
+    // addition) and `log -1` IS the ref. `makeBehind` rewinds the
+    // remote-tracking ref too, so this commit is in no local ref before the
+    // pull and its row can only render after refreshAll.
+    await $('[data-testid="commit-row"]*=feat: remote-only commit')
+      .waitForDisplayed({
+        timeout: 20_000,
+        timeoutMsg: "the pulled commit never appeared in the log",
+      });
+    expect(pair.repo.read("remote.txt")).toBe("remote\n");
     expect(pair.repo.git("status", "--porcelain").trim()).toBe("");
     expect(pair.repo.git("log", "-1", "--pretty=%s").trim())
       .toBe("feat: remote-only commit");

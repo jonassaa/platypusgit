@@ -857,3 +857,45 @@ export async function scrollCommitListTo(
     },
   );
 }
+
+/**
+ * Wait until History's HEAD marker sits on the commit whose subject contains
+ * `subject`.
+ *
+ * The UI signal for "a ref move has landed, all of it". `PGCommitRow` carries
+ * `data-head="true"` for the row matching the branch tip `refreshAll` read, so
+ * the marker can only move after the whole backend call returned — which is
+ * what makes it the right wait for an op that keeps working after the ref moves
+ * (see the hard-reset comment in history-ops.e2e.ts).
+ *
+ * An in-page query rather than a selector, for two reasons. Identity has to be
+ * part of the condition — `[data-testid="commit-row"][data-head="true"]` alone
+ * matches the row HEAD is leaving, so it is satisfied before anything happens —
+ * and WebdriverIO cannot express "two attributes AND partial text" (its
+ * extended-XPath grammar allows exactly one `[attr=value]` before `*=`, so the
+ * combined form silently degrades to an invalid CSS selector). Read-only, so
+ * bare `browser.execute` is correct.
+ *
+ * History is windowed, so this only works while the HEAD row is mounted — true
+ * for every small fixture, since HEAD sits at or near the top. A fixture deep
+ * enough to scroll HEAD out needs `scrollCommitListTo` first.
+ */
+export async function waitHeadMarkerOn(
+  subject: string,
+  timeout = 20_000,
+): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (want: string) =>
+          document
+            .querySelector('[data-testid="commit-row"][data-head="true"]')
+            ?.textContent?.includes(want) ?? false,
+        subject,
+      ),
+    {
+      timeout,
+      timeoutMsg: `the HEAD marker never moved to the commit matching "${subject}"`,
+    },
+  );
+}
