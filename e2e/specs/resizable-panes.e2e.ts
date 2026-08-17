@@ -26,6 +26,10 @@ import {
  *    screen and still draggable. Skip the initial measurement and this is the
  *    assertion that fails: the clamp goes unbounded, the sibling is squeezed to
  *    zero, and the drag becomes unrecoverable — the failure the issue is about.
+ *
+ * Unusually for this suite there is no repo truth to accept against: nothing here
+ * touches git, so the rendered geometry IS the behaviour under test. The repo is
+ * a fixture only because the screens need something to list.
  */
 
 /** Measured content extent of a pane's flex container, on one axis. */
