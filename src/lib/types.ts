@@ -407,16 +407,35 @@ export interface LaunchIntent {
   screen: string | null;
 }
 
+/**
+ * Who owns the `pgit` on the user's PATH (#144) — mirrors Rust
+ * `cli::CliShimSource`. `package` is the contract that matters: a shim shipped
+ * by Homebrew, dpkg or the MSI counts as installed and is never overwritten.
+ */
+export type CliShimSource = "none" | "app" | "package" | "foreign";
+
+/**
+ * Whether the shim's directory is reachable — mirrors `cli::CliPathState`.
+ * `pathAdded` is produced only by an install (the persistent PATH was just
+ * written, so already-open shells still need a restart), never by a status read.
+ */
+export type CliPathState = "onPath" | "offPath" | "pathAdded";
+
 export interface CliShimStatus {
+  /** `pgit` is present and launches this app — i.e. source is app or package. */
   installed: boolean;
+  /** Where it is, or (with none found) where an install would put one. */
   shimPath: string;
   target: string;
+  source: CliShimSource;
+  pathState: CliPathState;
 }
 
 export interface CliInstallOutcome {
   installed: boolean;
   path: string;
   manualCommand: string | null;
+  pathState: CliPathState;
 }
 
 export interface UpdateInfo {

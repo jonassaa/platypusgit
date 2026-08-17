@@ -49,7 +49,13 @@ function wire() {
     pauseReason: null,
   }));
   mockInvoke("take_launch_intent", () => null);
-  mockInvoke("cli_shim_status", () => ({ installed: false, path: null }));
+  mockInvoke("cli_shim_status", () => ({
+    installed: false,
+    shimPath: "",
+    target: "",
+    source: "none",
+    pathState: "offPath",
+  }));
   mockInvoke("get_diff", () => null);
   mockInvoke("check_for_update", () => null);
   mockInvoke("get_update_capability", () => ({ canSelfUpdate: false }));
