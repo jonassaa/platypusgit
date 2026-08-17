@@ -27,6 +27,7 @@ import {
 } from "@/lib/tauri";
 import type { ConflictSides, FileStatus } from "@/lib/types";
 import { isConflicted } from "@/lib/derive";
+import { appErrorMessage } from "@/lib/errors";
 import { eventToChord, formatChord } from "@/features/keymap/chord";
 import { buildMergeModel } from "./mergeModel";
 import { MergeBody, type MergeBodyHandle } from "./MergeBody";
@@ -253,7 +254,10 @@ export function MergeWindow() {
       await advance();
     } catch (e) {
       console.error("save resolution failed", e);
-      setApplyError(e instanceof Error ? e.message : String(e));
+      // A rejected Tauri command is a plain `{ kind, message }` object, NOT an
+      // Error, so the `instanceof` test always failed and this banner read
+      // "[object Object]" for every failed apply (#146).
+      setApplyError(appErrorMessage(e));
     }
   }, [canApply, model, repoId, path, advance]);
 

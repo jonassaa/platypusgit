@@ -3093,31 +3093,38 @@ impl GitBackend for Libgit2Backend {
         repo_id: &RepoId,
         revspec: &str,
         path: &Path,
-    ) -> AppResult<FileContent> {
+    ) -> AppResult<Option<FileContent>> {
         let rel = path.to_path_buf();
         let path_str = rel.to_string_lossy().into_owned();
         self.with_repo(repo_id, |repo| {
             let tree = resolve_tree(repo, revspec)?;
 
-            let entry = tree
-                .get_path(&rel)
-                .map_err(|_| AppError::InvalidPath(format!("file not found: {path_str}")))?;
+            // No text at this path at this revision is a STATE, not a failure
+            // (#146). Every diff surface reads the OTHER side of a file it is
+            // already rendering, so an ADDED file has no old side and a DELETED
+            // one has no new side — the expected case, and the reason seven of
+            // these were logged as errors during one commit's syntax prefetch.
+            // A non-blob (a directory, or a `160000` submodule gitlink) answers
+            // the same way: there is no text to colour either.
+            let Ok(entry) = tree.get_path(&rel) else {
+                return Ok(None);
+            };
             let obj = entry.to_object(repo)?;
-            let blob = obj
-                .as_blob()
-                .ok_or_else(|| AppError::InvalidPath(format!("not a file: {path_str}")))?;
+            let Some(blob) = obj.as_blob() else {
+                return Ok(None);
+            };
             let content = blob.content();
             let size = content.len() as u64;
             if blob.is_binary() {
-                return Ok(FileContent {
+                return Ok(Some(FileContent {
                     path: path_str,
                     binary: true,
                     text: None,
                     from_head: true,
                     size,
-                });
+                }));
             }
-            Ok(match std::str::from_utf8(content) {
+            Ok(Some(match std::str::from_utf8(content) {
                 Ok(s) => FileContent {
                     path: path_str,
                     binary: false,
@@ -3132,7 +3139,7 @@ impl GitBackend for Libgit2Backend {
                     from_head: true,
                     size,
                 },
-            })
+            }))
         })
     }
 
@@ -3140,7 +3147,7 @@ impl GitBackend for Libgit2Backend {
         &self,
         repo_id: &RepoId,
         path: &Path,
-    ) -> AppResult<FileContent> {
+    ) -> AppResult<Option<FileContent>> {
         let rel = path.to_path_buf();
         let path_str = rel.to_string_lossy().into_owned();
         self.with_repo(repo_id, |repo| {
@@ -3148,23 +3155,26 @@ impl GitBackend for Libgit2Backend {
             // Stage 0 is the normal, non-conflicted entry. A conflicted path has
             // stages 1-3 and no 0, so it lands in the same "not in the index"
             // branch as an untracked one — correct either way, because neither
-            // has a single index version to colour from.
-            let entry = index
-                .get_path(&rel, 0)
-                .ok_or_else(|| AppError::InvalidPath(format!("not in the index: {path_str}")))?;
+            // has a single index version to colour from. That absence is a
+            // STATE, not a failure (#146): the commit panel asks for the index
+            // side of every row it renders, and an untracked row genuinely has
+            // none.
+            let Some(entry) = index.get_path(&rel, 0) else {
+                return Ok(None);
+            };
             let blob = repo.find_blob(entry.id)?;
             let content = blob.content();
             let size = content.len() as u64;
             if blob.is_binary() {
-                return Ok(FileContent {
+                return Ok(Some(FileContent {
                     path: path_str,
                     binary: true,
                     text: None,
                     from_head: false,
                     size,
-                });
+                }));
             }
-            Ok(match std::str::from_utf8(content) {
+            Ok(Some(match std::str::from_utf8(content) {
                 Ok(s) => FileContent {
                     path: path_str,
                     binary: false,
@@ -3179,7 +3189,7 @@ impl GitBackend for Libgit2Backend {
                     from_head: false,
                     size,
                 },
-            })
+            }))
         })
     }
 

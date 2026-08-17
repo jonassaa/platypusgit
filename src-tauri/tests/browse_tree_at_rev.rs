@@ -53,14 +53,16 @@ fn reads_historical_file_content() {
 
     let old = backend
         .read_file_content_at_rev(&handle.id, "HEAD~1", Path::new("README.md"))
-        .unwrap();
+        .unwrap()
+        .expect("README.md exists at HEAD~1");
     assert_eq!(old.text.as_deref(), Some("first version\n"));
     assert!(!old.binary);
     assert!(old.from_head);
 
     let cur = backend
         .read_file_content_at_rev(&handle.id, "HEAD", Path::new("README.md"))
-        .unwrap();
+        .unwrap()
+        .expect("README.md exists at HEAD");
     assert_eq!(cur.text.as_deref(), Some("second version\n"));
 }
 
@@ -83,7 +85,8 @@ fn resolves_branch_revspec() {
 
     let content = backend
         .read_file_content_at_rev(&handle.id, "feature", Path::new("feature.txt"))
-        .unwrap();
+        .unwrap()
+        .expect("feature.txt exists on feature");
     assert_eq!(content.text.as_deref(), Some("on feature\n"));
 }
 
@@ -118,19 +121,39 @@ fn reads_binary_blob_at_revision() {
 
     let content = backend
         .read_file_content_at_rev(&handle.id, "HEAD", Path::new("blob.bin"))
-        .unwrap();
+        .unwrap()
+        .expect("blob.bin exists at HEAD");
     assert!(content.binary, "expected binary flag set");
     assert_eq!(content.text, None);
 }
 
-/// A path that doesn't exist in the tree yields InvalidPath.
+/// A path that doesn't exist in the tree is `Ok(None)`, NOT an error (#146).
+///
+/// Every caller is a diff surface reading the OTHER side of a file it is already
+/// rendering, so an added file having no old side is the routine case. While this
+/// answered `InvalidPath`, the frontend's shared `invoke` wrapper logged one ERROR
+/// line per absent side — seven in the v0.0.11 report, from a single commit's
+/// syntax prefetch.
 #[test]
-fn rejects_missing_path_in_tree() {
+fn missing_path_in_tree_is_absent_not_an_error() {
+    let tr = TempRepo::with_initial_commit("hi\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    let out = backend
+        .read_file_content_at_rev(&handle.id, "HEAD", Path::new("nope.txt"))
+        .expect("absence must not be an error");
+    assert!(out.is_none(), "expected None, got {out:?}");
+}
+
+/// ...but a GENUINE failure still errors. The two must stay distinguishable, or
+/// making absence quiet would also silence a real problem.
+#[test]
+fn a_bad_revspec_still_errors_while_absence_does_not() {
     let tr = TempRepo::with_initial_commit("hi\n");
     let (backend, handle) = tr.open_with_backend();
 
     let err = backend
-        .read_file_content_at_rev(&handle.id, "HEAD", Path::new("nope.txt"))
+        .read_file_content_at_rev(&handle.id, "no-such-ref", Path::new("nope.txt"))
         .unwrap_err();
-    assert!(matches!(err, AppError::InvalidPath(_)), "got {err:?}");
+    assert!(matches!(err, AppError::InvalidRef(_)), "got {err:?}");
 }

@@ -29,6 +29,7 @@ import { closeRepo as closeRepoIpc, getStatus } from "@/lib/tauri";
 import type { RepoHandle } from "@/lib/types";
 import { isConflicted, isStaged, isUnstaged } from "@/lib/derive";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
+import { describeError } from "@/lib/errors";
 import { emptySlice, frozenSlice, type RepoSlice } from "./repoSlice";
 import { useRepoStore } from "./useRepoStore";
 import {
@@ -179,7 +180,7 @@ export const useTabsStore = create<TabsState>((set, get) => {
     void closeRepoIpc(tab.repoId).catch((e) => {
       // The tab is going away either way; a failed eviction is a leak, not a
       // thing to interrupt the user about.
-      logWarn(`close_repo failed for ${tab.path}: ${String(e)}`);
+      logWarn(`close_repo failed for ${tab.path}: ${describeError(e)}`);
     });
   };
 

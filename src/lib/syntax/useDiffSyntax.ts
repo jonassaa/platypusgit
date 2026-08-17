@@ -47,8 +47,10 @@ const EMPTY: DiffSyntax = { old: null, new: null, oldText: null, newText: null }
  * no blob at the new path, so reading it there would leave every removed line
  * unhighlighted.
  *
- * A failed read yields no tokens for that side and those rows render plain: a
- * missing blob must never break a diff.
+ * A side with no content yields no tokens and those rows render plain: a missing
+ * blob must never break a diff. Since #146 an ABSENT blob resolves to `null`
+ * rather than rejecting, so it no longer reaches the log as an error — the
+ * `catch` below now covers only genuine failures, which still do.
  *
  * Panes that diff against the INDEX (the commit panel) ask for it directly with
  * `{ kind: "index" }`, so a partially staged file colours from the same content
