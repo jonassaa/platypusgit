@@ -661,8 +661,20 @@ export async function stashPop(repoId: string, index: number): Promise<void> {
   return invoke<void>("stash_pop", { repoId, index });
 }
 
-export async function stashDrop(repoId: string, index: number): Promise<void> {
-  return invoke<void>("stash_drop", { repoId, index });
+/**
+ * Drop the entry at `index`, refusing unless it is still `oid` (#133).
+ *
+ * The oid is not optional: an index is a position in the `refs/stash` reflog,
+ * so any write to that ref shifts it, and dropping whatever moved into the slot
+ * destroys a stash that was never selected. A `StaleStash` error means "the list
+ * changed, refresh and pick again".
+ */
+export async function stashDrop(
+  repoId: string,
+  index: number,
+  oid: string,
+): Promise<void> {
+  return invoke<void>("stash_drop", { repoId, index, oid });
 }
 
 export async function stashBranch(
@@ -671,6 +683,69 @@ export async function stashBranch(
   branch: string,
 ): Promise<void> {
   return invoke<void>("stash_branch", { repoId, index, branch });
+}
+
+/**
+ * Stash only `paths` (#133).
+ *
+ * `null` means git found nothing to save under that pathspec — a state, not a
+ * failure, exactly as `stashSave` already reports it.
+ *
+ * `includeUntracked` is not a preference here: `git stash push -- <untracked
+ * path>` FAILS without it, so callers derive it from whether the selection
+ * contains an untracked path.
+ */
+export async function stashSavePaths(
+  repoId: string,
+  opts: StashSaveOptions,
+  paths: string[],
+): Promise<string | null> {
+  return invoke<string | null>("stash_save_paths", { repoId, opts, paths });
+}
+
+/**
+ * Rename the entry at `index` (#133).
+ *
+ * `oid` proves the entry at `index` is still the one that was picked — see
+ * `stashDrop`. The caller must RE-READ the stash list afterwards, never patch
+ * its own copy: a rename is a store followed by a drop, and `refs/stash` can
+ * only be prepended to, so the renamed entry ends up at index 0 and everything
+ * between shifts down.
+ */
+export async function stashRename(
+  repoId: string,
+  index: number,
+  oid: string,
+  message: string,
+): Promise<void> {
+  return invoke<void>("stash_rename", { repoId, index, oid, message });
+}
+
+/**
+ * What this stash changed — its own first parent's tree against its own (#133).
+ *
+ * Addressed by OID, not index: an index is a reflog position and goes stale the
+ * moment anything writes to `refs/stash`, so a stale one would silently diff a
+ * different entry.
+ *
+ * `includeUntracked` folds in the `git stash -u` payload, which lives in a
+ * THIRD parent that no tree-level diff of the stash commit can reach. Inert on
+ * an entry that has none — see `StashInfo.untracked`.
+ */
+export async function stashDiff(
+  repoId: string,
+  oid: string,
+  contextLines = 3,
+  ignoreWhitespace = false,
+  includeUntracked = true,
+): Promise<FileDiff[]> {
+  return invoke<FileDiff[]>("stash_diff", {
+    repoId,
+    oid,
+    contextLines,
+    ignoreWhitespace,
+    includeUntracked,
+  });
 }
 
 // ─── Network operations ──────────────────────────────────────────────────────

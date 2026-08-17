@@ -87,7 +87,8 @@ fn stash_drop_removes_entry_without_applying() {
         )
         .unwrap();
 
-    backend.stash_drop(&handle.id, 0).unwrap();
+    let oid = backend.stashes(&handle.id).unwrap()[0].oid.clone();
+    backend.stash_drop(&handle.id, 0, &oid).unwrap();
     assert_eq!(read_file(tr.path(), "README.md"), "hello\n");
     assert_eq!(backend.stashes(&handle.id).unwrap().len(), 0);
 }

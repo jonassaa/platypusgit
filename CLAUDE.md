@@ -21,6 +21,9 @@ Recent specs/plans (for context on current direction):
 - `2026-08-16-tag-signing-*` — GPG/SSH signed annotated tags reusing the commit
   signing chain, `verify_tag` + badges, one create-tag dialog replacing three
   prompts (#132).
+- `2026-08-16-stash-improvements-*` — path-level partial stash, stash rename
+  (store a FRESH commit, then drop — see the stash convention below), and the
+  two correct stash comparisons; hunk-level stash deferred with reasons (#133).
 - `2026-08-16-branch-compare-*` — `compare` deep view: two mutable sides
   (ref↔ref or ref↔working tree), ahead/behind + both commit lists, the file diff
   through `CommitDiffPanel` (#131).
@@ -163,9 +166,9 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (24 files; count
-  them rather than trusting this number — it has been stale twice) drive the
-  real debug binary: real webview →
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (25 files; count
+  them rather than trusting this number — it has been stale three times) drive
+  the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
   driver or paid service — so it runs on Linux CI (WebKitGTK) and, in the same
@@ -332,6 +335,11 @@ git/
 │                the diff's own lines — no extra I/O). "Does this repo use LFS" is
 │                answered from `.gitattributes` via the INDEX, NOT `git lfs track`:
 │                it must be answerable with the binary MISSING (#93)
+├── stash.rs     Stash helpers that need no repository (#133): the `git stash
+│                push` / `git stash store` argv builders (the `--` placement and
+│                GIT_LITERAL_PATHSPECS live here), `validate_message`, and
+│                `rename_store_landed` — the pure gate the rename's DROP is
+│                conditioned on. All unit-tested with no temp repo
 ├── bisect.rs    Bisect. Reads GIT's own `.git/BISECT_*` + `refs/bisect/*` — there
 │                is deliberately NO parallel state file (see the note below), and
 │                progress comes from `git rev-list --bisect-vars`, git's own
@@ -392,7 +400,8 @@ commands/        Thin Tauri handlers, one file per area:
 │                  create/delete/push_tag, verify_tag, merge_branch, rebase_onto,
 │                  checkout_ref, push_delete_branch
 ├── history.rs     reset, cherry_pick, revert
-├── stash.rs       stash_save/apply/pop/drop/branch
+├── stash.rs       stash_save/apply/pop/drop/branch, plus stash_save_paths
+│                  (pathspec-scoped), stash_rename and stash_diff (#133)
 ├── conflict.rs    repo_state, conflict_sides, accept_ours/theirs, mark_resolved,
 │                  save_resolution, abort/continue_operation, run_mergetool,
 │                  restart_conflict
@@ -748,6 +757,14 @@ lib/
   oid). A working-tree side is right-hand ONLY: it is not a commit, so
   `left..workdir` is neither countable nor walkable, and the ahead/behind summary
   and both commit lists are ABSENT rather than zeroed.
+- **A stash comparison is two `CommitDiff` targets, not a `compare` side**
+  (#133). `stash-diff` is the entry against its own FIRST PARENT ("what it
+  changed"), `stash-vs-wt` is it against the working tree through the shared
+  `diff_ref_to_workdir`. Both stay in `CommitDiff` because a stash commit's
+  parents are three different commits, so `compare`'s rev↔rev half would walk
+  the index and untracked commits as history and announce a stash as "3 commits
+  ahead". `CommitDiff`'s oid-shaped `Target` is not violated: the STASH is the
+  oid, and the target is still immutable once routed.
 - Settings is a screen too, reached via titlebar gear or activity-bar settings slot.
 - Conflicts are NOT a destination: `OperationBar` (driven by `repoState`), the
   status-bar conflict count, `⌘5`/`conflict.openResolver` and a conflicted row's
@@ -1044,6 +1061,69 @@ lib/
   tag; the graded badge (`TagSignatureBadge`) verifies the SELECTED tag only.
   Same rule `SignatureBadge` states for the log: a verdict per row is a signer
   process per row.
+### Stash: two addresses, one destructive trap (#133)
+
+- **`StashInfo` carries `index` AND `oid`, and they are not interchangeable.**
+  `index` is a position in the `refs/stash` reflog, so ANY write to that ref
+  shifts it — a rename shifts it itself. So `stash_drop` and `stash_rename` take
+  BOTH, and the oid is REQUIRED, not a convenience: they re-read the entry and
+  compare before mutating, raising `StaleStash` on a mismatch. A COMPARISON
+  takes the oid alone, because a stale index would silently diff a different
+  entry. Every UI path already has the oid (`StashMenuTarget`, the palette's
+  `stashItems`) — thread it, never assert past it.
+- **Verify and mutate under ONE lock acquisition.** `with_repo_mut` holds the
+  backend's `repos` mutex only for its closure, so a check in one acquisition
+  and a drop in the next is a TOCTOU — and because that mutex serialises every
+  backend git op, a concurrent command parked on it is scheduled to run at
+  exactly that boundary. A write to `refs/stash` landing there shifts every
+  index and the drop deletes an unrelated entry, permanently. `stash_drop_at`
+  and `stash_finish_rename` exist for this; `stash_pairs` / `stash_entry_at`
+  take an already-borrowed `&mut Repository` because `Libgit2Backend::stashes`
+  takes the lock itself and std's `Mutex` is not reentrant. Nothing on the
+  frontend gates stash writes with a busy flag, and the reflog screen's
+  auto-stash is another live writer, so this is not theoretical.
+- **`git stash store <oid>` is a SILENT no-op when `refs/stash` already points
+  at `<oid>`.** git elides a value-identical ref update, writes no reflog entry,
+  and still exits 0 — and that is exactly `stash@{0}`, the entry a user is most
+  likely to rename. A store-then-drop rename that stores the EXISTING oid
+  therefore destroys the top stash while reporting success. `stash_rename`
+  stores a **fresh commit** instead (same tree, parents and both signatures;
+  only the message differs), which cannot collide with the ref's current value
+  and also keeps the stash commit's own message in step with its reflog message
+  — the way `git stash push` writes both. Pinned by two tests in
+  `tests/stash_rename.rs`, one of which asserts the git behaviour directly.
+- **Additive first, destructive last, and gated.** Store, then verify
+  (`stash::rename_store_landed`), then drop. Everything before the drop leaves
+  the original entry where it was, so a failure anywhere yields a DUPLICATE the
+  user can remove — never a gap. Do not "simplify" the verification away.
+- **A rename moves the entry to the top.** The reflog can only be prepended to;
+  restoring the previous order would mean dropping and re-storing every entry
+  above it. The UI says so in the prompt and **re-reads the list** rather than
+  patching its own copy.
+- **The third parent is where `git stash -u` lives**, and no tree-level diff of
+  the stash commit can reach it. `stash_diff` folds it in explicitly (its tree
+  against the EMPTY tree, so exactly the untracked files, all added);
+  `stash-vs-wt` cannot, so it excludes untracked on BOTH sides and says so. Any
+  new stash comparison must make that decision out loud, not by default.
+- **Pathspec ops set `GIT_LITERAL_PATHSPECS=1`** on top of the `--` rule, and
+  the `--` alone does NOT cover it: that ends option parsing, and everything
+  after it is still parsed as a pathspec. A path is data from `git status`, but
+  git reads a leading `:` as magic, so a file honestly named
+  `:(exclude)weird.txt` means "everything EXCEPT weird.txt" — a request to stash
+  one file stashes the **whole worktree**. Pinned by
+  `a_pathspec_magic_filename_is_a_literal_path_not_an_exclusion`, which was
+  confirmed to fail without the env var. This is the only shell-out in the app
+  that passes a pathspec — do not turn the flag on globally.
+- **`git stash push` exits 0 when it saves nothing** ("No local changes to
+  save"), so "was an entry created" is read off `refs/stash` before and after,
+  never off the exit status. `Ok(None)` is a state, not a failure.
+- **Hunk-level partial stash is deliberately absent, not merely unbuilt.** The
+  `git stash push --staged` composition needs the index rewritten and restored
+  around a subprocess, and an interruption in that window silently reduces the
+  user's index to the selection — and staged-but-uncommitted work has no other
+  copy anywhere. Crash-safety would need a journal, which is the `rebase_state`
+  instrument applied to a case git owns (the `bisect.rs` reasoning). Building it
+  needs its own spec; do not stub an affordance for it in the meantime.
 
 ### Bisect: git's state is the only state of record (#93)
 

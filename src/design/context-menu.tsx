@@ -1441,6 +1441,20 @@ export function fileMenuItems(
         useRepoStore.getState().openInEditor(path);
       },
     },
+    // Partial stash of one file (#133). Here as well as in the multi-selection
+    // menu because one row IS the common selection — reaching it only by
+    // selecting two files first would be a shortcut nobody finds.
+    {
+      icon: "stash",
+      label: "Stash this file…",
+      onClick: () => {
+        if (!path) return;
+        return promptStashPaths([path], {
+          untrackedPaths: untracked ? [path] : [],
+          stagedPaths: staged ? [path] : [],
+        });
+      },
+    },
     { divider: true },
     {
       icon: "copy",
@@ -1519,6 +1533,74 @@ export interface MultiFileMenuSelection {
  * own subset so mixed selections work; discard goes through the standard
  * confirm/danger flow before touching the worktree.
  */
+/**
+ * Stash a selection of paths (#133).
+ *
+ * `untrackedPaths` is not a preference the user is asked about: `git stash push
+ * -- <untracked path>` FAILS outright without `--include-untracked`, so the
+ * flag is derived from whether the selection contains one. Both lists come from
+ * the same `splitFileSelection` buckets Stage / Unstage / Discard already read.
+ *
+ * No confirm: the changes go INTO a stash, so nothing is lost — but staged
+ * paths in the selection are unstaged as part of the move, and they come back
+ * unstaged on pop. The prompt body says both, rather than leaving either to be
+ * discovered.
+ */
+export async function promptStashPaths(
+  paths: string[],
+  opts: { untrackedPaths?: string[]; stagedPaths?: string[] } = {},
+): Promise<void> {
+  if (!paths.length) return;
+  const n = paths.length;
+  const inSelection = (p: string) => paths.includes(p);
+  const untracked = (opts.untrackedPaths ?? []).filter(inSelection);
+  const staged = (opts.stagedPaths ?? []).filter(inSelection);
+  // Both clauses describe a real consequence the user cannot see coming.
+  // Staged ones especially: `git stash push -- <path>` takes the index side
+  // too, so a file that was staged comes back UNSTAGED on pop. Saying it here
+  // is the difference between a surprise and a choice.
+  const notes = [
+    untracked.length
+      ? `${untracked.length} untracked file${
+          untracked.length === 1 ? " is" : "s are"
+        } included.`
+      : null,
+    staged.length
+      ? `${staged.length} staged file${
+          staged.length === 1 ? "" : "s"
+        } will be unstaged, and come back unstaged when you pop.`
+      : null,
+  ].filter(Boolean);
+  const message = await pgPrompt({
+    title: `Stash ${n} file${n === 1 ? "" : "s"}`,
+    body: [
+      "The selected paths are reverted to HEAD and kept in a new stash entry.",
+      ...notes,
+    ].join(" "),
+    placeholder: "message (optional)",
+    confirmLabel: "Stash",
+  });
+  // `null` is dismissal; `""` is a deliberate empty message, and git is happy
+  // to write an entry without one — the same distinction pgPrompt inherits
+  // from window.prompt.
+  if (message == null) return;
+  const oid = await useRepoStore.getState().stashSavePaths(
+    {
+      message: message === "" ? null : message,
+      includeUntracked: untracked.length > 0,
+      keepIndex: false,
+    },
+    paths,
+  );
+  // `null` covers two outcomes: git found nothing to save (it exits 0 saying
+  // so) and the op failed. The second already has the error banner, so only the
+  // first needs a word — otherwise a click on "Stash 3 files" does nothing
+  // visible at all.
+  if (oid === null && !useRepoStore.getState().error) {
+    pgFlash("nothing to stash in those files");
+  }
+}
+
 export function multiFileMenuItems(
   sel: MultiFileMenuSelection | null,
 ): ContextMenuItem[] {
@@ -1557,6 +1639,27 @@ export function multiFileMenuItems(
       onClick: () => {
         useRepoStore.getState().unstage(stagedPaths);
       },
+    });
+  }
+  // Partial stash (#133).
+  //
+  // The set is the CHANGED paths, not every selected one: the repo browser's
+  // all-files view puts unmodified files in `paths` too, and a stash of only
+  // those is a click that does nothing (git exits 0 with "No local changes to
+  // save"). Embedded repos are excluded for the same reason they cannot be
+  // staged.
+  const stashable = Array.from(new Set([...stagedPaths, ...unstagedPaths])).filter(
+    (p) => !embeddedPaths.includes(p),
+  );
+  if (stashable.length) {
+    items.push({
+      icon: "stash",
+      label: `Stash ${files(stashable.length)}…`,
+      onClick: () =>
+        promptStashPaths(stashable, {
+          untrackedPaths: sel?.untrackedPaths ?? [],
+          stagedPaths,
+        }),
     });
   }
   items.push(
@@ -1601,10 +1704,69 @@ export function multiFileMenuItems(
   return items;
 }
 
-export function stashMenuItems(
-  stash: { name?: string; index?: number } | null,
-): ContextMenuItem[] {
+/**
+ * One stash entry, as the menu and the Branches detail pane both address it
+ * (#133). `oid` is the FULL commit oid — the comparisons take it, never the
+ * index, because an index is a reflog position that any write to `refs/stash`
+ * shifts (a rename included) and a stale one would compare a different entry.
+ */
+export interface StashMenuTarget {
+  name?: string;
+  index?: number;
+  oid?: string;
+  message?: string;
+  untracked?: boolean;
+}
+
+/** Ask to see what a stash changed — its own first parent against itself. */
+export function openStashDiff(stash: StashMenuTarget): void {
+  if (!stash.oid) return;
+  useNavStore.getState().setIntent({
+    kind: "stash-diff",
+    oid: stash.oid,
+    label: stash.name ?? `stash@{${stash.index ?? 0}}`,
+    untracked: !!stash.untracked,
+  });
+}
+
+/** Ask how a stash stands against what is on disk right now. */
+export function openStashVsWorktree(stash: StashMenuTarget): void {
+  if (!stash.oid) return;
+  useNavStore.getState().setIntent({
+    kind: "stash-vs-wt",
+    oid: stash.oid,
+    label: stash.name ?? `stash@{${stash.index ?? 0}}`,
+    untracked: !!stash.untracked,
+  });
+}
+
+/**
+ * Rename a stash entry. Prompts with the current message so the user edits
+ * rather than retypes — the whole displayed string is the name, `On main: `
+ * prefix included.
+ */
+export async function promptStashRename(stash: StashMenuTarget): Promise<void> {
+  // Both, not either: the index addresses the reflog entry and the oid proves
+  // it is still the one that was picked (#133).
+  if (stash.index == null || !stash.oid) return;
+  const name = stash.name ?? `stash@{${stash.index}}`;
+  const message = await pgPrompt({
+    title: `Rename ${name}`,
+    // Said up front, because it is visible and would otherwise look like a bug:
+    // `refs/stash` is a reflog and git can only PREPEND to it, so a renamed
+    // entry necessarily ends up first.
+    body: "The renamed stash moves to the top of the list — git's stash reflog has no insert-in-place.",
+    initialValue: stash.message ?? "",
+    confirmLabel: "Rename",
+    requireValue: true,
+  });
+  if (message == null) return;
+  await useRepoStore.getState().stashRename(stash.index, stash.oid, message);
+}
+
+export function stashMenuItems(stash: StashMenuTarget | null): ContextMenuItem[] {
   const name = stash?.name ?? `stash@{${stash?.index ?? 0}}`;
+  const target: StashMenuTarget = { ...stash, name };
   return [
     { __menuTitle: name },
     {
@@ -1620,6 +1782,26 @@ export function stashMenuItems(
       onClick: () => {
         if (stash?.index != null) useRepoStore.getState().stashPop(stash.index);
       },
+    },
+    { divider: true },
+    {
+      icon: "diff",
+      label: "Show what it changed",
+      disabled: !stash?.oid,
+      onClick: () => openStashDiff(target),
+    },
+    {
+      icon: "diff",
+      label: "Compare with working tree",
+      disabled: !stash?.oid,
+      onClick: () => openStashVsWorktree(target),
+    },
+    { divider: true },
+    {
+      icon: "edit",
+      label: "Rename…",
+      disabled: stash?.index == null || !stash?.oid,
+      onClick: () => promptStashRename(target),
     },
     {
       icon: "branch",
@@ -1643,8 +1825,13 @@ export function stashMenuItems(
       icon: "trash",
       label: "Drop",
       danger: true,
+      // Both are required, and the entry is disabled without them rather than
+      // asserted past: dropping by a bare index deletes whatever has moved into
+      // that reflog slot, which is the one unrecoverable mistake here (#133).
+      disabled: stash?.index == null || !stash?.oid,
       onClick: async () => {
-        if (stash?.index == null) return;
+        const { index, oid } = stash ?? {};
+        if (index == null || !oid) return;
         if (
           await pgConfirm({
             title: `Drop ${name}?`,
@@ -1653,7 +1840,7 @@ export function stashMenuItems(
             confirmLabel: "Drop",
           })
         )
-          useRepoStore.getState().stashDrop(stash.index);
+          useRepoStore.getState().stashDrop(index, oid);
       },
     },
   ];

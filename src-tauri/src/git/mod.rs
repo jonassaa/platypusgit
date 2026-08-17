@@ -8,6 +8,7 @@ pub mod rebase_plan;
 pub mod rebase_state;
 pub mod signature;
 pub mod signing;
+pub mod stash;
 pub mod submodule;
 pub mod tag;
 pub mod types;
@@ -389,8 +390,57 @@ pub trait GitBackend: Send + Sync {
     fn stash_save(&self, repo_id: &RepoId, opts: StashSaveOptions) -> AppResult<Option<String>>;
     fn stash_apply(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
     fn stash_pop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
-    fn stash_drop(&self, repo_id: &RepoId, index: usize) -> AppResult<()>;
+    /// Drop the entry at `index`, refusing unless it is still `expect_oid`.
+    ///
+    /// The oid is REQUIRED, not a convenience: an index is a position in the
+    /// `refs/stash` reflog, so any write to that ref shifts it, and dropping
+    /// whatever moved into the slot destroys a stash the user never selected.
+    /// Implementations must verify and drop under the same lock (#133).
+    fn stash_drop(&self, repo_id: &RepoId, index: usize, expect_oid: &str) -> AppResult<()>;
     fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()>;
+    /// Stash only `paths` (#133).
+    ///
+    /// Shells out — libgit2's stash API takes no pathspec at all. Local, so it
+    /// belongs with `run_git_capture`'s prompt-less family and NOT on
+    /// `commands::net::run_git_authenticated`; no remote is contacted.
+    ///
+    /// `Ok(None)` means git found nothing to save under that pathspec, which is
+    /// a state and not a failure — the same contract `stash_save` already has.
+    fn stash_save_paths(
+        &self,
+        repo_id: &RepoId,
+        opts: StashSaveOptions,
+        paths: &[PathBuf],
+    ) -> AppResult<Option<String>>;
+    /// Rename the entry at `index` (#133).
+    ///
+    /// git has no rename op: the displayed text is the reflog message, and
+    /// `git stash store` is its only supported writer. See
+    /// `git::stash::stash_store_args` and the impl for why this stores a FRESH
+    /// commit rather than the existing one, and why the drop is gated on a
+    /// verification.
+    /// Refuses unless the entry at `index` is still `expect_oid` — see
+    /// `stash_drop` for why an index alone cannot name an entry.
+    fn stash_rename(
+        &self,
+        repo_id: &RepoId,
+        index: usize,
+        expect_oid: &str,
+        message: &str,
+    ) -> AppResult<()>;
+    /// What this stash changed: its first parent's tree against its own (#133).
+    ///
+    /// Addressed by OID, not index — see `StashInfo`. `include_untracked` folds
+    /// in the third parent (the `git stash -u` payload) as added files; it is
+    /// inert on an entry that has no third parent.
+    fn stash_diff(
+        &self,
+        repo_id: &RepoId,
+        oid: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        include_untracked: bool,
+    ) -> AppResult<Vec<FileDiff>>;
 
     // === remote management ===
     fn add_remote(&self, repo_id: &RepoId, name: &str, url: &str) -> AppResult<()>;

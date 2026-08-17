@@ -194,9 +194,15 @@ function tagItems(icon: string, onPick: (name: string) => void): PaletteItem[] {
   }));
 }
 
+/**
+ * `onPick` receives the entry's OID as well as its index (#133). A stash index
+ * is a position in the `refs/stash` reflog, so the destructive picks have to
+ * name the commit they meant — the backend refuses a mismatch rather than
+ * acting on whatever moved into the slot.
+ */
 function stashItems(
   icon: string,
-  onPick: (index: number) => void,
+  onPick: (index: number, oid: string) => void,
 ): PaletteItem[] {
   return repoState().stashes.map((s) => ({
     type: "command" as const,
@@ -207,7 +213,7 @@ function stashItems(
     icon,
     run: () => {
       palette().closePalette();
-      onPick(s.index);
+      onPick(s.index, s.oid);
     },
   }));
 }
@@ -674,7 +680,7 @@ export function buildCommands(): PaletteItem[] {
         search: "Drop stash", label: "Drop stash…", danger: true, icon: "trash",
         run: step(() => ({
           kind: "pick", title: "Drop stash",
-          items: stashItems("trash", (i) => void repo.stashDrop(i)),
+          items: stashItems("trash", (i, oid) => void repo.stashDrop(i, oid)),
         })),
       },
       {

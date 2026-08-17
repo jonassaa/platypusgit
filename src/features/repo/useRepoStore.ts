@@ -87,7 +87,9 @@ import {
   stashBranch as stashBranchFn,
   stashDrop,
   stashPop,
+  stashRename as stashRenameFn,
   stashSave,
+  stashSavePaths,
   unstageHunk,
   unstageLines as unstageLinesFn,
   unstagePaths,
@@ -239,9 +241,23 @@ interface RepoStoreState extends RepoSlice {
   cherryPickMany: (oids: string[]) => Promise<void>;
   revert: (oid: string) => Promise<void>;
   stashSave: (opts: StashSaveOptions) => Promise<string | null>;
+  /**
+   * Stash only `paths` (#133). `null` when git found nothing to save under that
+   * pathspec — a state, not a failure.
+   */
+  stashSavePaths: (
+    opts: StashSaveOptions,
+    paths: string[],
+  ) => Promise<string | null>;
+  /** Rename the entry at `index` (#133). Re-reads the list; see the action. */
+  stashRename: (index: number, oid: string, message: string) => Promise<void>;
   stashApply: (index: number) => Promise<void>;
   stashPop: (index: number) => Promise<void>;
-  stashDrop: (index: number) => Promise<void>;
+  /**
+   * Drop a stash entry. `oid` is required and verified backend-side: an index
+   * is a reflog POSITION, so a stale one drops a stash nobody picked (#133).
+   */
+  stashDrop: (index: number, oid: string) => Promise<void>;
   stashBranch: (index: number, branch: string) => Promise<void>;
   // network
   fetch: (remote: string) => Promise<void>;
@@ -1081,11 +1097,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
-  async stashDrop(index) {
+  async stashDrop(index, oid) {
     const repo = get().current;
     if (!repo) return;
     try {
-      await stashDrop(repo.id, index);
+      await stashDrop(repo.id, index, oid);
       await get().refreshAll();
     } catch (e) {
       setErrorFor(repo.id, e);
@@ -1097,6 +1113,35 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await stashBranchFn(repo.id, index, branch);
+      await get().refreshAll();
+    } catch (e) {
+      setErrorFor(repo.id, e);
+    }
+  },
+
+  async stashSavePaths(opts, paths) {
+    const repo = get().current;
+    if (!repo) return null;
+    try {
+      const oid = await stashSavePaths(repo.id, opts, paths);
+      await get().refreshAll();
+      return oid;
+    } catch (e) {
+      setErrorFor(repo.id, e);
+      return null;
+    }
+  },
+
+  async stashRename(index, oid, message) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await stashRenameFn(repo.id, index, oid, message);
+      // `refreshAll`, never a local patch of `stashes`: a rename is a store
+      // followed by a drop and `refs/stash` can only be prepended to, so the
+      // renamed entry lands at index 0 and everything between it and its old
+      // position shifts down. Anything holding the old indices addresses the
+      // wrong entry on the next click.
       await get().refreshAll();
     } catch (e) {
       setErrorFor(repo.id, e);

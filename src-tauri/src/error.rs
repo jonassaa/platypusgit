@@ -100,6 +100,18 @@ pub enum AppError {
     #[error("branch already exists: {0}")]
     BranchExists(String),
 
+    /// The stash entry at the index an op was given is no longer the entry the
+    /// caller selected (#133). Carries the label (`stash@{1}`), not prose.
+    ///
+    /// A stash index is a position in the `refs/stash` reflog, so ANY write to
+    /// that ref shifts it — another window, a `DirtyTreeDialog` auto-stash, a
+    /// second click. Every destructive stash op therefore re-reads the entry
+    /// under the SAME lock it drops from and raises this rather than deleting
+    /// whatever moved into the slot. Distinct from `Git` because it is
+    /// recoverable and the remedy is specific: refresh and pick again.
+    #[error("stash entry moved: {0}")]
+    StaleStash(String),
+
     /// The `git-lfs` binary is missing or not runnable (#93). A **state**, not a
     /// failure: the UI disables the LFS actions and says why. Distinct from
     /// `Git`/`Network` precisely so git's `'lfs' is not a git command` can never

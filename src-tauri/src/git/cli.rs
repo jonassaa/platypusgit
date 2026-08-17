@@ -303,10 +303,37 @@ impl GitBackend for CliBackend {
     fn stash_pop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn stash_drop(&self, _repo_id: &RepoId, _index: usize) -> AppResult<()> {
+    fn stash_drop(&self, _repo_id: &RepoId, _index: usize, _expect_oid: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
     fn stash_branch(&self, _repo_id: &RepoId, _index: usize, _branch: &str) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn stash_save_paths(
+        &self,
+        _repo_id: &RepoId,
+        _opts: StashSaveOptions,
+        _paths: &[PathBuf],
+    ) -> AppResult<Option<String>> {
+        Err(AppError::NotImplemented)
+    }
+    fn stash_rename(
+        &self,
+        _repo_id: &RepoId,
+        _index: usize,
+        _expect_oid: &str,
+        _message: &str,
+    ) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn stash_diff(
+        &self,
+        _repo_id: &RepoId,
+        _oid: &str,
+        _context_lines: u32,
+        _ignore_whitespace: bool,
+        _include_untracked: bool,
+    ) -> AppResult<Vec<FileDiff>> {
         Err(AppError::NotImplemented)
     }
     fn repo_path(&self, _repo_id: &RepoId) -> AppResult<PathBuf> {

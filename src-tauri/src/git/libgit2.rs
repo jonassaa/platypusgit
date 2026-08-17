@@ -107,6 +107,74 @@ impl Libgit2Backend {
             .map_err(|e| AppError::Internal(e.to_string()))?;
         f(&mut repo)
     }
+
+    /// Drop the entry at `index`, but only if it is still the one the caller
+    /// picked (#133).
+    ///
+    /// **Enumerate, verify and drop happen in ONE `with_repo_mut` closure, and
+    /// that is the entire point.** `with_repo_mut` holds the backend's `repos`
+    /// mutex only for its closure's duration, so a check in one acquisition and
+    /// a drop in the next is a TOCTOU: the map mutex serialises every backend
+    /// git op, which means a concurrent command already parked on it is
+    /// scheduled to run at exactly that boundary. Any write to `refs/stash`
+    /// landing there shifts every index, and the drop then deletes a DIFFERENT
+    /// entry — permanently, and one the user never touched. Nothing on the
+    /// frontend gates stash writes with a busy flag, and the reflog screen's
+    /// auto-stash is another live writer, so this is not a theoretical race.
+    fn stash_drop_at(&self, repo_id: &RepoId, index: usize, expect_oid: &str) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            let (oid, _) = stash_entry_at(repo, index)?;
+            if oid != expect_oid {
+                return Err(AppError::StaleStash(format!("stash@{{{index}}}")));
+            }
+            repo.stash_drop(index)?;
+            Ok(())
+        })
+    }
+
+    /// The post-store half of a rename: verify the list, then drop — in ONE
+    /// lock acquisition (#133).
+    ///
+    /// Same reasoning as `stash_drop_at`, and the reason the gate reads the
+    /// list *here* rather than in the caller: a `rename_store_landed` decision
+    /// taken under one acquisition and acted on under the next is a check about
+    /// a list that may no longer exist. Both halves have to see the same one.
+    fn stash_finish_rename(
+        &self,
+        repo_id: &RepoId,
+        index: usize,
+        before: &[(String, String)],
+        new_oid: &str,
+        message: &str,
+    ) -> AppResult<()> {
+        self.with_repo_mut(repo_id, |repo| {
+            let after = stash_pairs(repo)?;
+            if !crate::git::stash::rename_store_landed(before, &after, index, new_oid, message) {
+                return Err(AppError::Git(format!(
+                    "stash rename could not be verified; the original stash@{{{index}}} was left in place"
+                )));
+            }
+            repo.stash_drop(index + 1)?;
+            Ok(())
+        })
+    }
+
+    /// What `refs/stash` points at right now, or `None` when the repository has
+    /// no stash at all (#133).
+    ///
+    /// Read either side of a `git stash push` shell-out to tell "an entry was
+    /// created" from "git had nothing to save": the pathspec form prints
+    /// `No local changes to save` and exits **0**, so the exit status cannot
+    /// answer that question and the ref has to.
+    fn stash_tip(&self, repo_id: &RepoId) -> AppResult<Option<String>> {
+        self.with_repo(repo_id, |repo| {
+            Ok(repo
+                .find_reference("refs/stash")
+                .ok()
+                .and_then(|r| r.target())
+                .map(|oid| oid.to_string()))
+        })
+    }
 }
 
 impl Default for Libgit2Backend {
@@ -1672,6 +1740,37 @@ const MAX_UNTRACKED_FILES: usize = 200;
 /// just sets it far below the 512MB default, because a 5MB "text" file is a
 /// generated artifact, not something anyone diffs in a GUI.
 const MAX_WORKDIR_BLOB: i64 = 5 * 1024 * 1024;
+
+/// Every stash entry as `(oid, reflog message)`, newest first (#133).
+///
+/// Takes an already-borrowed `&mut Repository` rather than a `RepoId` so it can
+/// run INSIDE a `with_repo_mut` closure: `Libgit2Backend::stashes` acquires the
+/// `repos` mutex itself, and std's `Mutex` is not reentrant, so calling it from
+/// inside a closure that holds the lock would deadlock. That constraint is why
+/// the verify-then-drop pair can be atomic at all.
+fn stash_pairs(repo: &mut Repository) -> AppResult<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    repo.stash_foreach(|_, message, oid| {
+        out.push((oid.to_string(), message.to_string()));
+        true
+    })?;
+    Ok(out)
+}
+
+/// The `(oid, message)` of the stash entry at `index`, or `StaleStash` when
+/// there is nothing there any more (#133).
+fn stash_entry_at(repo: &mut Repository, index: usize) -> AppResult<(String, String)> {
+    let mut found = None;
+    repo.stash_foreach(|i, message, oid| {
+        if i == index {
+            found = Some((oid.to_string(), message.to_string()));
+            false
+        } else {
+            true
+        }
+    })?;
+    found.ok_or_else(|| AppError::StaleStash(format!("stash@{{{index}}}")))
+}
 
 /// Resolve a revspec (branch, tag, short/full oid, `HEAD~2`, `tag^{}`, …) to
 /// its tree, mapping any resolution failure to `InvalidRef` so the UI gets a
@@ -3735,15 +3834,31 @@ impl GitBackend for Libgit2Backend {
 
     fn stashes(&self, repo_id: &RepoId) -> AppResult<Vec<StashInfo>> {
         self.with_repo_mut(repo_id, |repo| {
-            let mut out = Vec::new();
+            // Two passes, not one: `stash_foreach` holds the repository mutably
+            // for the duration of the walk, so the closure cannot `find_commit`
+            // to read a parent count. Collect the raw triples first, resolve
+            // the untracked parent after the walk has released the borrow.
+            let mut raw: Vec<(usize, git2::Oid, String)> = Vec::new();
             repo.stash_foreach(|index, message, oid| {
-                out.push(StashInfo {
-                    index,
-                    short_oid: oid.to_string()[..7].to_string(),
-                    message: message.to_string(),
-                });
+                raw.push((index, *oid, message.to_string()));
                 true
             })?;
+            let out = raw
+                .into_iter()
+                .map(|(index, oid, message)| StashInfo {
+                    index,
+                    short_oid: oid.to_string()[..7].to_string(),
+                    oid: oid.to_string(),
+                    message,
+                    // An unreadable entry is reported as carrying no untracked
+                    // side rather than taking the whole list down with it —
+                    // the list is how a user reaches Drop.
+                    untracked: repo
+                        .find_commit(oid)
+                        .map(|c| c.parent_count() > 2)
+                        .unwrap_or(false),
+                })
+                .collect();
             Ok(out)
         })
     }
@@ -4065,11 +4180,11 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
-    fn stash_drop(&self, repo_id: &RepoId, index: usize) -> AppResult<()> {
-        self.with_repo_mut(repo_id, |repo| {
-            repo.stash_drop(index)?;
-            Ok(())
-        })
+    fn stash_drop(&self, repo_id: &RepoId, index: usize, expect_oid: &str) -> AppResult<()> {
+        // Verified, and verified in the SAME lock acquisition as the drop —
+        // see `stash_drop_at`. A stash index is a reflog position, and dropping
+        // whatever moved into it is unrecoverable through the UI.
+        self.stash_drop_at(repo_id, index, expect_oid)
     }
     fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()> {
         self.with_repo_mut(repo_id, |repo| {
@@ -4107,6 +4222,166 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         })
     }
+
+    fn stash_save_paths(
+        &self,
+        repo_id: &RepoId,
+        opts: StashSaveOptions,
+        paths: &[PathBuf],
+    ) -> AppResult<Option<String>> {
+        let refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+        let args = crate::git::stash::stash_push_args(&opts, &refs)?;
+        if let Some(msg) = opts.message.as_deref() {
+            crate::git::stash::validate_message(msg)?;
+        }
+        let workdir = self.repo_path(repo_id)?;
+
+        // git prints "No local changes to save" and exits 0 when the pathspec
+        // matches only unchanged files, so the exit status cannot tell us
+        // whether an entry was actually created. The ref can: read it either
+        // side and compare.
+        let before = self.stash_tip(repo_id)?;
+        run_git_capture_env(&workdir, &args, &[crate::git::stash::LITERAL_PATHSPECS])
+            .map_err(AppError::Git)?;
+        let after = self.stash_tip(repo_id)?;
+        Ok(if after == before { None } else { after })
+    }
+
+    fn stash_rename(
+        &self,
+        repo_id: &RepoId,
+        index: usize,
+        expect_oid: &str,
+        message: &str,
+    ) -> AppResult<()> {
+        crate::git::stash::validate_message(message)?;
+
+        let before = self.stashes(repo_id)?;
+        let entry = before
+            .get(index)
+            .ok_or_else(|| AppError::StaleStash(format!("stash@{{{index}}}")))?
+            .clone();
+        // The index alone is not enough to name an entry: it is a reflog
+        // position, so a list the caller read a moment ago may already have
+        // shifted. Renaming the wrong stash preserves its content but moves
+        // somebody else's entry to the top under a name they did not choose.
+        if entry.oid != expect_oid {
+            return Err(AppError::StaleStash(format!("stash@{{{index}}}")));
+        }
+        // Renaming to what it is already called touches nothing. Worth an early
+        // exit rather than a no-op round trip: the `store` below would be
+        // elided by git (see the comment there) and the verification would then
+        // fail on an operation that had nothing to do.
+        if entry.message == message {
+            return Ok(());
+        }
+
+        // Store a FRESH commit, never the existing one.
+        //
+        // `git stash store <oid>` is a SILENT NO-OP when `refs/stash` already
+        // points at `<oid>`: the ref update is value-identical, git elides it,
+        // and it still exits 0 having written no reflog entry. That is exactly
+        // `stash@{0}` — so storing the old oid and then dropping the original
+        // would DESTROY the top stash. A new commit cannot collide with the
+        // ref's current value.
+        //
+        // The new commit keeps the original's tree, parents and BOTH
+        // signatures, so the entry keeps its own time and content; the message
+        // is the only thing that changes. That also fixes a second-order
+        // wrongness — `git stash push` writes the same string as the commit
+        // message and as the reflog message, and a store-only rename would
+        // leave the commit's own message stale forever.
+        let new_oid = self.with_repo(repo_id, |repo| {
+            let commit = resolve_commit(repo, &entry.oid)?;
+            let tree = commit.tree()?;
+            let parents: Vec<git2::Commit<'_>> = commit.parents().collect();
+            let parent_refs: Vec<&git2::Commit<'_>> = parents.iter().collect();
+            let oid = repo.commit(
+                // No ref: a dangling commit until `stash store` files it.
+                None,
+                &commit.author(),
+                &commit.committer(),
+                message,
+                &tree,
+                &parent_refs,
+            )?;
+            Ok(oid.to_string())
+        })?;
+        if new_oid == entry.oid {
+            // Only reachable if the commit already carried this exact message
+            // while its reflog entry said something else. Proceeding would hand
+            // `store` the elision case this whole design exists to avoid.
+            return Err(AppError::Git(
+                "stash rename would not change the entry; nothing was modified".into(),
+            ));
+        }
+
+        let workdir = self.repo_path(repo_id)?;
+        let args = crate::git::stash::stash_store_args(message, &new_oid);
+        run_git_capture(&workdir, &args).map_err(AppError::Git)?;
+
+        // VERIFY BEFORE DROPPING, and do both under ONE lock. Everything above
+        // is additive — a failure so far leaves the original entry exactly
+        // where it was. The drop is not, and it is unrecoverable through the
+        // UI. See `stash::rename_store_landed` for the three conditions and
+        // `stash_finish_rename` for why the read cannot be a separate
+        // acquisition from the drop.
+        let before_pairs: Vec<(String, String)> = before
+            .iter()
+            .map(|s| (s.oid.clone(), s.message.clone()))
+            .collect();
+        self.stash_finish_rename(repo_id, index, &before_pairs, &new_oid, message)
+    }
+
+    fn stash_diff(
+        &self,
+        repo_id: &RepoId,
+        oid: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        include_untracked: bool,
+    ) -> AppResult<Vec<FileDiff>> {
+        self.with_repo(repo_id, |repo| {
+            let commit = resolve_commit(repo, oid)?;
+            // Parent 0 is the commit the stash was taken on — its own base, not
+            // whatever HEAD has become since. Diffing against HEAD (what this
+            // used to do) mixes the stash with everything landed after it.
+            let base = commit
+                .parent(0)
+                .map_err(|_| AppError::InvalidRef(oid.to_string()))?;
+
+            let mut opts = DiffOptions::new();
+            opts.context_lines(context_lines);
+            opts.ignore_whitespace(ignore_whitespace);
+            // base → stash, so the stashed work reads as ADDITIONS.
+            let mut diff = repo.diff_tree_to_tree(
+                Some(&base.tree()?),
+                Some(&commit.tree()?),
+                Some(&mut opts),
+            )?;
+            let mut find_opts = DiffFindOptions::new();
+            find_opts.renames(true).copies(false);
+            diff.find_similar(Some(&mut find_opts)).ok();
+            let mut files = diff_to_file_diffs(&diff)?;
+
+            // The `git stash -u` payload lives in a THIRD parent, which no
+            // tree-level diff of the stash commit can reach. That parent's tree
+            // holds nothing but the untracked files, so diffing it against the
+            // EMPTY tree yields exactly them, all added — no filtering and no
+            // overlap with the tracked side above.
+            if include_untracked && commit.parent_count() > 2 {
+                let untracked = commit.parent(2)?;
+                let mut u_opts = DiffOptions::new();
+                u_opts.context_lines(context_lines);
+                u_opts.ignore_whitespace(ignore_whitespace);
+                let u_diff =
+                    repo.diff_tree_to_tree(None, Some(&untracked.tree()?), Some(&mut u_opts))?;
+                files.extend(diff_to_file_diffs(&u_diff)?);
+            }
+            Ok(files)
+        })
+    }
+
     fn repo_path(&self, repo_id: &RepoId) -> AppResult<PathBuf> {
         self.with_repo(repo_id, |repo| {
             repo.workdir()
@@ -5191,10 +5466,26 @@ fn submodule_matches(sm: &git2::Submodule<'_>, path: Option<&str>) -> bool {
 /// `spawn_blocking` (commands wrap the whole backend call), which is the same shape
 /// `run_rebase_flag` uses.
 fn run_git_capture(workdir: &Path, args: &[String]) -> Result<String, String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(workdir)
-        .args(args)
+    run_git_capture_env(workdir, args, &[])
+}
+
+/// `run_git_capture` with extra environment.
+///
+/// Split out rather than folded into the shared runner because the only caller
+/// that needs it is the pathspec-passing one (`GIT_LITERAL_PATHSPECS`), and
+/// turning pathspec magic off globally would change what every OTHER shell-out
+/// means without anyone asking for it.
+fn run_git_capture_env(
+    workdir: &Path,
+    args: &[String],
+    env: &[(&str, &str)],
+) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("-C").arg(workdir).args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd
         // No tty: without this an auth-requiring remote hangs forever on a prompt
         // nobody can see.
         .env("GIT_TERMINAL_PROMPT", "0")
