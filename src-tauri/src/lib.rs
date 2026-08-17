@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod commands;
+pub mod detach;
 pub mod error;
 pub mod forge;
 pub mod git;
@@ -47,7 +48,31 @@ pub fn run() {
         }
     }
 
-    let initial_intent = match cli::parse_args(&args, &cwd) {
+    let parsed = cli::parse_args(&args, &cwd);
+
+    // Hand the terminal back on a `pgit …` launch (#163) — the ONE fork site.
+    //
+    // ⚠️ Gated on `Parsed::Launch` and nothing else, because git runs THIS
+    // BINARY as its `GIT_ASKPASS` (see commands/net.rs::apply_auth_env) and
+    // reads the credential from its stdout, synchronously. A process that
+    // spawned a child and exited would hand git an empty credential, and every
+    // authenticated fetch, pull and push would fail with nothing to trace it
+    // back to. `Parsed::Help` must stay synchronous for the same reason at a
+    // lower stake: `USAGE` printed by a detached child goes to /dev/null.
+    //
+    // ⚠️ And this is why `GIT_ASKPASS` points at the BARE EXECUTABLE rather than
+    // at the installed `pgit` shim, which on every Unix channel is a symlink to
+    // this same binary: `pgit` now detaches. Pointing the askpass at it — an
+    // otherwise reasonable-looking simplification — reintroduces exactly the
+    // failure above. (The original reason is that `GIT_ASKPASS` is exec'd
+    // directly and cannot carry arguments; both reasons must hold.)
+    if detach::should_detach(&parsed, detach::LaunchEnv::current())
+        && detach::detach(&cwd) == detach::Detached::Yes
+    {
+        return;
+    }
+
+    let initial_intent = match parsed {
         cli::Parsed::Help => {
             print!("{}", cli::USAGE);
             return;
