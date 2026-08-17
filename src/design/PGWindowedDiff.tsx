@@ -1,14 +1,16 @@
 // Flat renderer for a file's diff rows, with an optional window.
 //
-// Reuses PGHunkHeader and PGDiffRow rather than restating their markup, so the
-// windowed and unwindowed paths cannot drift. `window` omitted renders
-// everything — that is the wrap-on case, where row heights are unknown.
+// Reuses PGDiffRow, PGFoldSeparator and PGHunkActions rather than restating their
+// markup, so the windowed and unwindowed paths cannot drift. `window` omitted
+// renders everything — that is the wrap-on case, where row heights are unknown.
 //
-// data-hunk-index stays on header rows: F7 navigation and the e2e specs address
-// hunks through it, and it must survive windowing.
+// There is no `@@` banner (#157). data-hunk-index / data-hunk-active — which F7
+// navigation and the e2e specs address hunks through — live on each hunk's ANCHOR
+// row, the first changed line, marked as such by flattenDiffRows. The hunk's
+// Stage/Discard cluster is pinned to that same row.
 import type { DiffRow } from "@/lib/diffRows";
 import type { WindowRange } from "@/lib/useWindowedList";
-import { PGDiffRow, PGHunkHeader } from "./git-components";
+import { PGDiffRow, PGFoldSeparator, PGHunkActions } from "./git-components";
 
 export interface PGWindowedDiffProps {
   rows: DiffRow[];
@@ -16,8 +18,6 @@ export interface PGWindowedDiffProps {
   window?: WindowRange;
   /** Hunk index F7/⇧F7 currently sits on. */
   activeHunk?: number;
-  collapsed?: ReadonlySet<number>;
-  onToggleHunk?: (hunkIndex: number) => void;
   /** Per-hunk stage/discard wiring, looked up by hunk index. */
   hunkActions?: (hunkIndex: number) => {
     staged?: boolean;
@@ -29,11 +29,16 @@ export interface PGWindowedDiffProps {
   selectedLines?: (hunkIndex: number) => number[];
   onLineClick?: (hunkIndex: number, changedIndex: number, range: boolean) => void;
   /**
+   * Reveal the unchanged lines a fold separator hides (chunked mode). Omit and the
+   * separators stay informational.
+   */
+  onExpandGap?: (gapIndex: number) => void;
+  /**
    * Flat row index the keyboard line cursor sits on (#61 D7 step 5).
    *
    * A ROW index rather than a (hunk, changedIndex) pair: this renderer already
    * knows each row's absolute index, so matching is one comparison and cannot
-   * mistake a collapsed or refetched hunk's line for the focused one.
+   * mistake a refetched hunk's line for the focused one.
    */
   focusedRow?: number | null;
 }
@@ -42,11 +47,10 @@ export function PGWindowedDiff({
   rows,
   window: win,
   activeHunk,
-  collapsed,
-  onToggleHunk,
   hunkActions,
   selectedLines,
   onLineClick,
+  onExpandGap,
   focusedRow,
 }: PGWindowedDiffProps) {
   const start = win?.start ?? 0;
@@ -65,30 +69,23 @@ export function PGWindowedDiff({
         if (row.kind === "fill") {
           return <PGDiffRow key={`f${start + i}`} line={row.line} />;
         }
-        if (row.kind === "header") {
-          const actions = hunkActions?.(row.hunkIndex) ?? {};
+        if (row.kind === "fold") {
           return (
-            <div
-              key={`h${row.hunkIndex}`}
-              data-hunk-index={row.hunkIndex}
-              data-hunk-active={activeHunk === row.hunkIndex ? "" : undefined}
-            >
-              <PGHunkHeader
-                header={row.header.replace(/^@@\s*|\s*@@$/g, "").trim()}
-                expanded={!collapsed?.has(row.hunkIndex)}
-                onToggle={onToggleHunk ? () => onToggleHunk(row.hunkIndex) : undefined}
-                selCount={selectedLines?.(row.hunkIndex).length ?? 0}
-                {...actions}
-              />
-            </div>
+            <PGFoldSeparator
+              key={`g${row.gapIndex}`}
+              hiddenLines={row.hiddenLines}
+              fromR={row.fromR}
+              onExpand={onExpandGap ? () => onExpandGap(row.gapIndex) : undefined}
+            />
           );
         }
         const sel = selectedLines?.(row.hunkIndex) ?? [];
+        const actions = hunkActions?.(row.hunkIndex);
         // Line selection is meaningless when the hunk's own indices don't address
         // what git would apply — the same condition that disables Stage/Discard
         // (#61 D2). PGHunk enforced this internally; the rule lives here now.
-        const disabled = !!hunkActions?.(row.hunkIndex).actionsDisabledReason;
-        return (
+        const disabled = !!actions?.actionsDisabledReason;
+        const line = (
           <PGDiffRow
             // Keyed by ABSOLUTE row index: a slice-relative key would make React
             // reuse a different line's DOM node as the window scrolls.
@@ -104,6 +101,27 @@ export function PGWindowedDiff({
                 : undefined
             }
           />
+        );
+        if (!row.hunkAnchor) return line;
+        // The anchor row is the hunk's addressable host: F7's cursor lands here
+        // and the action cluster hangs off it. `position: relative` only — the
+        // wrapper must not add height, or the window's arithmetic goes out of
+        // step with what is rendered.
+        return (
+          <div
+            key={`a${start + i}`}
+            data-hunk-index={row.hunkIndex}
+            data-hunk-active={activeHunk === row.hunkIndex ? "" : undefined}
+            style={{ position: "relative" }}
+          >
+            {line}
+            {actions && (actions.onStage || actions.onDiscard) && (
+              <PGHunkActions
+                {...actions}
+                selCount={sel.length}
+              />
+            )}
+          </div>
         );
       })}
       {win && win.bottomPad > 0 && (

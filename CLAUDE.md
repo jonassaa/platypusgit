@@ -18,6 +18,9 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-17-continuous-diff-view-*` — the `@@` hunk banners removed for a
+  Rider-style continuous file; hunk Stage/Discard moved to a gutter cluster with
+  two chords, per-hunk collapse retired, chunked mode given fold separators (#157).
 - `2026-08-17-pgit-cli-packaging-*` — `pgit` installed by every channel that
   offers a hook (Homebrew cask, `.deb`, `.msi`), copy-paste scripts for the ones
   that don't, and the ownership contract that keeps a package-managed `pgit` and
@@ -524,10 +527,13 @@ design/              In-house design system (NOT components/ui/). Exports via de
 │                        PGStatusBar, PGStatusItem
 ├── window-controls.tsx  Minimize / maximize / close (the titlebar is ours)
 ├── git-components.tsx   Git-specific UI bits — PGCommitRow, PGGraphRow,
-│                        PGChangeRow, PGFileTree(Row), PGRebaseRow, PGHunkHeader…
+│                        PGChangeRow, PGFileTree(Row), PGRebaseRow, PGDiffRow,
+│                        PGHunkActions + PGFoldSeparator (what replaced the `@@`
+│                        banner, #157)…
 ├── PGWindowedDiff.tsx   The ONE diff renderer over `DiffRow[]` (see "Diff
-│                        rendering"). Reuses PGHunkHeader/PGDiffRow, so the
-│                        windowed and unwindowed paths cannot drift
+│                        rendering"). Reuses PGDiffRow / PGFoldSeparator /
+│                        PGHunkActions, so the windowed and unwindowed paths
+│                        cannot drift
 ├── graph-geometry.ts    Lane geometry for the History graph in SVG user units —
 │                        the one place the lane pitch and gutter width live, so
 │                        PGGraphRow's path math and PGCommitRow's grid agree
@@ -664,9 +670,12 @@ features/            Per-feature: components + Zustand store colocated
 │                    a feature store), useCompareStore (sides + results + the
 │                    compare mark, its own store so RepoSlice is untouched),
 │                    CompareSidePicker
-├── diff/            CommitDiffPanel (shared commit-diff view), useWholeFile (the
-│                    `wholeFile` option for `flattenDiffRows`, or undefined in
-│                    chunked mode) + WhitespaceToggle
+├── diff/            CommitDiffPanel (shared commit-diff view), useDiffGaps (the
+│                    `gaps` + `text` options for `flattenDiffRows` — one hook so
+│                    four surfaces cannot drift on which setting they read; plus
+│                    useExpandedGaps, the fold separator's expand state, which
+│                    took the retired per-hunk `collapsed` set's place)
+│                    + WhitespaceToggle
 │                    (ignore-whitespace control; also owns
 │                    useHunkActionsDisabledReason — hunk staging is disabled
 │                    while whitespace is ignored, see #61 D2)
@@ -721,8 +730,11 @@ lib/
 │   ├── useSyntax.ts / useDiffSyntax.ts  Hooks; useDiffSyntax also EXPOSES the
 │   │                     texts it reads, which whole-file mode fills gaps from
 │   └── usePrefetchSyntax.ts  Bounded idle warm-up of a commit's other files
-├── diffRows.ts      Flat DiffRow model (header | line | fill) + exact
-│                    variable-height window. `fill` = whole-file gap filler
+├── diffRows.ts      Flat DiffRow model (line | fill | fold) + exact
+│                    variable-height window. `fill` = whole-file gap filler,
+│                    `fold` = chunked mode's separator; there is deliberately no
+│                    `@@` header row (#157). Also `hunkAnchorRows`, the hunk
+│                    index → flat row index map F7 scrolls by
 ├── wordDiff.ts      Intra-line (word) diff for one rem/add pair (#61 D8)
 ├── pairChangedLines.ts  WHICH rem pairs with WHICH add — one definition shared
 │                    by the unified hunk, the split view and the commit panel
@@ -798,10 +810,17 @@ module and every `src/features/*/` directory is named somewhere in here.
 
 ### Diff rendering
 
-- **One row model, one renderer.** `flattenDiffRows` (`lib/diffRows.ts`) turns a
-  `FileDiff` into a flat `DiffRow[]`; `PGWindowedDiff` renders it. All four diff
-  surfaces (Diff screen, commit panel, repo browser, commit-diff panel) go
-  through both, so word spans, syntax, staging and F7 cannot drift between them.
+- **One row model; TWO renderers, not one.** `flattenDiffRows` (`lib/diffRows.ts`)
+  turns a `FileDiff` into a flat `DiffRow[]`, and all four diff surfaces go
+  through it — that is what keeps word spans, syntax, hunk indices and the
+  `changedIndex` contract from drifting. But only THREE of them render it with
+  `PGWindowedDiff` (Diff screen, commit panel, repo browser); `CommitDiffPanel`
+  has its own lighter markup, tuned for the narrow History inline panel (no
+  line-number gutters, tighter rows) and read-only, so it needs none of the
+  staging machinery. This bullet claimed all four went through both renderer and
+  model until #157; it was false when written, and anything shared between the
+  surfaces has to be verified in `CommitDiffPanel.tsx` separately — the row model
+  is the only thing you get for free. Unifying the two is a wanted follow-up.
 - **Whole file is the default view** (`diffContextMode: "wholeFile"`), and it is
   composed on the FRONTEND: the canonical diff is left exactly as fetched and the
   unchanged remainder is filled in around it as `fill` rows, from text
@@ -809,11 +828,38 @@ module and every `src/features/*/` directory is named somewhere in here.
   `contextLines`** — libgit2 would return one hunk covering the file, so
   `stage_hunk` would stage everything and `changedIndex` would shift. `fill` is a
   distinct row kind with no `hunkIndex` precisely so it cannot reach a staging
-  path. Any inconsistent gap arithmetic degrades to chunked rather than render
-  wrong line numbers; git's `+N,0` convention (the line BEFORE) is normalized in
-  `effStart`, or every filler number after such a hunk shifts by one.
-- **Hunk headers stay in whole-file mode.** They carry Stage/Discard, the
-  collapse chevron, `data-hunk-index` for F7, and the e2e selectors.
+  path. Any inconsistent gap arithmetic degrades rather than rendering wrong line
+  numbers; git's `+N,0` convention (the line BEFORE) is normalized in `effStart`,
+  or every filler number after such a hunk shifts by one.
+- **There is NO `@@` hunk banner, and no `header` row kind** (#157). Whole-file
+  mode leaves no gap for one to label — every line between two hunks is already on
+  screen — so the four things the banner used to carry were rehomed:
+  - Stage / Discard → `PGHunkActions`, a gutter cluster pinned to the hunk's
+    ANCHOR row, plus the `diff.stageHunk` / `diff.discardHunk` chords
+    (`Mod+Shift+H` / `Mod+Shift+Backspace`). The banner's buttons were
+    mouse-only — `Tab` is `pane.focusNext`, so DOM focus never enters a pane's
+    buttons — and the chords are what fixed that, not what preserved it.
+  - Per-hunk collapse → **gone**, deliberately. It hid a change while its context
+    stayed, its chevron had no host left, and a collapsed hunk would have no
+    anchor row for F7 or the actions to hang off.
+  - `data-hunk-index` / `data-hunk-active` → the anchor row (see the two-cursors
+    bullet below). **`useHunkNav` is now wired into all four surfaces** — it was
+    only in the Diff screen and the commit-diff panel, so F7 did nothing at all in
+    the commit panel or the repo browser, for as long as both have existed. The
+    hunk cursor is what the two chords aim at, which is how that was found.
+  - The `@@` range itself → nothing in whole-file mode; a `PGFoldSeparator` in
+    chunked mode, which names the run of unchanged lines it hides and offers to
+    expand it in place. `fold` carries no `hunkIndex`, for the same reason `fill`
+    does not.
+- **`flattenDiffRows` has one gap walk and a two-tier degradation ladder.**
+  `gaps: "fill" | "fold"` chooses filler rows or separators; `text` is handed over
+  in BOTH modes (chunked needs it to expand a gap and to know the trailing
+  remainder's length). A STRUCTURAL failure — a gap whose two sides disagree on
+  length — falls all the way to bare concatenated hunks, because no gap count is
+  then trustworthy; a TEXT-dependent failure (no text yet, text past
+  `MAX_WHOLE_FILE_LINES`, text too short) falls only to `"fold"`, so the reader
+  still sees a labelled discontinuity rather than a silently joined file. Fold
+  mode never fails at the trailing gap, which is what keeps the re-entry bounded.
 - **`diff_ref_to_workdir` is a shared primitive, not compare's helper** (#131).
   Arbitrary revspec vs the working tree, with the same `context_lines` /
   `ignore_whitespace` knobs the other diff ops take, plus an explicit
@@ -852,7 +898,10 @@ module and every `src/features/*/` directory is named somewhere in here.
   400px viewport, and the bottom of a taller pane renders blank. Use
   `lib/useViewportH.ts`.
 - **Two cursors, two index spaces, and they must not be confused.** `useHunkNav`
-  keeps a HUNK cursor (F7/⇧F7, rendered as `data-hunk-active`);
+  keeps a HUNK cursor (F7/⇧F7, rendered as `data-hunk-active` on the hunk's
+  ANCHOR row — its first changed line, marked `hunkAnchor` by `flattenDiffRows`;
+  exactly one per hunk, falling back to the hunk's first row when it has no
+  changed one, so every hunk index stays addressable);
   `useDiffLineFocus` keeps a per-LINE cursor (list-nav chords + Space, rendered
   as `data-focused`). A `DiffLineTarget` carries BOTH numbers because they are
   different things: `rowIndex` addresses the flat `DiffRow[]` (what the focus ring
@@ -862,6 +911,12 @@ module and every `src/features/*/` directory is named somewhere in here.
   `fill` rows are unstageable, and skipping them is what keeps one mapping instead
   of two. Never derive a backend index from a row index or vice versa; read
   `changedIndex` off the row, where `flattenDiffRows` put it.
+- **F7's own scroll goes by offset too, now that its anchor is a line row.**
+  `useHunkNav` takes a `scrollToHunk` built from `hunkAnchorRows` +
+  `scrollTopForRow`, and every diff surface supplies one; the hook's
+  `querySelector` + `scrollIntoView` survives only as the fallback for an
+  unwindowed caller and its unit test. A line row is unmounted far more often
+  than a header row was.
 - **Scroll a diff row into view BY OFFSET** (`scrollTopForRow`), never by
   `querySelector` + `scrollIntoView`: the row is usually unmounted under
   windowing, so the DOM route silently does nothing (the #68 G10 trap). It

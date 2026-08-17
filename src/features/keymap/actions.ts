@@ -90,6 +90,8 @@ export type ActionId =
   | "diff.prevChange"
   | "diff.toggleLine"
   | "diff.viewCombined"
+  | "diff.stageHunk"
+  | "diff.discardHunk"
   | "commit.commit"
   | "commit.commitAndPush"
   | "commit.toggleAmend"
@@ -325,6 +327,14 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   // launch screen — claiming the single case there would leave the Diff viewer
   // with no chord anywhere a user starts.
   "diff.viewCombined": { id: "diff.viewCombined", title: "View combined diff of selected commits", category: "Diff", scope: "pane" },
+  // The keyboard half of the hunk gutter cluster (#157). The `@@` banner's
+  // Stage/Discard buttons were reachable by mouse only — Tab is pane traversal, so
+  // DOM focus never enters a pane's buttons — and the cluster that replaced them
+  // would have inherited that. Pane-scoped and registered by the two screens that
+  // own hunk staging, against the hunk their F7 cursor (or line cursor) sits on;
+  // no default runner, like the commit.* family.
+  "diff.stageHunk": { id: "diff.stageHunk", title: "Stage / unstage hunk", category: "Diff", scope: "pane" },
+  "diff.discardHunk": { id: "diff.discardHunk", title: "Discard hunk", category: "Diff", scope: "pane" },
 
   "repo.open": { id: "repo.open", title: "Open repository…", category: "Repository", scope: "global", run: openRepoOp },
   "repo.clone": { id: "repo.clone", title: "Clone repository…", category: "Repository", scope: "global", run: cloneRepoOp },

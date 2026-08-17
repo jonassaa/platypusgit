@@ -53,7 +53,12 @@ import {
 } from "@/lib/selection";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { useDiffSyntax, useSyntax } from "@/lib/syntax";
-import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import {
+  flattenDiffRows,
+  hunkAnchorRows,
+  scrollTopForRow,
+  windowVariable,
+} from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
@@ -73,8 +78,14 @@ import {
   useHunkActionsDisabledReason,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
-import { useWholeFile } from "@/features/diff/useWholeFile";
-import { PGPane, FocusableScroll, useAction, usePaneList } from "@/features/keymap";
+import { useDiffGaps, useExpandedGaps } from "@/features/diff/useDiffGaps";
+import {
+  PGPane,
+  FocusableScroll,
+  useAction,
+  useHunkNav,
+  usePaneList,
+} from "@/features/keymap";
 import type {
   BranchInfo,
   FileContent,
@@ -609,37 +620,97 @@ export function RepoBrowserScreen() {
     new: { kind: "worktree" },
   });
   const diffRowH = useDiffRowHeight();
-  const diffHeaderH = 26 + useDensityStep();
-  const [collapsedHunks, setCollapsedHunks] = React.useState<ReadonlySet<number>>(
-    new Set(),
+  const diffFoldH = 22 + useDensityStep();
+  const { expanded: expandedGaps, expand: expandGap } = useExpandedGaps(
+    selectedFile?.path ?? null,
   );
-  const toggleHunk = React.useCallback((i: number) => {
-    setCollapsedHunks((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
-  }, []);
-  const browserWholeFile = useWholeFile(browserSyntax);
+  const { gaps: browserGaps, text: browserText } = useDiffGaps(browserSyntax);
   const diffRows = React.useMemo(
     () =>
       // `isTextualDiff` also excludes an LFS pointer diff (#93) — its hunks are
       // three lines of pointer text, which must never reach a diff renderer.
       flattenDiffRows(isTextualDiff(diff) && diff ? diff.hunks : [], {
-        headerH: diffHeaderH,
+        foldH: diffFoldH,
         rowH: diffRowH,
-        collapsed: collapsedHunks,
         syntax: browserSyntax,
-        wholeFile: browserWholeFile,
+        text: browserText,
+        gaps: browserGaps,
+        expandedGaps,
       }),
-    [diff, diffHeaderH, diffRowH, collapsedHunks, browserSyntax, browserWholeFile],
+    [diff, diffFoldH, diffRowH, browserSyntax, browserText, browserGaps, expandedGaps],
   );
   const diffHeights = React.useMemo(() => diffRows.map((r) => r.h), [diffRows]);
   const diffScrollRef = React.useRef<HTMLDivElement>(null);
   const [diffScrollTop, setDiffScrollTop] = React.useState(0);
   const { viewportH: diffViewportH, remeasure: remeasureDiff } =
     useViewportH(diffScrollRef);
+  // ── Hunk cursor + hunk-level chords (#157) ───────────────────────────────
+  // This pane had no F7 either; the `@@` banner's Stage/Discard was mouse-only.
+  // Scroll BY OFFSET — the anchor row is usually unmounted under windowing.
+  const diffAnchorRows = React.useMemo(() => hunkAnchorRows(diffRows), [diffRows]);
+  const scrollToHunk = React.useCallback(
+    (hunkIndex: number) => {
+      const el = diffScrollRef.current;
+      const rowIndex = diffAnchorRows[hunkIndex];
+      if (!el || rowIndex == null || rowIndex < 0) return;
+      el.scrollTop = scrollTopForRow(diffHeights, rowIndex, {
+        scrollTop: el.scrollTop,
+        viewportH: el.clientHeight,
+      });
+    },
+    [diffAnchorRows, diffHeights],
+  );
+  const hunkCursor = useHunkNav({
+    paneIds: ["repo.tree", "repo.preview"],
+    count: isTextualDiff(diff) && diff ? diff.hunks.length : 0,
+    resetKey: selectedFile?.path ?? null,
+    scrollToHunk,
+  });
+  const stageHunkAt = React.useCallback((i: number) => {
+    const path = selectedFile?.path;
+    if (!path) return;
+    useRepoStore.getState().stageHunk(path, i);
+  }, [selectedFile?.path]);
+  const discardHunkAt = React.useCallback(
+    async (i: number) => {
+      const path = selectedFile?.path;
+      if (!path) return;
+      if (
+        await pgConfirm({
+          title: "Discard this hunk?",
+          body: `The change to ${path} will be lost.`,
+          danger: true,
+          confirmLabel: "Discard hunk",
+        })
+      ) {
+        useRepoStore.getState().discardHunk(path, i);
+      }
+    },
+    [selectedFile?.path],
+  );
+  // Decline rather than guess at hunk 0 when the cursor has not moved: Discard is
+  // destructive, and ignore-whitespace makes hunk indices unusable (#61 D2).
+  useAction(
+    "diff.stageHunk",
+    () => {
+      if (hunkCursor < 0 || hunkActionsDisabled) return false;
+      stageHunkAt(hunkCursor);
+      return true;
+    },
+    [hunkCursor, hunkActionsDisabled, stageHunkAt],
+    { paneId: "repo.preview" },
+  );
+  useAction(
+    "diff.discardHunk",
+    () => {
+      if (hunkCursor < 0 || hunkActionsDisabled) return false;
+      void discardHunkAt(hunkCursor);
+      return true;
+    },
+    [hunkCursor, hunkActionsDisabled, discardHunkAt],
+    { paneId: "repo.preview" },
+  );
+
   const diffWin = React.useMemo(
     () =>
       windowVariable(diffHeights, {
@@ -1036,28 +1107,13 @@ export function RepoBrowserScreen() {
               <PGWindowedDiff
                 rows={diffRows}
                 window={diffWin}
-                collapsed={collapsedHunks}
-                onToggleHunk={toggleHunk}
+                activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
+                onExpandGap={expandGap}
                 hunkActions={(i) => ({
                   staged: false,
                   actionsDisabledReason: hunkActionsDisabled,
-                  onStage: () => {
-                    if (!selectedFile) return;
-                    useRepoStore.getState().stageHunk(selectedFile.path, i);
-                  },
-                  onDiscard: async () => {
-                    if (!selectedFile) return;
-                    if (
-                      await pgConfirm({
-                        title: "Discard this hunk?",
-                        body: `The change to ${selectedFile.path} will be lost.`,
-                        danger: true,
-                        confirmLabel: "Discard hunk",
-                      })
-                    ) {
-                      useRepoStore.getState().discardHunk(selectedFile.path, i);
-                    }
-                  },
+                  onStage: () => stageHunkAt(i),
+                  onDiscard: () => void discardHunkAt(i),
                 })}
               />
             )}

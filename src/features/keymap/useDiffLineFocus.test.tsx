@@ -35,17 +35,17 @@ const rem = (n: number) => ({
 });
 
 /** Context, add, context, remove, add — changed indices 0,1,2 amid context. */
-const hunkWithContext = (header: string): Hunk => ({
+const hunkWithContext = (header: string, start = 1): Hunk => ({
   header,
-  oldStart: 1,
+  oldStart: start,
   oldLines: 3,
-  newStart: 1,
+  newStart: start,
   newLines: 4,
   lines: [ctx(1), add(2), ctx(3), rem(4), add(5)],
 });
 
 const rowsFor = (hunks: Hunk[]) =>
-  flattenDiffRows(hunks, { headerH: 26, rowH: 18 });
+  flattenDiffRows(hunks, { foldH: 22, rowH: 18 });
 
 const key = (k: string) =>
   ({
@@ -102,10 +102,11 @@ describe("diffLineTargets", () => {
   it("numbers changed lines only, skipping context", () => {
     const targets = diffLineTargets(rowsFor([hunkWithContext("@@ -1,3 +1,4 @@")]));
     expect(targets.map((t) => t.changedIndex)).toEqual([0, 1, 2]);
-    // Row 0 is the hunk header, so the changed rows are 2, 4, 5 — proving the
-    // cursor's own row index and the backend's changed index are NOT the same
-    // number, which is exactly why both are carried.
-    expect(targets.map((t) => t.rowIndex)).toEqual([2, 4, 5]);
+    // The hunk's lines are ctx, add, ctx, rem, add, so the changed rows are 1, 3,
+    // 4 — proving the cursor's own row index and the backend's changed index are
+    // NOT the same number, which is exactly why both are carried. (There is no
+    // header row any more, so nothing shifts these but the context lines.)
+    expect(targets.map((t) => t.rowIndex)).toEqual([1, 3, 4]);
   });
 
   it("restarts changedIndex per hunk while rowIndex keeps rising", () => {
@@ -126,21 +127,25 @@ describe("diffLineTargets", () => {
 
   it("skips whole-file fill rows, which belong to no hunk", () => {
     const rows = flattenDiffRows([hunkWithContext("@@ -1,3 +1,4 @@")], {
-      headerH: 26,
+      foldH: 22,
       rowH: 18,
-      wholeFile: { newText: "ctx1\nadd2\nctx3\nadd5\nafter1\nafter2\n", oldText: null },
+      text: { newText: "ctx1\nadd2\nctx3\nadd5\nafter1\nafter2\n", oldText: null },
+      gaps: "fill",
     });
     expect(rows.some((r) => r.kind === "fill")).toBe(true);
     expect(diffLineTargets(rows).map((t) => t.changedIndex)).toEqual([0, 1, 2]);
   });
 
-  it("has no targets in a collapsed hunk", () => {
-    const rows = flattenDiffRows([hunkWithContext("@@ -1,3 +1,4 @@")], {
-      headerH: 26,
+  it("skips chunked mode's fold separators, which belong to no hunk either", () => {
+    // A fold row carries no hunkIndex and no line — the cursor must not stop on
+    // one, and Space must have nothing to stage there (#157).
+    const rows = flattenDiffRows([hunkWithContext("@@ -4,3 +4,4 @@", 4)], {
+      foldH: 22,
       rowH: 18,
-      collapsed: new Set([0]),
+      gaps: "fold",
     });
-    expect(diffLineTargets(rows)).toEqual([]);
+    expect(rows.some((r) => r.kind === "fold")).toBe(true);
+    expect(diffLineTargets(rows).map((t) => t.changedIndex)).toEqual([0, 1, 2]);
   });
 });
 
@@ -243,9 +248,9 @@ describe("useDiffLineFocus", () => {
     useFocusStore.setState({ focused: "d.diff" });
     scrollToRow.mockClear();
     press("ArrowDown");
-    // Changed index 0 lives at flat row 2 — the header and one context row are
-    // ahead of it, and scrolling addresses the rendered row.
-    expect(scrollToRow).toHaveBeenLastCalledWith(2);
+    // Changed index 0 lives at flat row 1 — one context row is ahead of it, and
+    // scrolling addresses the rendered row.
+    expect(scrollToRow).toHaveBeenLastCalledWith(1);
   });
 
   it("drops a cursor that a shrinking diff left past the end", () => {

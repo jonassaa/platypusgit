@@ -1,9 +1,13 @@
 // Flat row model for a file diff, plus an exact variable-height window.
 //
-// A diff mixes two row heights — a hunk header is density-aware chrome, a code
+// A diff mixes two row heights — a fold separator is density-aware chrome, a code
 // row is --fs-12 * --lh-code — so the fixed-pitch useWindowedList does not fit.
 // Nothing needs measuring though: both heights are KNOWN, so prefix sums give an
 // exact window with no DOM reads and no estimation.
+//
+// There is deliberately NO `@@` header row (#157). Whole-file mode leaves no gap
+// for one to label, and where a gap IS real — chunked mode — what the reader needs
+// is how much is hidden and a way to show it, which is the `fold` row.
 //
 // `DiffLineData` is imported TYPE-ONLY on purpose. src/design/PGWindowedDiff.tsx
 // imports DiffRow from this module, so a value import of the design barrel here
@@ -15,10 +19,26 @@ import type { FileDiff } from "./types";
 import { pairChangedLines } from "./pairChangedLines";
 
 export type DiffRow =
-  | { kind: "header"; hunkIndex: number; header: string; h: number }
-  | { kind: "line"; hunkIndex: number; line: DiffLineData; h: number }
+  | {
+      kind: "line";
+      hunkIndex: number;
+      line: DiffLineData;
+      h: number;
+      /**
+       * This row is its hunk's ANCHOR: the first changed (`+`/`-`) row, or the
+       * hunk's first row when it has no changed one. Exactly one row per hunk
+       * carries it (#157).
+       *
+       * It hosts `data-hunk-index` / `data-hunk-active` for F7 and the hunk's
+       * Stage/Discard cluster — both of which used to live on the `@@` header.
+       * Additive and independent of `changedIndex`: nothing derives one from the
+       * other, and this flag reaches no backend op.
+       */
+      hunkAnchor?: true;
+    }
   /**
-   * An unchanged line from OUTSIDE every hunk, synthesized in whole-file mode.
+   * An unchanged line from OUTSIDE every hunk, synthesized in whole-file mode
+   * (and for a gap the reader expanded in chunked mode).
    *
    * A distinct kind rather than a `line` row carrying a sentinel hunkIndex:
    * consumers look up `hunkActions(row.hunkIndex)` and wire
@@ -26,10 +46,28 @@ export type DiffRow =
    * guard away from staging the wrong hunk. This variant has no hunkIndex to get
    * wrong, and the type checker makes every consumer say what it does with it.
    */
-  | { kind: "fill"; line: DiffLineData; h: number };
+  | { kind: "fill"; line: DiffLineData; h: number }
+  /**
+   * A run of unchanged lines that is NOT rendered — chunked mode's fold
+   * separator. Replaces the `@@` banner: it names the amount of file hidden and
+   * where it resumes, which is what a reader of a discontinuous file needs.
+   *
+   * No `hunkIndex`, for the same reason `fill` has none.
+   */
+  | {
+      kind: "fold";
+      /** Gap 0 precedes hunk 0; gap N follows hunk N-1. Identifies it to `onExpandGap`. */
+      gapIndex: number;
+      hiddenLines: number;
+      /** 1-based first hidden line, old side. */
+      fromL: number;
+      /** 1-based first hidden line, new side — what the separator displays. */
+      fromR: number;
+      h: number;
+    };
 
 /**
- * Past this, whole-file mode stays chunked.
+ * Past this, whole-file mode degrades to fold separators.
  *
  * Synthesizing a row per line of a very large file would fight the performance
  * goal whole-file mode is part of. It matches the tokenizer's own
@@ -172,50 +210,124 @@ function gapRows(o: {
   return rows;
 }
 
+export interface FlattenDiffOptions {
+  /** Code-row pitch, from `--diff-row-h`. */
+  rowH: number;
+  /** Fold-separator height. Chrome, so density-aware — see the surfaces. */
+  foldH: number;
+  syntax?: { old: SyntaxLine[] | null; new: SyntaxLine[] | null };
+  /**
+   * The file's two sides in full, when they are available. Both may be null;
+   * filling needs at least one. Read by BOTH modes — `"fill"` fills every gap
+   * from it, `"fold"` needs it only for a gap the reader expanded and for the
+   * length of the trailing remainder.
+   */
+  text?: { newText: string | null; oldText: string | null };
+  /**
+   * What to do with an unchanged run between (or around) the hunks.
+   *
+   * `"fill"` is whole-file mode, the default VIEW: the file reads continuously,
+   * so there is no discontinuity and no separator. `"fold"` is chunked mode: each
+   * gap becomes one `fold` row naming what it hides. Defaults to `"fold"`, which
+   * is also every degradation target — see the ladder below.
+   */
+  gaps?: "fill" | "fold";
+  /** `gaps: "fold"` only — gap indices the reader expanded, filled from `text`. */
+  expandedGaps?: ReadonlySet<number>;
+}
+
 export function flattenDiffRows(
   hunks: FileDiff["hunks"],
-  o: {
-    headerH: number;
-    rowH: number;
-    collapsed?: ReadonlySet<number>;
-    syntax?: { old: SyntaxLine[] | null; new: SyntaxLine[] | null };
-    /**
-     * Whole-file mode: fill the unchanged remainder of the file in around the
-     * hunks. Both texts may be null; filling needs at least one.
-     */
-    wholeFile?: { newText: string | null; oldText: string | null };
-  },
+  o: FlattenDiffOptions,
 ): DiffRow[] {
-  const { headerH, rowH, collapsed, syntax, wholeFile } = o;
+  const { rowH, foldH, syntax, text, gaps = "fold", expandedGaps } = o;
 
   const hunkRows = (h: FileDiff["hunks"][number], hunkIndex: number): DiffRow[] => {
-    const rows: DiffRow[] = [
-      { kind: "header", hunkIndex, header: h.header, h: headerH },
-    ];
-    if (collapsed?.has(hunkIndex)) return rows;
     // changedIndex FIRST, over the whole hunk, before anything slices rows.
     const lines = withWordSpans(
       withSyntax(withChangedIndices(h.lines.map(toUiLine)), syntax),
     );
-    for (const line of lines) rows.push({ kind: "line", hunkIndex, line, h: rowH });
-    return rows;
+    // The hunk's anchor is its first CHANGED row — F7 means "go to the next
+    // change", and the Stage/Discard cluster belongs at the change block's top.
+    // A hunk with no changed row is not something git emits, but a caller can
+    // construct one, so fall back to the first row: exactly one anchor per hunk,
+    // unconditionally, or F7 and the actions lose a reachable host.
+    let anchor = lines.findIndex((l) => l.kind === "add" || l.kind === "rem");
+    if (anchor < 0 && lines.length > 0) anchor = 0;
+    return lines.map((line, i) => ({
+      kind: "line" as const,
+      hunkIndex,
+      line,
+      h: rowH,
+      ...(i === anchor ? { hunkAnchor: true as const } : {}),
+    }));
   };
 
-  const chunked = (): DiffRow[] => hunks.flatMap(hunkRows);
+  /**
+   * The floor of the degradation ladder: hunks concatenated with NO gap markers.
+   *
+   * Only for a structural mismatch — a gap whose two sides disagree on length, or
+   * a descending range. The hunk headers are then not the shape assumed here, so
+   * a fold row's count would be as wrong as a filler row's line numbers.
+   */
+  const bare = (): DiffRow[] => hunks.flatMap(hunkRows);
+
+  /**
+   * The rung above it: fold separators, no filling. For every text-dependent
+   * failure (no text yet, text past the ceiling, text too short) — the structure
+   * is sound, only the filling is impossible. Re-entered with `expandedGaps`
+   * dropped, so this recurses at most once.
+   */
+  const folded = (): DiffRow[] =>
+    flattenDiffRows(hunks, { ...o, gaps: "fold", expandedGaps: undefined });
+
+  if (hunks.length === 0) return [];
 
   // Prefer the new side; a deleted file has only the old one. Either yields the
   // same characters for an unchanged region, which is all filler ever covers.
-  const text = wholeFile?.newText ?? wholeFile?.oldText ?? null;
-  if (!wholeFile || text == null || hunks.length === 0) return chunked();
-  const useNew = wholeFile.newText != null;
-  const textLines = text.split("\n");
-  // A file ending in a newline splits to a trailing "" that is not a line git
-  // would count — left in, it renders one phantom blank row past the end of
-  // every well-formed file. Exactly one, so a genuine blank last line survives.
-  if (textLines.length > 1 && textLines[textLines.length - 1] === "") {
-    textLines.pop();
+  const src = text?.newText ?? text?.oldText ?? null;
+  const useNew = text?.newText != null;
+  let textLines: string[] | null = null;
+  if (src != null) {
+    const l = src.split("\n");
+    // A file ending in a newline splits to a trailing "" that is not a line git
+    // would count — left in, it renders one phantom blank row past the end of
+    // every well-formed file. Exactly one, so a genuine blank last line survives.
+    if (l.length > 1 && l[l.length - 1] === "") l.pop();
+    // Synthesizing a row per line of a very large file would fight the
+    // performance goal whole-file mode is part of.
+    if (l.length <= MAX_WHOLE_FILE_LINES) textLines = l;
   }
-  if (textLines.length > MAX_WHOLE_FILE_LINES) return chunked();
+
+  const needsText = gaps === "fill" || (expandedGaps?.size ?? 0) > 0;
+  if (needsText && textLines === null) return folded();
+
+  /** One gap's rows, or null when the fill arithmetic did not check out. */
+  const gapOut = (
+    gapIndex: number,
+    oldFrom: number,
+    newFrom: number,
+    count: number,
+  ): DiffRow[] | null => {
+    if (count <= 0) return count === 0 ? [] : null;
+    const fill = gaps === "fill" || !!expandedGaps?.has(gapIndex);
+    if (!fill) {
+      return [
+        { kind: "fold", gapIndex, hiddenLines: count, fromL: oldFrom, fromR: newFrom, h: foldH },
+      ];
+    }
+    if (!textLines) return null;
+    return gapRows({
+      oldFrom,
+      newFrom,
+      count,
+      lines: textLines,
+      from: useNew ? newFrom : oldFrom,
+      rowH,
+      syntax,
+      useNew,
+    });
+  };
 
   const out: DiffRow[] = [];
   let oldAt = 1;
@@ -227,37 +339,52 @@ export function flattenDiffRows(
     const count = newStart - newAt;
     // The same unchanged region on both sides must be the same length. When it
     // is not, this diff is not the shape assumed here — degrade rather than
-    // guess.
-    if (oldStart - oldAt !== count) return chunked();
-    const gap = gapRows({
-      oldFrom: oldAt,
-      newFrom: newAt,
-      count,
-      lines: textLines,
-      from: useNew ? newAt : oldAt,
-      rowH,
-      syntax,
-      useNew,
-    });
-    if (!gap) return chunked();
+    // guess. Structural, so it takes the ladder's bottom rung.
+    if (oldStart - oldAt !== count || count < 0) return bare();
+    const gap = gapOut(i, oldAt, newAt, count);
+    if (!gap) return folded();
     out.push(...gap, ...hunkRows(h, i));
     oldAt = oldStart + h.oldLines;
     newAt = newStart + h.newLines;
   }
 
-  const tailFrom = useNew ? newAt : oldAt;
-  const tail = gapRows({
-    oldFrom: oldAt,
-    newFrom: newAt,
-    count: textLines.length - tailFrom + 1,
-    lines: textLines,
-    from: tailFrom,
-    rowH,
-    syntax,
-    useNew,
+  // The trailing remainder. Its length is only knowable from the text, so with no
+  // text there is no separator here either: one that cannot say how much it hides
+  // is worse than the file simply ending, and a count cannot be invented.
+  if (textLines) {
+    const tailFrom = useNew ? newAt : oldAt;
+    const tailCount = textLines.length - tailFrom + 1;
+    // A NEGATIVE tail means the text is shorter than the diff says the file is —
+    // so the text cannot compose the file, but the hunk headers are still sound
+    // and their gap counts still are too. Hence: fill mode degrades, fold mode
+    // simply has no trailing separator to draw. (This asymmetry is also what
+    // keeps `folded()` from re-entering itself: fold mode never fails here.)
+    if (tailCount > 0) {
+      const tail = gapOut(hunks.length, oldAt, newAt, tailCount);
+      if (!tail) return folded();
+      out.push(...tail);
+    } else if (tailCount < 0 && gaps === "fill") {
+      return folded();
+    }
+  }
+  return out;
+}
+
+/**
+ * Flat row index of each hunk's anchor row, indexed by hunk index; `-1` for a
+ * hunk with no rows at all.
+ *
+ * The one mapping F7 needs: `useHunkNav` moves a HUNK cursor, and scrolling it
+ * into view must go through `scrollTopForRow`, which addresses the flat array.
+ * Shared so every diff surface resolves it the same way.
+ */
+export function hunkAnchorRows(rows: DiffRow[]): number[] {
+  const out: number[] = [];
+  rows.forEach((row, i) => {
+    if (row.kind !== "line" || !row.hunkAnchor) return;
+    while (out.length <= row.hunkIndex) out.push(-1);
+    out[row.hunkIndex] = i;
   });
-  if (!tail) return chunked();
-  out.push(...tail);
   return out;
 }
 

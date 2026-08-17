@@ -36,6 +36,7 @@ import {
   usePaneList,
   useAction,
   useDiffLineFocus,
+  useHunkNav,
   type DiffLineTarget,
 } from "@/features/keymap";
 import { stageablePaths } from "@/features/repo/ops";
@@ -65,7 +66,12 @@ import {
 } from "@/lib/selection";
 import { getDiff, getLogPage } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
-import { flattenDiffRows, scrollTopForRow, windowVariable } from "@/lib/diffRows";
+import {
+  flattenDiffRows,
+  hunkAnchorRows,
+  scrollTopForRow,
+  windowVariable,
+} from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import {
@@ -73,7 +79,7 @@ import {
   useHunkActionsDisabledReason,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
-import { useWholeFile } from "@/features/diff/useWholeFile";
+import { useDiffGaps, useExpandedGaps } from "@/features/diff/useDiffGaps";
 import { buildStatusTree, findStatusByTreeKey, treeKeyToPath } from "@/lib/tree";
 import { useTreeViewMode } from "@/lib/useTreeViewMode";
 import {
@@ -554,33 +560,30 @@ export function CommitPanelScreen() {
   // No wrap toggle in this pane, so rows are always fixed-pitch and windowing is
   // always on. Row heights are known, so the window needs no measurement.
   const rowH = useDiffRowHeight();
-  const headerH = 26 + useDensityStep();
-  const [collapsed, setCollapsed] = React.useState<ReadonlySet<number>>(new Set());
-  const toggleHunk = React.useCallback((i: number) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
-  }, []);
-  React.useEffect(() => setCollapsed(new Set()), [selected?.path, selected?.side]);
+  const foldH = 22 + useDensityStep();
+  // Chunked mode only: which folded runs the reader asked to see. Took the place
+  // of the per-hunk `collapsed` set, which #157 retired.
+  const { expanded: expandedGaps, expand: expandGap } = useExpandedGaps(
+    `${selected?.path ?? ""}:${selected?.side ?? ""}`,
+  );
 
-  // Whole file here too, on purpose: the hunk headers stay, so each change block
-  // keeps its own Stage/Discard and line selection while the file reads
-  // continuously around them. Hunk indices are the canonical ones either way.
-  const wholeFile = useWholeFile(syntax);
+  // Whole file is the default here too: each change block keeps its own
+  // Stage/Discard and line selection while the file reads continuously around it,
+  // with nothing announcing a boundary the reader cannot see (#157). Hunk indices
+  // are the canonical ones either way.
+  const { gaps, text: diffText } = useDiffGaps(syntax);
   const rows = React.useMemo(
     () =>
       // Also excludes an LFS pointer diff (#93): its "hunks" are pointer text.
       flattenDiffRows(isTextualDiff(diff) && diff ? diff.hunks : [], {
-        headerH,
+        foldH,
         rowH,
-        collapsed,
         syntax,
-        wholeFile,
+        text: diffText,
+        gaps,
+        expandedGaps,
       }),
-    [diff, headerH, rowH, collapsed, syntax, wholeFile],
+    [diff, foldH, rowH, syntax, diffText, gaps, expandedGaps],
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
   const diffScrollRef = React.useRef<HTMLDivElement>(null);
@@ -709,6 +712,102 @@ export function CommitPanelScreen() {
     scrollToRow: scrollDiffRowIntoView,
     onToggle: toggleFocusedLine,
   });
+
+  // ── Hunk cursor + hunk-level chords (#157) ───────────────────────────────
+  // This pane had no F7 at all before, so the `@@` banner's Stage/Discard was
+  // mouse-only. Both now hang off the hunk cursor.
+  const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
+  const scrollToHunk = React.useCallback(
+    (hunkIndex: number) => {
+      const rowIndex = anchorRows[hunkIndex];
+      if (rowIndex == null || rowIndex < 0) return;
+      scrollDiffRowIntoView(rowIndex);
+    },
+    [anchorRows, scrollDiffRowIntoView],
+  );
+  const hunkCursor = useHunkNav({
+    paneIds: ["commit.diff"],
+    count: isTextualDiff(diff) && diff ? diff.hunks.length : 0,
+    resetKey: `${selected?.path ?? ""}:${selected?.side ?? ""}`,
+    scrollToHunk,
+  });
+
+  /**
+   * Which hunk a hunk-level chord acts on: the F7 cursor when it has moved, else
+   * the hunk the line cursor sits in. `null` declines the chord rather than
+   * guessing at hunk 0 — Discard is destructive.
+   */
+  const chordHunk =
+    hunkCursor >= 0 ? hunkCursor : (lineFocus.focused?.hunkIndex ?? null);
+
+  /**
+   * Stage (or unstage, on the staged side) a whole hunk — or the line selection
+   * inside it, which is the direction rule the cluster's button has always used.
+   */
+  const stageHunkAt = React.useCallback(
+    (i: number) => {
+      if (!selected) return;
+      const sel = lineSel[i] ?? [];
+      const store = useRepoStore.getState();
+      if (selected.side === "staged") {
+        if (sel.length) store.unstageLines(selected.path, i, sel);
+        else store.unstageHunk(selected.path, i);
+      } else {
+        if (sel.length) store.stageLines(selected.path, i, sel);
+        else store.stageHunk(selected.path, i);
+      }
+      clearLineSel();
+    },
+    [selected, lineSel, clearLineSel],
+  );
+
+  const discardHunkAt = React.useCallback(
+    async (i: number) => {
+      if (!selected) return;
+      const sel = lineSel[i] ?? [];
+      if (
+        await pgConfirm({
+          title: sel.length
+            ? `Discard ${sel.length} selected line${sel.length === 1 ? "" : "s"}?`
+            : "Discard this hunk?",
+          body: `The change to ${selected.path} will be lost.`,
+          danger: true,
+          confirmLabel: sel.length ? "Discard lines" : "Discard hunk",
+        })
+      ) {
+        const store = useRepoStore.getState();
+        if (sel.length) store.discardLines(selected.path, i, sel);
+        else store.discardHunk(selected.path, i);
+        clearLineSel();
+      }
+    },
+    [selected, lineSel, clearLineSel],
+  );
+
+  // Both decline (returning false) when there is no hunk to act on or when
+  // ignore-whitespace has made hunk indices unusable — the same gate the buttons
+  // and the line cursor sit behind (#61 D2). Declining lets the chord fall
+  // through instead of being swallowed.
+  useAction(
+    "diff.stageHunk",
+    () => {
+      if (chordHunk == null || hunkActionsDisabled) return false;
+      stageHunkAt(chordHunk);
+      return true;
+    },
+    [chordHunk, hunkActionsDisabled, stageHunkAt],
+    { paneId: "commit.diff" },
+  );
+  useAction(
+    "diff.discardHunk",
+    () => {
+      if (chordHunk == null || hunkActionsDisabled) return false;
+      void discardHunkAt(chordHunk);
+      return true;
+    },
+    [chordHunk, hunkActionsDisabled, discardHunkAt],
+    { paneId: "commit.diff" },
+  );
 
   const headBranch = currentBranch(branches);
   const defaultRemote = remotes[0] ?? null;
@@ -1188,46 +1287,16 @@ export function CommitPanelScreen() {
               <PGWindowedDiff
                 rows={rows}
                 window={win}
-                collapsed={collapsed}
-                onToggleHunk={toggleHunk}
+                activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
+                onExpandGap={expandGap}
                 selectedLines={(i) => lineSel[i] ?? []}
                 onLineClick={onLineClick}
                 focusedRow={lineFocus.focused?.rowIndex ?? null}
                 hunkActions={(i) => ({
                   staged: selected?.side === "staged",
                   actionsDisabledReason: hunkActionsDisabled,
-                  onStage: () => {
-                    if (!selected) return;
-                    const sel = lineSel[i] ?? [];
-                    const store = useRepoStore.getState();
-                    if (selected.side === "staged") {
-                      if (sel.length) store.unstageLines(selected.path, i, sel);
-                      else store.unstageHunk(selected.path, i);
-                    } else {
-                      if (sel.length) store.stageLines(selected.path, i, sel);
-                      else store.stageHunk(selected.path, i);
-                    }
-                    clearLineSel();
-                  },
-                  onDiscard: async () => {
-                    if (!selected) return;
-                    const sel = lineSel[i] ?? [];
-                    if (
-                      await pgConfirm({
-                        title: sel.length
-                          ? `Discard ${sel.length} selected line${sel.length === 1 ? "" : "s"}?`
-                          : "Discard this hunk?",
-                        body: `The change to ${selected.path} will be lost.`,
-                        danger: true,
-                        confirmLabel: sel.length ? "Discard lines" : "Discard hunk",
-                      })
-                    ) {
-                      const store = useRepoStore.getState();
-                      if (sel.length) store.discardLines(selected.path, i, sel);
-                      else store.discardHunk(selected.path, i);
-                      clearLineSel();
-                    }
-                  },
+                  onStage: () => stageHunkAt(i),
+                  onDiscard: () => void discardHunkAt(i),
                 })}
               />
             )}

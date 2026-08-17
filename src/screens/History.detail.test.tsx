@@ -93,8 +93,9 @@ describe("History detail panel with a long commit message", () => {
     expect(message.textContent).toContain("body line 119");
 
     // Diff renders as a sibling of the message column, not stacked under it.
+    // The diff's own content, not a `@@` banner — those are gone (#157).
     await waitFor(() => {
-      expect(screen.getByText(/@@ -0,0 \+1,1 @@/)).toBeInTheDocument();
+      expect(screen.getByText(/added line/)).toBeInTheDocument();
     });
     const diffRow = document.querySelector('[data-path="src/foo.ts"]');
     expect(diffRow).not.toBeNull();
@@ -122,8 +123,9 @@ describe("History detail panel with a long commit message", () => {
     expect(capped.style.maxHeight).toBe("50%");
     expect(capped.contains(screen.getByTestId("commit-cherry-pick"))).toBe(true);
 
+    // The diff's own content, not a `@@` banner — those are gone (#157).
     await waitFor(() => {
-      expect(screen.getByText(/@@ -0,0 \+1,1 @@/)).toBeInTheDocument();
+      expect(screen.getByText(/added line/)).toBeInTheDocument();
     });
     expect(message.contains(document.querySelector('[data-path="src/foo.ts"]'))).toBe(
       false,
