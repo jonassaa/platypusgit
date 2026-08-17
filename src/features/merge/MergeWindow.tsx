@@ -426,7 +426,13 @@ export function MergeWindow() {
               <PGSpinner size={18} />
             </div>
           ) : chooser ? (
-            <ChooserPanel sides={sides!} repoId={repoId} path={path} onResolved={advance} />
+            <ChooserPanel
+              sides={sides!}
+              repoId={repoId}
+              path={path}
+              onResolved={advance}
+              onError={setApplyError}
+            />
           ) : model ? (
             <MergeBody
               key={path}
@@ -540,11 +546,14 @@ function ChooserPanel({
   repoId,
   path,
   onResolved,
+  onError,
 }: {
   sides: ConflictSides;
   repoId: string;
   path: string;
   onResolved: () => Promise<void>;
+  /** Surface a failure in the window's shared banner; `null` clears it. */
+  onError: (message: string | null) => void;
 }) {
   const [busy, setBusy] = React.useState(false);
   const oursLabel = sides.binary
@@ -560,11 +569,17 @@ function ChooserPanel({
   const pick = async (side: "ours" | "theirs") => {
     setBusy(true);
     try {
+      onError(null);
       if (side === "ours") await acceptOursIpc(repoId, path);
       else await acceptTheirsIpc(repoId, path);
       await onResolved();
     } catch (e) {
+      // These two buttons are the ONLY way to resolve a binary or deleted-side
+      // conflict, so a console-only failure looks exactly like a dead button.
+      // Same banner Apply uses, and `appErrorMessage` for the same reason: a
+      // rejected command is a plain `{ kind, message }`, never an Error (#146).
       console.error("chooser resolution failed", e);
+      onError(appErrorMessage(e));
     } finally {
       setBusy(false);
     }

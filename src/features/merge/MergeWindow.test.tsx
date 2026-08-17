@@ -95,6 +95,28 @@ describe("MergeWindow shell", () => {
     );
   });
 
+  // The chooser is the resolver's ONLY path for a binary or deleted-side
+  // conflict, so a swallowed failure looks exactly like a dead button. #151
+  // fixed this same bug 300 lines above, in Apply's catch arm, and left this one.
+  it("reports a failed chooser resolution instead of swallowing it", async () => {
+    setSearch("window=merge&repoId=r1&path=blob.bin");
+    mockInvoke("get_status", () => conflictedStatus(["blob.bin"]));
+    mockInvoke("conflict_sides", () => ({
+      path: "blob.bin", base: null, ours: null, theirs: null, binary: true,
+    }));
+    mockInvoke("accept_ours", () => {
+      // A rejected Tauri command: a plain `{ kind, message }`, never an Error.
+      throw { kind: "Git", message: "index is locked" };
+    });
+    render(<MergeWindow />);
+    await screen.findByTestId("merge-chooser");
+    await userEvent.click(screen.getByTestId("chooser-take-ours"));
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("index is locked");
+    // ...and the button is usable again, not left disabled by a dead `busy`.
+    expect(screen.getByTestId("chooser-take-ours")).not.toBeDisabled();
+  });
+
   it("shows deleted-side chooser labels when ours is null", async () => {
     setSearch("window=merge&repoId=r1&path=gone.txt");
     mockInvoke("get_status", () => conflictedStatus(["gone.txt"]));
