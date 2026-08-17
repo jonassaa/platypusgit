@@ -5,7 +5,7 @@ export const heroFeatures = [
   { icon: 'git-branch', title: 'Branches & tags', blurb: 'List/create/checkout/rename/delete branches. Lightweight, annotated and signed tags.' },
   { icon: 'history', title: 'History', blurb: 'Commit graph, file history, reflog viewer, detached-HEAD checkout.' },
   { icon: 'rewind', title: 'History manipulation', blurb: 'Reset (soft/mixed/hard), cherry-pick, revert.' },
-  { icon: 'archive', title: 'Stash', blurb: 'Save/apply/pop/drop, stash-to-branch.' },
+  { icon: 'archive', title: 'Stash', blurb: 'Save/apply/pop/drop, partial stash by path, rename, stash-to-branch.' },
   { icon: 'merge', title: 'Conflict resolution', blurb: '3-way sides, accept ours/theirs, external mergetool, continue/abort.' },
   { icon: 'list', title: 'Interactive rebase', blurb: 'Pick/reword/edit/squash/fixup/drop, continue/abort, base picker.' },
   { icon: 'cloud', title: 'Remotes & network', blurb: 'Add/remove/rename/prune remotes, fetch/pull/push (with-lease/force), merge.' },
@@ -63,6 +63,9 @@ export const featureGroups = [
   ]},
   { title: 'Stash', blurb: 'Park work in progress.', items: [
     'Save / apply / pop / drop',
+    'Partial stash — stash only the paths you selected, one file or a multi-selection',
+    'Rename a stash entry',
+    'Compare a stash — what it changed, or against the working tree',
     'Stash to new branch',
   ]},
   { title: 'Conflict resolution', blurb: 'Resolve merges without leaving the app.', items: [
@@ -109,17 +112,27 @@ export const featureGroups = [
     'Type-to-jump speed-search in lists',
     'Commit chords and F7 / ⇧F7 hunk navigation',
     'Spatial Alt+Arrow pane focus and a ? cheat sheet',
-    '`pgit` command-line launcher — open a repo from the terminal',
+    '`pgit` command-line launcher — open a repo from the terminal, installed by the `.deb` and `.msi` packages or from Settings',
   ]},
 ];
 
 // Roadmap teaser (from features.md P0/P1 — clearly "planned")
 export const roadmap = [
-  'Partial/hunk-level stash + rename + compare to working tree',
+  'Hunk-level stash — stash part of a file, not only whole paths',
   'Signed & notarized macOS / Windows builds',
 ];
 
 export const changelog = [
+  {
+    version: '0.0.12',
+    date: '2026-08-17',
+    status: 'feature',
+    notes: [
+      'Stash the files you picked, rename the entry, and read what is inside it. A stash used to be all-or-nothing: everything dirty went in, the message was fixed forever, and the one way to look inside compared the entry against whatever HEAD is now, and backwards — so it mixed the stashed work with everything that had landed since and drew it as deletions. Now "Stash this file…" sits on any row and "Stash 3 files…" on a selection, stashing just those paths from the same buckets Stage and Discard already read, and the prompt says up front what you cannot see coming: untracked files in the selection come along, and staged ones are unstaged by the move and come back unstaged when you pop. A selection with nothing modified in it now says so, instead of git exiting successfully having stashed nothing while the app said nothing either. Renaming is a menu item, and it moves the entry to the top of the list — git\'s stash reflog can only be prepended to, so the prompt states that rather than letting you discover it; the rename is also additive first, so a failure anywhere leaves you a duplicate you can drop rather than a gap. And an entry has two comparisons that are both the right way round: "Show what it changed", against its own first parent, which folds in the untracked files a `-u` stash keeps in a third parent that no tree diff can reach, and "Compare with working tree", which cannot reach them and therefore excludes untracked on both sides and says so in the header. Hunk-level stash is deliberately not here: the composition it needs rewrites and restores your index around a subprocess, and an interruption in that window would leave the selection as your index with no other copy of the staged work anywhere — so there is no half-built affordance for it either.',
+      '`pgit` arrives with the app. The command-line launcher only ever appeared if you found Settings → Command line and clicked Install — and on macOS that usually failed, because `/usr/local/bin` needs root, so you were handed a `sudo ln -sf` line to paste; on Windows the row read "Not yet supported". Now the Linux `.deb` ships `/usr/bin/pgit` and the Windows `.msi` installs a `pgit` command and puts its directory on your PATH, both as ordinary package contents, so removing the app removes them too. The in-app install got better anyway: on macOS it walks an ordered list of directories and takes the first one it can actually write, so root is an edge case rather than the normal path, and if that directory is not somewhere your shell looks it tells you, with the line that fixes it, rather than reporting a successful install of something you cannot run. On Windows it is real — a per-user directory plus a per-user PATH entry. A `pgit` your package manager installed is never overwritten and never offered for overwrite: Settings names where it came from and shows no button at all. A `pgit` that is not ours is named and left alone. Two channels have no hook by nature — a `.dmg` drag-install runs no code and an AppImage is never installed — so those still go through Settings, or `scripts/install-pgit.sh` from the repository. Two things are not here yet: the Homebrew cask does not carry the command, so a `brew` install still gets it from Settings, and the `.deb` and `.msi` hooks meet a real installer for the first time in this release — Settings → Command line remains the fallback if either does not land.',
+      'Fixes — every backend failure reached the log file as `[object Object]`. An error crossing from Rust is a plain kind-and-message object rather than a JavaScript `Error`, so stringifying it threw the reason away, and a Linux bug report arrived as a burst of identical opaque ERROR lines with nothing in them to diagnose. A log line now leads with the error kind, which is the half you grep for, while a banner still never shows an enum\'s spelling. Two failures nobody could see are visible now: a failed Apply in the merge resolver showed the user `[object Object]`, and the chooser\'s "Keep our version" / "Take theirs" — the resolver\'s fallback for a binary or deleted-side conflict — reported nothing at all, so a failure looked exactly like a button that does nothing. An unhandled render error existed only in a devtools console that a reporting user never opens; it reaches the log file now, with its component stack. Clicking a perfectly ordinary submodule row cost three errors per click, because a gitlink names a commit in the submodule\'s own object database and all three file readers looked for it in the wrong one — "there is no text at this path" is an answer now rather than a failure, for a submodule, for a directory, and for the side a diff legitimately does not have, since an added file has no old version and a deleted one has no new version. And an error the log formatter itself could not read used to replace the failure it was reporting, taking with it the one detail that raises a credential prompt: a fetch against a private remote then simply failed instead of asking for a password. The Linux freeze that report opened with is not fixed — it was never reproduced, the evidence points at a GTK popup on Wayland, and it stays open.',
+    ],
+  },
   {
     version: '0.0.11',
     date: '2026-08-17',
