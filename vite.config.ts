@@ -27,9 +27,30 @@ export default defineConfig(async () => ({
       : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
   },
+  // Two suites, because they need different worlds. The frontend suite is jsdom
+  // and installs the Tauri mocks; the repo-level `test/` suite asserts facts
+  // about the tree (CLAUDE.md vs src-tauri/, features/, e2e/) and touches only
+  // node:fs — running it through the component harness makes it fail on jsdom
+  // globals the setup file shims (`Range`), for no benefit.
   test: {
-    environment: "jsdom",
-    include: ["src/**/*.test.{ts,tsx}"],
-    setupFiles: ["./src/test/setup.ts"],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          environment: "jsdom",
+          include: ["src/**/*.test.{ts,tsx}"],
+          setupFiles: ["./src/test/setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "docs",
+          environment: "node",
+          include: ["test/**/*.test.ts"],
+        },
+      },
+    ],
   },
 }));

@@ -24,6 +24,9 @@ Recent specs/plans (for context on current direction):
 - `2026-08-16-stash-improvements-*` — path-level partial stash, stash rename
   (store a FRESH commit, then drop — see the stash convention below), and the
   two correct stash comparisons; hunk-level stash deferred with reasons (#133).
+- `2026-08-16-branch-picker-order-*` — ONE branch ordering for every branch list
+  (`features/branches/orderBranches.ts`), backed by `BranchInfo.tip_time` +
+  `is_default` (#135).
 - `2026-08-16-branch-compare-*` — `compare` deep view: two mutable sides
   (ref↔ref or ref↔working tree), ahead/behind + both commit lists, the file diff
   through `CommitDiffPanel` (#131).
@@ -166,10 +169,15 @@ Four layers, each run independently:
   `src/`. Runs in jsdom with React Testing Library. The Tauri `invoke` and
   `plugin-dialog.open` calls are mocked via `src/test/setup.ts`; tests register
   per-command responses with `mockInvoke(cmd, handler)`.
-- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/` (25 files; count
-  them rather than trusting this number — it has been stale three times) drive
-  the real debug binary: real webview →
+  - Those two layers are one vitest **project**, `unit`. `pnpm test` also runs a
+    second project, `docs` (`test/**/*.test.ts`, node env, no setup file) — the
+    coverage gate on THIS file. See "`test/` at the repo root" below. Run one
+    with `pnpm vitest run --project unit`.
+- **E2E (webview-level)** — WebdriverIO specs in `e2e/specs/`, one file per
+  feature area, driving the real debug binary: real webview →
   real Tauri IPC → real libgit2 → temp repos built by `e2e/support/tempRepo.ts`.
+  (`ls e2e/specs/` for the current set. A file count used to live here and went
+  stale three times; a number nobody can keep true is worse than no number.)
   Uses the embedded WebDriver provider (`@wdio/tauri-service`) — no external
   driver or paid service — so it runs on Linux CI (WebKitGTK) and, in the same
   container image, locally.
@@ -267,7 +275,9 @@ opener.rs        Handing URLs/paths to the OS default handler. SECURITY-critical
                  exit status is checked. Both open_url and open_in_editor use it.
 update.rs        Update discovery — semver compare (semver crate, cmp_precedence),
                  dev-build (0.0.0) short-circuit BEFORE any network call,
-                 GitHub release parsing, ureq agent w/ timeout + https_only
+                 GitHub release parsing, ureq agent w/ timeout + https_only.
+                 The LOGIC; its Tauri handlers are commands/update.rs. Two
+                 different files with the same basename — see the note there
 forge/           Forge (GitHub / GitLab) integration — PR/MR list, create, checkout,
                  CI status (#92). The trait is split into URL BUILDERS + RESPONSE
                  PARSERS, not `list_pull_requests()`, so every forge-specific line
@@ -300,6 +310,8 @@ forge/           Forge (GitHub / GitLab) integration — PR/MR list, create, che
                  force-update someone's commits away. And do NOT pass `--` to
                  `git rev-parse`: after it everything is a PATH, so every branch
                  reads as absent (regression-tested)
+main.rs          Binary entry — calls `platypusgit_lib::run()`, nothing else.
+                 Keeps the `windows_subsystem = "windows"` attribute; leave it
 lib.rs           Tauri builder + invoke_handler! registry (all commands listed there)
 cli.rs           CLI arg parsing (LaunchIntent, parse_args, resolve_repo_root),
                  shim install/status helpers (install_shim, shim_status) —
@@ -362,7 +374,14 @@ git/
 │                NOT git's own `.git/rebase-merge/` dir — a half-compatible one
 │                would let `git status` / `git rebase --continue` claim a rebase
 │                they cannot drive
-├── signing.rs   Object signing (#61 D6, #132). PURE: gpg.format → program →
+├── auth.rs      Auth-failure classification + credential hygiene (#61 D5).
+│                PURE: `classify_auth_failure` (git's stderr → `AuthKind`, or
+│                `None` for "not an auth failure" — host-key verification is
+│                deliberately in that second bucket), `AuthChallenge`, and
+│                `scrub_credentials`. See "Network ops and credentials"
+├── signing.rs   CRYPTOGRAPHIC signing — GPG/SSH (#61 D6, #132). NOT
+│                signature.rs (below); read the pair note after this tree.
+│                PURE: gpg.format → program →
 │                user.signingkey resolution, `resolve_key_file` (the ssh
 │                key-PATH restriction — `key::…` literals refused), the signer
 │                argv, and `parse_verify_output` for git's `%G?` triple.
@@ -373,13 +392,25 @@ git/
 │                `append_signature`, `validate_tag_name` (the argv guard), and
 │                `parse_verify_tag` for `git verify-tag --raw` — see the
 │                tag-signing note under Conventions for why `%G?` can't be used
-└── signature.rs Author/committer signature helpers
+└── signature.rs IDENTITY, not cryptography. `default_signature` (the
+                 `user.name` / `user.email` lookup, local → global → system,
+                 `NoSignature` when unset) and `apply_signoff` (the
+                 `Signed-off-by:` TRAILER, `git commit -s` semantics, idempotent
+                 + its trailer-line rule). Nothing here signs anything
 commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs        open_repo, close_repo, trust_repo_path, get_status,
-│                  list_all_files, read_file_content, append_gitignore,
-│                  open_in_editor
+│                  list_all_files, append_gitignore, open_in_editor, and THREE
+│                  file readers that are not interchangeable:
+│                  read_file_content (the working tree, on disk),
+│                  read_file_content_at_rev + list_files_at_rev (a commit's
+│                  tree — what the repo browser reads at a revision) and
+│                  read_file_content_at_index (the STAGED blob, which is
+│                  neither of the other two whenever a file is staged and then
+│                  edited again)
 ├── cli.rs         take_launch_intent, cli_shim_status, install_cli_shim
-├── commits.rs     get_log, commit, file_history. The `refspec` arg takes the
+├── commits.rs     get_log, commit, file_history, verify_commit (one commit's
+│                  signature status, called lazily for the SELECTED commit —
+│                  never per log row). The `refspec` arg takes the
 │                  `REFSPEC_ALL` sentinel ("--all", git's own spelling) meaning
 │                  "walk every branch we know of" — local + remote-tracking heads
 │                  plus a detached HEAD, one graph. History's default scope; the
@@ -388,17 +419,42 @@ commands/        Thin Tauri handlers, one file per area:
 │                  rebase op must run it through `headAncestryOf` first (see
 │                  features/commits/headAncestry.ts) — a plan built from the raw
 │                  log replays another branch's commits onto the current one.
-│                  Also `commits_between` (`base..tip`, NO ancestry requirement —
+│                  THE LOG IS PAGED — see "The log is paged". `get_log`
+│                  is the one-shot walk; `get_log_page` /
+│                  `get_log_filtered_page` are what History actually calls, and
+│                  `get_log_filtered` is the unpaged filtered walk.
+│                  Also `commits_since` (`base..HEAD`, base must be an ANCESTOR),
+│                  `commits_between` (`base..tip`, NO ancestry requirement —
 │                  `commits_since` refuses a non-ancestor base, which is right for
 │                  a rebase base and wrong for two diverged branches) and
 │                  `ahead_behind` (counts read FROM `a` TOWARD `b`, plus the merge
 │                  base; unrelated histories are `mergeBase: null`, not an error).
-├── diff.rs        get_diff, stage/unstage/discard_paths, stage/unstage/discard_hunk,
-│                  diff_commits, diff_ref_to_workdir, blame_file
+├── diff.rs        get_diff, stage/unstage/discard_paths,
+│                  stage/unstage/discard_hunk, stage/unstage/discard_lines,
+│                  diff_ref_to_workdir, blame_file, and the two commit diffs
+│                  ONE CHARACTER apart: `diff_commit` (one oid — that commit
+│                  against its first parent, "what this commit changed") and
+│                  `diff_commits` (from_oid + to_oid — an arbitrary rev↔rev
+│                  range). Reaching for the wrong one compiles and returns a
+│                  plausible diff, so check the arity
 ├── branches.rs    list_branches/tags/stashes/remotes, checkout/create/delete/rename_branch,
-│                  fetch, fetch_all, pull, push, add/remove/rename/set_url/prune remote,
+│                  set_upstream, fetch, fetch_all, pull, push,
+│                  add/remove/rename/prune_remote, set_remote_url,
 │                  create/delete/push_tag, verify_tag, merge_branch, rebase_onto,
 │                  checkout_ref, push_delete_branch
+├── net.rs         NOT a command area — the shared network plumbing every
+│                  credentialed git shell-out goes through (`Credentials`,
+│                  `run_git_authenticated`, `apply_auth_env`, `map_git_failure`,
+│                  `credential_approve`) plus ONE registered command,
+│                  `remember_credential`: separate from the ops on purpose, so a
+│                  credential is stored only after it has actually worked rather
+│                  than on submit, which would persist a typo. See "Network ops
+│                  and credentials"
+├── update.rs      check_for_update, get_update_capability, open_url — the
+│                  handlers for the top-level `update.rs` logic. Two files named
+│                  `update.rs`: THIS one is thin Tauri commands,
+│                  `src-tauri/src/update.rs` is the semver + release-parsing
+│                  engine they call
 ├── history.rs     reset, cherry_pick, revert
 ├── stash.rs       stash_save/apply/pop/drop/branch, plus stash_save_paths
 │                  (pathspec-scoped), stash_rename and stash_diff (#133)
@@ -422,6 +478,20 @@ commands/        Thin Tauri handlers, one file per area:
                    git clone → clone://progress events)
 ```
 
+**Three pairs of near-identical filenames live in this tree, and the two halves
+of each pair do different jobs.** Check which one you want before editing:
+
+- `git/signing.rs` vs `git/signature.rs` — **cryptography vs identity.**
+  `signing.rs` resolves a GPG/SSH signer and produces or verifies a real
+  signature; `signature.rs` reads `user.name`/`user.email` and appends a
+  `Signed-off-by:` trailer. A sign-off is plain text anyone can type — it proves
+  nothing and involves no key. "Add signing" almost always means `signing.rs`.
+- `src-tauri/src/update.rs` vs `src-tauri/src/commands/update.rs` — engine vs
+  handlers. Both exist; neither is dead.
+- `src-tauri/src/cli.rs` vs `src-tauri/src/git/cli.rs` — the `pgit` launch
+  argument parser vs the `CliBackend` git implementation. (Already flagged at
+  `cli.rs` above.)
+
 ### Frontend (`src/`)
 
 ```
@@ -438,12 +508,25 @@ design/              In-house design system (NOT components/ui/). Exports via de
 ├── primitives.tsx       PGButton, PGIconButton, etc.
 ├── chrome.tsx           PGTitlebar, PGTabStrip (repository tabs), PGActivityBar,
 │                        PGStatusBar, PGStatusItem
-├── git-components.tsx   Git-specific UI bits
+├── window-controls.tsx  Minimize / maximize / close (the titlebar is ours)
+├── git-components.tsx   Git-specific UI bits — PGCommitRow, PGGraphRow,
+│                        PGChangeRow, PGFileTree(Row), PGRebaseRow, PGHunkHeader…
+├── PGWindowedDiff.tsx   The ONE diff renderer over `DiffRow[]` (see "Diff
+│                        rendering"). Reuses PGHunkHeader/PGDiffRow, so the
+│                        windowed and unwindowed paths cannot drift
+├── graph-geometry.ts    Lane geometry for the History graph in SVG user units —
+│                        the one place the lane pitch and gutter width live, so
+│                        PGGraphRow's path math and PGCommitRow's grid agree
 ├── icons.tsx            Icon set (name-based <PGIcon>), incl. file-type glyphs
+├── logo.tsx             App mark
 ├── context-menu.tsx     Context menu primitive
 ├── dialog.tsx           PGDialogHost + pgConfirm/pgPrompt — the ONLY confirm /
 │                        prompt path (no window.confirm/prompt anywhere)
 ├── empty-state.tsx      Empty-state component
+├── skeleton.tsx         Loading placeholders
+├── error-boundary.tsx   Per-window last line of defence — React unmounts the
+│                        whole root when a render throws, so without it one
+│                        broken screen leaves a blank window and no message
 ├── modal.tsx            PGModal — shared dialog shell
 ├── resizable.tsx        Resizable panes
 ├── ui-helpers.tsx       pgFlash, misc helpers
@@ -472,11 +555,26 @@ features/            Per-feature: components + Zustand store colocated
 │                    menu), useRecentsStore, ops (shared keymap/palette/titlebar
 │                    runners), OperationBar (the `repoState !== "Clean"` bar under
 │                    the titlebar: what operation is open, conflicts left,
-│                    Resolve/Finish/Abort)
+│                    Resolve/Finish/Abort), ownership (the `safe.directory`
+│                    confirm — outside the store so store tests need no dialog)
 ├── nav/             useNavStore — cross-screen intents (diff-file, commit-vs-wt,
-│                    file-history, blame, rebase-plan, stash-diff)
-├── branches/        BranchChip (titlebar), BranchPicker (popover)
-├── commits/         graphLayout + buildRebasePlan (both tested)
+│                    file-history, blame, rebase-plan, stash-diff) +
+│                    DeepViewHeader (the origin crumb a deep view goes back to)
+├── branches/        BranchChip (titlebar), BranchPicker (popover), orderBranches
+│                    (PURE, #135: default branch first, then newest `tipTime`
+│                    first, then name — a plain `<` compare, not `localeCompare`,
+│                    because branches cut from one commit share a tip time and
+│                    that tiebreaker must not depend on the runtime's ICU data).
+│                    EVERY branch list goes through it — picker, Branches screen,
+│                    palette rows; a second ordering is how those three drifted
+│                    apart before. `isHead` is deliberately NOT a sort key: the
+│                    current branch is the one branch the picker exists to leave
+├── commits/         The log's pure logic, all tested: graphLayout + laneColors +
+│                    graphAncestry + rowIdentity (the graph — #68 G2/G4/G9),
+│                    buildRebasePlan / buildPreservePlan / runRebasePlan /
+│                    planCommitSelection / squashMessage (the rebase plans), plus
+│                    headAncestry (`headAncestryOf`, see commands/commits.rs) and
+│                    logFilter (History's search inputs → a backend `LogFilter`)
 ├── rebase/          RebaseBasePicker + useRebaseMergeMode (persisted
 │                    flatten ⇄ preserve for merge commits in a plan)
 ├── dnd/             ALL drag-and-drop (#91). `useDragSource` / `useDropZone`
@@ -552,7 +650,9 @@ features/            Per-feature: components + Zustand store colocated
 │                    a feature store), useCompareStore (sides + results + the
 │                    compare mark, its own store so RepoSlice is untouched),
 │                    CompareSidePicker
-├── diff/            CommitDiffPanel (shared commit-diff view) + WhitespaceToggle
+├── diff/            CommitDiffPanel (shared commit-diff view), useWholeFile (the
+│                    `wholeFile` option for `flattenDiffRows`, or undefined in
+│                    chunked mode) + WhitespaceToggle
 │                    (ignore-whitespace control; also owns
 │                    useHunkActionsDisabledReason — hunk staging is disabled
 │                    while whitespace is ignored, see #61 D2)
@@ -589,6 +689,17 @@ lib/
 ├── syntax/          Shiki highlighting, OFF the main thread (see below)
 │   ├── tokenizeCore.ts   Shiki-FREE: SyntaxLine/SyntaxToken, MAX_HIGHLIGHT_*,
 │   │                     toLineRelative, packLines/unpackLines, skipHighlight
+│   ├── shiki.ts          The ONE Shiki instance — lazy, so app start pays
+│   │                     nothing, and shared so grammars register once.
+│   │                     engine-javascript, not WASM Oniguruma: no .wasm asset
+│   │                     to ship or fetch through the Tauri custom protocol
+│   ├── langs.ts          path → Shiki language + the grammar loaders.
+│   │                     LANG_LOADERS is an EXPLICIT map of static `import()`s —
+│   │                     a template-literal specifier is not statically
+│   │                     analysable, so Vite could neither resolve nor split it
+│   ├── scopes.ts         One table drives the SENTINEL theme we tokenize with
+│   │                     and the colour→CSS-class lookup that reads it back, so
+│   │                     token colours live in CSS, not in the tokenizer
 │   ├── tokenizeShiki.ts  The one place codeToTokens is called
 │   ├── tokenize.worker.ts  Module worker running tokenizeShiki
 │   ├── tokenize.ts       Main-thread API: LRU cache + worker client + fallback.
@@ -598,8 +709,21 @@ lib/
 │   └── usePrefetchSyntax.ts  Bounded idle warm-up of a commit's other files
 ├── diffRows.ts      Flat DiffRow model (header | line | fill) + exact
 │                    variable-height window. `fill` = whole-file gap filler
+├── wordDiff.ts      Intra-line (word) diff for one rem/add pair (#61 D8)
+├── pairChangedLines.ts  WHICH rem pairs with WHICH add — one definition shared
+│                    by the unified hunk, the split view and the commit panel
+├── lineSpans.ts     The ONE place syntax tokens and word-diff spans reconcile
+│                    into a single tiling of the line, so every renderer is a
+│                    flat `spans.map()` with no gap or overlap reasoning
+├── codeLines.ts     Split file text into DISPLAY lines — `text.split("\n")`
+│                    gets empty text and a trailing newline wrong, both visible
 ├── useViewportH.ts  Scroll-container height WITHOUT depending on ResizeObserver
 ├── useWindowedList.ts  Fixed-pitch windowing for the plain lists
+├── useDiffRowHeight.ts  Resolves `--diff-row-h` to px, with a fallback for
+│                    jsdom (which does not evaluate `calc()`); CSS stays the
+│                    source of truth — NaN here would collapse every row to zero
+├── platform.ts      `getPlatform` / `usePlatform` — the OS, resolved once and
+│                    cached (chord labels, platform-conditional chrome)
 ├── fileIcon.ts      path → file-type glyph + themeable tint (tested)
 ├── selection.ts     Multi-select click/range/prune model AND
 │                    `splitFileSelection` — the one place a multi-selection is
@@ -615,7 +739,48 @@ lib/
 └── recents.ts       Recent-repo persistence (`pg-recent-repos`). The OPEN set is
                      a separate key, `pg-open-repos`, in features/repo/tabs.ts —
                      recents are where you have been, the open set where you are
+
+test/                Component-test harness for the jsdom suite. NOT shipped
+                     code — nothing under src/ imports it at runtime:
+├── setup.ts         Vitest global setup — installs the invoke/dialog/event/
+│                    webview mocks (`mockInvoke(cmd, handler)` registers a
+│                    per-command response). jsdom-only: it shims `Range` and
+│                    runs RTL `cleanup`, so it cannot load in a node-env test
+├── invokeMock.ts / dialogMock.ts / eventMock.ts / webviewMock.ts  The mocks
+├── dialog.tsx       `WithDialogs` — a screen rendered in isolation has no
+│                    <PGDialogHost/>, so every pgConfirm silently reads as
+│                    "cancelled" without this
+└── settle.ts        The shared settle guard for tests driving a diff surface —
+                     subtle enough that a second copy drifts
 ```
+
+### `test/` at the repo root — doc invariants (#147, #150)
+
+**`test/docs.test.ts` fails the build when this document falls behind the tree.**
+It asserts that every id in `invoke_handler!`, every `src-tauri/src/**/*.rs`
+module and every `src/features/*/` directory is named somewhere in here.
+
+- It understands the compressed group notation the command lists use
+  (`stage/unstage/discard_paths`, `worktree_add/remove/lock/unlock/prune`) by
+  expanding it, so keep writing groups that way — but an irregular group it
+  cannot read will fail, and the fix is to spell that id out rather than to
+  contort the group.
+- It checks that a name is *mentioned*, not that the description is any good.
+  The prose is still on you.
+- Deliberately NOT extended to `src/screens/` or bare feature names — History,
+  Remote, diff, merge and update are ordinary words that occur all over this
+  file, so those assertions would pass for the wrong reason and could never
+  fail. Further doc invariants belong in this file; add cases, not counts.
+- **`test/` is the repo root, not `src/test/`** — the two are unrelated despite
+  the name. This suite reads `src-tauri/`, `CLAUDE.md` and `e2e/`, so it is not
+  a frontend test. `pnpm test` runs both suites as two vitest **projects**
+  (`vite.config.ts`): `unit` is jsdom + the `src/test/setup.ts` mocks, `docs` is
+  node with no setup file. That split is load-bearing — the harness above dies
+  on a missing `Range` outside jsdom, and a doc test has no use for Tauri mocks.
+- `tsconfig.json` has `include: ["src", "test"]` for the same reason. Without
+  the second entry the file still RUNS but stops being typechecked, which is a
+  silent hole rather than a visible one — a new top-level test directory needs
+  adding there as well as to `test.include`.
 
 ### Diff rendering
 
@@ -692,6 +857,37 @@ lib/
   boundaries, so both the click path and the keyboard cursor are switched off by
   `useHunkActionsDisabledReason` — the keyboard must never reach what the mouse
   cannot (#61 D2).
+
+### The log is paged (#68 G11)
+
+- **`s.commits` is a PREFIX of history, not history.** History loads one page at
+  a time (`PAGE_SIZE = 500`) and appends; `hasMoreLog` is "the cursor is not
+  null". So any logic that answers a question about the repository from
+  `s.commits` is answering it about however much has been walked so far. That is
+  fine for what is on screen and wrong for "does this commit exist" or "is X an
+  ancestor of Y" — ask the backend.
+- **The cursor is a FRONTIER — a set of oids, not one.** At a page boundary
+  several lanes are alive, each awaiting a different parent, so resuming from
+  the last emitted commit alone would silently drop every other branch.
+  `LogPage { commits, nextCursor }`; `nextCursor: null` means the walk reached
+  the true end of history.
+- **Passing a cursor makes `refspec` a no-op**, deliberately: the frontier
+  already encodes the walk it continues. Changing scope means starting a new
+  walk with no cursor, not handing the old cursor a new refspec.
+- **Two cursors, because a search must not destroy the unfiltered resume
+  point.** `commitCursor` belongs to `commits`, `searchCursor` to
+  `searchResults`, and `loadMoreCommits` extends whichever list is active
+  (`getLogPage` vs `getLogFilteredPage`). Both are `RepoSlice` fields — a tab
+  switch restores the cursor with its list, so a background tab does not silently
+  resume another repository's walk.
+- **Filtering happens on both sides and they are not the same filter.** The
+  backend `LogFilter` decides which commits count toward `limit`;
+  History then filters the loaded page again client-side (hide-merges, the text
+  box). A client filter can therefore hold the visible list shorter than the
+  window no matter how many pages arrive, which is why History's auto-paging
+  effect counts *barren* pages and stops after `MAX_BARREN_PAGES` — without that
+  bound it walks the whole repository a page at a time. Any new client-side log
+  filter inherits that trap.
 
 ### Navigation model
 
@@ -847,6 +1043,9 @@ lib/
 4. Register command name in `invoke_handler![…]` in `src-tauri/src/lib.rs`.
 5. Add TS type to `src/lib/types.ts`, wrapper to `src/lib/tauri.ts`.
 6. Wire into relevant feature's Zustand store.
+7. Add it to the `commands/<area>.rs` entry in the backend tree above —
+   `test/docs.test.ts` fails the build otherwise, and a command nobody can find
+   is a command that gets written twice.
 
 ### State management
 - **Zustand per-feature**, not one big global store. `useRepoStore` lives in `features/repo/` because that's who owns the state.
@@ -956,20 +1155,23 @@ lib/
 
 ### Network ops and credentials (#61 D5)
 
-- **One runner, eleven call sites.** Every op that shells out to real `git` over
-  the network goes through `commands::net::run_git_authenticated` (or, for clone,
-  through its two primitives `apply_auth_env` + `map_git_failure`, because clone
-  needs a streamed stderr pipe rather than `.output()`). The eleven:
+- **One runner, and every network op is on this list.** Every op that shells out
+  to real `git` over the network goes through
+  `commands::net::run_git_authenticated` (or, for clone, through its two
+  primitives `apply_auth_env` + `map_git_failure`, because clone needs a
+  streamed stderr pipe rather than `.output()`):
   `fetch`, `fetch_all`, `pull`, `push`, `push_tag`, `push_delete_branch` in
   `commands/branches.rs` (all six via its local `run_git_creds` wrapper),
   `clone_repo` in `commands/create.rs`, `forge_checkout_pull_request`'s FETCH in
   `commands/forge.rs` (#92 — its second git call, the `checkout` of `FETCH_HEAD`,
   passes `None` on purpose: the tip is already local and touches no remote), and
   — since #93 — `submodule_update` (`commands/submodule.rs`) plus `lfs_fetch` /
-  `lfs_pull` (`commands/lfs.rs`). Count them in the tree before trusting this
-  number: #92 and #93 landed within a day of each other and each rewrote the
-  sentence for its own additions only. A new network op joins them; **do not open
-  a second auth path** — on the frontend that means `useRepoStore`'s exported
+  `lfs_pull` (`commands/lfs.rs`).
+  `grep -rn 'run_git_authenticated\|run_git_creds\|apply_auth_env' src-tauri/src/`
+  is the authoritative list — a bare count used to lead this bullet and two PRs
+  landing a day apart each updated the prose for their own additions only.
+  A new network op joins them; **do not open a second auth path** — on the
+  frontend that means `useRepoStore`'s exported
   `withAuthRetry`, not a private copy, or the challenge is raised with nothing
   mounted to answer it. The deliberately credential-less siblings are
   `branches.rs`'s local `run_git` (merge/rebase/checkout) and `libgit2.rs`'s
@@ -1285,7 +1487,7 @@ lib/
 - Escape cancels any drag, from one capture-phase listener in the controller.
 
 ### Permissions (Tauri 2)
-- Shared permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
+- Shared permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `core:webview:allow-set-webview-zoom` (the `view.zoom*` chords), `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
 - **Self-update permissions are scoped narrower** — `updater:default` + `process:allow-restart` live in `src-tauri/capabilities/updater.json` with `windows: ["main"]`, NOT in `default.json`. The merge resolver window must not be able to swap the binary or relaunch the process mid-conflict. Keep new privileged permissions out of the shared capability unless both windows genuinely need them.
 - **E2E-only permissions** live in the inline `e2e-focus` capability in `src-tauri/tauri.e2e.conf.json`, NOT in `default.json`: `core:window:allow-set-focus` + `wdio-webdriver:default`. That capability is loaded only via `--config src-tauri/tauri.e2e.conf.json`, and the `tauri-plugin-wdio-webdriver` crate is an optional dep behind the `e2e` cargo feature (`--features …,e2e` in `test:e2e:build`), so the WebDriver bridge is never compiled into or permitted in dev/production builds.
 - New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`, register with `.plugin(tauri_plugin_X::init())` in `lib.rs`, add plugin permissions to capability file.
@@ -1297,8 +1499,17 @@ lib/
 
 - Shell integration / Finder / Explorer overlays (out of scope).
 - Custom icons — Tauri defaults for now. Replace before first release.
-- Code signing config for bundles.
-- Broad test suite — unit tests exist for pure logic (graphLayout, buildRebasePlan) + libgit2 smoke. Add tests alongside each feature as built.
+- Code signing config for bundles (distinct from the *updater* signing key, which
+  does exist — see "Common commands", and from git object signing, which is a
+  feature).
+
+Removed from this list once it stopped being true — do not re-add:
+
+- ~~CI config~~. Two workflows plus their gate jobs; see "What CI runs".
+- ~~Broad test suite~~. All four layers under "Testing" are populated and green,
+  including the Rust integration suite over real temp repos and jsdom component
+  tests for every screen. New work is expected to come with tests, and a claim
+  that this codebase has "only smoke tests" is now the opposite of the truth.
 
 ## Known placeholders
 
