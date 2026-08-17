@@ -305,7 +305,12 @@ export function AppShell() {
       case "rebase-plan":
         setScreen("rebase");
         break;
+      // Both stash comparisons are `CommitDiff` targets (#133) — the entry
+      // against its own first parent, and the entry against the working tree.
+      // They are one case because that screen's `Target` union carries both and
+      // fetches each on its own; the routing decision is identical.
       case "stash-diff":
+      case "stash-vs-wt":
         enterDeep("commitDiff");
         break;
       case "switch-screen":
