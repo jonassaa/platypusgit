@@ -851,6 +851,33 @@ module and every `src/features/*/` directory is named somewhere in here.
     chunked mode, which names the run of unchanged lines it hides and offers to
     expand it in place. `fold` carries no `hunkIndex`, for the same reason `fill`
     does not.
+- **The BACKEND still sends a `@@` line, and `flattenDiffRows` drops it** (#161).
+  A hunk header travels TWICE and #157 only cut one of the two paths. The second is
+  `DiffLineKind::HunkHeader`, an ordinary entry inside the hunk's own `lines[]`:
+  `diff_to_file_diffs` prints with `DiffFormat::Patch`, so libgit2's `'H'` line is
+  pushed in with the rest, and `toUiLine` maps every non-add/rem kind to `ctx` — so
+  it rendered as a context row whose text is `@@ -1,3 +1,3 @@`. The two backend
+  builders **disagree on purpose and must not be "unified" carelessly**: the
+  working-tree `diff` drops `'H'` itself, while `diff_to_file_diffs` (commit diffs,
+  `diff_commit`/`diff_commits`/`diff_ref_to_workdir`/`stash_diff`) keeps it, which
+  is why the bug was visible in `CommitDiffPanel` and invisible in the commit panel.
+  The KIND stays on the wire — `git/lfs.rs` reads `HunkHeader` to reconstruct one
+  side of a diff and to size a candidate pointer — so the drop is frontend-side,
+  and it is in `flattenDiffRows` because there are TWO renderers and a filter in
+  one would leave the other broken. `changedIndex` is unaffected by construction
+  (`withChangedIndices` counts `+`/`-` only), and `diffRows.test.ts` asserts the
+  filtered rows are deep-equal to the same hunk with no header line rather than
+  trusting that. `rowIndex` does shift — every surface derives its heights array
+  from `rows`, so it shifts with it.
+- **Two `@@` strings remain in `src/`, both in the SPLIT view, and neither is the
+  row model's** (#161). `diffToSplit` (`DiffViewer.tsx`, `CommitPanel.tsx`) pushes
+  `{ kind: "info", text: hunk.header }` into both columns as its own separator, and
+  `PGSideBySideDiff` renders it verbatim. Split mode does not fill gaps, so the
+  discontinuity there is real and the row must stay — but its TEXT is the very
+  string #157 set out to remove, and giving it the `PGFoldSeparator` treatment needs
+  the gap counts `diffToSplit` does not compute. That is a follow-up, not a
+  drive-by. `PGDiffLine`'s `"hunk"` kind, which rendered a literal `@@` with no
+  producer anywhere, is gone.
 - **`flattenDiffRows` has one gap walk and a two-tier degradation ladder.**
   `gaps: "fill" | "fold"` chooses filler rows or separators; `text` is handed over
   in BOTH modes (chunked needs it to expand a gap and to know the trailing
