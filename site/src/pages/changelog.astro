@@ -47,4 +47,20 @@ import { descriptions } from '../data/seo.ts';
   .entry-notes { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-4); }
   .entry-notes li { color: var(--fg-1); font-size: 15px; padding-left: var(--s-5); position: relative; }
   .entry-notes li::before { content: '–'; position: absolute; left: 0; color: var(--fg-3); }
+
+  @media (max-width: 720px) {
+    .page-head { padding-top: var(--s-11); }
+    .page-head h1 { font-size: 30px; }
+    .log { margin-top: var(--s-10); gap: var(--s-8); }
+  }
+  @media (max-width: 480px) {
+    .page-head h1 { font-size: 26px; }
+    .lead { font-size: 15px; }
+    .entry { padding-left: var(--s-6); }
+    .entry-meta { gap: var(--s-3) var(--s-4); margin-bottom: var(--s-4); }
+    .ver { font-size: 16px; }
+    .date { font-size: 13px; }
+    .entry-notes { gap: var(--s-3); }
+    .entry-notes li { font-size: 14px; }
+  }
 </style>

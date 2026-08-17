@@ -209,4 +209,29 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   .build h2 { font-size: 26px; margin: 0 0 var(--s-3); }
   .build .lead { margin-bottom: var(--s-7); }
   .readme-link { margin-top: var(--s-6); font-size: 14px; }
+
+  @media (max-width: 720px) {
+    .page-head { padding-top: var(--s-11); }
+    .page-head h1 { font-size: 30px; }
+    .install-head h2, .build h2 { font-size: 22px; }
+    .install { margin-top: var(--s-10); }
+    .build { margin-top: var(--s-11); }
+    .notice { margin-top: var(--s-9); }
+    .os-tabs { margin-top: var(--s-7); }
+  }
+  /* The nav becomes two rows at this width, so an anchored section landed
+     underneath it with the 72px offset calibrated for the one-row bar. */
+  @media (max-width: 640px) {
+    .install, .build { scroll-margin-top: 96px; }
+  }
+  @media (max-width: 560px) {
+    /* Three inline tabs at 18px side padding measured ~335px — wider than a
+       360px phone's content box. A three-column grid divides the row it has
+       instead of demanding one. */
+    .os-tabs { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
+    .os-tab { justify-content: center; padding: 9px 4px; font-size: 13px; gap: 5px; }
+    .page-head h1 { font-size: 26px; }
+    .method { margin-top: var(--s-6); }
+    .method-primary { padding-left: var(--s-5); }
+  }
 </style>

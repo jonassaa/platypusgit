@@ -51,5 +51,20 @@ import { descriptions } from '../data/seo.ts';
   .roadmap-list li { display: flex; gap: var(--s-5); align-items: baseline; color: var(--fg-2); font-size: 15px; }
   .soon { font-size: 11px; color: var(--accent-2); border: 1px solid var(--border-1);
     padding: 2px 7px; border-radius: var(--r-3); flex-shrink: 0; }
-  @media (max-width: 720px) { .group { grid-template-columns: 1fr; gap: var(--s-5); } }
+  @media (max-width: 720px) {
+    .group { grid-template-columns: 1fr; gap: var(--s-5); }
+    .page-head { padding-top: var(--s-11); }
+    .page-head h1 { font-size: 30px; }
+    .groups, .roadmap { margin-top: var(--s-10); }
+  }
+  @media (max-width: 480px) {
+    .page-head h1 { font-size: 26px; }
+    .lead { font-size: 15px; }
+    .roadmap-title { font-size: 21px; }
+    .group { padding-bottom: var(--s-8); }
+    .group-head h2 { font-size: 18px; }
+    .group-list { gap: var(--s-3); }
+    .group-list li, .roadmap-list li { font-size: 14px; gap: var(--s-3); }
+    .roadmap-list { gap: var(--s-4); }
+  }
 </style>

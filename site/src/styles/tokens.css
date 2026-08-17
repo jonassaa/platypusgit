@@ -111,11 +111,18 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-h1, h2, h3 { font-family: var(--font-display); letter-spacing: -0.02em; line-height: 1.15; }
+/* Headings are set in a monospace display face, where a long single word is
+   both unbreakable and ~0.6em per character. break-word only fires when the
+   word would otherwise overflow, so wider viewports render identically. */
+h1, h2, h3 { font-family: var(--font-display); letter-spacing: -0.02em; line-height: 1.15;
+  overflow-wrap: break-word; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, .mono { font-family: var(--font-mono); }
 .container { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--s-7); }
+/* 40px of gutter out of a 360px screen is 11% of it. Only narrow viewports are
+   affected — every layout above 480px keeps the 20px gutter. */
+@media (max-width: 480px) { .container { padding: 0 var(--s-6); } }
 ::selection { background: oklch(0.68 0.09 185 / 0.3); }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb { background: var(--border-1); border-radius: 10px; border: 2px solid var(--bg-0); }

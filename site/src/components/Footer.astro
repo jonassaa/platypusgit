@@ -41,4 +41,17 @@ const year = 2026;
     padding-top: var(--s-6); border-top: 1px solid var(--border-0); color: var(--fg-3); font-size: 13px; }
   .footer-legal a { color: var(--fg-2); }
   .footer-legal a:hover { color: var(--accent); }
+  @media (max-width: 720px) {
+    .footer { margin-top: var(--s-12); padding: var(--s-10) 0 var(--s-8); }
+    .footer-inner { gap: var(--s-8); }
+    .footer-cols { gap: var(--s-9); }
+  }
+  @media (max-width: 480px) {
+    /* The two link columns fit side by side at 360px, but only by wrapping
+       every label onto three lines. Let them stack instead. */
+    .footer-cols { flex-wrap: wrap; gap: var(--s-7) var(--s-9); }
+    .footer-tag { max-width: none; }
+    /* Two spans in one non-wrapping row is a guaranteed overflow at 360px. */
+    .footer-legal { flex-direction: column; align-items: flex-start; gap: var(--s-2); }
+  }
 </style>

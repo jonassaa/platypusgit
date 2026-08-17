@@ -39,5 +39,24 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   .nav-links a:hover { color: var(--fg-0); text-decoration: none; }
   .chip { border: 1px solid var(--border-1); padding: 5px 10px; border-radius: var(--r-4); white-space: nowrap; }
   .chip:hover { border-color: var(--accent); color: var(--accent) !important; }
-  @media (max-width: 640px) { .nav-links { gap: var(--s-4); } .nav-links a:not(.chip) { font-size: 13px; } }
+  /* The bar's natural width is ~728px including gutters, so it starts to bind
+     just under 760px. The GitHub chip is its widest single item and it is
+     repeated in the hero CTAs and the footer, so it is the first to go. */
+  @media (max-width: 760px) { .chip { display: none; } }
+  /* Four links plus the theme toggle cannot share a 360px row with the
+     wordmark — 442px of links alone forced every page to 649px and phones
+     answered by zooming out. `flex: 1 0 100%` puts the links on their own row
+     rather than letting them push the document wider; the brand keeps its
+     natural width on row one. */
+  @media (max-width: 640px) {
+    .nav-inner { flex-wrap: wrap; height: auto; row-gap: var(--s-3);
+      padding-top: var(--s-4); padding-bottom: var(--s-4); }
+    /* flex-wrap is the safety valve: the four labels plus the toggle measure
+       ~295px, so they fit a 360px screen but not a 320px one, and a longer
+       label later would make the row bind sooner. Wrapping costs a row;
+       overflowing costs the whole document. */
+    .nav-links { flex: 1 0 100%; flex-wrap: wrap; justify-content: space-between;
+      gap: var(--s-3) var(--s-4); }
+    .nav-links a:not(.chip) { font-size: 13px; }
+  }
 </style>
