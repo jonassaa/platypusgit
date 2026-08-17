@@ -16,6 +16,7 @@ import {
   PGSpinner,
   pgConfirm,
   usePaneWidth,
+  usePreventBrowserContextMenu,
 } from "@/design";
 import { MergeFileList, type MergeFile } from "./FileList";
 import {
@@ -39,6 +40,14 @@ export function findNextConflict(status: FileStatus[], current: string): string 
 }
 
 export function MergeWindow() {
+  // Each WINDOW needs its own listener — the hook is document-scoped and this
+  // window has its own document, so `AppShell`'s call covers only the main one.
+  // Without it WebKitGTK's native context menu was reachable throughout the
+  // resolver, including on the editable result pane, where right-click also
+  // opens spell-check and input-method SUBMENUS. On Linux that is a real
+  // GtkMenu (a native GDK popup), so it is also the one surface in this window
+  // that could take a toolkit grab mid-conflict-resolution.
+  usePreventBrowserContextMenu();
   const params = new URLSearchParams(window.location.search);
   const [repoId, setRepoId] = React.useState(params.get("repoId") ?? "");
   const [path, setPath] = React.useState(params.get("path") ?? "");

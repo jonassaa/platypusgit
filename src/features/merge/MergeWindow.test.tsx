@@ -80,6 +80,26 @@ describe("MergeWindow shell", () => {
     ).toBe(true);
   });
 
+  // The resolver runs in its OWN window, so it has its own document and
+  // AppShell's `usePreventBrowserContextMenu` never applied to it. On Linux the
+  // menu that leaked through is WebKitGTK's native GtkMenu — a real GDK popup,
+  // with spell-check and input-method submenus on the editable result pane.
+  it("suppresses the native context menu, including over the result pane", async () => {
+    setSearch("window=merge&repoId=r1&path=conflict.txt");
+    mockInvoke("get_status", () => conflictedStatus(["conflict.txt"]));
+    mockInvoke("conflict_sides", () => textSides());
+    render(<MergeWindow />);
+    await waitFor(() =>
+      expect(screen.getByTestId("merge-file-path")).toHaveTextContent("conflict.txt"),
+    );
+
+    for (const target of [document.body, screen.getByTestId("merge-file-path")]) {
+      const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      target.dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(true);
+    }
+  });
+
   it("shows the chooser for binary conflicts and resolves via accept_theirs", async () => {
     setSearch("window=merge&repoId=r1&path=blob.bin");
     mockInvoke("get_status", () => conflictedStatus(["blob.bin"]));
