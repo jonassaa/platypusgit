@@ -1,8 +1,8 @@
 // 9 hero feature areas (from README "Features")
 export const heroFeatures = [
   { icon: 'git-commit', title: 'Staging & commit', blurb: 'Stage/unstage/discard files and individual hunks. Commit with amend + author override.' },
-  { icon: 'diff', title: 'Diff & viewing', blurb: 'Worktree/index/HEAD diffs, commit-to-commit diffs, blame, repo browser.' },
-  { icon: 'git-branch', title: 'Branches & tags', blurb: 'List/create/checkout/rename/delete branches. Lightweight + annotated tags.' },
+  { icon: 'diff', title: 'Diff & viewing', blurb: 'Worktree/index/HEAD diffs, commit-to-commit diffs, branch compare, blame, repo browser.' },
+  { icon: 'git-branch', title: 'Branches & tags', blurb: 'List/create/checkout/rename/delete branches. Lightweight, annotated and signed tags.' },
   { icon: 'history', title: 'History', blurb: 'Commit graph, file history, reflog viewer, detached-HEAD checkout.' },
   { icon: 'rewind', title: 'History manipulation', blurb: 'Reset (soft/mixed/hard), cherry-pick, revert.' },
   { icon: 'archive', title: 'Stash', blurb: 'Save/apply/pop/drop, stash-to-branch.' },
@@ -32,12 +32,14 @@ export const featureGroups = [
     'Word-level highlighting within a changed line',
     'Configurable diff context lines',
     'Commit-to-commit diffs',
+    'Branch compare — any two refs, or a ref against the working tree, with ahead/behind, both commit lists and the combined diff',
     'Line-by-line blame',
     'Repo file browser at HEAD, or any revision',
     'git-LFS pointers are shown as the objects they are, not as two lines of text',
   ]},
   { title: 'Branches & tags', blurb: 'Full ref management.', items: [
     'List / create / checkout / rename / delete branches',
+    'Default branch pinned to the top of every branch list, the rest ordered by most recent commit',
     'Merge or rebase onto any branch — local or remote — straight from the branch picker, the titlebar chip or the Branches screen',
     'Lightweight and annotated tags',
     'GPG/SSH signed tags — defaults from `tag.gpgsign`, overridable per tag, with a verification badge on the tag you select',
@@ -113,12 +115,22 @@ export const featureGroups = [
 
 // Roadmap teaser (from features.md P0/P1 — clearly "planned")
 export const roadmap = [
-  'Branch compare — branch↔branch and branch↔working tree',
   'Partial/hunk-level stash + rename + compare to working tree',
   'Signed & notarized macOS / Windows builds',
 ];
 
 export const changelog = [
+  {
+    version: '0.0.11',
+    date: '2026-08-17',
+    status: 'feature',
+    notes: [
+      'Branch compare — what is on that branch and not on this one. Right-click any branch, local or remote, and compare it with the current branch, with the working tree, or with another branch you marked earlier; the command palette has the same entries. You get the ahead/behind counts and the merge base, both commit lists — what is on each side and not on the other — and the combined file diff, rendered by the same pipeline every other diff surface uses, so word highlighting, syntax and `F7` come along. Either side can be changed or swapped without leaving the view, and the diff says out loud that it is a tree-against-tree comparison, so files that exist only on the base side reading as deletions is stated rather than discovered. The working tree is a right-hand side only: it is not a commit, so there is nothing to count or walk, and the summary and the two lists are absent rather than shown as zero. Untracked files count as additions there — hiding a file you just wrote is the one case the view exists for — and if there are too many of them the untracked side is dropped whole and says how many, instead of truncating quietly.',
+      'Signed tags, and a verdict worth trusting. Annotated tags can now be signed with GPG or SSH, through the same key resolution commit signing has used since 0.0.8: `tag.gpgsign` sets the default and any tag can override it. Creating a tag is one dialog now — name, annotation, sign — replacing three separate single-value prompts. The sign box has a third state meaning "follow the git config", because a plain unchecked box would claim a tag is unsigned in a repository that signs everything; and signing needs an annotation, since a lightweight tag is a reference with no object to sign. A signing failure creates no tag at all — the reference is written last, so you are never left believing you signed something you did not. Signed tags are marked in the Branches list, and the selected tag carries a graded badge: Signed, Bad signature, or "Signed, key unavailable" for a signature from a key outside your `allowedSignersFile`, which is not the same thing as verified.',
+      'Branch lists in an order worth reading. Every list of branches — the titlebar picker, the Branches screen, `⌘P` — showed git\'s own ref order, which is alphabetical: `chore/bump-deps` above `main`, and a branch you touched five minutes ago below one abandoned last year. The repository\'s default branch now pins to the top and everything else falls in recency order, newest commit first; remote branches get the same treatment within their own section. The default branch is git\'s own answer — `origin/HEAD` — falling back to whichever of `main`, `master` or `trunk` exists, and deliberately not the `init.defaultBranch` config, which describes branches that do not exist yet. Filtering still beats pinning, so a query that excludes the default branch does not resurrect it, and the picker\'s cursor now rests on the current branch: the one row where a stray Enter does nothing at all.',
+      'Fixes — creating a tag from a commit\'s context menu or the command palette could only ever produce a lightweight one, because both paths passed no annotation; annotated tags were unreachable from either. The remote-branch menu\'s "Compare with current" resolved both tips itself and did nothing at all when either was missing — it is the ref-named compare now, which cannot silently no-op. The branch picker\'s keyboard cursor survived a change of query instead of following the filtered list. And "Create tag here" is hidden in an empty repository rather than offered and then refused.',
+    ],
+  },
   {
     version: '0.0.10',
     date: '2026-08-16',
