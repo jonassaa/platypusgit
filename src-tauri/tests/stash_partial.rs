@@ -51,6 +51,55 @@ fn stashes_only_the_named_path_and_leaves_the_rest_dirty() {
     assert_eq!(stashes[0].oid, oid.unwrap());
 }
 
+/// The exact shape the e2e fixture builds: one path modified, one path staged,
+/// one path untracked — stash only the modified one.
+///
+/// Worth its own test because a CI failure on the e2e spec looked like this op
+/// leaving the selected file dirty. It does not; the spec's WAIT was wrong
+/// (`git stash push` updates `refs/stash` BEFORE it restores the working tree,
+/// so the entry is observable while the file is still dirty). This pins the
+/// backend half of that conclusion, where no timing is involved at all: by the
+/// time the call returns, the selected file is reverted and nothing else moved.
+#[test]
+fn a_modified_staged_untracked_mix_stashes_only_the_selected_path() {
+    let tr = TempRepo::with_initial_commit("committed\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    write_file(tr.path(), "README.md", "modified\n");
+    write_file(tr.path(), "untracked.txt", "untracked\n");
+    write_file(tr.path(), "staged.txt", "staged\n");
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(tr.path())
+        .args(["add", "staged.txt"])
+        .output()
+        .unwrap();
+
+    let oid = backend
+        .stash_save_paths(&handle.id, opts("only the readme", false), &paths(&["README.md"]))
+        .unwrap();
+    assert!(oid.is_some());
+
+    // The selected path is reverted the moment the call returns.
+    assert_eq!(read_file(tr.path(), "README.md"), "committed\n");
+    // And nothing else was touched: the staged file is still staged, the
+    // untracked one still on disk.
+    let status = String::from_utf8(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(tr.path())
+            .args(["status", "--short"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert!(status.contains("staged.txt"), "status was: {status}");
+    assert!(status.contains("untracked.txt"), "status was: {status}");
+    assert!(tr.path().join("untracked.txt").exists());
+    assert_eq!(read_file(tr.path(), "staged.txt"), "staged\n");
+}
+
 #[test]
 fn a_pathspec_that_matches_no_change_is_a_no_op_not_an_error() {
     let tr = TempRepo::with_initial_commit("hello\n");

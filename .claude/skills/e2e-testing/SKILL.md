@@ -115,6 +115,19 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
 
 **Assertion contract:** repo truth (`repo.git(...)`, `repo.read(...)`) is the acceptance, as plain `expect`s AFTER a UI wait; UI text is the wait condition. `waitUntil` on repo truth only when no UI signal exists — say so in a comment. Every wait: `timeout` + `timeoutMsg`. Never `pause()`.
 
+**Why repo truth is a bad WAIT even though it's the right ASSERTION** — a git
+command is not atomic, so one part of repo truth can be observable while the
+part you're asserting is not yet. Concretely (#133, caught by CI): `git stash
+push` updates `refs/stash` and only THEN restores the working tree, so
+`waitUntil(() => git("stash","list").includes(msg))` returns while the stashed
+file is *still dirty*, and the very next `expect(repo.read(f)).not.toContain(...)`
+loses the race. Same shape for any store-then-mutate op — a stash rename is a
+store followed by a drop, so the new message is on the reflog while the old entry
+still exists. A UI signal (`changeRow(f).waitForExist({reverse: true})`, a row
+repainting) can only appear after the whole backend call returned, which is
+strictly after every part of the git op. Prefer it; when you truly must wait on
+repo truth, wait on the LAST thing the command does, not the first.
+
 ## Debugging
 
 1. Reproduce on one spec: `pnpm test:e2e:docker run --spec e2e/specs/<file>`.
