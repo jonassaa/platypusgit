@@ -2976,7 +2976,7 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn read_file_content(&self, repo_id: &RepoId, path: &Path) -> AppResult<FileContent> {
+    fn read_file_content(&self, repo_id: &RepoId, path: &Path) -> AppResult<Option<FileContent>> {
         let rel = path.to_path_buf();
         let path_str = rel.to_string_lossy().into_owned();
         self.with_repo(repo_id, |repo| {
@@ -2987,7 +2987,7 @@ impl GitBackend for Libgit2Backend {
             if abs.is_file() {
                 let bytes = std::fs::read(&abs)?;
                 let size = bytes.len() as u64;
-                return Ok(match std::str::from_utf8(&bytes) {
+                return Ok(Some(match std::str::from_utf8(&bytes) {
                     Ok(s) => FileContent {
                         path: path_str,
                         binary: false,
@@ -3002,49 +3002,57 @@ impl GitBackend for Libgit2Backend {
                         from_head: false,
                         size,
                     },
-                });
+                }));
             }
 
             // Fallback: read from HEAD blob (for deleted files).
             let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
             if let Some(tree) = head {
                 if let Ok(entry) = tree.get_path(&rel) {
-                    let obj = entry.to_object(repo)?;
-                    if let Some(blob) = obj.as_blob() {
-                        let content = blob.content();
-                        let size = content.len() as u64;
-                        if blob.is_binary() {
-                            return Ok(FileContent {
-                                path: path_str,
-                                binary: true,
-                                text: None,
-                                from_head: true,
-                                size,
-                            });
+                    // KIND before lookup, as in `read_file_content_at_rev`: a
+                    // `160000` gitlink's oid is a commit this repository does not
+                    // hold, so `to_object` errored for every click on a clean
+                    // submodule row.
+                    if entry.kind() == Some(git2::ObjectType::Blob) {
+                        let obj = entry.to_object(repo)?;
+                        if let Some(blob) = obj.as_blob() {
+                            let content = blob.content();
+                            let size = content.len() as u64;
+                            if blob.is_binary() {
+                                return Ok(Some(FileContent {
+                                    path: path_str,
+                                    binary: true,
+                                    text: None,
+                                    from_head: true,
+                                    size,
+                                }));
+                            }
+                            return Ok(Some(match std::str::from_utf8(content) {
+                                Ok(s) => FileContent {
+                                    path: path_str,
+                                    binary: false,
+                                    text: Some(s.to_string()),
+                                    from_head: true,
+                                    size,
+                                },
+                                Err(_) => FileContent {
+                                    path: path_str,
+                                    binary: true,
+                                    text: None,
+                                    from_head: true,
+                                    size,
+                                },
+                            }));
                         }
-                        return Ok(match std::str::from_utf8(content) {
-                            Ok(s) => FileContent {
-                                path: path_str,
-                                binary: false,
-                                text: Some(s.to_string()),
-                                from_head: true,
-                                size,
-                            },
-                            Err(_) => FileContent {
-                                path: path_str,
-                                binary: true,
-                                text: None,
-                                from_head: true,
-                                size,
-                            },
-                        });
                     }
                 }
             }
 
-            Err(AppError::InvalidPath(format!(
-                "file not found: {path_str}"
-            )))
+            // Neither the worktree nor HEAD holds text at this path: a submodule
+            // or plain directory, or a file that vanished after the status
+            // snapshot the caller is rendering. A STATE, not a failure (#146) —
+            // see the trait doc.
+            Ok(None)
         })
     }
 
@@ -3109,6 +3117,15 @@ impl GitBackend for Libgit2Backend {
             let Ok(entry) = tree.get_path(&rel) else {
                 return Ok(None);
             };
+            // Test the entry's KIND before looking the object up. A gitlink's oid
+            // names a commit in the SUBMODULE's object database, which this
+            // repository does not hold, so `to_object` failed with "object not
+            // found" and the `as_blob` guard below never got the chance — #151
+            // documented the gitlink as answering `Ok(None)` while it actually
+            // errored. `kind()` reads the entry's filemode, no ODB lookup.
+            if entry.kind() != Some(git2::ObjectType::Blob) {
+                return Ok(None);
+            }
             let obj = entry.to_object(repo)?;
             let Some(blob) = obj.as_blob() else {
                 return Ok(None);
@@ -3162,6 +3179,16 @@ impl GitBackend for Libgit2Backend {
             let Some(entry) = index.get_path(&rel, 0) else {
                 return Ok(None);
             };
+            // A `160000` gitlink DOES have a stage-0 entry, so the guard above
+            // never fires for a submodule — and its oid names a commit in the
+            // SUBMODULE's object database, so `find_blob` failed with "object not
+            // found", once per selection of a submodule row in the commit panel.
+            // Same answer as the other two readers: a non-blob has no text to
+            // colour. (The index holds no tree entries, so a gitlink is the only
+            // non-blob mode reachable here.)
+            if entry.mode == u32::from(git2::FileMode::Commit) {
+                return Ok(None);
+            }
             let blob = repo.find_blob(entry.id)?;
             let content = blob.content();
             let size = content.len() as u64;

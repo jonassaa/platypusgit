@@ -11,11 +11,10 @@ import type {
 } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
 import {
-  describeError,
   dubiousOwnershipPath,
-  isAppError,
   isAuthError,
   isDubiousOwnershipError,
+  toAppError,
 } from "@/lib/errors";
 import { useAuthStore } from "@/features/auth/useAuthStore";
 import { confirmTrust } from "@/features/repo/ownership";
@@ -184,8 +183,13 @@ interface RepoStoreState extends RepoSlice {
    */
   listFilesAtRev: (revspec: string) => Promise<FileStatus[] | null>;
   /**
-   * Read a file's content from the tree at `revspec`. Returns null on failure
-   * (error is set on the store).
+   * Read a file's content from the tree at `revspec`.
+   *
+   * `null` means one of two things, and the caller cannot tell them apart from
+   * the value alone: that tree holds no text at that path (absent, a directory,
+   * a submodule gitlink — a STATE since #146, nothing set on the store), or the
+   * read failed and `error` is now set. Both render the same empty pane, which
+   * is why one sentinel is enough here; read `error` if you need to distinguish.
    */
   readFileContentAtRev: (
     revspec: string,
@@ -297,13 +301,6 @@ interface RepoStoreState extends RepoSlice {
   bisectReset: () => Promise<void>;
   appendGitignore: (pattern: string) => Promise<void>;
   openInEditor: (relativePath: string) => Promise<void>;
-}
-
-function toAppError(e: unknown): AppError {
-  // `describeError`, not `String(e)`: this message is what the error banner
-  // renders, so a thrown plain object used to reach the user as
-  // "[object Object]" (#146).
-  return isAppError(e) ? e : { kind: "Internal", message: describeError(e) };
 }
 
 /**

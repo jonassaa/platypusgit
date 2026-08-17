@@ -1020,6 +1020,30 @@ module and every `src/features/*/` directory is named somewhere in here.
 - `ForgeAuth` is deliberately separate from `Auth`: `Auth` means "git needs a
   credential for this remote, prompt and retry", so reusing it for a bad API token
   would pop the transport-credential dialog for a problem only Settings can fix.
+- **Two formatters, two voices, and the wrong one is a bug either way** (#146).
+  `describeError` is for the LOG FILE and leads with the `kind`; `appErrorMessage`
+  is for a BANNER and never shows the enum's spelling. `toAppError`
+  (`lib/errors.ts`, one definition for the five stores whose `error` field is an
+  `AppError`) wraps with `appErrorMessage` — a banner reading "TypeError: x is not
+  a function" is developer text. Stores whose `error` is a plain string call
+  `appErrorMessage` directly and need no wrapper.
+- **Neither formatter may throw, and neither may assume `message` is a string.**
+  `invoke` logs a failure BEFORE it rethrows it, so an exception raised inside the
+  logger *replaces* the original rejection — `isAuthError` then fails to narrow and
+  no credential prompt is raised. And `isAppError` accepts any object with a string
+  `kind`, while `Auth` proves the enum itself can carry a struct, so a payload of
+  the wrong shape must be coerced (`describeUnknown`), never interpolated. Both
+  are pinned in `errors.test.ts` + `tauri.errors.test.ts`.
+- **"No text at this path" is a STATE for all three file-content readers**
+  (`read_file_content`, `_at_rev`, `_at_index`), and each one needs an explicit
+  non-blob KIND test to honour it. A `160000` gitlink's oid names a commit in the
+  SUBMODULE's object database, so looking the entry's object up answers "object not
+  found" — which is what all three did for every click on a submodule row until
+  `tests/file_content_absence.rs`. Absence is answered `Ok(None)` because every
+  caller is a diff or preview surface reading one side of something it is already
+  rendering; a genuine failure (bad revspec, unknown repository, unreadable file)
+  still errors. On the frontend the sentinel is `null`, NOT `""` — whole-file mode
+  bails on `null` and would compose a file out of an empty string.
 
 ### Forge tokens are NOT git credentials (#92)
 - `commands/net.rs::Credentials` answers git's askpass prompt for one

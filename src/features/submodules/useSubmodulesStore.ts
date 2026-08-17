@@ -4,7 +4,7 @@
 
 import { create } from "zustand";
 import type { AppError } from "@/lib/errors";
-import { describeError, isAppError } from "@/lib/errors";
+import { toAppError } from "@/lib/errors";
 import type { SubmoduleInfo } from "@/lib/types";
 import {
   listSubmodules,
@@ -23,10 +23,6 @@ function readRecursive(): boolean {
   } catch {
     return false;
   }
-}
-
-function toAppError(e: unknown): AppError {
-  return isAppError(e) ? e : { kind: "Internal", message: describeError(e) };
 }
 
 /** Absolute path of a submodule's checkout, for "open as repository". */
