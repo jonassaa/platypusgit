@@ -527,3 +527,94 @@ describe("keymap — rider preset (default)", () => {
     await waitScreen('[data-pg-pane="commit.files"]', "Commit (classic ⌘2)");
   });
 });
+
+// ⌘D over the History commit list (#158). Appended as its own block so it merges
+// cleanly alongside concurrent work in this file.
+//
+// The chord carries TWO actions: the pane-scoped `diff.viewCombined` (this
+// list's combined diff) and the global `nav.diff` (go to the Diff viewer). The
+// dispatcher tries them in order and stops at the first that does not decline,
+// so both halves need proving in the real app: the claim, and — more
+// importantly — the fall-through, since History is the launch screen and a
+// handler that swallowed ⌘D there would strand the Diff viewer.
+describe("keymap — ⌘D over the History commit list (#158)", () => {
+  let repo: TempRepo | null = null;
+
+  afterEach(async () => {
+    await resetApp();
+    repo?.dispose(); repo = null;
+  });
+
+  it("⌘D on a multi-selection opens the combined diff of the range", async () => {
+    repo = basicRepo();
+    // Rows are newest-first: "fix: update a.txt" (HEAD), "feat: add b.txt",
+    // "feat: add a.txt" (root). Selecting the first two makes the range
+    // parent-of-oldest → newest = root → HEAD.
+    const from = repo.git("rev-parse", "--short=7", "HEAD~2").trim();
+    const to = repo.git("rev-parse", "--short=7", "HEAD").trim();
+    await openRepo(repo.path);
+    await waitScreen('[data-pg-pane="history.list"]', "History");
+    await waitFocusedPane("history.list", "opening a repo should focus the commit list");
+
+    // Keyboard-only, so nothing about this depends on a click also moving focus.
+    await jsChord("Home");
+    await waitHistorySelection("fix: update a.txt", "Home");
+    await jsChord("Shift+ArrowDown");
+    // NOT waitHistorySelection: two rows now carry [data-selected], and that
+    // helper reads the FIRST one — which is still the row Home landed on. The
+    // multi-selection detail pane is the signal that the range exists.
+    await waitScreen("div*=2 commits selected", "multi-selection detail");
+
+    await jsChord("Mod+D");
+    await $(`div*=Diff ${from} → ${to}`).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: `⌘D never routed the selection's combined diff (${from} → ${to})`,
+    });
+    // b.txt is added inside that range, so it can only appear if the range —
+    // not one commit — was diffed.
+    await $(
+      '[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]',
+    ).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the combined diff never listed b.txt",
+    });
+  });
+
+  // THE fall-through. One commit is always selected in History, so if the pane
+  // handler claimed "anything selected" this would land on the commit diff and
+  // ⌘D would never reach the Diff viewer from the screen the app opens on.
+  it("⌘D with a single commit selected still reaches the Diff viewer", async () => {
+    // dirtyRepo: the Diff screen renders "Nothing to diff" on a clean tree, so
+    // its panes only exist when there are changes.
+    repo = dirtyRepo();
+    await openRepo(repo.path);
+    await waitScreen('[data-pg-pane="history.list"]', "History");
+    await waitFocusedPane("history.list", "opening a repo should focus the commit list");
+    await jsChord("Home"); // exactly one row selected
+
+    await jsChord("Mod+D");
+    await waitScreen('[data-pg-pane="diff.files"]', "Diff (⌘D, single selection)");
+  });
+
+  // ...and the pane scope itself: the selection is still two commits here, so
+  // only the dispatcher's pane filter can be what keeps the chord global.
+  it("⌘D from outside the list reaches the Diff viewer even with a multi-selection", async () => {
+    repo = dirtyRepo();
+    await openRepo(repo.path);
+    await waitScreen('[data-pg-pane="history.list"]', "History");
+    await waitFocusedPane("history.list", "opening a repo should focus the commit list");
+    await jsChord("Home");
+    await jsChord("Shift+ArrowDown");
+    // Same reason as above: with two rows selected the selected-row helper
+    // reads the first of them, so the detail pane is the honest signal.
+    await waitScreen("div*=2 commits selected", "multi-selection detail");
+
+    // Off the list without changing the selection: the activity bar is the
+    // nearest focusable thing to its left.
+    await jsChord("Alt+ArrowLeft");
+    await waitFocusedPane("activitybar", "Alt+ArrowLeft should reach the activity bar");
+
+    await jsChord("Mod+D");
+    await waitScreen('[data-pg-pane="diff.files"]', "Diff (⌘D, off the commit list)");
+  });
+});
