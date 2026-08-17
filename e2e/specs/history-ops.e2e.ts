@@ -98,19 +98,41 @@ describe("history danger ops", () => {
     await $("div*=2 commits selected").waitForDisplayed({
       timeout: 10_000, timeoutMsg: "multi-select detail never appeared",
     });
-    await $("button*=View combined diff").click();
     // Oldest selected = "feat: add b.txt" (parent "feat: add a.txt"); newest =
-    // "fix: update a.txt". The combined diff therefore introduces b.txt.
-    // 25s, not the 15s the rest of this file uses for UI waits: this is the
-    // only assertion here that spans BOTH a screen transition AND a backend
-    // diff_commits round-trip, and it is the suite's most frequent CI failure
-    // (three times across unrelated branches, always under parallel-spec load,
-    // never when the spec runs alone). The operation is genuinely slower than
-    // the old budget under contention — the deadline was wrong, not the app.
-    await $('[data-pg-row]*=b.txt').waitForDisplayed({
-      timeout: 25_000,
-      timeoutMsg:
-        "combined diff never listed b.txt (CommitDiff mounts before diff_commits resolves, so this waits on the fetch)",
+    // "fix: update a.txt". The combined diff therefore runs
+    // parent-of-oldest → newest and introduces b.txt. Both shas come from repo
+    // truth, sliced to 7 the way `targetHeader` renders them.
+    const from = repo.git("rev-parse", "HEAD~2").trim().slice(0, 7);
+    const to = repo.git("rev-parse", "HEAD").trim().slice(0, 7);
+    await $("button*=View combined diff").click();
+
+    // TWO waits, in this order, and neither is redundant.
+    //
+    // First the DESTINATION screen's own header — a signal that exists only
+    // after the transition, and one that names the pair that was routed, so a
+    // mis-routed selection fails HERE saying so, instead of as a mute timeout
+    // on a file row further down.
+    await $(`div*=Diff ${from} → ${to}`).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: `the commit-diff header never showed ${from} → ${to}`,
+    });
+    // Then the file row, as a PURE CSS selector scoped to the commit-diff file
+    // pane. This used to be `[data-pg-row]*=b.txt`, which ALSO matches
+    // History's commit row for "feat: add b.txt" — and that is what made this
+    // the suite's most frequent CI failure. Resolved a moment too early (more
+    // likely the busier the machine), the handle binds to a row the screen
+    // switch is about to unmount, and the embedded driver never reports that
+    // node as stale: it stays resolvable and simply answers "not displayed"
+    // forever, so WebdriverIO's stale-element refetch cannot fire. Measured:
+    // 4 failures in 10 under CPU contention with the old selector, 0 in 10 with
+    // this pair of waits, and 1/1 when the binding is forced deliberately — in
+    // every failure the real b.txt row was on screen for the whole 25s. Raising
+    // the deadline (15s → 25s, which was tried) could never have helped.
+    await $(
+      '[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]',
+    ).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the combined diff never listed b.txt",
     });
   });
 
