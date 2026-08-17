@@ -548,7 +548,10 @@ design/              In-house design system (NOT components/ui/). Exports via de
 │                        whole root when a render throws, so without it one
 │                        broken screen leaves a blank window and no message
 ├── modal.tsx            PGModal — shared dialog shell
-├── resizable.tsx        Resizable panes
+├── resizable.tsx        Resizable panes — PGResizeHandle + usePaneSize (the
+│                        container-relative clamp; see "Resizable panes")
+├── paneSize.ts          That clamp as PURE arithmetic: paneMaxSize /
+│                        clampPaneSize, PANE_HANDLE_PX, DEFAULT_SIBLING_MIN
 ├── ui-helpers.tsx       pgFlash, misc helpers
 └── use-prevent-browser-context-menu.ts
 
@@ -744,6 +747,12 @@ lib/
 ├── codeLines.ts     Split file text into DISPLAY lines — `text.split("\n")`
 │                    gets empty text and a trailing newline wrong, both visible
 ├── useViewportH.ts  Scroll-container height WITHOUT depending on ResizeObserver
+├── useElementSize.ts  The same rule generalised to BOTH axes, for the pane
+│                    clamp: a ref CALLBACK (so a remounted container is
+│                    re-measured with no deps list), measured on attach BEFORE
+│                    any capability check, then kept fresh by `window`'s resize
+│                    event, a ResizeObserver when there is one, and a bounded
+│                    rAF poll while it still reads 0
 ├── useWindowedList.ts  Fixed-pitch windowing for the plain lists
 ├── useDiffRowHeight.ts  Resolves `--diff-row-h` to px, with a fallback for
 │                    jsdom (which does not evaluate `calc()`); CSS stays the
@@ -776,6 +785,10 @@ test/                Component-test harness for the jsdom suite. NOT shipped
 ├── dialog.tsx       `WithDialogs` — a screen rendered in isolation has no
 │                    <PGDialogHost/>, so every pgConfirm silently reads as
 │                    "cancelled" without this
+├── elementSize.ts   `stubContainerSize` / `stubContainerWidth` — jsdom performs
+│                    no layout, so every `clientWidth` is 0, which is exactly
+│                    the "unmeasured" branch of the pane clamp. A test that wants
+│                    the CLAMPED branch has to say what the container measures
 └── settle.ts        The shared settle guard for tests driving a diff surface —
                      subtle enough that a second copy drifts
 ```
@@ -896,7 +909,9 @@ module and every `src/features/*/` directory is named somewhere in here.
   WebKitGTK 605 (the Linux webview, and the e2e target) has none; guarding before
   the initial measurement leaves the height 0, `windowVariable` falls back to a
   400px viewport, and the bottom of a taller pane renders blank. Use
-  `lib/useViewportH.ts`.
+  `lib/useViewportH.ts` — or `lib/useElementSize.ts` when the answer is a
+  container's width, or both axes (#162). Any new measurement obeys the same
+  order: read first, observe second.
 - **Two cursors, two index spaces, and they must not be confused.** `useHunkNav`
   keeps a HUNK cursor (F7/⇧F7, rendered as `data-hunk-active` on the hunk's
   ANCHOR row — its first changed line, marked `hunkAnchor` by `flattenDiffRows`;
@@ -1514,6 +1529,52 @@ module and every `src/features/*/` directory is named somewhere in here.
 - New shared primitive → add to appropriate file in `src/design/` and re-export via `index.ts`.
 - `PGButton`/`PGInput` spread `...rest` onto their DOM node (so `data-testid` etc. pass through); `PGIconButton` does NOT (forwards `title` only). Row components (`PGChangeRow`, `PGCommitRow`, `PGFileTreeRow`, …) need explicit prop threading for new attributes.
 - Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
+
+### Resizable panes (#162)
+
+- **A pane has no fixed maximum. It has a sibling with a floor.** Every
+  `usePaneSize` call site declares `min` for itself and `siblingMin` for what is
+  left over, and the cap is derived: `container - siblingMin - reserve - handle`
+  (`design/paneSize.ts`, pure + tested). The old hard-coded maxima (520…800px)
+  were arbitrary on a large display and still did not prevent the failure they
+  existed for — `PGResizeHandle` sits BETWEEN the panes and every flexible
+  sibling is `flex: 1; minWidth: 0`, so a sibling squeezed to zero puts the handle
+  at the container edge and the drag cannot be reversed. Raising a constant moves
+  that cliff; a sibling floor removes it.
+- **The hook names its AXIS, because it sizes heights too** (History's bottom
+  detail panel, Compare's commit lists). It reads `container[axis]` from a
+  `useElementSize` result, so one measured container can serve two panes on two
+  axes — which is why it is `usePaneSize`, not `usePaneWidth`, and why a call site
+  that reads `.width` for a height is now impossible rather than merely ugly.
+- **Preference and effective size are two values, and that is the whole safety
+  argument.** The persisted number is the user's PREFERENCE; the rendered size is
+  that preference clamped, derived during render. So a container that changed is
+  honoured on the next paint with no effect and no second pass (two panes in a
+  three-pane layout cannot oscillate against each other's clamp), and opening a
+  720px panel on a 1280px laptop narrows it WITHOUT overwriting what the external
+  monitor earned. Nothing derived from a measurement is ever stored.
+- **An unmeasured container (0) means "no constraint known", never "no space".**
+  `container - siblingMin` is negative there, so clamping against it drives every
+  pane to its minimum — and the persist path would then destroy the stored size.
+  `paneMaxSize` returns `Infinity` until a real measurement lands; only the floor
+  applies in the meantime. This is the trap the change lives or dies on, pinned in
+  `paneSize.test.ts` and `resizable.test.tsx` (jsdom has no layout, so the default
+  test environment IS the unmeasured case — see `src/test/elementSize.ts`).
+- **A three-pane container is asymmetric on purpose.** The pane declared first
+  reserves the other fixed pane's MINIMUM; the second reserves the first's ACTUAL
+  size. Both reserving actual sizes would be circular; both reserving minimums
+  would let the two of them squeeze the flexible middle below its floor. The
+  arithmetic that the middle still keeps exactly its floor is a test, not a
+  comment (`paneSize.test.ts`'s three-pane invariant).
+- **Double-clicking a handle resets that pane to its `initial`** — the standard
+  editor gesture, and the recovery net for a persisted size that outlived its
+  layout. Wire `onReset={pane.reset}` on every handle.
+- E2E covers what jsdom cannot: that the measurement ARRIVES on a webview with no
+  `ResizeObserver` (`e2e/specs/resizable-panes.e2e.ts`). The pane drag has its own
+  helper, `jsDragHandle` — this is the one drag in the app that is mouse events on
+  `document`, not the `features/dnd` pointer primitive, and the grab has to be its
+  own driver round trip because the document listeners are registered by an effect
+  the mousedown schedules.
 
 ### Dialogs
 - **Never call `window.confirm` / `window.prompt`.** Use `pgConfirm` /
