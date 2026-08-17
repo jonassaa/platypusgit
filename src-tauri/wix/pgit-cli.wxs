@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Installs the `pgit` CLI shim into INSTALLDIR and puts INSTALLDIR on the machine
+  PATH (#144). Wired in through bundle.windows.wix.fragmentPaths +
+  componentRefs, which lands this component in main.wxs's
+  `Feature Id="External"`.
+
+  This is the highest-risk file in the change: a candle or light failure fails
+  the whole Windows release job, and the release then ships with no .msi at all.
+  Four things below are therefore deliberate, each checked against
+  tauri-bundler's msi/mod.rs + msi/main.wxs and the WiX v3 wix.xsd:
+
+  1. NO HANDLEBARS. The bundler renders every fragment through Handlebars and
+     then DISCARDS the result, passing the raw file to candle (the render exists
+     only to sniff which -ext DLLs the file needs). So a double-brace
+     expression is neither substituted nor safe here: a malformed one fails the
+     render and a well-formed one is silently dropped. This file contains no
+     doubled opening brace anywhere, comments included.
+
+  2. THE $(var.Win64) PREAMBLE IS COPIED, NOT INHERITED. candle's preprocessor
+     defines are per source file, so main.wxs's own <?if $(sys.BUILDARCH)?>
+     block does not reach this one. candle IS invoked with `-arch <arch>` for
+     every input, so $(sys.BUILDARCH) is set. Repeating the preamble keeps this
+     component's bitness identical to the components main.wxs already places in
+     INSTALLDIR — light runs WITHOUT -sval, so ICE validation is live and an ICE
+     error would fail the build. Matching the existing components is the
+     low-risk option.
+
+  3. Source USES $(sys.SOURCEFILEDIR). run_candle sets current_dir to
+     target/release/wix/<arch>, so a bare relative path would resolve there and
+     fail. $(sys.SOURCEFILEDIR) is candle's built-in for the compiling file's own
+     directory, trailing separator included — i.e. src-tauri/wix/. The bundler
+     also passes -dSourceDir, but that names the main binary FILE, not a
+     directory.
+
+  4. <Environment> IS CORE WiX, not WixUtilExtension, so no extra -ext is
+     needed. Action="set" with Part="last" is the documented append form
+     ([~];value); Permanent="no" is what makes uninstall remove the entry again.
+     INSTALLDIR is under Program Files and the package is perMachine, so the
+     System="yes" write is already elevated.
+
+  The GUID is fixed rather than "*" so it stays stable across upgrades.
+-->
+<?if $(sys.BUILDARCH)="x86"?>
+    <?define Win64 = "no" ?>
+<?elseif $(sys.BUILDARCH)="x64"?>
+    <?define Win64 = "yes" ?>
+<?elseif $(sys.BUILDARCH)="arm64"?>
+    <?define Win64 = "yes" ?>
+<?else?>
+    <?error Unsupported value of sys.BUILDARCH=$(sys.BUILDARCH)?>
+<?endif?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Fragment>
+        <DirectoryRef Id="INSTALLDIR">
+            <Component Id="PgitCli" Guid="747F47F3-FA90-459C-AB77-1B9A5D40A033" Win64="$(var.Win64)">
+                <File Id="PgitCmd"
+                      Name="pgit.cmd"
+                      Source="$(sys.SOURCEFILEDIR)pgit.cmd"
+                      KeyPath="yes" />
+                <Environment Id="PgitPathEntry"
+                             Name="PATH"
+                             Value="[INSTALLDIR]"
+                             Part="last"
+                             Action="set"
+                             System="yes"
+                             Permanent="no" />
+            </Component>
+        </DirectoryRef>
+    </Fragment>
+</Wix>

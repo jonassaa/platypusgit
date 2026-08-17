@@ -1,0 +1,13 @@
+#!/bin/sh
+# The `pgit` CLI, as shipped by the platypusgit .deb (#144).
+#
+# Installed at /usr/bin/pgit via `bundle.linux.deb.files`, so dpkg tracks it and
+# `apt remove` deletes it. A symlink is not an option: the bundler copies
+# `deb.files` with std::fs::copy, which FOLLOWS symlinks and would embed a
+# second copy of the binary in the package.
+#
+# The target is spelled absolutely rather than derived from `dirname "$0"`
+# because cli.rs's shim classifier greps this file for the binary name to tell a
+# package-managed pgit from a self-installed one. dpkg installs it at exactly
+# one path anyway.
+exec /usr/bin/platypusgit "$@"

@@ -63,12 +63,16 @@
     },
     "windows": {
       "wix": {
-        "language": ["en-US"]
+        "language": ["en-US"],
+        "fragmentPaths": ["wix/pgit-cli.wxs"],
+        "componentRefs": ["PgitCli"]
       }
     },
     "linux": {
       "deb": {
-        "depends": []
+        "depends": [],
+        "files": { "/usr/bin/pgit": "deb/pgit" },
+        "postInstallScript": "deb/postinst"
       },
       "appimage": {
         "bundleMediaFramework": false
