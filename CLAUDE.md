@@ -810,10 +810,17 @@ module and every `src/features/*/` directory is named somewhere in here.
 
 ### Diff rendering
 
-- **One row model, one renderer.** `flattenDiffRows` (`lib/diffRows.ts`) turns a
-  `FileDiff` into a flat `DiffRow[]`; `PGWindowedDiff` renders it. All four diff
-  surfaces (Diff screen, commit panel, repo browser, commit-diff panel) go
-  through both, so word spans, syntax, staging and F7 cannot drift between them.
+- **One row model; TWO renderers, not one.** `flattenDiffRows` (`lib/diffRows.ts`)
+  turns a `FileDiff` into a flat `DiffRow[]`, and all four diff surfaces go
+  through it — that is what keeps word spans, syntax, hunk indices and the
+  `changedIndex` contract from drifting. But only THREE of them render it with
+  `PGWindowedDiff` (Diff screen, commit panel, repo browser); `CommitDiffPanel`
+  has its own lighter markup, tuned for the narrow History inline panel (no
+  line-number gutters, tighter rows) and read-only, so it needs none of the
+  staging machinery. This bullet claimed all four went through both renderer and
+  model until #157; it was false when written, and anything shared between the
+  surfaces has to be verified in `CommitDiffPanel.tsx` separately — the row model
+  is the only thing you get for free. Unifying the two is a wanted follow-up.
 - **Whole file is the default view** (`diffContextMode: "wholeFile"`), and it is
   composed on the FRONTEND: the canonical diff is left exactly as fetched and the
   unchanged remainder is filled in around it as `fill` rows, from text
@@ -836,7 +843,10 @@ module and every `src/features/*/` directory is named somewhere in here.
     stayed, its chevron had no host left, and a collapsed hunk would have no
     anchor row for F7 or the actions to hang off.
   - `data-hunk-index` / `data-hunk-active` → the anchor row (see the two-cursors
-    bullet below).
+    bullet below). **`useHunkNav` is now wired into all four surfaces** — it was
+    only in the Diff screen and the commit-diff panel, so F7 did nothing at all in
+    the commit panel or the repo browser, for as long as both have existed. The
+    hunk cursor is what the two chords aim at, which is how that was found.
   - The `@@` range itself → nothing in whole-file mode; a `PGFoldSeparator` in
     chunked mode, which names the run of unchanged lines it hides and offers to
     expand it in place. `fold` carries no `hunkIndex`, for the same reason `fill`
