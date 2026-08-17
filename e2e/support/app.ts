@@ -809,6 +809,87 @@ export async function jsDrag(fromSel: string, toSel: string): Promise<void> {
   if (!ok) throw new Error(`jsDrag: element not found (${fromSel} -> ${toSel})`);
 }
 
+/**
+ * Drag a `PGResizeHandle` by `delta` px along its axis.
+ *
+ * Separate from `jsDrag`, for two reasons. The pane handle is the one drag
+ * gesture in the app that is NOT the pointer-event primitive from
+ * `features/dnd`: it takes `mousedown` on itself and then `mousemove` /
+ * `mouseup` on `document`, so a `pointermove` on the handle reaches nothing.
+ *
+ * And the grab must be its OWN round trip. Those document listeners are
+ * registered by an effect that the mousedown's state update schedules, and React
+ * runs passive effects after the commit rather than inside the dispatch — so a
+ * mousemove fired in the same task lands before the listener exists, silently
+ * does nothing, and leaves the handle stuck in its dragging state with no
+ * mouseup ever delivered. A second driver command is a whole event-loop turn
+ * later, which is all the effect needs.
+ *
+ * One move is enough once armed: the handler tracks the previous position and
+ * reports the delta between them, so a single 2000px move is a 2000px delta.
+ */
+export async function jsDragHandle(
+  selector: string,
+  delta: number,
+  axis: "x" | "y" = "x",
+): Promise<void> {
+  // executeOnce on both halves: a driver-retry re-run would re-grab or re-apply.
+  const from = await executeOnce((sel: string) => {
+    const el = document.querySelector(sel) as HTMLElement | null;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const p = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    el.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: p.x,
+        clientY: p.y,
+      }),
+    );
+    return p;
+  }, selector);
+  if (!from) throw new Error(`jsDragHandle: element not found (${selector})`);
+
+  const to =
+    axis === "y" ? { x: from.x, y: from.y + delta } : { x: from.x + delta, y: from.y };
+  await executeOnce((p: { x: number; y: number }) => {
+    for (const type of ["mousemove", "mouseup"]) {
+      document.dispatchEvent(
+        new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          clientX: p.x,
+          clientY: p.y,
+        }),
+      );
+    }
+    return true;
+  }, to);
+}
+
+/** In-page `dblclick` — the pane handle's reset gesture. */
+export async function jsDoubleClick(selector: string): Promise<void> {
+  const ok = await executeOnce((sel: string) => {
+    const el = document.querySelector(sel) as HTMLElement | null;
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(
+      new MouseEvent("dblclick", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
+      }),
+    );
+    return true;
+  }, selector);
+  if (!ok) throw new Error(`jsDoubleClick: element not found (${selector})`);
+}
+
 /** Full length of the windowed History list, from the container's data-total. */
 export async function commitListTotal(): Promise<number> {
   const raw = await $('[data-testid="commit-list"]').getAttribute("data-total");
