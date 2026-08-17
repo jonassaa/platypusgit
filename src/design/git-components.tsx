@@ -509,7 +509,17 @@ export function PGChangeRow({
 // DIFF
 // ═════════════════════════════════════════════════════════
 
-export type DiffLineKind = "ctx" | "add" | "rem" | "hunk" | "info" | "empty";
+/**
+ * `info` and `empty` belong to the SPLIT view's `SideLine` only — `diffToSplit`
+ * pushes an `info` row per hunk and an `empty` row where one side has no line.
+ * `flattenDiffRows` emits none of them.
+ *
+ * There is no `"hunk"` kind: it rendered a literal `@@` in an 80px gutter, had no
+ * producer anywhere, and #157 recorded it as noted-not-done while removing the
+ * banner. It is gone now, so no live render path in the unified diff contains the
+ * string at all (#161).
+ */
+export type DiffLineKind = "ctx" | "add" | "rem" | "info" | "empty";
 
 export interface DiffLineData {
   kind: DiffLineKind;
@@ -547,7 +557,6 @@ export function PGDiffLine({
     ctx: "transparent",
     add: "var(--git-added-bg)",
     rem: "var(--git-removed-bg)",
-    hunk: "oklch(from var(--accent) l c h / 0.1)",
     info: "var(--bg-2)",
     empty: "var(--bg-2)",
   };
@@ -555,7 +564,6 @@ export function PGDiffLine({
     add: "+",
     rem: "−",
     ctx: " ",
-    hunk: "@",
     info: "i",
     empty: "",
   };
@@ -563,40 +571,9 @@ export function PGDiffLine({
     ctx: "var(--fg-1)",
     add: "var(--git-added)",
     rem: "var(--git-removed)",
-    hunk: "var(--accent)",
     info: "var(--fg-2)",
     empty: "var(--fg-3)",
   };
-
-  if (kind === "hunk") {
-    return (
-      <div
-        style={{
-          display: "flex",
-          fontFamily: "var(--font-mono)",
-          fontSize: "var(--fs-12)",
-          background: bg.hunk,
-          color: "var(--fg-2)",
-          padding: "2px 0",
-          borderTop: "1px solid var(--border-0)",
-          borderBottom: "1px solid var(--border-0)",
-        }}
-      >
-        <span
-          style={{
-            width: 80,
-            flexShrink: 0,
-            color: "var(--fg-3)",
-            textAlign: "right",
-            paddingRight: 10,
-          }}
-        >
-          @@
-        </span>
-        <span style={{ padding: "0 12px", color: "var(--accent)" }}>{text}</span>
-      </div>
-    );
-  }
 
   return (
     <div
@@ -741,7 +718,6 @@ export function PGDiffRow({
   const bg: Partial<Record<DiffLineKind, string>> = {
     add: "var(--git-added-bg)",
     rem: "var(--git-removed-bg)",
-    hunk: "oklch(from var(--accent) l c h / 0.1)",
     info: "var(--bg-2)",
   };
   const borderColor: Partial<Record<DiffLineKind, string>> = {
@@ -752,7 +728,6 @@ export function PGDiffRow({
     add: "+",
     rem: "−",
     ctx: " ",
-    hunk: "@",
     info: "i",
     empty: "",
   };
@@ -760,13 +735,14 @@ export function PGDiffRow({
     ctx: "var(--fg-0)",
     add: "var(--git-added)",
     rem: "var(--git-removed)",
-    hunk: "var(--accent)",
     info: "var(--fg-2)",
     empty: "var(--fg-3)",
   };
 
-  // Header and separator rows keep their own renderer.
-  if (kind === "hunk" || kind === "info") return <PGDiffLine {...line} />;
+  // A separator row keeps its own renderer. `flattenDiffRows` produces no `info`
+  // rows — the split view does, through PGSideBySideDiff — so this is the total
+  // branch for a kind that cannot currently arrive, not a live path.
+  if (kind === "info") return <PGDiffLine {...line} />;
 
   const ln = line;
   const selectable = onLineClick != null && ln.changedIndex != null;

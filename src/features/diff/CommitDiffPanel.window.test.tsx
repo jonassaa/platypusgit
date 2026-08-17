@@ -42,6 +42,42 @@ const diffs: FileDiff[] = [
   },
 ];
 
+/**
+ * A commit diff exactly as `diff_to_file_diffs` builds it: the hunk's `lines[]`
+ * opens with libgit2's `'H'` line, kind `HunkHeader`, content `@@ …\n` (#161).
+ * This panel is where that was visible — the working-tree builder drops `'H'`, the
+ * commit builder keeps it, and this panel is the one that renders commit diffs.
+ */
+const withHeaderLine: FileDiff[] = [
+  {
+    path: "b.ts",
+    oldPath: null,
+    binary: false,
+    additions: 1,
+    deletions: 0,
+    hunks: [
+      {
+        header: "@@ -1,2 +1,3 @@",
+        oldStart: 1,
+        oldLines: 2,
+        newStart: 1,
+        newLines: 3,
+        lines: [
+          {
+            kind: { kind: "HunkHeader" as const },
+            oldLineno: null,
+            newLineno: null,
+            content: "@@ -1,2 +1,3 @@\n",
+          },
+          { kind: { kind: "Context" as const }, oldLineno: 1, newLineno: 1, content: "keep" },
+          { kind: { kind: "Addition" as const }, oldLineno: null, newLineno: 2, content: "added" },
+          { kind: { kind: "Context" as const }, oldLineno: 2, newLineno: 3, content: "tail" },
+        ],
+      },
+    ],
+  },
+];
+
 beforeEach(() => {
   resetInvokeMock();
 });
@@ -75,5 +111,22 @@ describe("CommitDiffPanel windowing", () => {
     await waitFor(() =>
       expect(document.querySelector('[data-hunk-index="0"]')).not.toBeNull(),
     );
+  });
+
+  it("renders no `@@` for a commit diff whose lines carry the header (#161)", async () => {
+    const { container } = render(
+      <CommitDiffPanel
+        diffs={withHeaderLine}
+        loading={false}
+        error={null}
+        header="x → y"
+        paneIdPrefix="w3"
+      />,
+    );
+    await waitFor(() => expect(screen.getByText(/added/)).toBeInTheDocument());
+    expect(container.textContent).not.toContain("@@");
+    // The anchor is the added line — the row F7 lands on and the row index the
+    // header line used to occupy.
+    expect(document.querySelector('[data-hunk-index="0"]')?.textContent).toContain("added");
   });
 });

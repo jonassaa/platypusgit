@@ -122,6 +122,112 @@ describe("flattenDiffRows", () => {
   });
 });
 
+/**
+ * The `@@` #157 missed (#161).
+ *
+ * `diff_to_file_diffs` (the backend's COMMIT-diff builder) prints with
+ * `DiffFormat::Patch` and pushes libgit2's `'H'` line into the hunk's own
+ * `lines[]` as `DiffLineKind::HunkHeader` — so `@@ -1,3 +1,3 @@` arrives as an
+ * ordinary entry in the line list, nothing to do with the banner #157 deleted.
+ * `toUiLine` maps every non-add/rem kind to `ctx`, so it used to render as a
+ * context row whose text is the `@@` range.
+ *
+ * The kind stays on the wire: `git/lfs.rs` reads `HunkHeader` to tell a pointer
+ * diff from a real one. The drop is frontend-side, and it is HERE rather than in a
+ * renderer because there are two renderers (`PGWindowedDiff` and
+ * `CommitDiffPanel`'s own) and a fix in one would leave the other broken.
+ */
+describe("flattenDiffRows hunk-header lines", () => {
+  /** Byte-for-byte what the backend hands over, trailing newline included. */
+  const header = (n: number): FileDiff["hunks"][number]["lines"][number] => ({
+    kind: { kind: "HunkHeader" },
+    oldLineno: null,
+    newLineno: null,
+    content: `@@ -${n},3 +${n},3 @@\n`,
+  });
+  const headered = (n: number): FileDiff["hunks"][number] => ({
+    ...hunk(n),
+    lines: [header(n), ...hunk(n).lines],
+  });
+
+  it("emits no row for the header line, so no `@@` reaches a renderer", () => {
+    const rows = flattenDiffRows([headered(1)], { foldH: 22, rowH: 19 });
+    expect(rows).toHaveLength(3);
+    const text = rows.map((r) => (r.kind === "line" ? r.line.text : "")).join("\n");
+    expect(text).not.toContain("@@");
+  });
+
+  /**
+   * The one thing that would silently corrupt staging, so it is asserted rather
+   * than assumed: `changedIndex` is the ONLY index `stage_lines` /
+   * `unstage_lines` / `discard_lines` accept, and it is read off the row.
+   * `withChangedIndices` counts `+`/`-` lines only and a header line is neither,
+   * so dropping one cannot renumber them.
+   */
+  it("leaves changedIndex — and every other row field — untouched", () => {
+    const withHeader = flattenDiffRows([headered(1)], { foldH: 22, rowH: 19 });
+    const without = flattenDiffRows([hunk(1)], { foldH: 22, rowH: 19 });
+    expect(withHeader).toEqual(without);
+    expect(
+      withHeader.map((r) => (r.kind === "line" ? [r.line.kind, r.line.changedIndex] : null)),
+    ).toEqual([
+      ["ctx", undefined],
+      ["rem", 0],
+      ["add", 1],
+    ]);
+  });
+
+  /**
+   * `rowIndex` DOES shift, and that is fine — it is derived. But every surface
+   * derives its heights array from `rows` too (`rows.map((r) => r.h)`), and
+   * `scrollTopForRow` / `hunkAnchorRows` / F7 all address the flat array, so the
+   * two must be built from the same filtered list. A stale heights array is what
+   * renders a blank strip or scrolls to the wrong row.
+   */
+  it("keeps the heights array and the anchor map in step with the filtered rows", () => {
+    const rows = flattenDiffRows([headered(1), headered(2)], { foldH: 22, rowH: 19 });
+    const heights = rows.map((r) => r.h);
+    expect(heights).toEqual([19, 19, 19, 19, 19, 19]);
+    // Anchors at the two rem rows — not at rows 2 and 5, where they would sit if
+    // the header rows were still occupying an index each.
+    expect(hunkAnchorRows(rows)).toEqual([1, 4]);
+    expect(rowOffset(heights, 4)).toBe(76);
+    expect(scrollTopForRow(heights, 4, { scrollTop: 0, viewportH: 40 })).toBe(55);
+  });
+
+  it("does not disturb whole-file gap arithmetic", () => {
+    const changed: FileDiff["hunks"][number]["lines"] = [
+      { kind: { kind: "Deletion" }, oldLineno: 4, newLineno: null, content: "old four" },
+      { kind: { kind: "Addition" }, oldLineno: null, newLineno: 4, content: "new four" },
+    ];
+    const base = { header: "@@ -4,1 +4,1 @@", oldStart: 4, oldLines: 1, newStart: 4, newLines: 1 };
+    const opts = {
+      foldH: 22,
+      rowH: 19,
+      gaps: "fill" as const,
+      text: {
+        newText: "one\ntwo\nthree\nnew four\nfive\nsix",
+        oldText: "one\ntwo\nthree\nold four\nfive\nsix",
+      },
+    };
+    const withHeader = flattenDiffRows([{ ...base, lines: [header(4), ...changed] }], opts);
+    const without = flattenDiffRows([{ ...base, lines: changed }], opts);
+    expect(withHeader).toEqual(without);
+    expect(withHeader.filter((r) => r.kind === "fill")).toHaveLength(5);
+  });
+
+  it("leaves a header-only hunk with no rows and no anchor to address", () => {
+    // Not something git emits — but the guard matters, because `scrollToHunk`
+    // and the action cluster both look a hunk index up in the anchor map.
+    const rows = flattenDiffRows([{ ...hunk(1), lines: [header(1)] }], {
+      foldH: 22,
+      rowH: 19,
+    });
+    expect(rows).toEqual([]);
+    expect(hunkAnchorRows(rows)).toEqual([]);
+  });
+});
+
 // Whole-file mode fills the unchanged remainder of the file in AROUND the hunks
 // the backend returned, rather than asking libgit2 for a huge context — that
 // would collapse the file into hunk 0 and break every stage-hunk index.
