@@ -75,10 +75,10 @@ const COMMON = {
   // because both actions are pane-scoped — presets.test.ts only forbids two
   // GLOBAL actions on one chord, and the dispatcher tries each id in turn.
   "diff.toggleLine": [" "],
-  // The History selection's combined diff, on the same Mod+D as nav.diff (#158).
-  // Legal because this one is pane-scoped: the dispatcher tries each id bound to
-  // a chord in turn, and the pane handler declines unless the commit list has
-  // focus with 2+ commits selected — so Mod+D still reaches the Diff viewer
+  // The History selection's diff, on the same Mod+D as nav.diff (#158). Legal
+  // because this one is pane-scoped: the dispatcher tries each id bound to a
+  // chord in turn, and the pane handler declines unless the commit list has focus
+  // with something selected (#164) — so Mod+D still reaches the Diff viewer
   // everywhere else. Rider's ⌘D is "Show diff", which is what both do.
   //
   // ORDER IS LOAD-BEARING: buildReverseMap walks Object.entries, so this entry

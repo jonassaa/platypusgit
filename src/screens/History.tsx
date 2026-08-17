@@ -352,21 +352,27 @@ export function HistoryScreen() {
     scrollToIndex: win.scrollToIndex,
   });
 
-  // Mod+D on a multi-selection: the same combined diff Enter and the menu open
-  // (#158). Pane-scoped and SHARING the chord with the global nav.diff, so this
-  // handler must DECLINE whenever it has nothing selection-shaped to show —
-  // returning true unconditionally would swallow Mod+D and strand the Diff
-  // viewer, which is why the decline is the tested half.
+  // Mod+D on the commit selection: the same diff Enter and the commit menu open
+  // — one commit → its own diff, 2+ → the combined diff of the range (#158).
+  // Pane-scoped and SHARING the chord with the global nav.diff, so this handler
+  // must DECLINE whenever it has nothing to show — returning true
+  // unconditionally would swallow Mod+D and strand the Diff viewer, which is why
+  // the decline is still the tested half.
   //
-  // "Nothing to show" is fewer than TWO commits: History keeps one row selected
-  // at all times, whose diff is already on screen inline and one Enter away, and
-  // History is the launch screen — so claiming the single-commit case would take
-  // Mod+D away from the Diff viewer for anyone who has not navigated elsewhere.
-  // Zero happens on an empty log.
+  // It used to decline below TWO commits, to keep Mod+D → Diff viewer on the
+  // launch screen. That floor was the deviation, not the fidelity (#164): #158
+  // asked for "a commit or commits", and Rider's ⌘D on a selected commit in the
+  // Log shows THAT commit's diff, so context-sensitivity is the behaviour being
+  // imitated. Mod+D still reaches the Diff viewer from every other pane, plus
+  // the activity bar and the palette.
+  //
+  // So "nothing to show" is an EMPTY selection — which means an empty log and
+  // nothing else, since the pruning effect above re-seeds order[0] whenever the
+  // log has rows. That is what lets the guard be a count rather than a probe.
   useAction(
     "diff.viewCombined",
     () => {
-      if (sel.keys.length < 2) return false;
+      if (sel.keys.length < 1) return false;
       activateSelection();
       return true;
     },
