@@ -875,6 +875,10 @@ export async function scrollCommitListTo(
  * extended-XPath grammar allows exactly one `[attr=value]` before `*=`, so the
  * combined form silently degrades to an invalid CSS selector). Read-only, so
  * bare `browser.execute` is correct.
+ *
+ * History is windowed, so this only works while the HEAD row is mounted — true
+ * for every small fixture, since HEAD sits at or near the top. A fixture deep
+ * enough to scroll HEAD out needs `scrollCommitListTo` first.
  */
 export async function waitHeadMarkerOn(
   subject: string,

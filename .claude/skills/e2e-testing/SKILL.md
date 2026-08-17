@@ -128,6 +128,53 @@ repainting) can only appear after the whole backend call returned, which is
 strictly after every part of the git op. Prefer it; when you truly must wait on
 repo truth, wait on the LAST thing the command does, not the first.
 
+**And you cannot guess which part is last — read the implementation.** The
+orderings that bit this suite are all counter-intuitive, and each one made a wait
+resume mid-operation:
+
+| Op | Order | What the wrong wait cost |
+|---|---|---|
+| `git stash push` | `refs/stash` → worktree | entry present, file still dirty (#133) |
+| libgit2 hard reset | checkout → **HEAD** → index (`reset.c`) | HEAD moved, index still on the old tree → `git status` reports the file *staged* |
+| `rebase_abort` | `set_head(branch)` → hard reset | HEAD back on the branch, conflicted worktree still there (measured: `UU conflict.txt`) |
+| `git pull` (fast-forward) | worktree + index → **ref** | pulled file readable, `log -1` still the old commit |
+
+Note the last two point in OPPOSITE directions — a reset publishes its ref
+early, a fast-forward publishes it late — so "wait on HEAD" is neither safe nor
+unsafe in general. Only the UI signal is safe in general, because it needs the
+whole IPC call to have returned. Widen the window to check a suspicion: a
+20 000-file fixture turned the rebase-abort race from unobservable into 2 runs
+out of 2.
+
+**A wait must not be able to bind to the screen you are LEAVING.** Sharper than
+it sounds, because this driver makes the mistake unrecoverable. `$(sel)` resolved
+a moment before a screen switch can match a row on the outgoing screen; when
+React unmounts it, the embedded driver does **not** report the handle as stale —
+it still holds the detached node, `checkVisibility()` on it is simply `false`, so
+WebdriverIO's stale-element refetch never fires and `waitForDisplayed` polls a
+dead node until the deadline, with the row it wanted on screen the whole time.
+Load-dependent (a busier machine loses the race more often) and immune to a
+bigger timeout — `history-ops`'s `[data-pg-row]*=b.txt`, which also matched
+History's commit row for "feat: add b.txt", failed 4 runs in 10 under CPU
+contention at 25s, having already been raised from 15s for exactly this symptom.
+So, after any action that changes screens: **wait on a signal that exists only on
+the destination first** (its `DeepViewHeader` crumb — name the shas it should
+carry, so a mis-route fails there saying which pair it got), and make the follow-up
+selector unambiguous — pure CSS scoped to the destination's pane
+(`[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]`), not
+`*=`-text that some other screen also satisfies.
+
+**A readiness signal that is also true of "not started yet" is not a readiness
+signal.** `merge-window` waited for Apply to be *disabled* to mean "the next
+file's fresh model is unresolved", but `canApply`'s `allResolved` is
+`regionStates.every(...)` — vacuously true while the list is empty — so a
+retarget goes disabled (loading) → briefly ENABLED with zero regions → disabled
+(one unresolved region). The wait was satisfied by the first, so ⌘1 could land in
+the second with no region to accept and be dropped: "Apply never enabled for the
+second file", CI-only. Wait for the counter to read `0/N` instead — a state only
+the seeded-and-unresolved model produces. Same fix, same reason, as the
+`regionStates` guard in `MergeWindow.test.tsx`.
+
 ## Debugging
 
 1. Reproduce on one spec: `pnpm test:e2e:docker run --spec e2e/specs/<file>`.
