@@ -11,7 +11,7 @@ import type {
 } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
 import {
-  describeError,
+  appErrorMessage,
   dubiousOwnershipPath,
   isAppError,
   isAuthError,
@@ -305,10 +305,13 @@ interface RepoStoreState extends RepoSlice {
 }
 
 function toAppError(e: unknown): AppError {
-  // `describeError`, not `String(e)`: this message is what the error banner
-  // renders, so a thrown plain object used to reach the user as
-  // "[object Object]" (#146).
-  return isAppError(e) ? e : { kind: "Internal", message: describeError(e) };
+  // `appErrorMessage`, not `String(e)` and not `describeError`: this message is
+  // what the error BANNER renders. `String(e)` reached the user as
+  // "[object Object]" for a rejected command (#146); `describeError` formats for
+  // the log file, so it leads with a discriminant — "TypeError: x is not a
+  // function" is developer text in a banner. Both fix the actual bug; only one
+  // is the right voice, and it is the one four other stores already use.
+  return isAppError(e) ? e : { kind: "Internal", message: appErrorMessage(e) };
 }
 
 /**

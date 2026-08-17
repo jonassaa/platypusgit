@@ -6,13 +6,13 @@
 
 import { create } from "zustand";
 import type { AppError } from "@/lib/errors";
-import { describeError, isAppError } from "@/lib/errors";
+import { appErrorMessage, isAppError } from "@/lib/errors";
 import type { LfsStatus } from "@/lib/types";
 import { lfsCheckout, lfsFetch, lfsPull, lfsStatus } from "@/lib/tauri";
 import { useRepoStore, withAuthRetry } from "@/features/repo/useRepoStore";
 
 function toAppError(e: unknown): AppError {
-  return isAppError(e) ? e : { kind: "Internal", message: describeError(e) };
+  return isAppError(e) ? e : { kind: "Internal", message: appErrorMessage(e) };
 }
 
 /** Human-readable byte size for a pointer's payload. */
