@@ -13,7 +13,7 @@ import {
 import {
   openRepo, resetApp, jsChord, jsDoubleShift, jsKey, jsSelectValue,
   focusedPaneId, paletteDialog, paletteInput, changeRow, stagedRow,
-  scrollCommitListTo,
+  scrollCommitListTo, switchScreen,
 } from "../support/app";
 
 const CHEAT_SHEET = "h2*=Keyboard shortcuts";
@@ -71,6 +71,10 @@ describe("keymap — rider preset (default)", () => {
       { chord: "Mod+4", marker: '[data-pg-pane="branches.list"]', label: "Branches (⌘4)" },
       { chord: "Mod+6", marker: '[data-testid="rebase-start"]', label: "Rebase (⌘6)" },
       { chord: "Mod+7", marker: '[data-pg-pane="remote.list"]', label: "Remotes (⌘7)" },
+      // ⌘D reaches the Diff viewer here because the step BEFORE it leaves focus
+      // on the Remotes screen. From the History list the pane-scoped
+      // diff.viewCombined claims the chord instead (#164), so do not reorder
+      // this step to follow ⌘9.
       { chord: "Mod+D", marker: '[data-pg-pane="diff.files"]', label: "Diff (⌘D)" },
       { chord: "Mod+Shift+9", marker: '[data-pg-pane="reflog.list"]', label: "Reflog (⌘⇧9)" },
       { chord: "Mod+,", marker: "div*=Choose a keymap preset", label: "Settings (⌘,)" },
@@ -484,7 +488,12 @@ describe("keymap — rider preset (default)", () => {
     lines[57] = "line 58 CHANGED";
     repo.write("big.txt", lines.join("\n") + "\n");
     await openRepo(repo.path);
-    await jsChord("Mod+D");
+    // The activity bar, NOT ⌘D: since #164 that chord opens the selected
+    // commit's own diff from History, and this test is about F7, so how it
+    // reaches the Diff screen is incidental. Both routes call AppShell's
+    // enterScreen, so focus still lands on the primary pane (diff.files), which
+    // is one of useHunkNav's paneIds — F7 is pane-scoped.
+    await switchScreen("diff");
     await waitScreen('[data-pg-pane="diff.files"]', "Diff");
     // Only hunk 0 is asserted up front. The diff is windowed and whole-file by
     // default, so hunk 1 — ~50 lines further down — is not mounted until F7
