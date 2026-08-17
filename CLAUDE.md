@@ -958,6 +958,17 @@ module and every `src/features/*/` directory is named somewhere in here.
   sheet and palette then name each behavior in its own category, and the two can
   be rebound apart. Register the pane handler as declining (`() => false`) when it
   has nothing to act on, or it swallows the chord from the other action.
+- **A pane action may also share a chord with a GLOBAL one — but then the BINDING
+  ORDER is load-bearing** (#158). `Mod+D` is `diff.viewCombined` in
+  `history.list` and `nav.diff` everywhere else. A global action with a default
+  runner never declines, so tried first it shadows the pane action permanently and
+  silently; the pane entry must come earlier in the preset table (`COMMON` is
+  spread before the per-preset `nav.*`, which is why it lands there), and
+  `presets.test.ts` pins the resulting `rev.get("Mod+D")` order. The pane
+  handler's decline is then what keeps the global chord working — and since
+  History always has one commit selected, "decline" there means *fewer than two*,
+  not "nothing selected": claiming the single case would take `Mod+D` away from the
+  Diff viewer on the launch screen.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
 - **A new `NavIntent` kind must be routed in AppShell, and both halves of that
   are now enforced.** The routing switch ends in `default: assertNever(intent)`,

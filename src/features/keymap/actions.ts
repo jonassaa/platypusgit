@@ -89,6 +89,7 @@ export type ActionId =
   | "diff.nextChange"
   | "diff.prevChange"
   | "diff.toggleLine"
+  | "diff.viewCombined"
   | "commit.commit"
   | "commit.commitAndPush"
   | "commit.toggleAmend"
@@ -309,6 +310,21 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   // sheet says "Diff / stage the focused line" instead of hiding a diff action
   // under "Lists & trees", and so the two can be rebound apart.
   "diff.toggleLine": { id: "diff.toggleLine", title: "Stage / unstage focused line", category: "Diff", scope: "pane" },
+  // #158. Shares Mod+D with the GLOBAL nav.diff, which is legal in exactly one
+  // direction: this action is pane-scoped, so the dispatcher only offers it while
+  // the History commit list holds focus, and when its handler declines the chord
+  // falls through to nav.diff's default runner (presets.test.ts forbids two
+  // GLOBAL actions on one chord, not this pairing — the same asymmetry that lets
+  // Space mean list.toggle in a list and diff.toggleLine in a diff).
+  //
+  // Its own catalog entry rather than a second meaning hung off nav.diff, so the
+  // cheat sheet names both behaviors and the two can be rebound apart.
+  //
+  // The handler (History.tsx) claims a MULTI-commit selection only. One selected
+  // commit already has its diff on screen inline and on Enter, and History is the
+  // launch screen — claiming the single case there would leave the Diff viewer
+  // with no chord anywhere a user starts.
+  "diff.viewCombined": { id: "diff.viewCombined", title: "View combined diff of selected commits", category: "Diff", scope: "pane" },
 
   "repo.open": { id: "repo.open", title: "Open repository…", category: "Repository", scope: "global", run: openRepoOp },
   "repo.clone": { id: "repo.clone", title: "Clone repository…", category: "Repository", scope: "global", run: cloneRepoOp },

@@ -526,6 +526,21 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       },
     },
     { divider: true },
+    // The commit's OWN diff (parent..commit) — what Enter on the row and the
+    // inline panel already show, and what "View combined diff" shows for a
+    // selection of several (#158). Until this existed the menu's only
+    // diff-shaped entry was the one below, so right-clicking one commit and
+    // right-clicking three offered two different comparisons.
+    {
+      icon: "diff",
+      label: "View diff",
+      onClick: () => {
+        if (!commit?.sha) return;
+        useNavStore.getState().setIntent({ kind: "commit-self", oid: commit.sha });
+      },
+    },
+    // Kept alongside it: a genuinely different question — this commit's tree
+    // against the working tree, not against its parent.
     {
       icon: "diff",
       label: "Compare with HEAD",

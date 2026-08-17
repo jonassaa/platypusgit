@@ -42,7 +42,7 @@ import { useDensityStep, useSettingsStore } from "@/features/settings/useSetting
 import { resolveHeadDecor } from "@/features/settings/headMarks";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
-import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
+import { PGPane, FocusableScroll, useAction, usePaneList } from "@/features/keymap";
 import {
   resolveGraphDrop,
   useDragSource,
@@ -351,6 +351,28 @@ export function HistoryScreen() {
     // hook's DOM-query fallback would find nothing (#68 G10).
     scrollToIndex: win.scrollToIndex,
   });
+
+  // Mod+D on a multi-selection: the same combined diff Enter and the menu open
+  // (#158). Pane-scoped and SHARING the chord with the global nav.diff, so this
+  // handler must DECLINE whenever it has nothing selection-shaped to show —
+  // returning true unconditionally would swallow Mod+D and strand the Diff
+  // viewer, which is why the decline is the tested half.
+  //
+  // "Nothing to show" is fewer than TWO commits: History keeps one row selected
+  // at all times, whose diff is already on screen inline and one Enter away, and
+  // History is the launch screen — so claiming the single-commit case would take
+  // Mod+D away from the Diff viewer for anyone who has not navigated elsewhere.
+  // Zero happens on an empty log.
+  useAction(
+    "diff.viewCombined",
+    () => {
+      if (sel.keys.length < 2) return false;
+      activateSelection();
+      return true;
+    },
+    [sel.keys, activateSelection],
+    { paneId: "history.list" },
+  );
 
   // Single-selection commit whose own diff (parent..commit) feeds the inline
   // panel; null while multi-selecting (that path uses the combined diff).
@@ -1076,6 +1098,30 @@ function MultiCommitDetail({
       >
         {n} commits selected
       </div>
+      {/* A combined diff is a RANGE diff: parent-of-oldest → newest, which is the
+          only thing two trees can be compared as. So a selection that is not an
+          unbroken first-parent chain silently includes whatever sits between the
+          picked commits, and until now nothing said so (#158). Keyed on
+          plan.contiguous rather than a count: "how many commits are in the range"
+          cannot be answered from the loaded log, which is a graph-ordered PREFIX
+          of history across every branch (#68 G11) — a number derived from row
+          distance would be confidently wrong. */}
+      {!plan.contiguous && (
+        <div
+          data-testid="multi-range-note"
+          style={{
+            padding: "0 12px 6px",
+            fontSize: "var(--fs-12)",
+            color: "var(--fg-2)",
+          }}
+        >
+          Combined diff covers the whole range{" "}
+          <span style={{ fontFamily: "var(--font-mono)" }}>
+            {shortSha(plan.baseOid ?? plan.oldestOid)}..{shortSha(plan.newestOid)}
+          </span>
+          , including commits between the selected ones.
+        </div>
+      )}
       <div
         style={{
           padding: "0 12px 10px",

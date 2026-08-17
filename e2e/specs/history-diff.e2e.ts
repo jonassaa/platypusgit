@@ -2,6 +2,8 @@ import { browser, $, $$, expect } from "@wdio/globals";
 import { basicRepo, branchyRepo, dirtyRepo, TempRepo } from "../support/tempRepo";
 import {
   commitListTotal,
+  jsClickMenuItem,
+  jsContextMenu,
   openRepo,
   resetApp,
   scrollCommitListTo,
@@ -156,5 +158,82 @@ describe("history & diff", () => {
       ...(await rows[1]!.$$('svg [data-lane-kind="half-bot"], svg [data-lane-kind="line"]')),
     ];
     expect(trailing).toHaveLength(0);
+  });
+});
+
+// #158 — the diff entries on History's commit context menus. Appended as its own
+// block so it merges cleanly alongside concurrent work in this file.
+//
+// Before #158 the single-commit menu's only diff-shaped entry was "Compare with
+// HEAD" (that commit against the working tree), so right-clicking ONE commit and
+// right-clicking SEVERAL offered two different comparisons. "View diff" is the
+// commit's own diff — parent..commit, what Enter on the row and the inline panel
+// already show — and it pairs with the selection's "View combined diff".
+describe("history — the commit menu's diff entries (#158)", () => {
+  let repo: TempRepo;
+
+  afterEach(async () => {
+    await resetApp();
+    repo.dispose();
+  });
+
+  it('"View diff" opens the commit\'s own diff (parent..commit)', async () => {
+    repo = basicRepo();
+    // basicRepo, oldest first: "feat: add a.txt", "feat: add b.txt",
+    // "fix: update a.txt". The MIDDLE commit is the one to pick: it added b.txt
+    // and nothing since touched that file, so b.txt on screen can only come
+    // from parent..commit — "Compare with HEAD" would show a.txt (changed by
+    // the newer commit) and no b.txt at all.
+    const sha = repo.git("rev-parse", "--short=7", "HEAD~1").trim();
+    await openRepo(repo.path);
+    await switchScreen("history");
+    await $("span*=SUBJECT").waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "history column headers never appeared",
+    });
+    await scrollCommitListTo("feat: add b.txt");
+
+    await jsContextMenu('[data-testid="commit-row"]', { text: "feat: add b.txt" });
+    // Exact span text, so this can never match "View combined diff".
+    await jsClickMenuItem("View diff");
+
+    // The destination's own header first — it names the commit that was routed,
+    // so a mis-routed intent fails here rather than as a mute timeout on a file
+    // row (the lesson history-ops.e2e.ts records at length).
+    await $(`div*=Diff ${sha} (this commit)`).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: `the commit-diff header never showed ${sha} (this commit)`,
+    });
+    // Then the file row, scoped to the commit-diff file pane: a bare
+    // `[data-pg-row]*=b.txt` would also match History's own row for
+    // "feat: add b.txt", which the screen switch is about to unmount.
+    await $(
+      '[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]',
+    ).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the commit's own diff never listed b.txt",
+    });
+  });
+
+  it('"Compare with HEAD" is still there beside it, and still compares with the working tree', async () => {
+    repo = basicRepo();
+    const sha = repo.git("rev-parse", "--short=7", "HEAD~1").trim();
+    await openRepo(repo.path);
+    await switchScreen("history");
+    await $("span*=SUBJECT").waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "history column headers never appeared",
+    });
+    await scrollCommitListTo("feat: add b.txt");
+
+    await jsContextMenu('[data-testid="commit-row"]', { text: "feat: add b.txt" });
+    await jsClickMenuItem("Compare with HEAD");
+
+    // Its own header spelling — proof the two entries route differently rather
+    // than one having quietly replaced the other.
+    await $(`div*=Diff ${sha} → HEAD`).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: `the commit-diff header never showed ${sha} → HEAD`,
+    });
   });
 });
