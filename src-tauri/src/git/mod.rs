@@ -173,7 +173,18 @@ pub trait GitBackend: Send + Sync {
     ) -> AppResult<FileDiff>;
     /// Read the full content of a file from the worktree. Falls back to the
     /// HEAD blob when the worktree copy is missing (e.g. a deleted file).
-    fn read_file_content(&self, repo_id: &RepoId, path: &Path) -> AppResult<FileContent>;
+    ///
+    /// `Ok(None)` — NOT an error — when neither side holds text at that path:
+    /// a directory, a `160000` submodule gitlink, or a file that vanished after
+    /// the status snapshot the caller is rendering. The HEAD fallback does not
+    /// make those anomalous, because it only recovers a BLOB: a clean submodule
+    /// row in the Files screen is an ordinary click, and it used to cost three
+    /// ERROR lines in the log (this reader twice, `_at_rev` once) for a pane that
+    /// then silently rendered nothing anyway (#146). Every caller is a diff or
+    /// preview surface that already treats "no text" as "render plain".
+    /// A genuine failure — unknown repository, bare repository, an unreadable
+    /// file — still errors.
+    fn read_file_content(&self, repo_id: &RepoId, path: &Path) -> AppResult<Option<FileContent>>;
     /// List every file in the tree at `revspec` (commit, branch, tag, or any
     /// revspec). Resolves the revspec to a tree and walks it recursively.
     /// Returns `FileStatus` entries with both sides `Unmodified` — the tree is
@@ -192,6 +203,12 @@ pub trait GitBackend: Send + Sync {
     /// condition on the error path, where the frontend's shared `invoke` wrapper
     /// logged it at ERROR (#146). A genuine failure — bad revspec, unknown
     /// repository, unreadable object — still errors.
+    ///
+    /// The gitlink half of that needs an explicit KIND test, and #151 claimed it
+    /// without one: a gitlink's oid names a commit in the SUBMODULE's object
+    /// database, so looking the entry's object up fails with "object not found"
+    /// before any `as_blob` guard can answer. Pinned by
+    /// `tests/file_content_absence.rs`.
     fn read_file_content_at_rev(
         &self,
         repo_id: &RepoId,
@@ -206,7 +223,11 @@ pub trait GitBackend: Send + Sync {
     /// A path with no stage-0 entry (untracked, or conflicted) is `Ok(None)`,
     /// not an error — the commit panel asks for the index side of every row it
     /// renders, so an untracked row genuinely having none is the expected
-    /// answer, and the caller falls back to plain rows (#146).
+    /// answer, and the caller falls back to plain rows (#146). A `160000`
+    /// submodule gitlink is also `Ok(None)`, and needs its own test: it DOES
+    /// have a stage-0 entry, so the absence guard never fires, and its oid is a
+    /// commit in the submodule's object database — `find_blob` on it errored
+    /// once per selection until this was guarded.
     fn read_file_content_at_index(
         &self,
         repo_id: &RepoId,

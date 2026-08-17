@@ -49,7 +49,8 @@ const EMPTY: DiffSyntax = { old: null, new: null, oldText: null, newText: null }
  *
  * A side with no content yields no tokens and those rows render plain: a missing
  * blob must never break a diff. Since #146 an ABSENT blob resolves to `null`
- * rather than rejecting, so it no longer reaches the log as an error — the
+ * rather than rejecting — for all three readers, the worktree one included, so a
+ * submodule or directory row no longer reaches the log as an error either. The
  * `catch` below now covers only genuine failures, which still do.
  *
  * Panes that diff against the INDEX (the commit panel) ask for it directly with

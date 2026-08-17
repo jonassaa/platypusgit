@@ -104,11 +104,22 @@ export async function listAllFiles(repoId: string): Promise<FileStatus[]> {
   return invoke<FileStatus[]>("list_all_files", { repoId });
 }
 
+/**
+ * Read a file's content from the worktree, falling back to the HEAD blob for a
+ * deleted file.
+ *
+ * Resolves to `null` — it does NOT reject — when neither side holds text: a
+ * directory, a submodule gitlink, or a path that vanished after the status
+ * snapshot the caller is rendering. The HEAD fallback only recovers a BLOB, so
+ * clicking a clean submodule row was routine and still cost ERROR lines in the
+ * log for a pane that rendered nothing either way (#146). A genuine failure
+ * (unknown repository, unreadable file) still rejects.
+ */
 export async function readFileContent(
   repoId: string,
   path: string,
-): Promise<FileContent> {
-  return invoke<FileContent>("read_file_content", { repoId, path });
+): Promise<FileContent | null> {
+  return invoke<FileContent | null>("read_file_content", { repoId, path });
 }
 
 /**

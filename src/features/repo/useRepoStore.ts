@@ -184,8 +184,13 @@ interface RepoStoreState extends RepoSlice {
    */
   listFilesAtRev: (revspec: string) => Promise<FileStatus[] | null>;
   /**
-   * Read a file's content from the tree at `revspec`. Returns null on failure
-   * (error is set on the store).
+   * Read a file's content from the tree at `revspec`.
+   *
+   * `null` means one of two things, and the caller cannot tell them apart from
+   * the value alone: that tree holds no text at that path (absent, a directory,
+   * a submodule gitlink — a STATE since #146, nothing set on the store), or the
+   * read failed and `error` is now set. Both render the same empty pane, which
+   * is why one sentinel is enough here; read `error` if you need to distinguish.
    */
   readFileContentAtRev: (
     revspec: string,

@@ -38,7 +38,8 @@ fn reads_the_staged_copy_not_the_worktree_or_head() {
     // whole reason this op exists.
     let worktree = backend
         .read_file_content(&handle.id, Path::new("README.md"))
-        .unwrap();
+        .unwrap()
+        .expect("README.md is in the worktree");
     assert_eq!(worktree.text.as_deref(), Some("v3\n"));
     let head = backend
         .read_file_content_at_rev(&handle.id, "HEAD", Path::new("README.md"))
