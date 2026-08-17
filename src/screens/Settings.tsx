@@ -1,5 +1,4 @@
 import React from "react";
-import { platform } from "@tauri-apps/plugin-os";
 import {
   PGButton,
   PGButtonGroup,
@@ -27,7 +26,7 @@ import { ForgeSettings } from "@/features/forge/ForgeSettings";
 import { cliShimStatus, installCliShim, type PullMode } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
-import type { CliShimStatus } from "@/lib/types";
+import type { CliPathState, CliShimStatus } from "@/lib/types";
 import { BUILTIN_PRESETS, useKeymapStore } from "@/features/keymap";
 
 export function SettingsScreen() {
@@ -313,9 +312,9 @@ function KeyboardSection() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function CliSection() {
-  const isWindows = platform() === "windows";
   const [status, setStatus] = React.useState<CliShimStatus | null>(null);
   const [manual, setManual] = React.useState<string | null>(null);
+  const [pathState, setPathState] = React.useState<CliPathState | null>(null);
   const [busy, setBusy] = React.useState(false);
 
   const refresh = React.useCallback(() => {
@@ -324,9 +323,10 @@ function CliSection() {
       .catch(() => setStatus(null));
   }, []);
 
-  React.useEffect(() => {
-    if (!isWindows) refresh();
-  }, [isWindows, refresh]);
+  // No platform gate any more (#144): Windows writes a pgit.cmd and appends the
+  // per-user PATH, so the old "not yet supported" row is gone rather than
+  // conditional.
+  React.useEffect(refresh, [refresh]);
 
   const install = async () => {
     setBusy(true);
@@ -334,6 +334,7 @@ function CliSection() {
       const out = await installCliShim();
       if (out.installed) {
         setManual(null);
+        setPathState(out.pathState);
         // Deliberately doesn't repeat the shim path here — the status row
         // below shows it, and a toast echoing the same substring would
         // outlive the row's re-render (toast lives ~1.7s) and collide with
@@ -350,55 +351,114 @@ function CliSection() {
     }
   };
 
+  const source = status?.source ?? "none";
+  // A package manager owns the file — offering to overwrite it is the one thing
+  // #144 says must not happen, so there is no button at all in that state.
+  const packaged = source === "package";
+  const effectivePathState = pathState ?? status?.pathState ?? null;
+
   return (
     <Section
       title="Command line"
       subtitle="Launch platypusgit from a terminal: pgit [commit|status|log|history|branches] [path]."
     >
-      {isWindows ? (
-        <Row
-          label="pgit command"
-          hint="Not yet supported on Windows. Add the install directory to PATH manually to use platypusgit.exe from a terminal."
-          control={<span />}
-        />
-      ) : (
-        <Row
-          label="pgit command"
-          hint={
-            status?.installed ? (
+      <Row
+        label="pgit command"
+        hint={
+          <>
+            {packaged ? (
               <>
-                Installed at{" "}
-                <code style={{ fontFamily: "var(--font-mono)" }}>
-                  {status.shimPath}
-                </code>
+                Installed by your package manager at{" "}
+                <Mono>{status?.shimPath}</Mono>. Updating platypusgit updates it
+                too.
+              </>
+            ) : source === "app" ? (
+              <>
+                Installed at <Mono>{status?.shimPath}</Mono>
               </>
             ) : (
               <>
                 Not installed.{" "}
+                {source === "foreign" && (
+                  <>
+                    A different <Mono>pgit</Mono> is already on your PATH at{" "}
+                    <Mono>{status?.shimPath}</Mono> — it will not be touched.{" "}
+                  </>
+                )}
                 {manual && (
                   <>
                     Automatic install failed (permissions) — run:{" "}
-                    <code
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        userSelect: "all",
-                      }}
-                    >
-                      {manual}
-                    </code>
+                    <Mono selectable>{manual}</Mono>
                   </>
                 )}
               </>
-            )
-          }
-          control={
+            )}
+            <PathNote
+              state={packaged ? null : effectivePathState}
+              shimPath={status?.shimPath}
+            />
+          </>
+        }
+        control={
+          packaged ? (
+            <span />
+          ) : (
             <PGButton size="sm" onClick={install} disabled={busy}>
-              {status?.installed ? "Reinstall pgit" : "Install pgit"}
+              {source === "app" ? "Reinstall pgit" : "Install pgit"}
             </PGButton>
-          }
-        />
-      )}
+          )
+        }
+      />
     </Section>
+  );
+}
+
+function Mono({
+  children,
+  selectable,
+}: {
+  children: React.ReactNode;
+  selectable?: boolean;
+}) {
+  return (
+    <code
+      style={{
+        fontFamily: "var(--font-mono)",
+        ...(selectable ? { userSelect: "all" as const } : null),
+      }}
+    >
+      {children}
+    </code>
+  );
+}
+
+/**
+ * The PATH half of the answer. A shim in a directory the shell cannot see is
+ * installed but unusable, so the state is surfaced with the line that fixes it
+ * rather than hidden behind a successful install.
+ */
+function PathNote({
+  state,
+  shimPath,
+}: {
+  state: CliPathState | null;
+  shimPath?: string;
+}) {
+  if (state === null || state === "onPath") return null;
+  // dirname, without importing a path helper for one call.
+  const dir = shimPath?.replace(/[/\\][^/\\]*$/, "") ?? "";
+  if (state === "pathAdded") {
+    return (
+      <div style={{ marginTop: 4 }}>
+        Added <Mono>{dir}</Mono> to your PATH — open a new terminal.
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginTop: 4 }}>
+      <Mono>{dir}</Mono> is not on your PATH. Add it:{" "}
+      <Mono selectable>{`export PATH="${dir}:$PATH"`}</Mono>
+    </div>
   );
 }
 

@@ -1,0 +1,32 @@
+#!/bin/sh
+# platypusgit .deb postinst (#144). One job: make sure /usr/bin/pgit is
+# executable.
+#
+# It should already be. The chain was read in the bundler rather than assumed:
+# the wrapper is committed 100755, `fs_utils::copy_file` is std::fs::copy (which
+# copies permission bits), and debian.rs builds data.tar with
+# `HeaderMode::Deterministic`, whose Unix branch is
+#   if meta.is_dir() || (0o100 & meta.mode() == 0o100) { 0o755 } else { 0o644 }
+# — i.e. it propagates the user execute bit rather than flattening to 0644.
+#
+# This file is the belt for that brace, because none of it is observable without
+# building a .deb on Linux. It is deliberately tiny: a postinst that exits
+# non-zero fails `dpkg -i` for the WHOLE package, so its blast radius is every
+# Linux install. It touches one path, only when that path exists and lacks the
+# bit, and it does nothing at all for any argument other than `configure`.
+#
+# PGIT_POSTINST_PREFIX exists so the logic can be exercised against a fixture on
+# a machine that cannot build a .deb. dpkg never sets it.
+set -e
+
+if [ "${1:-configure}" != "configure" ]; then
+    exit 0
+fi
+
+shim="${PGIT_POSTINST_PREFIX:-}/usr/bin/pgit"
+
+if [ -f "$shim" ] && [ ! -x "$shim" ]; then
+    chmod 0755 "$shim"
+fi
+
+exit 0

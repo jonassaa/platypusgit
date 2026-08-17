@@ -101,7 +101,13 @@ function wireAll(): void {
   mockInvoke("diff_commits", () => []);
   mockInvoke("conflict_sides", () => null);
   mockInvoke("take_launch_intent", () => null);
-  mockInvoke("cli_shim_status", () => ({ installed: false, path: null }));
+  mockInvoke("cli_shim_status", () => ({
+    installed: false,
+    shimPath: "",
+    target: "",
+    source: "none",
+    pathState: "offPath",
+  }));
   mockInvoke("open_repo", () => handle);
   mockInvoke("default_init_branch", () => "main");
 }
