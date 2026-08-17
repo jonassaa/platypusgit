@@ -869,10 +869,12 @@ module and every `src/features/*/` directory is named somewhere in here.
   filtered rows are deep-equal to the same hunk with no header line rather than
   trusting that. `rowIndex` does shift — every surface derives its heights array
   from `rows`, so it shifts with it.
-- **Two `@@` strings remain in `src/`, both in the SPLIT view, and neither is the
-  row model's** (#161). `diffToSplit` (`DiffViewer.tsx`, `CommitPanel.tsx`) pushes
-  `{ kind: "info", text: hunk.header }` into both columns as its own separator, and
-  `PGSideBySideDiff` renders it verbatim. Split mode does not fill gaps, so the
+- **One `@@` still reaches a reader, and it is the SPLIT view's, not the row
+  model's** (#161). `diffToSplit` (`DiffViewer.tsx`, `CommitPanel.tsx` — four sites,
+  two per file) pushes `{ kind: "info", text: hunk.header }` into both columns as
+  its own separator, and `PGSideBySideDiff` renders it verbatim. Note it arrives as
+  DATA, off `DiffHunk.header`, so `grep '@@' src/` does not find it — every literal
+  `@@` left in non-test source is a comment. Split mode does not fill gaps, so the
   discontinuity there is real and the row must stay — but its TEXT is the very
   string #157 set out to remove, and giving it the `PGFoldSeparator` treatment needs
   the gap counts `diffToSplit` does not compute. That is a follow-up, not a
