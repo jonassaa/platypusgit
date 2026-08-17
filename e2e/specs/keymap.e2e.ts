@@ -532,11 +532,13 @@ describe("keymap — rider preset (default)", () => {
 // cleanly alongside concurrent work in this file.
 //
 // The chord carries TWO actions: the pane-scoped `diff.viewCombined` (this
-// list's combined diff) and the global `nav.diff` (go to the Diff viewer). The
+// list's selection diff) and the global `nav.diff` (go to the Diff viewer). The
 // dispatcher tries them in order and stops at the first that does not decline,
 // so both halves need proving in the real app: the claim, and — more
-// importantly — the fall-through, since History is the launch screen and a
-// handler that swallowed ⌘D there would strand the Diff viewer.
+// importantly — the fall-through, which is now what the LAST case proves, from
+// another pane. #164 lowered the claim from 2+ commits to any non-empty
+// selection, so the list itself no longer declines on a live repository; one
+// commit routes to its own diff, exactly as Enter does.
 describe("keymap — ⌘D over the History commit list (#158)", () => {
   let repo: TempRepo | null = null;
 
@@ -580,20 +582,43 @@ describe("keymap — ⌘D over the History commit list (#158)", () => {
     });
   });
 
-  // THE fall-through. One commit is always selected in History, so if the pane
-  // handler claimed "anything selected" this would land on the commit diff and
-  // ⌘D would never reach the Diff viewer from the screen the app opens on.
-  it("⌘D with a single commit selected still reaches the Diff viewer", async () => {
-    // dirtyRepo: the Diff screen renders "Nothing to diff" on a clean tree, so
-    // its panes only exist when there are changes.
-    repo = dirtyRepo();
+  // The single-commit case, claimed since #164: ⌘D on one selected commit opens
+  // THAT commit's own diff (parent..commit) — the same commit-self view Enter and
+  // the commit menu's "View diff" give, not the Diff viewer and not
+  // commit-vs-HEAD.
+  it("⌘D with a single commit selected opens that commit's own diff", async () => {
+    repo = basicRepo();
+    // basicRepo, newest-first: "fix: update a.txt" (HEAD), "feat: add b.txt",
+    // "feat: add a.txt" (root). The MIDDLE commit is the one to select: it added
+    // b.txt and nothing since touched that file, so b.txt on screen can only come
+    // from parent..commit — commit-vs-HEAD would show a.txt and no b.txt at all,
+    // and the Diff viewer would show the (clean) working tree.
+    const sha = repo.git("rev-parse", "--short=7", "HEAD~1").trim();
     await openRepo(repo.path);
     await waitScreen('[data-pg-pane="history.list"]', "History");
     await waitFocusedPane("history.list", "opening a repo should focus the commit list");
-    await jsChord("Home"); // exactly one row selected
+
+    // Keyboard-only, like the case above, so nothing here depends on a click.
+    await jsChord("Home");
+    await waitHistorySelection("fix: update a.txt", "Home");
+    await jsChord("ArrowDown"); // exactly one row selected: the middle commit
+    await waitHistorySelection("feat: add b.txt", "ArrowDown");
 
     await jsChord("Mod+D");
-    await waitScreen('[data-pg-pane="diff.files"]', "Diff (⌘D, single selection)");
+    // The destination's own header first — it names the commit that was routed,
+    // so a mis-route fails here rather than as a mute timeout on a file row.
+    await $(`div*=Diff ${sha} (this commit)`).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: `⌘D never routed the single commit's own diff (${sha})`,
+    });
+    // Pane-scoped CSS, not `*=`-text: a bare match on b.txt would also hit
+    // History's own commit row for "feat: add b.txt", which is being unmounted.
+    await $(
+      '[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]',
+    ).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the commit's own diff never listed b.txt",
+    });
   });
 
   // ...and the pane scope itself: the selection is still two commits here, so
