@@ -202,4 +202,24 @@ describe("History multi-select", () => {
     fireEvent.click(rowFor("commit B"), { shiftKey: true }); // A,B (base = C)
     expect(screen.getByTestId("multi-squash")).not.toBeDisabled();
   });
+
+  // #158. The combined diff is a RANGE diff (parent-of-oldest → newest), so a
+  // scattered selection quietly includes the commits in between. Squash refuses
+  // such a selection and says why; the diff cannot refuse it — a range is the
+  // only thing two trees can be compared as — so it says so instead.
+  it("says a non-contiguous selection's combined diff covers the whole range", () => {
+    render(<HistoryScreen />);
+    fireEvent.click(rowFor("commit A"));
+    fireEvent.click(rowFor("commit C"), { ctrlKey: true }); // A + C, skipping B
+    const note = screen.getByTestId("multi-range-note");
+    // Oldest selected is C, so the range starts at its parent D.
+    expect(note.textContent).toContain(`${D.slice(0, 7)}..${A.slice(0, 7)}`);
+  });
+
+  it("stays quiet when the selection IS the range", () => {
+    render(<HistoryScreen />);
+    fireEvent.click(rowFor("commit A"));
+    fireEvent.click(rowFor("commit B"), { shiftKey: true }); // A,B — unbroken
+    expect(screen.queryByTestId("multi-range-note")).toBeNull();
+  });
 });

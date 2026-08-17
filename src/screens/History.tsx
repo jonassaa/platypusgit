@@ -1076,6 +1076,30 @@ function MultiCommitDetail({
       >
         {n} commits selected
       </div>
+      {/* A combined diff is a RANGE diff: parent-of-oldest → newest, which is the
+          only thing two trees can be compared as. So a selection that is not an
+          unbroken first-parent chain silently includes whatever sits between the
+          picked commits, and until now nothing said so (#158). Keyed on
+          plan.contiguous rather than a count: "how many commits are in the range"
+          cannot be answered from the loaded log, which is a graph-ordered PREFIX
+          of history across every branch (#68 G11) — a number derived from row
+          distance would be confidently wrong. */}
+      {!plan.contiguous && (
+        <div
+          data-testid="multi-range-note"
+          style={{
+            padding: "0 12px 6px",
+            fontSize: "var(--fs-12)",
+            color: "var(--fg-2)",
+          }}
+        >
+          Combined diff covers the whole range{" "}
+          <span style={{ fontFamily: "var(--font-mono)" }}>
+            {shortSha(plan.baseOid ?? plan.oldestOid)}..{shortSha(plan.newestOid)}
+          </span>
+          , including commits between the selected ones.
+        </div>
+      )}
       <div
         style={{
           padding: "0 12px 10px",
