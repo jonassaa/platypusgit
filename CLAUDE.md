@@ -18,6 +18,9 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-16-tag-signing-*` — GPG/SSH signed annotated tags reusing the commit
+  signing chain, `verify_tag` + badges, one create-tag dialog replacing three
+  prompts (#132).
 - `2026-08-16-branch-compare-*` — `compare` deep view: two mutable sides
   (ref↔ref or ref↔working tree), ahead/behind + both commit lists, the file diff
   through `CommitDiffPanel` (#131).
@@ -351,6 +354,17 @@ git/
 │                NOT git's own `.git/rebase-merge/` dir — a half-compatible one
 │                would let `git status` / `git rebase --continue` claim a rebase
 │                they cannot drive
+├── signing.rs   Object signing (#61 D6, #132). PURE: gpg.format → program →
+│                user.signingkey resolution, `resolve_key_file` (the ssh
+│                key-PATH restriction — `key::…` literals refused), the signer
+│                argv, and `parse_verify_output` for git's `%G?` triple.
+│                Format-agnostic about WHAT is signed — a commit buffer and a
+│                tag body are both just payloads, which is why the tag path
+│                reuses it whole instead of growing a second chain
+├── tag.rs       Tag signing's pure half (#132): armor-header detection,
+│                `append_signature`, `validate_tag_name` (the argv guard), and
+│                `parse_verify_tag` for `git verify-tag --raw` — see the
+│                tag-signing note under Conventions for why `%G?` can't be used
 └── signature.rs Author/committer signature helpers
 commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs        open_repo, close_repo, trust_repo_path, get_status,
@@ -375,8 +389,8 @@ commands/        Thin Tauri handlers, one file per area:
 │                  diff_commits, diff_ref_to_workdir, blame_file
 ├── branches.rs    list_branches/tags/stashes/remotes, checkout/create/delete/rename_branch,
 │                  fetch, fetch_all, pull, push, add/remove/rename/set_url/prune remote,
-│                  create/delete/push_tag, merge_branch, rebase_onto, checkout_ref,
-│                  push_delete_branch
+│                  create/delete/push_tag, verify_tag, merge_branch, rebase_onto,
+│                  checkout_ref, push_delete_branch
 ├── history.rs     reset, cherry_pick, revert
 ├── stash.rs       stash_save/apply/pop/drop/branch
 ├── conflict.rs    repo_state, conflict_sides, accept_ours/theirs, mark_resolved,
@@ -540,6 +554,15 @@ features/            Per-feature: components + Zustand store colocated
 │                    destructive flows so the screen and the row menu cannot drift:
 │                    remove is a `pgConfirm`, and git's `DirtyWorktree` refusal
 │                    becomes a SECOND, `requireText` confirm that passes --force
+├── signing/         SignatureBadgeView + useLazyVerification (the shared
+│                    debounce-then-verify), SignatureBadge (commits, #61 D6) and
+│                    TagSignatureBadge (tags, #132). Both verify ONE object, for
+│                    the current selection — never per row
+├── tags/            useCreateTagStore + CreateTagDialog (#132): name +
+│                    annotation + three-state sign, mounted once in AppShell.
+│                    Store-driven and promise-shaped because two of its three
+│                    call sites (a context-menu item builder and a palette step)
+│                    are not React components
 ├── lfs/             useLfsStore, LfsPanel (a section on the REMOTE screen, not a
 │                    screen — `git lfs fetch/pull` are remote-object transfers),
 │                    LfsDiffNotice (what all four diff surfaces render instead of
@@ -961,6 +984,66 @@ lib/
 - **`credential_approve` refuses values containing a newline** rather than
   escaping them: git's credential protocol is line-based `key=value`, so a
   newline injects further keys and could file a password against another host.
+
+### Signing: one chain for commits and tags (#61 D6, #132)
+
+- **One chain, two callers.** `libgit2.rs::sign_payload` is
+  `resolve_signing` → `signing::resolve_key_file` → `signing_args` →
+  `run_signer`, and `commit_signed` and `create_signed_tag` both call it. Do not
+  open a second one: the ssh key-PATH restriction (`user.signingkey` must be a
+  file, `key::…` and bare `ssh-…` literals are refused rather than written to a
+  temp file) lives in `resolve_key_file`, and a private copy is how it would come
+  to hold for commits and lapse for tags.
+- **A signing failure creates nothing, ever.** Both writers put the ref update
+  LAST — `repo.commit_signed` and `tag_annotation_create`/`odb.write` move no
+  reference, so we move it ourselves, after the signature exists. An unsigned
+  fallback would leave the user believing they had signed it.
+- **`git2` has no `tag_signed`.** `create_signed_tag` builds the canonical
+  UNSIGNED annotation with `tag_annotation_create`, reads its bytes back from the
+  ODB, signs those, appends the armored signature and writes a second object.
+  Deliberately not hand-written serialization: the payload is then byte-for-byte
+  what libgit2 would have stored, with no tagger formatting or timezone
+  arithmetic of ours. Cost: the unsigned annotation is left unreferenced and
+  collected by `git gc`. **Shelling out to plain `git tag -s` was considered and
+  rejected** — it does its own key resolution, so it would bypass `signing.rs`
+  entirely and silently accept the `key::` literals commits refuse. (A hybrid —
+  resolve here, then `git tag -s -u <key> -F -` — would keep the restriction; the
+  spec records why route (a) won anyway, so nobody re-derives a false dichotomy.)
+- **The ref write is not the only collision check.** `create_signed_tag`
+  early-returns on an existing `refs/tags/<name>` BEFORE signing: otherwise a
+  duplicate name pops pinentry, takes the passphrase, and only then fails. The
+  atomic `force = false` write stays as the real guarantee.
+- **Signing implies annotated.** A lightweight tag is a ref with no object to
+  sign, so `sign: Some(true)` with no annotation is `InvalidArgument`, not a
+  silent downgrade. A bare `tag.gpgsign`, though, does NOT promote a lightweight
+  tag — real `git tag v1` fails outright there (`fatal: no tag message?`), which
+  would make lightweight tags unreachable in a signing repository, and the
+  dialog's blank annotation field *means* lightweight.
+- **`commit.gpgsign` and `tag.gpgsign` are separate keys**, as in git. `sign:
+  None` follows the matching one; `Some` overrides it for that one object.
+- **`%G?` is a COMMIT format placeholder — never use it for a tag.** `git show
+  <tag> --format=%G?` reports the *commit's* signature, and
+  `for-each-ref`'s `%(signature:grade)` atom is empty for a tag object (checked
+  against git 2.50.1). `verify_tag` uses `git verify-tag --raw` and its own
+  parser, `tag::parse_verify_tag`, which returns the same `SignatureStatus`.
+  Neither the exit status nor the text alone is sufficient: a valid signature
+  from a key outside `allowedSignersFile` exits NON-ZERO while grading `G`/`U`.
+  The `[GNUPG:] ` prefix is REQUIRED when matching a gpg status token — git
+  relays gpg's status-fd output verbatim, on **stderr**, so read both streams.
+- **"No false Good" belongs to the parser.** An SSH `Good` line is refuted by a
+  non-zero exit plus `Could not verify signature`, so a signer that printed its
+  verdict before its checks cannot produce a green badge. And a key outside
+  `allowedSignersFile` (`Good "git" signature with …`, no principal) is
+  `UnknownKey` for a TAG, not `Good` — the COMMIT path still says `Good` via
+  `parse_verify_output`'s `U` mapping, which is a known gap with its own issue,
+  not something to copy. There is no SSH `Revoked` branch: git emits only
+  `Could not verify signature.` for a revoked key (measured, git 2.50.1 +
+  OpenSSH 10.2), so one would be dead code.
+- **Verdicts are lazy, presence is free.** `TagInfo.signed` is read off the tag
+  object during the existing walk (no subprocess), so tag ROWS can mark a signed
+  tag; the graded badge (`TagSignatureBadge`) verifies the SELECTED tag only.
+  Same rule `SignatureBadge` states for the log: a verdict per row is a signer
+  process per row.
 
 ### Bisect: git's state is the only state of record (#93)
 

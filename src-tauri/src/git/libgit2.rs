@@ -1060,8 +1060,6 @@ fn commit_signed(
     head: Option<&git2::Reference<'_>>,
     amend: bool,
 ) -> AppResult<String> {
-    use crate::git::signing::{resolve_signing, signing_args, SigFormat};
-
     // Parents: an amend replaces HEAD, so it inherits HEAD's parents rather than
     // chaining onto it.
     let tip = match head {
@@ -1080,28 +1078,7 @@ fn commit_signed(
     let buffer_str = std::str::from_utf8(&buffer)
         .map_err(|e| AppError::Internal(format!("commit buffer is not utf-8: {e}")))?;
 
-    let cfg = resolve_signing(repo)?;
-    let key_file = match cfg.format {
-        SigFormat::Ssh => {
-            let key = cfg.key.as_deref().ok_or_else(|| {
-                AppError::InvalidArgument("ssh signing needs user.signingkey".to_string())
-            })?;
-            // Only a key PATH is supported. git also accepts a literal key
-            // (`key::ssh-ed25519 …`), which would have to be written to a temp
-            // file first; rejecting it clearly beats writing key material to
-            // disk behind the user's back.
-            if key.starts_with("key::") || key.starts_with("ssh-") {
-                return Err(AppError::InvalidArgument(
-                    "user.signingkey must be a path to a key file for ssh signing".to_string(),
-                ));
-            }
-            Some(std::path::PathBuf::from(key))
-        }
-        _ => None,
-    };
-    let args = signing_args(&cfg, key_file.as_deref())?;
-
-    let signature = run_signer(&cfg.program, &args, buffer_str)?;
+    let signature = sign_payload(repo, buffer_str)?;
     let oid = repo.commit_signed(buffer_str, &signature, Some("gpgsig"))?;
 
     // Move the branch ourselves — commit_signed did not.
@@ -1125,6 +1102,81 @@ fn commit_signed(
     repo.reference(&ref_name, oid, true, &reflog_msg)?;
 
     Ok(oid.to_string())
+}
+
+/// Create a signed annotated tag and point `refs/tags/<name>` at it (#132).
+///
+/// `git2` has no `tag_signed` counterpart to `commit_signed`, so this is what
+/// git itself does in `builtin/tag.c`: build the tag body, sign it, append the
+/// armored signature, write the object. What it does **not** do is re-derive
+/// git's object serialization — `tag_annotation_create` writes the canonical
+/// unsigned object and `odb.read` hands its bytes back, so the payload is
+/// byte-for-byte what libgit2 would have stored, with no hand-written tagger
+/// formatting or timezone arithmetic.
+///
+/// **Same trap as `commit_signed`:** neither `tag_annotation_create` nor
+/// `odb.write` moves a reference. The ref is written last, on purpose — a
+/// signing failure then leaves no tag at all, rather than an unsigned one the
+/// user believes is signed.
+///
+/// Cost: the unsigned annotation from step one is left unreferenced in the ODB
+/// and collected by `git gc` like any other loose object. git writes one object
+/// where we write two; that is the whole difference.
+fn create_signed_tag(
+    repo: &Repository,
+    name: &str,
+    target: &git2::Object<'_>,
+    tagger: &git2::Signature<'_>,
+    message: &str,
+) -> AppResult<()> {
+    // Refuse a name collision BEFORE running the signer. The final
+    // `repo.reference(…, force = false)` would catch it too, but only after
+    // pinentry had taken the user's GPG passphrase for a tag that then fails
+    // with "tag already exists" — and after two objects had been written.
+    let refname = format!("refs/tags/{name}");
+    if repo.find_reference(&refname).is_ok() {
+        return Err(AppError::Git(format!("tag '{name}' already exists")));
+    }
+
+    // Normalize BEFORE the object is created: the signature is made over the
+    // object's bytes, so normalizing afterwards would sign one body and store
+    // another.
+    let message = crate::git::tag::normalize_message(message);
+
+    let unsigned = repo.tag_annotation_create(name, target, tagger, &message)?;
+    let odb = repo.odb()?;
+    let body = odb.read(unsigned)?.data().to_vec();
+    let payload = std::str::from_utf8(&body)
+        .map_err(|e| AppError::Internal(format!("tag buffer is not utf-8: {e}")))?;
+
+    let signature = sign_payload(repo, payload)?;
+    let signed = crate::git::tag::append_signature(&body, &signature);
+    let oid = odb.write(git2::ObjectType::Tag, &signed)?;
+
+    // Force is still false: the check above is an early-out for the common case,
+    // not a substitute for the atomic one. A ref created between the two must
+    // fail here, exactly as it does on the unsigned path (`repo.tag(…, false)`).
+    //
+    // Empty reflog message because `git tag` writes none — core.logAllRefUpdates
+    // does not cover refs/tags.
+    repo.reference(&refname, oid, false, "")?;
+    Ok(())
+}
+
+/// Resolve the signing config and produce a detached signature over `payload`.
+///
+/// The whole chain in one place — `resolve_signing` → `resolve_key_file` →
+/// `signing_args` → `run_signer` — because a commit buffer and an annotated-tag
+/// body are the same kind of thing to a signer, and a second copy of these four
+/// lines is how the ssh key-path restriction would come to hold for commits and
+/// lapse for tags (#132).
+fn sign_payload(repo: &Repository, payload: &str) -> AppResult<String> {
+    use crate::git::signing::{resolve_key_file, resolve_signing, signing_args};
+
+    let cfg = resolve_signing(repo)?;
+    let key_file = resolve_key_file(&cfg)?;
+    let args = signing_args(&cfg, key_file.as_deref())?;
+    run_signer(&cfg.program, &args, payload)
 }
 
 /// Run the signing program over `payload`, returning its signature.
@@ -3661,10 +3713,19 @@ impl GitBackend for Libgit2Backend {
                     .and_then(|o| o.peel(git2::ObjectType::Commit).ok())
                     .map(|c| c.id())
                     .unwrap_or(oid);
+                // Free: a lightweight tag has no tag object, and an annotated
+                // one already had to be read to peel it. No subprocess — the
+                // VERDICT costs one, which is why verify_tag is separate (#132).
+                let signed = repo
+                    .find_tag(oid)
+                    .ok()
+                    .and_then(|t| t.message().map(crate::git::tag::has_signature_block))
+                    .unwrap_or(false);
                 out.push(TagInfo {
                     name,
                     short_oid: tip_oid.to_string()[..7].to_string(),
                     oid: tip_oid.to_string(),
+                    signed,
                 });
                 true
             })?;
@@ -3821,15 +3882,45 @@ impl GitBackend for Libgit2Backend {
     }
     fn create_tag(&self, repo_id: &RepoId, name: &str, target: TagTarget) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
+            crate::git::tag::validate_tag_name(name)?;
             let obj = repo
                 .revparse_single(&target.oid)
                 .map_err(|_| AppError::InvalidRef(target.oid.clone()))?;
+            // `None` follows tag.gpgsign; `Some` overrides it (#132) — the same
+            // contract commit signing has with commit.gpgsign.
+            let want_sign = target
+                .sign
+                .unwrap_or_else(|| crate::git::signing::config_wants_tag_signing(repo));
             match target.annotation {
+                Some(msg) if want_sign => {
+                    let sig = crate::git::signature::default_signature(repo)?;
+                    create_signed_tag(repo, name, &obj, &sig, &msg)?;
+                }
                 Some(msg) => {
                     let sig = crate::git::signature::default_signature(repo)?;
+                    // Same normalization the signed path applies, so one dialog
+                    // input does not produce two different objects depending on
+                    // whether it was signed. `git tag` completes the line too.
+                    let msg = crate::git::tag::normalize_message(&msg);
                     repo.tag(name, &obj, &sig, &msg, false)?;
                 }
                 None => {
+                    // Signing implies annotated: a lightweight tag is a ref, and
+                    // there is no object to carry a signature. An explicit
+                    // request is refused rather than silently not honoured.
+                    //
+                    // A bare tag.gpgsign, though, does NOT promote the tag to
+                    // annotated — real `git tag` fails outright here ("fatal: no
+                    // tag message?"), which would make lightweight tags
+                    // unreachable in a signing repository. Our create-tag dialog
+                    // has an explicit annotation field whose blankness *means*
+                    // lightweight, so it wins.
+                    if target.sign == Some(true) {
+                        return Err(AppError::InvalidArgument(
+                            "signing a tag requires an annotation — a lightweight tag has no object to sign"
+                                .to_string(),
+                        ));
+                    }
                     repo.tag_lightweight(name, &obj, false)?;
                 }
             }
@@ -4353,6 +4444,71 @@ impl GitBackend for Libgit2Backend {
         Ok(crate::git::signing::parse_verify_output(
             &String::from_utf8_lossy(&out.stdout),
         ))
+    }
+
+    fn verify_tag(
+        &self,
+        repo_id: &RepoId,
+        name: &str,
+    ) -> AppResult<crate::git::signing::SignatureStatus> {
+        use crate::git::signing::{SigState, SignatureStatus};
+
+        // Before it reaches an argv: `git verify-tag` would read a value
+        // starting with '-' as an option, and this name comes from a text field.
+        crate::git::tag::validate_tag_name(name)?;
+
+        let unsigned = SignatureStatus {
+            state: SigState::None,
+            signer: None,
+            key: None,
+        };
+
+        // The common case costs no subprocess. Most tags in most repositories
+        // are unsigned or lightweight, and the Branches screen renders all of
+        // them; spawning a signer per row is exactly what SignatureBadge's doc
+        // comment refuses for commits.
+        let signed = self.with_repo(repo_id, |repo| {
+            let reference = repo
+                .find_reference(&format!("refs/tags/{name}"))
+                .map_err(|_| AppError::InvalidRef(name.to_string()))?;
+            let Some(oid) = reference.target() else {
+                // Symbolic: not a tag object, so nothing signed.
+                return Ok(false);
+            };
+            Ok(repo
+                .find_tag(oid)
+                .ok()
+                .and_then(|t| t.message().map(crate::git::tag::has_signature_block))
+                .unwrap_or(false))
+        })?;
+        if !signed {
+            return Ok(unsigned);
+        }
+
+        let repo_path = self.repo_path(repo_id)?;
+        // Shells out rather than reimplementing trust evaluation — same reason
+        // verify_commit does. `%G?` cannot be used here: it is a COMMIT format
+        // placeholder, so `git show <tag> --format=%G?` reports the commit's
+        // signature, and for-each-ref's %(signature:grade) atom is empty for a
+        // tag object. `git verify-tag --raw` is git's own verdict on the tag.
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["verify-tag", "--raw", "--"])
+            .arg(name)
+            // No tty: verification must never block on a prompt nobody can see.
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| AppError::Io(e.to_string()))?;
+
+        // git writes the verdict to stderr, not stdout.
+        let raw = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(crate::git::tag::parse_verify_tag(&raw, out.status.success()))
     }
 
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>> {

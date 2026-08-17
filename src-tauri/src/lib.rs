@@ -198,6 +198,7 @@ pub fn run() {
             commands::branches::prune_remote,
             commands::branches::create_tag,
             commands::branches::delete_tag,
+            commands::branches::verify_tag,
             commands::branches::merge_branch,
             commands::branches::rebase_onto,
             commands::branches::checkout_ref,

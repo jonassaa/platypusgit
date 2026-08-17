@@ -127,7 +127,7 @@ export interface LogFilter {
   contentRegex?: boolean;
 }
 
-/** Verification verdict for one commit's signature (#61 D6). */
+/** Verification verdict for one commit's or tag's signature (#61 D6, #132). */
 export type SigState =
   | "Good"
   | "Bad"
@@ -191,6 +191,14 @@ export interface TagInfo {
   name: string;
   shortOid: string;
   oid: string;
+  /**
+   * Whether this annotated tag's object carries a signature block (#132).
+   *
+   * A fact, not a verdict — it is read straight off the object during the tag
+   * walk, so `list_tags` costs no subprocess. `verifyTag` is what grades the
+   * signature, lazily, for the selected tag.
+   */
+  signed: boolean;
 }
 
 export interface StashInfo {

@@ -10,6 +10,7 @@
 // through to the browser.
 
 import { useCreateStore } from "@/features/create/useCreateStore";
+import { useCreateTagStore } from "@/features/tags/useCreateTagStore";
 import { useForgeStore } from "@/features/forge/useForgeStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
@@ -264,6 +265,11 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
       // fall through to some other overlay action while a run is in flight.
       if (useCreateStore.getState().open !== "none") {
         useCreateStore.getState().close();
+        return true;
+      }
+      // Same stacking layer (PGModal), same rule (#132).
+      if (useCreateTagStore.getState().target) {
+        useCreateTagStore.getState().close();
         return true;
       }
       if (useUpdateStore.getState().panelOpen) {

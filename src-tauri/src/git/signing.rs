@@ -1,8 +1,14 @@
-//! Commit signing: config resolution, program arguments, and verify parsing
-//! (#61 D6).
+//! Object signing: config resolution, program arguments, and verify parsing
+//! (#61 D6, extended to tags by #132).
 //!
 //! Nothing here spawns a process — that is `libgit2.rs`'s job. Keeping the
 //! decisions pure is what makes them testable without a gpg keyring.
+//!
+//! Everything below is **format-agnostic about what is being signed**: a
+//! signature is made over a payload on stdin, and a commit buffer and an
+//! annotated-tag body are both just payloads. That is why the tag path
+//! (`git/tag.rs` + `libgit2.rs::create_signed_tag`) reuses this module whole
+//! rather than growing a second key-resolution chain.
 
 use serde::Serialize;
 
@@ -52,18 +58,59 @@ pub fn resolve_signing(repo: &git2::Repository) -> AppResult<SigningConfig> {
     })
 }
 
-/// Whether `commit.gpgsign` asks for signing. Defaults to false.
-pub fn config_wants_signing(repo: &git2::Repository) -> bool {
+/// Read a boolean git-config flag, defaulting to false when absent or unreadable.
+fn config_flag(repo: &git2::Repository, key: &str) -> bool {
     repo.config()
-        .and_then(|c| c.get_bool("commit.gpgsign"))
+        .and_then(|c| c.get_bool(key))
         .unwrap_or(false)
 }
 
-/// Arguments for signing a commit buffer fed on stdin, signature on stdout.
+/// Whether `commit.gpgsign` asks for signing. Defaults to false.
+pub fn config_wants_signing(repo: &git2::Repository) -> bool {
+    config_flag(repo, "commit.gpgsign")
+}
+
+/// Whether `tag.gpgsign` asks for signing. Defaults to false (#132).
 ///
-/// `key_file` is the resolved private-key path for ssh signing; `user.signingkey`
-/// may instead hold a literal key (`key::ssh-ed25519 …`), which the caller writes
-/// to a temp file first, so the path cannot be derived here.
+/// Deliberately a **separate key** from `commit.gpgsign`, because git treats them
+/// separately: a repository that signs every commit has not thereby asked for
+/// signed tags, and vice versa.
+pub fn config_wants_tag_signing(repo: &git2::Repository) -> bool {
+    config_flag(repo, "tag.gpgsign")
+}
+
+/// The private-key path ssh signing needs, or `None` for formats that do not
+/// take one.
+///
+/// Only a key **path** is supported. git also accepts a literal key
+/// (`key::ssh-ed25519 …`), which would have to be written to a temp file first;
+/// rejecting it clearly beats writing key material to disk behind the user's
+/// back. Shared by the commit and tag paths so the restriction cannot hold on
+/// one and lapse on the other.
+pub fn resolve_key_file(cfg: &SigningConfig) -> AppResult<Option<std::path::PathBuf>> {
+    match cfg.format {
+        SigFormat::Ssh => {
+            let key = cfg.key.as_deref().ok_or_else(|| {
+                AppError::InvalidArgument("ssh signing needs user.signingkey".to_string())
+            })?;
+            if key.starts_with("key::") || key.starts_with("ssh-") {
+                return Err(AppError::InvalidArgument(
+                    "user.signingkey must be a path to a key file for ssh signing".to_string(),
+                ));
+            }
+            Ok(Some(std::path::PathBuf::from(key)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Arguments for signing a payload fed on stdin, signature on stdout.
+///
+/// The payload is a commit buffer or an annotated-tag body — the signer neither
+/// knows nor cares which.
+///
+/// `key_file` is the resolved private-key path for ssh signing; see
+/// [`resolve_key_file`].
 pub fn signing_args(cfg: &SigningConfig, key_file: Option<&std::path::Path>) -> AppResult<Vec<String>> {
     match cfg.format {
         SigFormat::OpenPgp => {
@@ -210,6 +257,55 @@ mod tests {
         };
         let err = signing_args(&cfg, None).expect_err("ssh needs a key");
         assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn resolve_key_file_returns_the_path_for_ssh() {
+        let cfg = SigningConfig {
+            format: SigFormat::Ssh,
+            program: "ssh-keygen".into(),
+            key: Some("/home/u/.ssh/id_ed25519".into()),
+        };
+        assert_eq!(
+            resolve_key_file(&cfg).unwrap().unwrap(),
+            std::path::PathBuf::from("/home/u/.ssh/id_ed25519")
+        );
+    }
+
+    #[test]
+    fn resolve_key_file_refuses_a_literal_ssh_key() {
+        // Supporting it would mean writing key material to a temp file behind
+        // the user's back. Both spellings git accepts are refused.
+        for literal in ["key::ssh-ed25519 AAAAC3Nz…", "ssh-ed25519 AAAAC3Nz…"] {
+            let cfg = SigningConfig {
+                format: SigFormat::Ssh,
+                program: "ssh-keygen".into(),
+                key: Some(literal.into()),
+            };
+            let err = resolve_key_file(&cfg).expect_err("literal keys are refused");
+            assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
+        }
+    }
+
+    #[test]
+    fn resolve_key_file_needs_a_key_for_ssh_but_not_for_openpgp() {
+        let ssh = SigningConfig {
+            format: SigFormat::Ssh,
+            program: "ssh-keygen".into(),
+            key: None,
+        };
+        assert!(matches!(
+            resolve_key_file(&ssh),
+            Err(AppError::InvalidArgument(_))
+        ));
+
+        // gpg picks its own default key, so no path is needed.
+        let pgp = SigningConfig {
+            format: SigFormat::OpenPgp,
+            program: "gpg".into(),
+            key: None,
+        };
+        assert!(resolve_key_file(&pgp).unwrap().is_none());
     }
 
     #[test]

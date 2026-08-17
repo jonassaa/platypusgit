@@ -116,6 +116,7 @@ fn ref_to_workdir_accepts_branch_and_tag_revspecs() {
             TagTarget {
                 oid: head,
                 annotation: None,
+                sign: None,
             },
         )
         .unwrap();

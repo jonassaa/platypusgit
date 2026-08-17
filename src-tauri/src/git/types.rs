@@ -213,6 +213,11 @@ pub struct TagInfo {
     pub name: String,
     pub short_oid: String,
     pub oid: String,
+    /// Whether this is an annotated tag whose object carries a signature block
+    /// (#132). Read from the object during the tag walk — no subprocess, so
+    /// `list_tags` costs what it always did. It states a fact, not a verdict:
+    /// `verify_tag` is what grades the signature, lazily and one tag at a time.
+    pub signed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -355,6 +360,15 @@ pub struct TagTarget {
     pub oid: String,
     /// None = lightweight tag; Some = annotated tag with this message.
     pub annotation: Option<String>,
+    /// Cryptographically sign this tag (#132). `None` follows `tag.gpgsign`
+    /// from git config; `Some` overrides it for this tag — the same contract
+    /// `CommitOptions.sign` has.
+    ///
+    /// Signing requires an annotation: a lightweight tag is a ref, with no
+    /// object to sign. `Some(true)` with no annotation is refused rather than
+    /// silently dropped.
+    #[serde(default)]
+    pub sign: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
