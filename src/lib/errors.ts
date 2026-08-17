@@ -152,7 +152,9 @@ function describeUnknown(e: unknown): string {
 
 export function appErrorMessage(e: unknown): string {
   try {
-    if (isAppError(e)) return appErrorDetail(e) || e.kind;
+    // `|| e.kind` is the no-prose fallback; `|| describeUnknown` catches an
+    // empty kind too, so a banner can never be blank.
+    if (isAppError(e)) return appErrorDetail(e) || e.kind || describeUnknown(e);
     if (e instanceof Error) return e.message;
     return describeUnknown(e);
   } catch {
@@ -211,7 +213,11 @@ export function describeError(e: unknown): string {
   try {
     if (isAppError(e)) {
       const detail = appErrorDetail(e);
-      return detail ? `${e.kind}: ${detail}` : e.kind;
+      // `isAppError` only checks that `kind` is a STRING, so it can be empty —
+      // and an empty kind with an empty message composed the one thing this
+      // function promises never to return. Fall back to the object itself.
+      if (detail) return e.kind ? `${e.kind}: ${detail}` : detail;
+      return e.kind || describeUnknown(e);
     }
     return describeUnknown(e);
   } catch {

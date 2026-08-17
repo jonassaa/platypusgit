@@ -136,6 +136,16 @@ describe("an AppError whose message is not a string", () => {
     expect(m).not.toContain(OBJ);
   });
 
+  it("says something even when the kind itself is empty", () => {
+    // `isAppError` accepts `kind: ""` — it only checks the TYPE — so an empty
+    // kind and an empty message together used to compose the empty string the
+    // docstring promises never to return.
+    expect(describeError({ kind: "", message: "" })).not.toBe("");
+    expect(appErrorMessage({ kind: "", message: "" })).not.toBe("");
+    // A real message still wins, with no stray ": " prefix from the empty kind.
+    expect(describeError({ kind: "", message: "boom" })).toBe("boom");
+  });
+
   it("keeps a struct payload's own rendering for the variants that have one", () => {
     // The shape guards must not cost Auth its sentence.
     expect(appErrorMessage({ kind: "Auth", message: { host: "h", kind: "Https" } })).toContain(
