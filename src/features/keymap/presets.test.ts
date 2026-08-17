@@ -162,6 +162,36 @@ describe("platypusgit preset", () => {
   });
 });
 
+// #158. Mod+D carries two actions: the global "go to the Diff viewer" and the
+// History commit list's combined diff. The dispatcher tries the ids in the order
+// buildReverseMap produced them and stops at the first that does not decline —
+// and nav.diff is global WITH a default runner, so it NEVER declines. Tried
+// first it would shadow the pane action permanently and silently; tried second it
+// is the fallback the pane action's decline needs. That ordering is a fact about
+// the preset TABLES (COMMON is spread before nav.diff), invisible at the call
+// site, so it is pinned here.
+describe("Mod+D is shared between a pane action and a global one (#158)", () => {
+  for (const preset of BUILTIN_PRESETS) {
+    it(`${preset.id}: offers the pane action before any global one`, () => {
+      const ids = buildReverseMap(preset).get("Mod+D") ?? [];
+      expect(ids[0]).toBe("diff.viewCombined");
+      expect(ACTIONS["diff.viewCombined"].scope).toBe("pane");
+      const globals = ids.filter((id) => ACTIONS[id].scope === "global");
+      // Classic binds nav.diff to Mod+8, so there is nothing global on Mod+D
+      // there; rider has exactly nav.diff. Either way every global id must sort
+      // after the pane one.
+      for (const g of globals) expect(ids.indexOf(g)).toBeGreaterThan(0);
+    });
+  }
+
+  it("rider: the fallback behind the pane action is the Diff viewer", () => {
+    expect(buildReverseMap(RIDER_PRESET).get("Mod+D")).toEqual([
+      "diff.viewCombined",
+      "nav.diff",
+    ]);
+  });
+});
+
 describe("repository tabs (#90)", () => {
   // Every preset binds them (the catalog-coverage test above enforces that);
   // these pin the SHAPE of the chords, which is what makes them work on every

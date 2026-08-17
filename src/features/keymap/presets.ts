@@ -75,6 +75,21 @@ const COMMON = {
   // because both actions are pane-scoped — presets.test.ts only forbids two
   // GLOBAL actions on one chord, and the dispatcher tries each id in turn.
   "diff.toggleLine": [" "],
+  // The History selection's combined diff, on the same Mod+D as nav.diff (#158).
+  // Legal because this one is pane-scoped: the dispatcher tries each id bound to
+  // a chord in turn, and the pane handler declines unless the commit list has
+  // focus with 2+ commits selected — so Mod+D still reaches the Diff viewer
+  // everywhere else. Rider's ⌘D is "Show diff", which is what both do.
+  //
+  // ORDER IS LOAD-BEARING: buildReverseMap walks Object.entries, so this entry
+  // must come BEFORE nav.diff's, and it does because COMMON is spread first in
+  // both presets. nav.diff is global WITH a default runner, so it never
+  // declines — tried first it would shadow this action permanently. Pinned by
+  // "Mod+D offers the pane action before the global one" in presets.test.ts.
+  //
+  // Bound in classic too (every catalog action must be), where nav.diff lives on
+  // Mod+8 and Mod+D is otherwise free.
+  "diff.viewCombined": ["Mod+D"],
   // Pull / merge requests (#92). The shifted-digit family is already where
   // screens without a primary number live (nav.reflog is ⌘⇧9 in rider), and
   // ⌘⇧8 is free in both presets — classic's asserted ⌘8 = Diff stays put.
