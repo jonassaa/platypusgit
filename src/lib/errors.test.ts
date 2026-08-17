@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appErrorMessage, describeError, type AppError } from "./errors";
+import { appErrorMessage, describeError, toAppError, type AppError } from "./errors";
 
 /**
  * #146: every backend failure reached the log file as `[object Object]`, so the
@@ -174,6 +174,28 @@ describe("an AppError whose message getter throws", () => {
       m = appErrorMessage(hostile());
     }).not.toThrow();
     expect(m.length).toBeGreaterThan(0);
+  });
+});
+
+describe("toAppError", () => {
+  it("passes a rejected command through with its identity intact", () => {
+    // Identity, not just shape: five `is*Error` narrowings key off `kind`, and a
+    // rewrapped Internal would defeat every one of them.
+    const app: AppError = { kind: "Auth", message: { host: "h", kind: "Https" } };
+    expect(toAppError(app)).toBe(app);
+  });
+
+  it("wraps anything else as Internal with the banner's wording", () => {
+    expect(toAppError(new TypeError("x is not a function"))).toEqual({
+      kind: "Internal",
+      message: "x is not a function",
+    });
+  });
+
+  it("never wraps a plain object as [object Object] — the #146 bug", () => {
+    const wrapped = toAppError({ code: 7, why: "nope" });
+    expect(wrapped.message).not.toContain(OBJ);
+    expect(wrapped.message).toContain("nope");
   });
 });
 

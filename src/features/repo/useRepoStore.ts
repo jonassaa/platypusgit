@@ -11,11 +11,10 @@ import type {
 } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
 import {
-  appErrorMessage,
   dubiousOwnershipPath,
-  isAppError,
   isAuthError,
   isDubiousOwnershipError,
+  toAppError,
 } from "@/lib/errors";
 import { useAuthStore } from "@/features/auth/useAuthStore";
 import { confirmTrust } from "@/features/repo/ownership";
@@ -302,16 +301,6 @@ interface RepoStoreState extends RepoSlice {
   bisectReset: () => Promise<void>;
   appendGitignore: (pattern: string) => Promise<void>;
   openInEditor: (relativePath: string) => Promise<void>;
-}
-
-function toAppError(e: unknown): AppError {
-  // `appErrorMessage`, not `String(e)` and not `describeError`: this message is
-  // what the error BANNER renders. `String(e)` reached the user as
-  // "[object Object]" for a rejected command (#146); `describeError` formats for
-  // the log file, so it leads with a discriminant — "TypeError: x is not a
-  // function" is developer text in a banner. Both fix the actual bug; only one
-  // is the right voice, and it is the one four other stores already use.
-  return isAppError(e) ? e : { kind: "Internal", message: appErrorMessage(e) };
 }
 
 /**

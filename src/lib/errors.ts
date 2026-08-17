@@ -164,6 +164,28 @@ export function appErrorMessage(e: unknown): string {
 }
 
 /**
+ * Any throw as an `AppError`, for a store whose `error` field is one.
+ *
+ * A rejected Tauri command already IS an `AppError` and passes through with its
+ * identity intact — callers narrow on `kind` (`isAuthError`,
+ * `isLfsUnavailableError`, `isBranchExistsError`, `isDubiousOwnershipError`), and
+ * rewrapping it as `Internal` would defeat every one of them. Anything else — a
+ * bug in our own code, a rejected non-command promise — becomes `Internal`
+ * carrying `appErrorMessage`'s prose, because that string is what a BANNER
+ * renders, not a log line.
+ *
+ * One definition for the five stores that hold an `AppError`: `useRepoStore`,
+ * `useReflogStore`, `useWorktreesStore`, `useSubmodulesStore`, `useLfsStore`. It
+ * was five byte-identical copies, and #151 had to edit all five to change this
+ * one line. Stores whose `error` is a plain string (`useForgeStore`,
+ * `useCompareStore`, `useCreateStore`, `useUpdateStore`) call `appErrorMessage`
+ * directly and need nothing from here.
+ */
+export function toAppError(e: unknown): AppError {
+  return isAppError(e) ? e : { kind: "Internal", message: appErrorMessage(e) };
+}
+
+/**
  * One failure rendered for the LOG FILE, not for a banner (#146).
  *
  * Differs from `appErrorMessage` on purpose: a log line leads with the `kind`,

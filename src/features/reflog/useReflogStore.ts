@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { FileDiff, ReflogEntry } from "@/lib/types";
 import type { AppError } from "@/lib/errors";
-import { appErrorMessage, isAppError } from "@/lib/errors";
+import { toAppError } from "@/lib/errors";
 import {
   checkoutDetached,
   createBranch as createBranchFn,
@@ -34,10 +34,6 @@ interface ReflogState {
   rememberAction: (a: ReflogActionChoice) => void;
   clearRememberedAction: () => void;
   clearError: () => void;
-}
-
-function toAppError(e: unknown): AppError {
-  return isAppError(e) ? e : { kind: "Internal", message: appErrorMessage(e) };
 }
 
 function currentRepoId(): string | null {

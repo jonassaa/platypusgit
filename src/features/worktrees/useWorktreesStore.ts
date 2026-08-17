@@ -7,7 +7,7 @@
 import { create } from "zustand";
 import { pgConfirm, pgPrompt } from "@/design";
 import type { AppError } from "@/lib/errors";
-import { appErrorMessage, isAppError } from "@/lib/errors";
+import { toAppError } from "@/lib/errors";
 import type { WorktreeBranch, WorktreeInfo } from "@/lib/types";
 import {
   listWorktrees,
@@ -19,10 +19,6 @@ import {
 } from "@/lib/tauri";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { useRepoStore } from "@/features/repo/useRepoStore";
-
-function toAppError(e: unknown): AppError {
-  return isAppError(e) ? e : { kind: "Internal", message: appErrorMessage(e) };
-}
 
 interface WorktreesState {
   items: WorktreeInfo[];
