@@ -1,4 +1,7 @@
 import React from "react";
+import { error as logError } from "@tauri-apps/plugin-log";
+
+import { describeError } from "@/lib/errors";
 
 /**
  * Last line of defence around a whole window.
@@ -33,6 +36,16 @@ export class PGErrorBoundary extends React.Component<Props, State> {
     // Keep the component stack — a minified production stack alone rarely
     // names the screen that threw.
     console.error("Unhandled render error:", error, info.componentStack);
+    // And to the LOG FILE, which is the only artifact a reporter can hand over:
+    // #146 was diagnosed (and mis-diagnosed) entirely from one, and a Linux user
+    // will never open a devtools console. `describeError` for the same reason
+    // `invoke` uses it — the throw need not be an `Error`, and this is a log line
+    // rather than a banner, so leading with the kind is right here.
+    logError(
+      `unhandled render error: ${describeError(error)}${
+        info.componentStack ? ` | component stack: ${info.componentStack}` : ""
+      }`,
+    );
   }
 
   render(): React.ReactNode {

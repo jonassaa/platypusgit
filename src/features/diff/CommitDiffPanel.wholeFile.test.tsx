@@ -94,7 +94,28 @@ describe("CommitDiffPanel whole-file mode", () => {
     expect(document.body.textContent).not.toContain("five");
   });
 
-  it("still renders the hunk when there is no text to fill from", async () => {
+  // The realistic absence since #151: the command RESOLVES with null instead of
+  // rejecting, so the `catch` the throw-mock below exercises is never entered.
+  // Nothing covered that path, which is the one every added or deleted file takes.
+  it("still renders the hunk when the read resolves absent", async () => {
+    resetInvokeMock();
+    mockInvoke("read_file_content_at_rev", () => null);
+    render(
+      <CommitDiffPanel
+        diffs={diffs}
+        loading={false}
+        error={null}
+        header="x → y"
+        paneIdPrefix="w4"
+        syntaxSides={sides}
+      />,
+    );
+    await waitFor(() => expect(document.body.textContent).toContain("CHANGED"));
+    // No text on either side means no filler — not a whole file filled from "".
+    expect(document.body.textContent).not.toContain("five");
+  });
+
+  it("still renders the hunk when the read rejects", async () => {
     resetInvokeMock();
     mockInvoke("read_file_content_at_rev", () => {
       throw new Error("no blob");
