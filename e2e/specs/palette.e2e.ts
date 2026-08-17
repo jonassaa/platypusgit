@@ -5,6 +5,7 @@ import {
 } from "../support/tempRepo";
 import {
   openRepo, resetApp, openPalette, paletteDialog, paletteInput, jsKey,
+  waitHeadMarkerOn,
 } from "../support/app";
 
 /** Click the palette row whose visible label contains `text`. */
@@ -112,10 +113,13 @@ describe("command palette", () => {
     await clickPaletteRow("Reset current branch to…");
     await clickPaletteRow("feat: add b.txt"); // pick the HEAD~1 commit by subject
     await clickPaletteRow("Hard");            // second step: mode pick
-    await browser.waitUntil(
-      async () => repo!.git("rev-parse", "HEAD").trim() === target,
-      { timeout: 20_000, timeoutMsg: "hard reset never moved HEAD" },
-    );
+    // The UI, not `rev-parse HEAD`: libgit2's hard reset writes
+    // checkout → HEAD → index (`reset.c`), so the ref is readable while the
+    // index still holds the old tree and `git status` — which compares against
+    // HEAD — would report a.txt as staged. Same trap as history-ops.e2e.ts's
+    // hard-reset test; the HEAD marker moving can only paint after refreshAll.
+    await waitHeadMarkerOn("feat: add b.txt");
+    expect(repo.git("rev-parse", "HEAD").trim()).toBe(target);
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 

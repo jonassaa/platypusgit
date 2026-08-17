@@ -92,10 +92,21 @@ describe("interactive rebase", () => {
       timeout: 20_000, timeoutMsg: "conflict banner (with Abort) never appeared",
     });
     await $('[data-testid="rebase-abort"]').click();
-    await browser.waitUntil(
-      async () => repo.git("rev-parse", "HEAD").trim() === before,
-      { timeout: 20_000, timeoutMsg: "abort did not restore HEAD" },
-    );
+    // The UI, not `rev-parse HEAD`. `rebase_abort` re-attaches HEAD to the
+    // branch FIRST (`set_head`) and only then throws the replay away with a
+    // hard reset, so HEAD reads as `before` while the conflicted worktree is
+    // still there — reproduced deliberately (a 20 000-file fixture widens the
+    // reset's checkout): at the first sample where HEAD had moved,
+    // `git status --porcelain` said `UU conflict.txt`, 2 runs out of 2, and
+    // never with the small fixture. The Abort button leaving the DOM can only
+    // happen after `rebaseAbort` awaited the backend call, so it is strictly
+    // after both halves.
+    await $('[data-testid="rebase-abort"]').waitForDisplayed({
+      reverse: true,
+      timeout: 20_000,
+      timeoutMsg: "the rebase banner never went away after Abort",
+    });
+    expect(repo.git("rev-parse", "HEAD").trim()).toBe(before);
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 

@@ -3,7 +3,7 @@ import { cherryRepo, multiCherryRepo, TempRepo } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
   jsContextMenu, jsHoverMenuItem, jsClickMenuItem, jsSelectValue, jsChord,
-  scrollCommitListTo,
+  scrollCommitListTo, waitHeadMarkerOn,
 } from "../support/app";
 
 describe("history danger ops", () => {
@@ -41,10 +41,16 @@ describe("history danger ops", () => {
     await jsContextMenu('[data-testid="commit-row"]', { text: "feat: add b.txt" });
     await jsHoverMenuItem("Reset current branch to here");
     await jsClickMenuItem("Hard (discard changes)");
-    await browser.waitUntil(
-      async () => repo.git("rev-parse", "HEAD").trim() === parent,
-      { timeout: 20_000, timeoutMsg: "hard reset did not move HEAD" },
-    );
+    // The UI, not `rev-parse HEAD` — unlike the soft case above, this reset has
+    // work left to do after the ref moves. libgit2 writes in the order
+    // checkout → HEAD → index (`reset.c`), so the branch ref is readable while
+    // the INDEX still holds the old tree, and `git status` compares against
+    // HEAD: it would report a.txt as staged and lose the race with the
+    // clean-tree assertion below. The HEAD marker moving to the parent's row
+    // can only paint after `refreshAll` re-read the branch tip, which is
+    // strictly after the whole reset call returned.
+    await waitHeadMarkerOn("feat: add b.txt");
+    expect(repo.git("rev-parse", "HEAD").trim()).toBe(parent);
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 
