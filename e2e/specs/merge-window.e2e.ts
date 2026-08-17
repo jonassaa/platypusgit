@@ -176,19 +176,35 @@ describe("merge resolver window", () => {
     await expect(
       $(`[data-testid="merge-file-row"][data-path="${firstPath}"]`),
     ).toHaveAttribute("data-resolved", "true");
-    // Wait for the second file's fresh (unresolved) model to finish loading
-    // before driving it: Apply stays disabled until the new region is seeded.
-    // Sending the accept chord earlier races the async sides fetch + editor
-    // remount. try/catch treats a mid-transition window as not-ready-yet.
+    // Wait for the second file's fresh model to have SEEDED ITS REGIONS before
+    // driving it — the counter reading `0/N`, not "Apply is disabled".
+    //
+    // "Apply is disabled" is ambiguous, and the gap between its two meanings is
+    // where the CI-only "Apply never enabled for the second file" flake lived.
+    // `canApply` is `!loading && !!model && !chooser && allResolved`, and
+    // `allResolved` is `regionStates.every(...)` — which is TRUE for an empty
+    // list (deliberately: a zero-conflict auto-merge file is applyable). So the
+    // retarget goes disabled (loading) → briefly ENABLED with zero regions
+    // (model in, regionStates not seeded yet) → disabled again (one unresolved
+    // region). The old wait was satisfied by the FIRST of those, so ⌘1 could
+    // land in the second and be dropped for want of a region to accept, and
+    // Apply then never enabled. `0/N` can only be the fresh unresolved file:
+    // file one's counter read `1/1` before its Apply. try/catch treats a
+    // mid-transition window as not-ready-yet.
     await browser.waitUntil(
       async () => {
         try {
-          return !(await $('[data-testid="merge-apply"]').isEnabled());
+          return /^0\/[1-9]/.test(
+            await $('[data-testid="merge-conflict-counter"]').getText(),
+          );
         } catch {
           return false;
         }
       },
-      { timeout: 10_000, timeoutMsg: "second file never settled as unresolved" },
+      {
+        timeout: 10_000,
+        timeoutMsg: "the second file's conflict regions never seeded (counter never read 0/N)",
+      },
     );
     // Resolve the second file too (keyboard ⌘1 = take ours); window closes.
     await jsChord("Mod+1");
