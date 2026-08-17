@@ -264,3 +264,29 @@ Both continue to share `flattenDiffRows`, so there is still exactly one row mode
 - The dead `DiffLineKind: "hunk"` variant in `PGDiffLine`, which renders a literal
   `@@` and has no producer anywhere. Removing it touches `PGSideBySideDiff`'s
   types; it is noted, not done.
+
+## How it renders
+
+Captured from the e2e binary on WebKitGTK/Linux, so these show layout and colour
+rather than final macOS polish. Fixture: a 40-line file with one added run, one
+removed run and one modified line.
+
+Whole-file mode — the default. The file reads top to bottom, changed lines carry
+`--git-added-bg` / `--git-removed-bg` plus their gutter stripe, and nothing labels a
+boundary the reader cannot see:
+
+![whole-file mode](assets/2026-08-17-continuous-diff-view/01-wholefile.png)
+
+The same view with F7 on hunk 0 — the gutter cluster at full strength (the hover
+treatment; the CSS rule is shared):
+
+![hunk actions revealed](assets/2026-08-17-continuous-diff-view/02-hunk-actions-active.png)
+
+Chunked mode — the gaps are real here, so each gets a separator naming what it
+hides and where it resumes:
+
+![chunked fold separators](assets/2026-08-17-continuous-diff-view/04-chunked-folds.png)
+
+…and the first gap after its expand control was clicked, filled in place:
+
+![a gap expanded in place](assets/2026-08-17-continuous-diff-view/05-chunked-expanded.png)
