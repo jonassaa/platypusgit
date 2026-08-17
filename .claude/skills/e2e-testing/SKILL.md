@@ -146,21 +146,33 @@ whole IPC call to have returned. Widen the window to check a suspicion: a
 20 000-file fixture turned the rebase-abort race from unobservable into 2 runs
 out of 2.
 
-**A wait must not be able to bind to the screen you are LEAVING.** Sharper than
-it sounds, because this driver makes the mistake unrecoverable. `$(sel)` resolved
-a moment before a screen switch can match a row on the outgoing screen; when
-React unmounts it, the embedded driver does **not** report the handle as stale —
-it still holds the detached node, `checkVisibility()` on it is simply `false`, so
-WebdriverIO's stale-element refetch never fires and `waitForDisplayed` polls a
-dead node until the deadline, with the row it wanted on screen the whole time.
-Load-dependent (a busier machine loses the race more often) and immune to a
-bigger timeout — `history-ops`'s `[data-pg-row]*=b.txt`, which also matched
-History's commit row for "feat: add b.txt", failed 4 runs in 10 under CPU
+**A wait must not be able to bind to the screen you are LEAVING**, because
+`waitForDisplayed` cannot recover from it. `$(sel)` resolved a moment before a
+screen switch can match a row on the OUTGOING screen, and once React unmounts
+that row the wait is dead — for a reason specific to how `isDisplayed` is built,
+so don't assume the usual stale-element recovery covers you:
+
+- WebdriverIO's refetch DOES work for protocol-level element commands. Measured:
+  `getText()` on such a handle raises stale, `refetchElement` re-runs the
+  selector, `elementId` changes, and it returns the NEW row's text.
+- but `isDisplayed` doesn't go through the protocol. It is
+  `browser.execute(checkVisibility, elem)` plus a `getComputedStyle` probe, with
+  the element passed as an ARGUMENT — and a detached node answers both honestly:
+  `checkVisibility()` is `false`, `getComputedStyle()` returns empty rather than
+  throwing. No "stale element reference" is ever raised, so
+  `elementErrorHandler` has nothing to catch and never refetches.
+- so `waitForDisplayed` (which is `waitUntil(() => isDisplayed())`) polls the
+  dead node for its entire budget, with the row it wanted on screen the whole
+  time.
+
+Load-dependent (a busier machine loses the resolve-vs-swap race more often) and
+immune to a bigger timeout — `history-ops`'s `[data-pg-row]*=b.txt`, which also
+matched History's commit row for "feat: add b.txt", failed 4 runs in 10 under CPU
 contention at 25s, having already been raised from 15s for exactly this symptom.
 So, after any action that changes screens: **wait on a signal that exists only on
 the destination first** (its `DeepViewHeader` crumb — name the shas it should
-carry, so a mis-route fails there saying which pair it got), and make the follow-up
-selector unambiguous — pure CSS scoped to the destination's pane
+carry, so a mis-route fails there saying which pair it got), and make the
+follow-up selector unambiguous — pure CSS scoped to the destination's pane
 (`[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]`), not
 `*=`-text that some other screen also satisfies.
 

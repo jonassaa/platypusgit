@@ -121,13 +121,16 @@ describe("history danger ops", () => {
     // History's commit row for "feat: add b.txt" — and that is what made this
     // the suite's most frequent CI failure. Resolved a moment too early (more
     // likely the busier the machine), the handle binds to a row the screen
-    // switch is about to unmount, and the embedded driver never reports that
-    // node as stale: it stays resolvable and simply answers "not displayed"
-    // forever, so WebdriverIO's stale-element refetch cannot fire. Measured:
-    // 4 failures in 10 under CPU contention with the old selector, 0 in 10 with
-    // this pair of waits, and 1/1 when the binding is forced deliberately — in
-    // every failure the real b.txt row was on screen for the whole 25s. Raising
-    // the deadline (15s → 25s, which was tried) could never have helped.
+    // switch is about to unmount, and `waitForDisplayed` cannot recover from
+    // that: `isDisplayed` is a `browser.execute(checkVisibility, elem)` with the
+    // element passed as an argument, and a DETACHED node answers honestly
+    // (`false`, and `getComputedStyle` returns empty rather than throwing), so no
+    // stale-element error is ever raised and WebdriverIO's refetch never fires.
+    // Measured: 4 failures in 10 under CPU contention with the old selector,
+    // 0 in 10 with this pair of waits, and 1/1 when the binding is forced
+    // deliberately — in every failure the real b.txt row was on screen for the
+    // whole 25s. Raising the deadline (15s → 25s, which was tried) could never
+    // have helped.
     await $(
       '[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]',
     ).waitForDisplayed({
