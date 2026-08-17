@@ -18,6 +18,10 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-17-pgit-cli-packaging-*` — `pgit` installed by every channel that
+  offers a hook (Homebrew cask, `.deb`, `.msi`), copy-paste scripts for the ones
+  that don't, and the ownership contract that keeps a package-managed `pgit` and
+  an app-installed one from fighting (#144).
 - `2026-08-16-tag-signing-*` — GPG/SSH signed annotated tags reusing the commit
   signing chain, `verify_tag` + badges, one create-tag dialog replacing three
   prompts (#132).
@@ -301,9 +305,19 @@ forge/           Forge (GitHub / GitLab) integration — PR/MR list, create, che
                  `git rev-parse`: after it everything is a PATH, so every branch
                  reads as absent (regression-tested)
 lib.rs           Tauri builder + invoke_handler! registry (all commands listed there)
-cli.rs           CLI arg parsing (LaunchIntent, parse_args, resolve_repo_root),
-                 shim install/status helpers (install_shim, shim_status) —
-                 not to be confused with git/cli.rs (CliBackend) below
+cli.rs           CLI arg parsing (LaunchIntent, parse_args, resolve_repo_root)
+                 and the whole `pgit` shim story (#144): the PURE core
+                 (shim_dirs_for / package_shim_paths_for / path_dirs /
+                 shim_scan_order / references_app / classify_sighting /
+                 plan_install) plus the impure shim_status / install_shim over
+                 it. `ShimOs` is an explicit parameter, not a `cfg!` at the
+                 point of use, so all three platform tables are testable from
+                 any host — two of the three cannot be exercised otherwise.
+                 Not to be confused with git/cli.rs (CliBackend) below
+windows/         add-user-path.ps1 — the per-user PATH append, `include_str!`'d
+                 as `WINDOWS_PATH_SCRIPT` and fed to powershell on stdin
+deb/             pgit (the /usr/bin wrapper, committed 100755) + postinst
+wix/             pgit-cli.wxs (the MSI component) + pgit.cmd
 git/
 ├── mod.rs       GitBackend trait — every git op, returns AppResult<T>
 ├── types.rs     RepoHandle, FileStatus, CommitInfo, BranchInfo, TagInfo, StashInfo,
@@ -1270,6 +1284,86 @@ lib/
   chevrons; graph merge/rebase/cherry-pick → the branch/commit context menus, the
   palette, and the Branches screen. A new gesture without one is not done.
 - Escape cancels any drag, from one capture-phase listener in the controller.
+
+### CLI packaging: `pgit` per channel (#144)
+
+- **Where `pgit` lands, per channel.** Homebrew cask: a `binary` stanza symlinks
+  the app binary into the brew prefix. `.deb`: `/usr/bin/pgit`, a wrapper
+  exec'ing `/usr/bin/platypusgit`, shipped via `bundle.linux.deb.files`.
+  `.msi`: `<INSTALLDIR>\pgit.cmd` plus `INSTALLDIR` on the machine PATH, via a
+  WiX fragment. `.dmg` and AppImage have **no hook at all** — a drag-install runs
+  no code and an AppImage is never installed — so they get Settings → Command
+  line and `scripts/install-pgit.sh`.
+- **Three parties can own `pgit`, and `shim_status` says which.**
+  `CliShimSource` is `app` (a directory we write) / `package` (launches us from
+  anywhere else) / `foreign` (does not launch us) / `none`, and `installed` means
+  *`pgit` is present and launches this app*. **A `package` shim is never
+  overwritten and never offered for overwrite** — `plan_install` enforces it in
+  the backend, not only by hiding the button, so a future caller (palette,
+  first-run prompt) cannot reintroduce the fight.
+- The scan order is **our dirs → known package paths → PATH**, deliberately.
+  Ours first is what the Reinstall button depends on; "what would a shell
+  actually run" is answered separately by `pathState`, not by reordering.
+- **Recognition needs three probes**, because the channels ship three kinds of
+  file: a symlink to `current_exe()`, a symlink named after the binary, and a
+  small wrapper script mentioning it. That last one is why the deb wrapper spells
+  its target absolutely instead of using `dirname "$0"`. Text reads are capped at
+  4 KiB and non-UTF-8 counts as "no".
+- **On an Intel Mac, Homebrew's prefix IS `/usr/local/bin`** — also our first
+  shim dir — so a cask symlink classifies `app`. Accepted, not a bug: both are
+  symlinks to the same target, and `plan_install` returns `KeepExisting` when the
+  link already points at us, so Reinstall cannot clobber a brew-managed link.
+- **macOS installs no longer need sudo.** `shim_dirs_for` is an ordered list and
+  `install_shim` takes the first one it can write; attempting the write IS the
+  writability test (a separate probe would only add a TOCTOU). `/usr/local/bin`
+  stays first because it is the only default-PATH entry, so existing installs are
+  untouched; everyone else falls through to `~/.local/bin` and the off-PATH state
+  is *reported* with the line that fixes it, never hidden.
+- **The Windows PATH write is PowerShell on purpose**, and both traps are load
+  bearing: `setx` truncates at 1024 characters and `setx PATH "%PATH%;…"` writes
+  the MERGED machine+user PATH into the user PATH; and a bare
+  `[Environment]::SetEnvironmentVariable(…, 'User')` rewrites a `REG_EXPAND_SZ`
+  PATH as `REG_SZ` with `%USERPROFILE%` permanently expanded. So the value is
+  read `DoNotExpandEnvironmentNames` and written back with `GetValueKind`'s
+  answer. The directory travels in `PGIT_BIN_DIR`, never argv — `-Command` takes
+  a script and a path is user-controlled text.
+- **Four traps in `src-tauri/wix/pgit-cli.wxs`**, each a way to fail the Windows
+  release job and ship a release with no `.msi`. They are documented in the file
+  itself; the short version: no doubled opening brace anywhere (the bundler
+  renders fragments through Handlebars and then *discards* the result, so a
+  malformed expression fails the build and a well-formed one is silently
+  dropped); the `$(var.Win64)` preamble is **copied** because candle defines are
+  per source file; `Source` uses `$(sys.SOURCEFILEDIR)` because candle's cwd is
+  `target/release/wix/<arch>`; and `light` runs **without `-sval`**, so ICE
+  validation is live — match `main.wxs`'s own component shapes rather than
+  inventing one.
+- **The exec bit on `/usr/bin/pgit` survives the bundler**, verified in source
+  rather than assumed: git stores `100755`, `fs_utils::copy_file` is
+  `std::fs::copy` (which copies permission bits), and tar-rs's
+  `HeaderMode::Deterministic` *propagates* the user execute bit on Unix
+  (`0o100 & mode` → `0o755`) instead of flattening to `0644`. Its Windows branch
+  does not, but the `.deb` is built on `ubuntu-22.04`. `deb/postinst` is the belt
+  for that brace and stays minimal: **a postinst exiting non-zero fails
+  `dpkg -i` for the whole package.**
+- **Uninstall needs no code.** Each channel's remover already deletes what it
+  shipped. There is deliberately no `postrm` (a package must not delete files it
+  did not ship) and no uninstall command (after an uninstall there is no app to
+  run one).
+- **`release.yml` is not involved.** All of this is additive bundle config;
+  `bundle.targets`, `createUpdaterArtifacts`, the updater `pubkey` and the
+  signing config are untouched. `bump-cask` rewrites the tap's cask with two
+  `sed -i -E` expressions anchored on `^  version "` and `^  sha256 "`, so the
+  cask's `binary` stanza matches neither anchor and the version bump keeps
+  working.
+- **Test seams are deliberate, and named as such**: `PGIT_APP_SEARCH_ROOT` /
+  `PGIT_UNAME` in `install-pgit.sh` and `PGIT_POSTINST_PREFIX` in `deb/postinst`
+  exist because three of five channels cannot be exercised on a developer
+  machine. Nothing in normal use sets them.
+- **`scripts/install-pgit.sh` must stay `curl … | sh`-safe**: POSIX `sh`,
+  `set -eu`, and it never reads stdin — stdin IS the script, so there can be no
+  prompts and every choice is a flag or an env var. Watch `set -e` around
+  `[ … ] && cmd` as a function's or loop body's last command, and feed loops from
+  a here-doc rather than a pipe when they assign to an outer variable.
 
 ### Permissions (Tauri 2)
 - Shared permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
