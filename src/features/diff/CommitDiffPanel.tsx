@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  PGFoldSeparator,
   PGIcon,
   PGResizeHandle,
   PGSkeleton,
@@ -9,10 +10,15 @@ import {
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
-import { useWholeFile } from "./useWholeFile";
+import { useDiffGaps, useExpandedGaps } from "./useDiffGaps";
 import { SignatureBadge } from "@/features/signing/SignatureBadge";
 import { useDiffSyntax, usePrefetchSyntax, type SideSource } from "@/lib/syntax";
-import { flattenDiffRows, windowVariable } from "@/lib/diffRows";
+import {
+  flattenDiffRows,
+  hunkAnchorRows,
+  scrollTopForRow,
+  windowVariable,
+} from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
@@ -133,12 +139,6 @@ export function CommitDiffPanel({
   // a new diff arrives, before the selection-sync effect runs.
   const current = diffs.find((d) => d.path === selected) ?? diffs[0] ?? null;
 
-  const hunkCursor = useHunkNav({
-    paneIds: [filesPaneId, viewPaneId],
-    count: current?.hunks.length ?? 0,
-    resetKey: selected,
-  });
-
   const syntax = useDiffSyntax({
     repoId: syntaxSides?.repoId ?? null,
     path: syntaxSides ? (current?.path ?? null) : null,
@@ -170,19 +170,22 @@ export function CommitDiffPanel({
   // flattenDiffRows already pairs the word spans and resolves each row's syntax
   // side, which this panel used to do by hand.
   const rowH = useDiffRowHeight();
-  const wholeFile = useWholeFile(syntax);
+  const { expanded: expandedGaps, expand: expandGap } = useExpandedGaps(selected);
+  const { gaps, text: diffText } = useDiffGaps(syntax);
   const rows = React.useMemo(
     () =>
       // `isTextualDiff` also excludes an LFS pointer diff (#93).
       flattenDiffRows(isTextualDiff(current) && current ? current.hunks : [], {
-        // This panel's hunk header is a plain text line rather than chrome with
-        // buttons, so it is one code row tall, not density-sized.
-        headerH: rowH,
+        // This panel's rows are tighter than the other surfaces', so its fold
+        // separator is one code row tall rather than density-sized chrome.
+        foldH: rowH,
         rowH,
         syntax,
-        wholeFile,
+        text: diffText,
+        gaps,
+        expandedGaps,
       }),
-    [current, rowH, syntax, wholeFile],
+    [current, rowH, syntax, diffText, gaps, expandedGaps],
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -192,6 +195,28 @@ export function CommitDiffPanel({
     () => windowVariable(heights, { scrollTop, viewportH, overscan: 8 }),
     [heights, scrollTop, viewportH],
   );
+
+  // F7/⇧F7. The cursor lands on each hunk's ANCHOR row — its first changed line —
+  // and scrolling goes BY OFFSET, because that row is usually unmounted (#157).
+  const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
+  const scrollToHunk = React.useCallback(
+    (hunkIndex: number) => {
+      const el = scrollRef.current;
+      const rowIndex = anchorRows[hunkIndex];
+      if (!el || rowIndex == null || rowIndex < 0) return;
+      el.scrollTop = scrollTopForRow(heights, rowIndex, {
+        scrollTop: el.scrollTop,
+        viewportH: el.clientHeight,
+      });
+    },
+    [anchorRows, heights],
+  );
+  const hunkCursor = useHunkNav({
+    paneIds: [filesPaneId, viewPaneId],
+    count: current?.hunks.length ?? 0,
+    resetKey: selected,
+    scrollToHunk,
+  });
 
   // Per mount site: History's bottom panel is wide and short, the full-screen
   // commit diff is not, so one shared width would fit neither.
@@ -359,22 +384,22 @@ export function CommitDiffPanel({
           {win.topPad > 0 && (
             <div data-pg-spacer="top" style={{ height: `${win.topPad}px` }} />
           )}
-          {rows.slice(win.start, win.end).map((row, k) =>
-            row.kind === "header" ? (
-              <div
-                key={`h${row.hunkIndex}`}
-                data-hunk-index={row.hunkIndex}
-                data-hunk-active={hunkCursor === row.hunkIndex ? "" : undefined}
-                style={{
-                  height: `var(--diff-row-h)`,
-                  color: "var(--fg-3)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--fs-12)",
-                }}
-              >
-                {row.header}
-              </div>
-            ) : (
+          {rows.slice(win.start, win.end).map((row, k) => {
+            // Chunked mode's real discontinuity, named rather than labelled with a
+            // `@@` range (#157). Sized to this panel's tighter code row.
+            if (row.kind === "fold") {
+              return (
+                <PGFoldSeparator
+                  key={`g${row.gapIndex}`}
+                  hiddenLines={row.hiddenLines}
+                  fromR={row.fromR}
+                  height="var(--diff-row-h)"
+                  onExpand={() => expandGap(row.gapIndex)}
+                />
+              );
+            }
+            const kind = row.line.kind;
+            const line = (
               <div
                 key={`l${win.start + k}`}
                 style={{
@@ -382,19 +407,47 @@ export function CommitDiffPanel({
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--fs-12)",
                   whiteSpace: "pre",
+                  // The Rider read: a changed line carries a coloured BACKGROUND
+                  // and a gutter stripe, not just coloured text (#157). This panel
+                  // was the one diff surface without it.
+                  background:
+                    kind === "add"
+                      ? "var(--git-added-bg)"
+                      : kind === "rem"
+                        ? "var(--git-removed-bg)"
+                        : undefined,
+                  borderLeft:
+                    kind === "add"
+                      ? "2px solid var(--git-added-gutter)"
+                      : kind === "rem"
+                        ? "2px solid var(--git-removed-gutter)"
+                        : "2px solid transparent",
+                  paddingLeft: 2,
+                  boxSizing: "border-box",
                   color:
-                    row.line.kind === "add"
+                    kind === "add"
                       ? "var(--git-added)"
-                      : row.line.kind === "rem"
+                      : kind === "rem"
                         ? "var(--git-removed)"
                         : "var(--fg-0)",
                 }}
               >
-                {row.line.kind === "add" ? "+" : row.line.kind === "rem" ? "-" : " "}
+                {kind === "add" ? "+" : kind === "rem" ? "-" : " "}
                 <CommitDiffRowText line={row.line} />
               </div>
-            ),
-          )}
+            );
+            // The anchor row is where F7 addresses this hunk, since #157.
+            if (row.kind !== "line" || !row.hunkAnchor) return line;
+            return (
+              <div
+                key={`a${win.start + k}`}
+                data-hunk-index={row.hunkIndex}
+                data-hunk-active={hunkCursor === row.hunkIndex ? "" : undefined}
+              >
+                {line}
+              </div>
+            );
+          })}
           {win.bottomPad > 0 && (
             <div data-pg-spacer="bottom" style={{ height: `${win.bottomPad}px` }} />
           )}

@@ -30,7 +30,7 @@ const bigHunk: FileDiff["hunks"] = [
   },
 ];
 
-const rows = flattenDiffRows(bigHunk, { headerH: 26, rowH: 19 });
+const rows = flattenDiffRows(bigHunk, { foldH: 22, rowH: 19 });
 
 describe("PGWindowedDiff", () => {
   it("renders every row when no window is given", () => {
@@ -53,14 +53,14 @@ describe("PGWindowedDiff", () => {
     // The whole point of numbering before windowing (#61 D7): a click in a slice
     // must report the hunk-wide index, or staging targets the wrong line.
     const clicks: Array<[number, number]> = [];
-    const target = rows[21];
+    const target = rows[20];
     if (target.kind !== "line" || target.line.changedIndex === undefined) {
-      throw new Error("fixture must put a changed line at row 21");
+      throw new Error("fixture must put a changed line at row 20");
     }
     render(
       <PGWindowedDiff
         rows={rows}
-        window={{ start: 20, end: 26, topPad: 387, bottomPad: 500 }}
+        window={{ start: 20, end: 26, topPad: 380, bottomPad: 500 }}
         onLineClick={(h, c) => clicks.push([h, c])}
       />,
     );
@@ -68,25 +68,49 @@ describe("PGWindowedDiff", () => {
     expect(clicks).toEqual([[0, target.line.changedIndex]]);
   });
 
-  it("marks the active hunk's header, which is how F7 navigation is addressed", () => {
+  it("marks the active hunk's ANCHOR row, which is how F7 navigation is addressed", () => {
+    // Since #157 the host is the hunk's first changed line, not a `@@` banner —
+    // so it must also be the row that actually holds the first addition.
     render(<PGWindowedDiff rows={rows} activeHunk={0} />);
-    const header = document.querySelector('[data-hunk-index="0"]');
-    expect(header).not.toBeNull();
-    expect(header?.getAttribute("data-hunk-active")).toBe("");
+    const anchor = document.querySelector('[data-hunk-index="0"]');
+    expect(anchor).not.toBeNull();
+    expect(anchor?.getAttribute("data-hunk-active")).toBe("");
+    expect(anchor?.textContent).toContain("line 0");
   });
 
-  it("routes stage and collapse per hunk index", () => {
-    const onToggleHunk = vi.fn();
+  it("puts exactly one anchor host in the DOM per hunk", () => {
+    render(<PGWindowedDiff rows={rows} />);
+    expect(document.querySelectorAll("[data-hunk-index]")).toHaveLength(1);
+  });
+
+  it("renders no `@@` text anywhere", () => {
+    const { container } = render(<PGWindowedDiff rows={rows} />);
+    expect(container.textContent).not.toContain("@@");
+  });
+
+  it("routes stage per hunk index, from the gutter cluster on the anchor row", () => {
     const onStage = vi.fn();
-    render(
+    render(<PGWindowedDiff rows={rows} hunkActions={() => ({ onStage })} />);
+    const stage = screen.getByTestId("hunk-stage");
+    // The cluster hangs off the anchor row, which is what makes it addressable
+    // without a per-hunk wrapper the windowing could split.
+    expect(stage.closest("[data-hunk-index]")).not.toBeNull();
+    fireEvent.click(stage);
+    expect(onStage).toHaveBeenCalled();
+  });
+
+  it("names the selection in the stage button, and stays wordless without one", () => {
+    const { unmount } = render(
       <PGWindowedDiff
         rows={rows}
-        onToggleHunk={onToggleHunk}
-        hunkActions={() => ({ onStage })}
+        hunkActions={() => ({ onStage: () => {} })}
+        selectedLines={() => [0, 1, 2]}
       />,
     );
-    fireEvent.click(screen.getByTestId("hunk-stage"));
-    expect(onStage).toHaveBeenCalled();
+    expect(screen.getByTestId("hunk-stage").textContent).toMatch(/3 lines/);
+    unmount();
+    render(<PGWindowedDiff rows={rows} hunkActions={() => ({ onStage: () => {} })} />);
+    expect(screen.getByTestId("hunk-stage").textContent).not.toMatch(/line/i);
   });
 
   it("suppresses line selection when the hunk's actions are disabled", () => {
@@ -103,6 +127,39 @@ describe("PGWindowedDiff", () => {
     expect(document.querySelectorAll('[data-testid="diff-line-changed"]')).toHaveLength(0);
     fireEvent.click(screen.getByText("line 0"));
     expect(onLineClick).not.toHaveBeenCalled();
+  });
+
+  // Chunked mode's separator. The fixture's one change is at line 5 of a file that
+  // starts above it, so there is a leading gap to name.
+  const gapped: FileDiff["hunks"] = [
+    {
+      header: "@@ -5,1 +5,1 @@",
+      oldStart: 5,
+      oldLines: 1,
+      newStart: 5,
+      newLines: 1,
+      lines: [
+        { kind: { kind: "Deletion" as const }, oldLineno: 5, newLineno: null, content: "was" },
+        { kind: { kind: "Addition" as const }, oldLineno: null, newLineno: 5, content: "now" },
+      ],
+    },
+  ];
+  const gappedRows = flattenDiffRows(gapped, { foldH: 22, rowH: 19, gaps: "fold" });
+
+  it("names a folded gap and offers to expand it", () => {
+    const onExpandGap = vi.fn();
+    render(<PGWindowedDiff rows={gappedRows} onExpandGap={onExpandGap} />);
+    const fold = screen.getByTestId("fold-expand");
+    expect(fold.textContent).toMatch(/4 unchanged lines/);
+    fireEvent.click(fold);
+    expect(onExpandGap).toHaveBeenCalledWith(0);
+  });
+
+  it("leaves the separator informational when nothing can expand it", () => {
+    render(<PGWindowedDiff rows={gappedRows} />);
+    expect(screen.getByTestId("fold-expand")).toBeDisabled();
+    // The range is still stated — that is the whole point of replacing `@@`.
+    expect(document.querySelector("[data-pg-fold]")?.textContent).toContain("1–4");
   });
 
   it("renders no spacer when the window covers everything", () => {

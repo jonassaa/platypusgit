@@ -9,7 +9,6 @@ import {
   PGBranchPill,
   PGStatusMark,
   PGButton,
-  PGIconButton,
   PGCheckbox,
   PGSelect,
 } from "./primitives";
@@ -864,77 +863,184 @@ export function PGDiffRow({
   );
 }
 
+/** Shared button shape for the two hunk-action controls. */
+function hunkActionStyle(disabled: boolean): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 3,
+    height: 16,
+    padding: "0 4px",
+    border: "1px solid var(--border-1)",
+    borderRadius: "var(--r-3)",
+    background: "var(--bg-2)",
+    color: "var(--fg-1)",
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--fs-10)",
+    lineHeight: 1,
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.5 : 1,
+    // The wrapper is pointer-events: none so a click anywhere else on the row
+    // still selects the line; the buttons opt back in.
+    pointerEvents: "auto",
+  };
+}
+
 /**
- * A hunk's chrome bar: collapse chevron, header text, Discard and Stage.
+ * A hunk's Stage/Discard cluster, pinned to the right edge of the hunk's ANCHOR
+ * row (its first changed line) — Rider's per-change gutter affordance rather than
+ * the `@@` banner that used to carry these (#157).
  *
- * Emitted by the windowed renderer as one row among many. Stays density-aware —
- * it is chrome, not code, so --row-step applies here and never to code rows.
+ * Idle at reduced opacity and full on hover; `index.css` owns that, keyed on
+ * `[data-pg-hunk-actions]`. NOT hover-only: a windowed diff cannot wrap a hunk in
+ * one element (its rows split across the window boundary), so the only cheap hover
+ * target is this single ~19px row, and an affordance discoverable solely by
+ * hovering the exact row it sits on is not discoverable. The keyboard equivalents
+ * are `diff.stageHunk` / `diff.discardHunk`.
  */
-export function PGHunkHeader({
-  header,
+export function PGHunkActions({
   staged,
   onStage,
   onDiscard,
-  expanded,
-  onToggle,
   actionsDisabledReason,
   selCount = 0,
 }: {
-  header: string;
   staged?: boolean;
   onStage?: () => void;
   onDiscard?: () => void;
-  expanded: boolean;
-  onToggle?: () => void;
   actionsDisabledReason?: string;
   selCount?: number;
 }) {
+  const disabled = !!actionsDisabledReason;
+  const verb = staged ? "Unstage" : "Stage";
+  const stageTitle =
+    actionsDisabledReason ??
+    (selCount > 0
+      ? `${verb} ${selCount} selected line${selCount === 1 ? "" : "s"}`
+      : `${verb} hunk`);
   return (
     <div
+      data-pg-hunk-actions=""
+      style={{
+        position: "absolute",
+        right: 6,
+        top: 0,
+        bottom: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 3,
+        pointerEvents: "none",
+      }}
+    >
+      <button
+        type="button"
+        className="focusable"
+        onClick={onDiscard}
+        disabled={disabled}
+        title={actionsDisabledReason ?? (selCount > 0 ? `Discard ${selCount} selected lines` : "Discard hunk")}
+        aria-label="Discard hunk"
+        style={hunkActionStyle(disabled)}
+      >
+        <PGIcon name="x" size={9} />
+      </button>
+      <button
+        type="button"
+        data-testid="hunk-stage"
+        className="focusable"
+        onClick={onStage}
+        disabled={disabled}
+        title={stageTitle}
+        aria-label={stageTitle}
+        style={{
+          ...hunkActionStyle(disabled),
+          borderColor: staged ? "var(--border-1)" : "var(--accent)",
+          color: staged ? "var(--fg-1)" : "var(--accent)",
+        }}
+      >
+        <PGIcon name={staged ? "check" : "plus"} size={9} />
+        {/* Only the selection count is spelled out. With nothing selected this
+            button has no text at all, which is what keeps it a quiet gutter
+            control — and what CommitPanel.lineStaging asserts. */}
+        {selCount > 0 && <span>{selCount} lines</span>}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Chunked mode's fold separator: the run of unchanged lines between two rendered
+ * regions, named rather than labelled with a `@@` range (#157).
+ *
+ * Says how much is hidden, where it resumes, and offers to show it. Chrome, not
+ * code, so it is density-aware (`--row-step`) — code geometry stays on
+ * `--lh-code`. `onExpand` omitted leaves it informational, which is what happens
+ * when the file text is not available to expand from.
+ */
+export function PGFoldSeparator({
+  hiddenLines,
+  fromR,
+  height = "calc(22px + var(--row-step))",
+  onExpand,
+}: {
+  hiddenLines: number;
+  /** 1-based first hidden line, new side. */
+  fromR: number;
+  height?: string;
+  onExpand?: () => void;
+}) {
+  const range = `${fromR}–${fromR + hiddenLines - 1}`;
+  const label = `${hiddenLines} unchanged line${hiddenLines === 1 ? "" : "s"}`;
+  return (
+    <div
+      data-pg-fold=""
+      title={
+        onExpand
+          ? `Lines ${range} hidden — click to show them`
+          : `Lines ${range} hidden (the file text is not loaded, so they cannot be shown here)`
+      }
       style={{
         display: "flex",
         alignItems: "center",
         gap: 8,
-        height: "calc(26px + var(--row-step))",
-        padding: "0 8px",
-        background: "var(--bg-2)",
+        height,
+        padding: "0 10px",
+        background: "var(--bg-1)",
+        borderTop: "1px dashed var(--border-0)",
+        borderBottom: "1px dashed var(--border-0)",
         fontFamily: "var(--font-mono)",
-        fontSize: "var(--fs-11)",
-        color: "var(--fg-2)",
+        fontSize: "var(--fs-10)",
+        color: "var(--fg-3)",
+        boxSizing: "border-box",
       }}
     >
-      <PGIconButton
-        icon={expanded ? "chevronDown" : "chevronRight"}
-        size="sm"
-        onClick={onToggle}
-      />
-      <span style={{ color: "var(--accent)" }}>@@ {header} @@</span>
-      <div style={{ flex: 1 }} />
-      <PGButton
-        size="xs"
-        variant="ghost"
-        onClick={onDiscard}
-        icon="x"
-        disabled={!!actionsDisabledReason}
-        title={actionsDisabledReason}
+      <button
+        type="button"
+        data-testid="fold-expand"
+        className="focusable"
+        onClick={onExpand}
+        disabled={!onExpand}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          height: 16,
+          padding: "0 5px",
+          border: "1px solid var(--border-1)",
+          borderRadius: "var(--r-3)",
+          background: "var(--bg-2)",
+          color: onExpand ? "var(--fg-1)" : "var(--fg-3)",
+          fontFamily: "inherit",
+          fontSize: "inherit",
+          lineHeight: 1,
+          cursor: onExpand ? "pointer" : "default",
+          flexShrink: 0,
+        }}
       >
-        Discard
-      </PGButton>
-      <PGButton
-        data-testid="hunk-stage"
-        size="xs"
-        variant={staged ? "outline" : "primary"}
-        onClick={onStage}
-        icon={staged ? "check" : "plus"}
-        disabled={!!actionsDisabledReason}
-        title={actionsDisabledReason}
-      >
-        {selCount > 0
-          ? `${staged ? "Unstage" : "Stage"} ${selCount} lines`
-          : staged
-            ? "Staged"
-            : "Stage hunk"}
-      </PGButton>
+        <PGIcon name="expandAll" size={9} />
+        <span>{label}</span>
+      </button>
+      <div style={{ flex: 1, borderTop: "1px dashed var(--border-0)", minWidth: 8 }} />
+      <span style={{ flexShrink: 0 }}>{range}</span>
     </div>
   );
 }

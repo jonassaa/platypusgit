@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   flattenDiffRows,
+  hunkAnchorRows,
   rowOffset,
   scrollTopForRow,
   windowVariable,
+  type DiffRow,
 } from "./diffRows";
 import type { FileDiff } from "./types";
 
@@ -21,16 +23,44 @@ const hunk = (n: number): FileDiff["hunks"][number] => ({
 });
 
 describe("flattenDiffRows", () => {
-  it("emits a header row then one row per line, per hunk", () => {
-    const rows = flattenDiffRows([hunk(1), hunk(2)], { headerH: 26, rowH: 19 });
-    expect(rows).toHaveLength(8); // 2 headers + 6 lines
-    expect(rows[0]).toMatchObject({ kind: "header", hunkIndex: 0, h: 26 });
-    expect(rows[1]).toMatchObject({ kind: "line", hunkIndex: 0, h: 19 });
-    expect(rows[4]).toMatchObject({ kind: "header", hunkIndex: 1 });
+  // There is no `@@` header row any more (#157). Two adjacent hunks with a gap
+  // between them get one fold separator; a hunk's own lines are all there is.
+  it("emits one row per line per hunk, and no header row", () => {
+    const rows = flattenDiffRows([hunk(1), hunk(2)], { foldH: 22, rowH: 19 });
+    expect(rows.some((r) => (r as { kind: string }).kind === "header")).toBe(false);
+    expect(rows[0]).toMatchObject({ kind: "line", hunkIndex: 0, h: 19 });
+    expect(rows.filter((r) => r.kind === "line")).toHaveLength(6);
+  });
+
+  it("marks each hunk's first CHANGED row as its anchor — the F7 target", () => {
+    const rows = flattenDiffRows([hunk(1), hunk(2)], { foldH: 22, rowH: 19 });
+    const anchors = rows.flatMap((r, i) =>
+      r.kind === "line" && r.hunkAnchor ? [[r.hunkIndex, i, r.line.kind]] : [],
+    );
+    // hunk(n)'s lines are [ctx, rem, add] — the rem row is the first change.
+    expect(anchors).toEqual([
+      [0, 1, "rem"],
+      [1, 4, "rem"],
+    ]);
+  });
+
+  it("anchors a hunk with no changed line at all on its first row", () => {
+    // Not something git emits, but a caller can construct one — and F7 plus the
+    // hunk actions both need every hunk index to have exactly one host.
+    const allContext = {
+      ...hunk(1),
+      lines: [
+        { kind: { kind: "Context" as const }, oldLineno: 1, newLineno: 1, content: "a" },
+        { kind: { kind: "Context" as const }, oldLineno: 2, newLineno: 2, content: "b" },
+      ],
+    };
+    const rows = flattenDiffRows([allContext], { foldH: 22, rowH: 19 });
+    expect(rows.filter((r) => r.kind === "line" && r.hunkAnchor)).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "line", hunkAnchor: true });
   });
 
   it("numbers changedIndex over the WHOLE hunk, skipping context", () => {
-    const rows = flattenDiffRows([hunk(1)], { headerH: 26, rowH: 19 });
+    const rows = flattenDiffRows([hunk(1)], { foldH: 22, rowH: 19 });
     const lines = rows.filter((r) => r.kind === "line");
     expect(lines[0].kind === "line" && lines[0].line.changedIndex).toBeUndefined();
     expect(lines[1].kind === "line" && lines[1].line.changedIndex).toBe(0);
@@ -38,7 +68,7 @@ describe("flattenDiffRows", () => {
   });
 
   it("restarts changedIndex per hunk, because the backend counts per hunk", () => {
-    const rows = flattenDiffRows([hunk(1), hunk(2)], { headerH: 26, rowH: 19 });
+    const rows = flattenDiffRows([hunk(1), hunk(2)], { foldH: 22, rowH: 19 });
     const second = rows.filter((r) => r.kind === "line" && r.hunkIndex === 1);
     expect(second.map((r) => (r.kind === "line" ? r.line.changedIndex : null))).toEqual([
       undefined,
@@ -47,14 +77,11 @@ describe("flattenDiffRows", () => {
     ]);
   });
 
-  it("omits a collapsed hunk's line rows but keeps its header", () => {
-    const rows = flattenDiffRows([hunk(1), hunk(2)], {
-      headerH: 26,
-      rowH: 19,
-      collapsed: new Set([0]),
-    });
-    expect(rows.filter((r) => r.kind !== "fill" && r.hunkIndex === 0)).toHaveLength(1);
-    expect(rows.filter((r) => r.kind !== "fill" && r.hunkIndex === 1)).toHaveLength(4);
+  it("drops every gap marker when the two sides disagree structurally", () => {
+    // hunk(2) starts BEFORE hunk(1) ends, so the gap arithmetic is nonsense and
+    // no fold count would be trustworthy — the ladder's bottom rung.
+    const rows = flattenDiffRows([hunk(1), hunk(2)], { foldH: 22, rowH: 19 });
+    expect(rows.every((r) => r.kind === "line")).toBe(true);
   });
 
   it("attaches word spans to paired rem/add rows", () => {
@@ -72,7 +99,7 @@ describe("flattenDiffRows", () => {
           ],
         },
       ],
-      { headerH: 26, rowH: 19 },
+      { foldH: 22, rowH: 19 },
     );
     const lines = rows.filter((r) => r.kind === "line");
     expect(lines[0].kind === "line" && lines[0].line.spans?.some((s) => s.changed)).toBe(true);
@@ -81,7 +108,7 @@ describe("flattenDiffRows", () => {
 
   it("attaches syntax tokens by side: rem from old, add and ctx from new", () => {
     const rows = flattenDiffRows([hunk(1)], {
-      headerH: 26,
+      foldH: 22,
       rowH: 19,
       syntax: {
         old: [[], [{ start: 0, end: 3, cls: "syn-comment" }]],
@@ -143,9 +170,10 @@ describe("flattenDiffRows whole-file mode", () => {
     oldText: string | null,
   ) =>
     flattenDiffRows(hunks, {
-      headerH: 26,
+      foldH: 22,
       rowH: 19,
-      wholeFile: { newText, oldText },
+      text: { newText, oldText },
+      gaps: "fill",
     });
   const fillsOf = (rows: ReturnType<typeof flattenDiffRows>) =>
     rows.flatMap((r) => (r.kind === "fill" ? [r.line] : []));
@@ -176,9 +204,11 @@ describe("flattenDiffRows whole-file mode", () => {
   // differs, a hunk index or changedIndex has shifted and staging would apply the
   // wrong lines.
   it("leaves hunk rows byte-identical to chunked mode", () => {
-    const plain = flattenDiffRows(oneChange, { headerH: 26, rowH: 19 });
+    const plain = flattenDiffRows(oneChange, { foldH: 22, rowH: 19 });
     const rows = whole(oneChange, NEW_TEXT, OLD_TEXT);
-    expect(rows.filter((r) => r.kind !== "fill")).toEqual(plain);
+    const lines = (rs: ReturnType<typeof flattenDiffRows>) =>
+      rs.filter((r) => r.kind === "line");
+    expect(lines(rows)).toEqual(lines(plain));
   });
 
   it("keeps filler rows out of every hunk, so they can never be staged", () => {
@@ -299,7 +329,7 @@ describe("flattenDiffRows whole-file mode", () => {
   it("degrades to chunked rows when the text is too short to fill the gap", () => {
     const rows = whole(oneChange, "one\ntwo", "one\ntwo");
     expect(rows.some((r) => r.kind === "fill")).toBe(false);
-    expect(rows).toEqual(flattenDiffRows(oneChange, { headerH: 26, rowH: 19 }));
+    expect(rows).toEqual(flattenDiffRows(oneChange, { foldH: 22, rowH: 19 }));
   });
 
   it("degrades to chunked rows when the two sides disagree on the gap length", () => {
@@ -320,7 +350,7 @@ describe("flattenDiffRows whole-file mode", () => {
 
   it("renders chunked when there is no text at all", () => {
     expect(whole(oneChange, null, null)).toEqual(
-      flattenDiffRows(oneChange, { headerH: 26, rowH: 19 }),
+      flattenDiffRows(oneChange, { foldH: 22, rowH: 19 }),
     );
   });
 
@@ -337,13 +367,118 @@ describe("flattenDiffRows whole-file mode", () => {
 
   it("still resolves syntax tokens for filler rows", () => {
     const rows = flattenDiffRows(oneChange, {
-      headerH: 26,
+      foldH: 22,
       rowH: 19,
-      wholeFile: { newText: NEW_TEXT, oldText: OLD_TEXT },
+      text: { newText: NEW_TEXT, oldText: OLD_TEXT },
+      gaps: "fill",
       // New-side line 1 is "one"; filler reads the new side.
       syntax: { old: null, new: [[{ start: 0, end: 3, cls: "syn-keyword" }]] },
     });
     expect(fillsOf(rows)[0].syntax?.[0].cls).toBe("syn-keyword");
+  });
+});
+
+// Chunked mode's answer to the `@@` banner (#157): the gap is real there, so it is
+// named — how much is hidden and where it resumes — and it can be expanded.
+describe("flattenDiffRows fold separators", () => {
+  const h = (
+    oldStart: number,
+    newStart: number,
+  ): FileDiff["hunks"][number] => ({
+    header: `@@ -${oldStart},1 +${newStart},1 @@`,
+    oldStart,
+    oldLines: 1,
+    newStart,
+    newLines: 1,
+    lines: [
+      { kind: { kind: "Deletion" }, oldLineno: oldStart, newLineno: null, content: `old ${oldStart}` },
+      { kind: { kind: "Addition" }, oldLineno: null, newLineno: newStart, content: `new ${newStart}` },
+    ],
+  });
+  // Lines 3 and 6 of an 8-line file changed.
+  const twoChanges = [h(3, 3), h(6, 6)];
+  const TEXT = "1\n2\nnew 3\n4\n5\nnew 6\n7\n8";
+  const foldsOf = (rows: DiffRow[]) => rows.flatMap((r) => (r.kind === "fold" ? [r] : []));
+  const chunked = (o?: { text?: string | null; expandedGaps?: ReadonlySet<number> }) =>
+    flattenDiffRows(twoChanges, {
+      foldH: 22,
+      rowH: 19,
+      gaps: "fold",
+      ...(o?.text === undefined ? {} : { text: { newText: o.text, oldText: null } }),
+      expandedGaps: o?.expandedGaps,
+    });
+
+  it("names the leading and inter-hunk gaps with their length and range", () => {
+    expect(foldsOf(chunked()).map((f) => [f.gapIndex, f.hiddenLines, f.fromR])).toEqual([
+      [0, 2, 1], // lines 1–2 before the first change
+      [1, 2, 4], // lines 4–5 between the two
+    ]);
+  });
+
+  it("emits no trailing separator without the text, because its length is unknowable", () => {
+    expect(foldsOf(chunked()).map((f) => f.gapIndex)).not.toContain(2);
+  });
+
+  it("emits the trailing separator once the text is there", () => {
+    const folds = foldsOf(chunked({ text: TEXT }));
+    expect(folds.map((f) => [f.gapIndex, f.hiddenLines, f.fromR])).toEqual([
+      [0, 2, 1],
+      [1, 2, 4],
+      [2, 2, 7], // lines 7–8 after the last change
+    ]);
+  });
+
+  it("carries no hunkIndex, so a fold can never reach a staging path", () => {
+    for (const f of foldsOf(chunked({ text: TEXT }))) {
+      expect("hunkIndex" in f).toBe(false);
+    }
+  });
+
+  it("expands one gap in place, leaving the others folded", () => {
+    const rows = chunked({ text: TEXT, expandedGaps: new Set([1]) });
+    expect(rows.flatMap((r) => (r.kind === "fill" ? [r.line.text] : []))).toEqual([
+      "4",
+      "5",
+    ]);
+    expect(foldsOf(rows).map((f) => f.gapIndex)).toEqual([0, 2]);
+  });
+
+  it("still folds an expanded gap when there is no text to expand from", () => {
+    const rows = chunked({ expandedGaps: new Set([1]) });
+    expect(rows.some((r) => r.kind === "fill")).toBe(false);
+    expect(foldsOf(rows).map((f) => f.gapIndex)).toEqual([0, 1]);
+  });
+});
+
+describe("hunkAnchorRows", () => {
+  const hunkAt = (n: number): FileDiff["hunks"][number] => ({
+    header: `@@ -${n},1 +${n},1 @@`,
+    oldStart: n,
+    oldLines: 1,
+    newStart: n,
+    newLines: 1,
+    lines: [
+      { kind: { kind: "Context" }, oldLineno: n, newLineno: n, content: "ctx" },
+      { kind: { kind: "Deletion" }, oldLineno: n, newLineno: null, content: "old" },
+      { kind: { kind: "Addition" }, oldLineno: null, newLineno: n, content: "new" },
+    ],
+  });
+
+  it("maps each hunk index to its anchor's FLAT row index", () => {
+    // Gap rows shift the flat indices, which is exactly why F7 cannot compute
+    // this itself from a hunk index.
+    const rows = flattenDiffRows([hunkAt(4), hunkAt(9)], { foldH: 22, rowH: 19 });
+    const anchors = hunkAnchorRows(rows);
+    expect(anchors).toHaveLength(2);
+    for (const [hunkIndex, rowIndex] of anchors.entries()) {
+      const row = rows[rowIndex];
+      expect(row.kind === "line" && row.hunkIndex).toBe(hunkIndex);
+      expect(row.kind === "line" && row.hunkAnchor).toBe(true);
+    }
+  });
+
+  it("is empty for an empty diff", () => {
+    expect(hunkAnchorRows([])).toEqual([]);
   });
 });
 

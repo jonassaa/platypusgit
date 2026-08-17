@@ -22,13 +22,18 @@ import {
   WhitespaceToggle,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
-import { useWholeFile } from "@/features/diff/useWholeFile";
+import { useDiffGaps, useExpandedGaps } from "@/features/diff/useDiffGaps";
 import { isTextualDiff, statusMark } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
-import { flattenDiffRows, rowOffset, windowVariable } from "@/lib/diffRows";
+import {
+  flattenDiffRows,
+  hunkAnchorRows,
+  rowOffset,
+  windowVariable,
+} from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { useDensityStep } from "@/features/settings/useSettingsStore";
@@ -184,41 +189,28 @@ export function DiffViewerScreen() {
     searchText: (i) => filtered[i]?.path ?? "",
   });
 
-  // F7/⇧F7 walk the viewed file's hunks from either pane.
-  const hunkCursor = useHunkNav({
-    paneIds: ["diff.files", "diff.view"],
-    count: findFiltered?.hunks.length ?? 0,
-    resetKey: selectedPath,
-  });
-
   // ── Windowed rows ────────────────────────────────────────────────────────
   const rowH = useDiffRowHeight();
-  const headerH = 26 + useDensityStep();
-  const [collapsed, setCollapsed] = React.useState<ReadonlySet<number>>(new Set());
-  const toggleHunk = React.useCallback((i: number) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
-  }, []);
-  React.useEffect(() => setCollapsed(new Set()), [selectedPath]);
+  const foldH = 22 + useDensityStep();
+  const { expanded: expandedGaps, expand: expandGap } = useExpandedGaps(selectedPath);
 
   // A find query rewrites the hunks down to matching lines only, so the pane
   // becomes a list of matches rather than a file. Filler rows are never matches,
   // so whole-file mode is suppressed while a query is active.
-  const wholeFile = useWholeFile(syntax, { disabled: !!findQuery.trim() });
+  const { gaps, text: diffText } = useDiffGaps(syntax, {
+    disabled: !!findQuery.trim(),
+  });
   const rows = React.useMemo(
     () =>
       flattenDiffRows(findFiltered?.hunks ?? [], {
-        headerH,
+        foldH,
         rowH,
-        collapsed,
         syntax,
-        wholeFile,
+        text: diffText,
+        gaps,
+        expandedGaps,
       }),
-    [findFiltered, headerH, rowH, collapsed, syntax, wholeFile],
+    [findFiltered, foldH, rowH, syntax, diffText, gaps, expandedGaps],
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
 
@@ -235,18 +227,28 @@ export function DiffViewerScreen() {
     [wrap, heights, scrollTop, viewportH],
   );
 
-  // Scroll F7's target hunk into view BY OFFSET. A querySelector would find
-  // nothing whenever the target row is outside the window.
-  React.useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || hunkCursor == null) return;
-    const idx = rows.findIndex((r) => r.kind === "header" && r.hunkIndex === hunkCursor);
-    if (idx < 0) return;
-    const top = rowOffset(heights, idx);
-    if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - headerH) {
-      el.scrollTop = top;
-    }
-  }, [hunkCursor, rows, heights, headerH]);
+  // F7/⇧F7 walk the viewed file's hunks from either pane. Scroll to the hunk's
+  // ANCHOR row BY OFFSET (#157): a querySelector would find nothing whenever that
+  // row is outside the window, which for a line row is most of the time.
+  const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
+  const scrollToHunk = React.useCallback(
+    (hunkIndex: number) => {
+      const el = scrollRef.current;
+      const idx = anchorRows[hunkIndex];
+      if (!el || idx == null || idx < 0) return;
+      const top = rowOffset(heights, idx);
+      if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - rowH) {
+        el.scrollTop = top;
+      }
+    },
+    [anchorRows, heights, rowH],
+  );
+  const hunkCursor = useHunkNav({
+    paneIds: ["diff.files", "diff.view"],
+    count: findFiltered?.hunks.length ?? 0,
+    resetKey: selectedPath,
+    scrollToHunk,
+  });
 
   if (status.length === 0) {
     return (
@@ -474,9 +476,8 @@ export function DiffViewerScreen() {
               <PGWindowedDiff
                 rows={rows}
                 window={win}
-                activeHunk={hunkCursor ?? undefined}
-                collapsed={collapsed}
-                onToggleHunk={toggleHunk}
+                activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
+                onExpandGap={expandGap}
               />
             </FocusableScroll>
           )}

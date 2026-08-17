@@ -27,7 +27,7 @@ function renderLines(
 ) {
   const rows = flattenDiffRows(
     [{ header: "@@ -1 +1 @@", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines }],
-    { headerH: 26, rowH: 19, syntax },
+    { foldH: 22, rowH: 19, syntax },
   );
   return render(<PGWindowedDiff rows={rows} />);
 }

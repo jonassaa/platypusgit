@@ -90,6 +90,20 @@ const COMMON = {
   // Bound in classic too (every catalog action must be), where nav.diff lives on
   // Mod+8 and Mod+D is otherwise free.
   "diff.viewCombined": ["Mod+D"],
+  // Hunk-level Stage/Discard from the keyboard (#157). Mod+Shift+<letter> is
+  // where repo OPS already live (S/U/M/K/T/Y/F/N/O) and H is free in both
+  // presets; it is not Mod+Alt+<letter>, so the AltGr rule is satisfied. Note
+  // Shift+Space could NOT be used for "the whole hunk, not just the line":
+  // eventToChord bakes shift into a printable character and " " is not
+  // alphanumeric, so Shift+Space and Space are the same chord. Discard takes a
+  // named key rather than a letter — it is destructive (it still confirms), and
+  // ⌫ reads that way. Both are pane-scoped, so they only fire in a diff pane.
+  //
+  // Unlike diff.viewCombined above, these two share their chords with NOTHING,
+  // so their position in this table carries no meaning — the order rule bites
+  // only where a pane action and a global one collide.
+  "diff.stageHunk": ["Mod+Shift+H"],
+  "diff.discardHunk": ["Mod+Shift+Backspace"],
   // Pull / merge requests (#92). The shifted-digit family is already where
   // screens without a primary number live (nav.reflog is ⌘⇧9 in rider), and
   // ⌘⇧8 is free in both presets — classic's asserted ⌘8 = Diff stays put.

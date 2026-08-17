@@ -77,9 +77,10 @@ describe("History inline commit diff", () => {
     render(<HistoryScreen />);
 
     // The changed-file list + the first file's hunk appear inline (no screen
-    // switch — the nav intent stays null).
+    // switch — the nav intent stays null). Asserted on the diff's own CONTENT:
+    // there is no `@@` banner to look for any more (#157).
     await waitFor(() => {
-      expect(screen.getByText(/@@ -0,0 \+1,2 @@/)).toBeInTheDocument();
+      expect(screen.getByText(/added line/)).toBeInTheDocument();
     });
     // Rows render the basename and the directory in separate spans, so assert
     // on the row's stable `data-path` rather than a single joined text node.

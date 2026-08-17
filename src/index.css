@@ -366,6 +366,24 @@ kbd {
   background: oklch(from var(--accent) l c h / 0.14) !important;
 }
 
+/* The hunk Stage/Discard cluster on a diff's anchor row (#157). Quiet until the
+   pointer is on that row or F7's cursor is, then full strength.
+
+   Deliberately NOT opacity 0: a windowed diff cannot wrap a hunk in one element
+   (its rows split across the window boundary), so the only hover target is this
+   single code row — an invisible control you can reach only by hovering the exact
+   row it lives on is undiscoverable, and a WebDriver displayedness check fails at
+   opacity 0. */
+[data-pg-hunk-actions] {
+  opacity: 0.45;
+  transition: opacity var(--t-fast);
+}
+[data-hunk-index]:hover [data-pg-hunk-actions],
+[data-hunk-active] [data-pg-hunk-actions],
+[data-pg-hunk-actions]:focus-within {
+  opacity: 1;
+}
+
 /* A source must not let WebKit start its own native drag off a selection, a
    link or an icon underneath the gesture. */
 [data-pg-drag-source] { -webkit-user-drag: none; }
