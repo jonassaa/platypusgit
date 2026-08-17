@@ -22,7 +22,8 @@ import {
   multiFileMenuItems,
   pgConfirm,
   useContextMenu,
-  usePaneWidth,
+  usePaneSize,
+  PANE_HANDLE_PX,
   type ContextMenuItem,
   type PGFileTreeNode,
 } from "@/design";
@@ -60,6 +61,7 @@ import {
   windowVariable,
 } from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
+import { useElementSize } from "@/lib/useElementSize";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
 import { splitCodeLines } from "@/lib/codeLines";
@@ -97,6 +99,11 @@ import type {
 
 type SortMode = "asc" | "desc";
 type HideKind = "Untracked" | "Ignored" | "Deleted";
+
+/** The middle pane holds a file preview or a diff — it needs a code column. */
+const PREVIEW_MIN_W = 360;
+/** The inspector is a label/value list; this is its floor as well as its reserve. */
+const INSPECTOR_MIN_W = 200;
 
 function PGBreadcrumb({ items }: { items: string[] }) {
   return (
@@ -169,14 +176,27 @@ export function RepoBrowserScreen() {
   const [sortMode, setSortMode] = React.useState<SortMode>("asc");
   const [viewMode, setViewMode] = useTreeViewMode("pg-repo-view-mode");
   const setNavIntent = useNavStore((s) => s.setIntent);
-  const treePane = usePaneWidth(280, {
+  // Three panes in one container: tree | preview (flexible) | inspector (#162).
+  // So each fixed pane caps itself against the preview's floor AND the other
+  // fixed pane. The tree reserves the inspector's MINIMUM while the inspector
+  // reserves the tree's ACTUAL size — one side has to be static or the two
+  // clamps would be circular, and yielding to the tree keeps the preview's floor
+  // exact (see paneSize.test.ts's three-pane invariant).
+  const layout = useElementSize();
+  const treePane = usePaneSize(280, {
+    axis: "width",
+    container: layout,
     min: 180,
-    max: 600,
+    siblingMin: PREVIEW_MIN_W,
+    reserve: INSPECTOR_MIN_W + PANE_HANDLE_PX,
     storageKey: "pg-repo-tree-w",
   });
-  const inspectorPane = usePaneWidth(260, {
-    min: 200,
-    max: 520,
+  const inspectorPane = usePaneSize(260, {
+    axis: "width",
+    container: layout,
+    min: INSPECTOR_MIN_W,
+    siblingMin: PREVIEW_MIN_W,
+    reserve: treePane.size + PANE_HANDLE_PX,
     storageKey: "pg-repo-inspector-w",
   });
 
@@ -836,13 +856,13 @@ export function RepoBrowserScreen() {
           </>
         }
       />
-      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+      <div ref={layout.ref} style={{ flex: 1, minHeight: 0, display: "flex" }}>
         {/* File tree */}
         <PGPane
           id="repo.tree"
           primary
           style={{
-            width: treePane.width,
+            width: treePane.size,
             flexShrink: 0,
             borderRight: "1px solid var(--border-0)",
             display: "flex",
@@ -960,7 +980,7 @@ export function RepoBrowserScreen() {
           </div>
           <StageDropBar onDrop={onStageBarDrop} />
         </PGPane>
-        <PGResizeHandle onDrag={treePane.resize} />
+        <PGResizeHandle onDrag={treePane.resize} onReset={treePane.reset} />
 
         {/* Preview + meta */}
         <PGPane
@@ -1149,6 +1169,7 @@ export function RepoBrowserScreen() {
 
         <PGResizeHandle
           onDrag={(d) => inspectorPane.resize(-d)}
+          onReset={inspectorPane.reset}
           side="left"
         />
 
@@ -1156,7 +1177,7 @@ export function RepoBrowserScreen() {
         <PGPane
           id="repo.inspector"
           style={{
-            width: inspectorPane.width,
+            width: inspectorPane.size,
             flexShrink: 0,
             borderLeft: "1px solid var(--border-0)",
             background: "var(--bg-1)",

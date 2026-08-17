@@ -4,6 +4,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
+import { stubContainerWidth } from "@/test/elementSize";
 import { CommitDiffPanel } from "./CommitDiffPanel";
 
 const props = {
@@ -47,16 +48,47 @@ describe("CommitDiffPanel files column resize", () => {
     expect(filesPane(container, "history.diff").style.width).toBe("140px");
   });
 
-  it("caps the column relative to the panel so the diff can't be pushed out", () => {
+  it("caps the column relative to the measured panel, not at a fixed number", () => {
     // The column never shrinks (flexShrink: 0), so in the narrow side-by-side
-    // History layout an unbounded drag would overflow the detail pane.
-    const { container, getByTestId } = render(
+    // History layout an unbounded drag would overflow the detail pane. The cap is
+    // the panel's own width minus what the diff needs — no constant involved.
+    const restore = stubContainerWidth(900);
+    try {
+      const { container, getByTestId } = render(
+        <CommitDiffPanel {...props} paneIdPrefix="history.diff" />,
+      );
+
+      drag(getByTestId("history.diff-files-resize"), 1000);
+
+      // 900 − 200 (the diff's floor) − 4 (the handle).
+      expect(filesPane(container, "history.diff").style.width).toBe("696px");
+    } finally {
+      restore();
+    }
+  });
+
+  it("leaves a stored width alone while the panel is unmeasured", () => {
+    // The trap: with no measurement, `container - siblingMin` is negative, so a
+    // clamp here would collapse the column AND persist the collapse.
+    localStorage.setItem("pg-history-diff-files-w", "900");
+    const { container } = render(
       <CommitDiffPanel {...props} paneIdPrefix="history.diff" />,
     );
 
-    drag(getByTestId("history.diff-files-resize"), 1000);
+    expect(filesPane(container, "history.diff").style.width).toBe("900px");
+    expect(localStorage.getItem("pg-history-diff-files-w")).toBe("900");
+  });
 
-    expect(filesPane(container, "history.diff").style.maxWidth).toBe("60%");
+  it("double-clicking the handle resets the column to its default", () => {
+    const { container, getByTestId } = render(
+      <CommitDiffPanel {...props} paneIdPrefix="history.diff" />,
+    );
+    drag(getByTestId("history.diff-files-resize"), 120);
+    expect(filesPane(container, "history.diff").style.width).toBe("360px");
+
+    fireEvent.doubleClick(getByTestId("history.diff-files-resize"));
+
+    expect(filesPane(container, "history.diff").style.width).toBe("240px");
   });
 
   it("restores the dragged width on remount, per mount site", () => {

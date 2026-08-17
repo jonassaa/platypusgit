@@ -15,9 +15,10 @@ import {
   PGResizeHandle,
   PGSpinner,
   pgConfirm,
-  usePaneWidth,
+  usePaneSize,
   usePreventBrowserContextMenu,
 } from "@/design";
+import { useElementSize } from "@/lib/useElementSize";
 import { MergeFileList, type MergeFile } from "./FileList";
 import {
   acceptOurs as acceptOursIpc,
@@ -61,9 +62,15 @@ export function MergeWindow() {
   // Bumped when the open file changed on disk without being resolved (a
   // "Restart resolution" brings its markers back), to re-fetch its sides.
   const [reloadKey, setReloadKey] = React.useState(0);
-  const listPane = usePaneWidth(260, {
+  // The body beside the list is the three-pane resolver (ours | result | theirs),
+  // so its floor is what three code columns need — but nothing caps the list
+  // beyond that (#162).
+  const layout = useElementSize();
+  const listPane = usePaneSize(260, {
+    axis: "width",
+    container: layout,
     min: 180,
-    max: 520,
+    siblingMin: 480,
     storageKey: "pg-merge-list-w",
   });
 
@@ -406,19 +413,19 @@ export function MergeWindow() {
         )}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+      <div ref={layout.ref} style={{ flex: 1, minHeight: 0, display: "flex" }}>
         {files.length > 0 && (
           <>
             <MergeFileList
               files={files}
               current={path}
               repoId={repoId}
-              width={listPane.width}
+              width={listPane.size}
               onSelect={requestSwitchTo}
               onResolved={(p) => void onFileResolved(p)}
               onChanged={(p) => void onFileChanged(p)}
             />
-            <PGResizeHandle onDrag={listPane.resize} />
+            <PGResizeHandle onDrag={listPane.resize} onReset={listPane.reset} />
           </>
         )}
         <div
