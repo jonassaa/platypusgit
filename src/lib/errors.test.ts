@@ -108,6 +108,75 @@ describe("describeError", () => {
   });
 });
 
+/**
+ * The three shapes the original 13 tests skipped, all reachable TODAY: every one
+ * of them goes through `appErrorDetail`, whose `e.message ?? ""` assumed a
+ * string. `isAppError` accepts any object carrying a string `kind`, so a foreign
+ * object qualifies — and the moment Rust grows a second struct-payload variant
+ * (`Auth` is the first) a real one does too.
+ */
+describe("an AppError whose message is not a string", () => {
+  const nested = { kind: "Git", message: { nested: true } };
+
+  it("does not reach the log as [object Object]", () => {
+    // Pre-fix this returned literally "Git: [object Object]" — the one string
+    // describeError's own docstring says it can never return.
+    const s = describeError(nested);
+    expect(s).not.toContain(OBJ);
+    expect(s).toContain("Git");
+    expect(s).toContain("nested");
+  });
+
+  it("does not reach a banner as a non-string", () => {
+    // Pre-fix this returned the OBJECT itself from a function typed `: string`
+    // — "Objects are not valid as a React child" in a banner, "[object Object]"
+    // in a template.
+    const m = appErrorMessage(nested);
+    expect(typeof m).toBe("string");
+    expect(m).not.toContain(OBJ);
+  });
+
+  it("keeps a struct payload's own rendering for the variants that have one", () => {
+    // The shape guards must not cost Auth its sentence.
+    expect(appErrorMessage({ kind: "Auth", message: { host: "h", kind: "Https" } })).toContain(
+      "h",
+    );
+    expect(appErrorMessage({ kind: "BranchExists", message: "feat/x" })).toContain("feat/x");
+  });
+});
+
+describe("an AppError whose message getter throws", () => {
+  const hostile = () => ({
+    kind: "Git",
+    get message(): string {
+      throw new Error("payload is a trap");
+    },
+  });
+
+  /**
+   * The dangerous one. `invoke` logs BEFORE it rethrows, so an exception raised
+   * INSIDE the logger replaces the original rejection: `isAuthError` downstream
+   * then fails to narrow and no credential prompt is raised — a network op just
+   * fails instead of asking for a password.
+   */
+  it("does not propagate out of describeError", () => {
+    let s = "";
+    expect(() => {
+      s = describeError(hostile());
+    }).not.toThrow();
+    expect(s).toContain("Git");
+    expect(s).not.toContain(OBJ);
+  });
+
+  it("does not propagate out of appErrorMessage either", () => {
+    let m = "";
+    expect(() => {
+      m = appErrorMessage(hostile());
+    }).not.toThrow();
+    expect(m.length).toBeGreaterThan(0);
+  });
+});
+
 describe("appErrorMessage", () => {
   it("still renders a sentence, without the kind prefix a log wants", () => {
     // The banner contract is unchanged: prose only, no discriminant.

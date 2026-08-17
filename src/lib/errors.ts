@@ -74,21 +74,53 @@ export function isAppError(e: unknown): e is AppError {
  * Empty when the variant carries no message at all (`Unborn`, `NoBisect`, …), so
  * callers decide what to show instead: a banner falls back to the kind, a log
  * line already has it.
+ *
+ * ALWAYS a string, whatever the payload is. `isAppError` accepts any object with
+ * a string `kind`, so `message` is only a string by convention — and `Auth`
+ * proves the enum itself can carry a struct. The old `e.message ?? ""` therefore
+ * returned an object for any shape without a case below: `[object Object]` in a
+ * log line, and "Objects are not valid as a React child" in a banner.
  */
 function appErrorDetail(e: AppError): string {
-  // Auth's payload is structured, not a sentence — render it here rather than
-  // letting an object reach the UI as "[object Object]".
-  if (e.kind === "Auth") return authChallengeMessage(e.message);
+  // ONE guarded read, so every branch below works on a value that is already in
+  // hand. A `message` getter that throws must not escape — see `describeError`.
+  let message: unknown;
+  try {
+    message = (e as { message?: unknown }).message;
+  } catch {
+    // Unreadable reads as "no prose available", same as a variant that carries
+    // none: both consumers then fall back to the kind, which is the whole
+    // reason that fallback exists.
+    return "";
+  }
+  // Each variant that carries a STRUCT or an IDENTIFIER instead of prose renders
+  // it here — and checks the shape it needs first, so a payload of the wrong
+  // type falls through to the generic tail instead of being mis-read.
+  //
+  // Auth's payload is structured, not a sentence.
+  if (e.kind === "Auth" && typeof message === "object" && message !== null) {
+    return authChallengeMessage(message as AuthChallenge);
+  }
   // ForgeAuth carries a HOST and BranchExists carries a BRANCH NAME, not
   // prose. Rendered raw, the banner would just read "github.com".
-  if (e.kind === "ForgeAuth") return forgeAuthMessage(e.message);
-  if (e.kind === "BranchExists")
-    return `A local branch named ${e.message} already exists.`;
+  if (e.kind === "ForgeAuth" && typeof message === "string") {
+    return forgeAuthMessage(message);
+  }
+  if (e.kind === "BranchExists" && typeof message === "string") {
+    return `A local branch named ${message} already exists.`;
+  }
   // StaleStash carries a LABEL (`stash@{1}`) — rendered raw the banner would
   // just read "stash@{1}" with no hint of what to do about it.
-  if (e.kind === "StaleStash")
-    return `${e.message} is no longer the entry you picked — the stash list changed. Refresh and try again.`;
-  return e.message ?? "";
+  if (e.kind === "StaleStash" && typeof message === "string") {
+    return `${message} is no longer the entry you picked — the stash list changed. Refresh and try again.`;
+  }
+  if (message === undefined || message === null) return "";
+  if (typeof message === "string") return message;
+  // Anything else: a future Rust variant carrying a struct with no case above,
+  // or a foreign object that merely satisfies `isAppError`. `describeUnknown` is
+  // what keeps the return type honest and "[object Object]" out of both the log
+  // file and the DOM.
+  return describeUnknown(message);
 }
 
 /**
@@ -119,9 +151,16 @@ function describeUnknown(e: unknown): string {
 }
 
 export function appErrorMessage(e: unknown): string {
-  if (isAppError(e)) return appErrorDetail(e) || e.kind;
-  if (e instanceof Error) return e.message;
-  return describeUnknown(e);
+  try {
+    if (isAppError(e)) return appErrorDetail(e) || e.kind;
+    if (e instanceof Error) return e.message;
+    return describeUnknown(e);
+  } catch {
+    // Same reason `describeError` is total: this runs in catch arms and in
+    // render, so throwing here would either replace the failure being reported
+    // or take the whole screen down with it.
+    return "The error could not be read.";
+  }
 }
 
 /**
@@ -134,16 +173,28 @@ export function appErrorMessage(e: unknown): string {
  * enum's spelling to a user.
  *
  * Total over every input shape: `AppError`, `Error`, string, `undefined`,
- * `null`, a bare object, a primitive. It never returns an empty string and
- * never returns `[object Object]`, which is what v0.0.11 logged for every
- * backend failure and what cost us the diagnosis in #146.
+ * `null`, a bare object, a primitive, an `AppError` whose message is not a
+ * string. It never returns an empty string and never returns `[object Object]`,
+ * which is what v0.0.11 logged for every backend failure and what cost us the
+ * diagnosis in #146.
+ *
+ * And it NEVER THROWS, which matters more than the formatting: `invoke` logs a
+ * failure and then rethrows it, in that order, so an exception raised in here
+ * would replace the original rejection — `isAuthError` would stop narrowing and
+ * a network op would fail silently instead of raising the credential prompt.
+ * Hence the catch-all: an unreadable payload (a throwing getter, an exotic
+ * proxy) costs a vague line, not the diagnosis.
  */
 export function describeError(e: unknown): string {
-  if (isAppError(e)) {
-    const detail = appErrorDetail(e);
-    return detail ? `${e.kind}: ${detail}` : e.kind;
+  try {
+    if (isAppError(e)) {
+      const detail = appErrorDetail(e);
+      return detail ? `${e.kind}: ${detail}` : e.kind;
+    }
+    return describeUnknown(e);
+  } catch {
+    return "<unreadable error>";
   }
-  return describeUnknown(e);
 }
 
 /** One-line description of an auth challenge, for banners and fallbacks. */
