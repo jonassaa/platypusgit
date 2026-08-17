@@ -181,27 +181,37 @@ pub trait GitBackend: Send + Sync {
     /// revspec can't be resolved.
     fn list_files_at_rev(&self, repo_id: &RepoId, revspec: &str) -> AppResult<Vec<FileStatus>>;
     /// Read the content of `path` from the tree at `revspec`. `InvalidRef` if
-    /// the revspec can't be resolved; `InvalidPath` if the path isn't in that
-    /// tree. The returned `FileContent.from_head` is true (content is from a
-    /// committed tree, not the worktree).
+    /// the revspec can't be resolved. The returned `FileContent.from_head` is
+    /// true (content is from a committed tree, not the worktree).
+    ///
+    /// `Ok(None)` — NOT an error — when that tree holds no text at that path:
+    /// the path is absent, or it is a directory or a submodule gitlink. Absence
+    /// is the EXPECTED answer here, because every caller is a diff surface
+    /// asking for the other side of a file it is already rendering, and an added
+    /// file has no old side. Returning `InvalidPath` instead put a routine
+    /// condition on the error path, where the frontend's shared `invoke` wrapper
+    /// logged it at ERROR (#146). A genuine failure — bad revspec, unknown
+    /// repository, unreadable object — still errors.
     fn read_file_content_at_rev(
         &self,
         repo_id: &RepoId,
         revspec: &str,
         path: &Path,
-    ) -> AppResult<FileContent>;
+    ) -> AppResult<Option<FileContent>>;
     /// The INDEX copy of a file — what committing would record.
     ///
     /// Distinct from both other readers precisely when a file is partially
     /// staged, which is the case the commit panel could not colour correctly
     /// while it had to approximate the index with HEAD and the worktree.
-    /// A path with no stage-0 entry (untracked, or conflicted) is an
-    /// `InvalidPath`, so the caller can fall back to rendering plain rows.
+    /// A path with no stage-0 entry (untracked, or conflicted) is `Ok(None)`,
+    /// not an error — the commit panel asks for the index side of every row it
+    /// renders, so an untracked row genuinely having none is the expected
+    /// answer, and the caller falls back to plain rows (#146).
     fn read_file_content_at_index(
         &self,
         repo_id: &RepoId,
         path: &Path,
-    ) -> AppResult<FileContent>;
+    ) -> AppResult<Option<FileContent>>;
     fn diff_commits(
         &self,
         repo_id: &RepoId,

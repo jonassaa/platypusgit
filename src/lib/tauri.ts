@@ -128,23 +128,33 @@ export async function listFilesAtRev(
  * Differs from both other readers exactly when a file is partially staged, which
  * is why the commit panel needs it: its diffs are against the index, so tokens
  * taken from HEAD or the worktree could land on the wrong lines there.
- * Rejects with `InvalidPath` for a path with no stage-0 entry (untracked, or
- * conflicted); callers render those rows plain.
+ * Resolves to `null` — it does NOT reject — for a path with no stage-0 entry
+ * (untracked, or conflicted); callers render those rows plain. Absence is the
+ * expected answer, not a failure: the commit panel asks for the index side of
+ * every row it draws (#146).
  */
 export async function readFileContentAtIndex(
   repoId: string,
   path: string,
-): Promise<FileContent> {
-  return invoke<FileContent>("read_file_content_at_index", { repoId, path });
+): Promise<FileContent | null> {
+  return invoke<FileContent | null>("read_file_content_at_index", { repoId, path });
 }
 
-/** Read a file's content from the tree at `revspec`. */
+/**
+ * Read a file's content from the tree at `revspec`.
+ *
+ * Resolves to `null` when that tree holds no text at that path — absent, a
+ * directory, or a submodule gitlink. Every caller is a diff surface reading the
+ * OTHER side of a file it is already rendering, so an added file having no old
+ * side is routine and must not travel the error path (#146). A genuine failure
+ * (bad revspec, unknown repository) still rejects.
+ */
 export async function readFileContentAtRev(
   repoId: string,
   revspec: string,
   path: string,
-): Promise<FileContent> {
-  return invoke<FileContent>("read_file_content_at_rev", {
+): Promise<FileContent | null> {
+  return invoke<FileContent | null>("read_file_content_at_rev", {
     repoId,
     revspec,
     path,

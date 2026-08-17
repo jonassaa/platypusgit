@@ -10,7 +10,7 @@ mod support;
 use std::path::Path;
 
 use platypusgit_lib::error::AppError;
-use platypusgit_lib::git::GitBackend;
+use platypusgit_lib::git::{libgit2::Libgit2Backend, types::RepoId, GitBackend};
 
 use support::{fs::write_file, TempRepo};
 
@@ -29,7 +29,8 @@ fn reads_the_staged_copy_not_the_worktree_or_head() {
 
     let index = backend
         .read_file_content_at_index(&handle.id, Path::new("README.md"))
-        .unwrap();
+        .unwrap()
+        .expect("README.md is in the index");
     assert_eq!(index.text.as_deref(), Some("v2\n"));
     assert!(!index.binary);
 
@@ -41,7 +42,8 @@ fn reads_the_staged_copy_not_the_worktree_or_head() {
     assert_eq!(worktree.text.as_deref(), Some("v3\n"));
     let head = backend
         .read_file_content_at_rev(&handle.id, "HEAD", Path::new("README.md"))
-        .unwrap();
+        .unwrap()
+        .expect("README.md exists at HEAD");
     assert_eq!(head.text.as_deref(), Some("v1\n"));
 }
 
@@ -53,22 +55,35 @@ fn reads_committed_content_when_nothing_is_staged() {
 
     let index = backend
         .read_file_content_at_index(&handle.id, Path::new("README.md"))
-        .unwrap();
+        .unwrap()
+        .expect("README.md is in the index");
     assert_eq!(index.text.as_deref(), Some("v1\n"));
 }
 
-/// A path that is not in the index at all is an InvalidPath, not a panic — the
-/// caller renders the rows plain.
+/// A path that is not in the index at all is `Ok(None)`, not an error (#146) —
+/// the caller renders the rows plain. The commit panel asks for the index side of
+/// every row it draws, so an untracked row having none is the expected answer,
+/// and reporting it as `InvalidPath` put a routine condition on the error path.
 #[test]
-fn untracked_path_is_an_error() {
+fn untracked_path_is_absent_not_an_error() {
     let tr = TempRepo::with_initial_commit("v1\n");
     write_file(tr.path(), "untracked.txt", "nope\n");
     let (backend, handle) = tr.open_with_backend();
 
-    let err = backend
+    let out = backend
         .read_file_content_at_index(&handle.id, Path::new("untracked.txt"))
+        .expect("absence must not be an error");
+    assert!(out.is_none(), "expected None, got {out:?}");
+}
+
+/// ...but a GENUINE failure on the same op still errors. Absence going quiet
+/// must not take real problems with it.
+#[test]
+fn an_unknown_repo_still_errors_while_absence_does_not() {
+    let err = Libgit2Backend::new()
+        .read_file_content_at_index(&RepoId("never-opened".into()), Path::new("README.md"))
         .unwrap_err();
-    assert!(matches!(err, AppError::InvalidPath(_)), "got {err:?}");
+    assert!(matches!(err, AppError::UnknownRepo(_)), "got {err:?}");
 }
 
 /// Binary content is reported as binary with no text, like the other readers.
@@ -84,7 +99,8 @@ fn binary_content_reports_binary() {
 
     let out = backend
         .read_file_content_at_index(&handle.id, Path::new("blob.bin"))
-        .unwrap();
+        .unwrap()
+        .expect("blob.bin is staged");
     assert!(out.binary);
     assert!(out.text.is_none());
 }

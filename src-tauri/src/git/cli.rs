@@ -129,14 +129,14 @@ impl GitBackend for CliBackend {
         _repo_id: &RepoId,
         _revspec: &str,
         _path: &Path,
-    ) -> AppResult<FileContent> {
+    ) -> AppResult<Option<FileContent>> {
         Err(AppError::NotImplemented)
     }
     fn read_file_content_at_index(
         &self,
         _repo_id: &RepoId,
         _path: &Path,
-    ) -> AppResult<FileContent> {
+    ) -> AppResult<Option<FileContent>> {
         Err(AppError::NotImplemented)
     }
     fn diff_commits(

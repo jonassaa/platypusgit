@@ -102,7 +102,7 @@ pub async fn read_file_content_at_rev(
     repo_id: String,
     revspec: String,
     path: String,
-) -> AppResult<FileContent> {
+) -> AppResult<Option<FileContent>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let path_buf = PathBuf::from(path);
@@ -118,7 +118,7 @@ pub async fn read_file_content_at_index(
     state: State<'_, AppState>,
     repo_id: String,
     path: String,
-) -> AppResult<FileContent> {
+) -> AppResult<Option<FileContent>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let path_buf = PathBuf::from(path);
