@@ -4,7 +4,12 @@ import { PGWindowedDiff } from "./PGWindowedDiff";
 import { flattenDiffRows } from "@/lib/diffRows";
 import type { FileDiff } from "@/lib/types";
 
-/** 50 lines, alternating addition and context, so changed indices are 0,1,2… */
+/**
+ * 50 lines, alternating addition and context, so changed indices are 0,1,2… —
+ * behind the `HunkHeader` line the backend's commit-diff builder puts at the front
+ * of every hunk's `lines[]` (#161). The fixture carries it because the version
+ * without it let `renders no @@ text anywhere` pass while `@@` was on screen.
+ */
 const bigHunk: FileDiff["hunks"] = [
   {
     header: "@@ -1,50 +1,50 @@",
@@ -12,21 +17,29 @@ const bigHunk: FileDiff["hunks"] = [
     oldLines: 50,
     newStart: 1,
     newLines: 50,
-    lines: Array.from({ length: 50 }, (_, i) =>
-      i % 2 === 0
-        ? {
-            kind: { kind: "Addition" as const },
-            oldLineno: null,
-            newLineno: i + 1,
-            content: `line ${i}`,
-          }
-        : {
-            kind: { kind: "Context" as const },
-            oldLineno: i + 1,
-            newLineno: i + 1,
-            content: `line ${i}`,
-          },
-    ),
+    lines: [
+      {
+        kind: { kind: "HunkHeader" as const },
+        oldLineno: null,
+        newLineno: null,
+        content: "@@ -1,50 +1,50 @@\n",
+      },
+      ...Array.from({ length: 50 }, (_, i) =>
+        i % 2 === 0
+          ? {
+              kind: { kind: "Addition" as const },
+              oldLineno: null,
+              newLineno: i + 1,
+              content: `line ${i}`,
+            }
+          : {
+              kind: { kind: "Context" as const },
+              oldLineno: i + 1,
+              newLineno: i + 1,
+              content: `line ${i}`,
+            },
+      ),
+    ],
   },
 ];
 

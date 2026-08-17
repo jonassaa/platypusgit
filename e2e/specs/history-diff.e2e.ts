@@ -76,6 +76,44 @@ describe("history & diff", () => {
     await expect($("span*=SUBJECT")).toBeDisplayed();
   });
 
+  // #161 — the check #157 skipped. #157 proved `PGHunkHeader` was gone and the
+  // `@@` round trip with it, but never that `@@` had left the SCREEN, and it had
+  // not: the backend's commit-diff builder prints with `DiffFormat::Patch`, so
+  // libgit2's `'H'` line rides inside the hunk's own `lines[]` as
+  // `DiffLineKind::HunkHeader` and rendered here as a context row reading
+  // `@@ -1 +1 @@`. This panel is the surface — the working-tree builder drops
+  // `'H'` itself, so the commit panel and the Diff screen never showed it.
+  it("renders the inline commit diff with no `@@` on screen", async () => {
+    repo = basicRepo();
+    await openRepo(repo.path);
+    await switchScreen("history");
+    await $("span*=SUBJECT").waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "history column headers never appeared",
+    });
+
+    // Default selection is the newest commit, "fix: update a.txt" — a.txt from
+    // `alpha v1` to `alpha v2`, so its diff is one real hunk with both a removed
+    // and an added line: the shape that carries a header line.
+    const detail = $('[data-testid="history-detail"]');
+    await detail.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "inline diff detail region never appeared",
+    });
+    // Wait for diff CONTENT, not just the region: an empty pane satisfies
+    // "contains no @@" vacuously, which is the whole failure mode being fixed.
+    await browser.waitUntil(
+      async () => (await detail.getText()).includes("alpha v2"),
+      {
+        timeout: 20_000,
+        timeoutMsg: "the inline diff never rendered the commit's added line",
+      },
+    );
+    const text = await detail.getText();
+    expect(text).toContain("alpha v1");
+    expect(text).not.toContain("@@");
+  });
+
   it("shows a hunk for a modified file and stages it", async () => {
     repo = dirtyRepo();
     await openRepo(repo.path);

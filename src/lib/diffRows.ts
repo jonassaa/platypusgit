@@ -92,6 +92,30 @@ export function withChangedIndices(lines: DiffLineData[]): DiffLineData[] {
   );
 }
 
+/**
+ * Is this backend line part of the FILE, rather than diff chrome?
+ *
+ * `diff_to_file_diffs` — the backend's commit-diff builder — prints with
+ * `DiffFormat::Patch`, so libgit2's `'H'` line lands inside the hunk's own
+ * `lines[]` as `DiffLineKind::HunkHeader`: `@@ -1,3 +1,3 @@` arriving as an
+ * ordinary entry in the line list, nothing to do with the `PGHunkHeader` banner
+ * #157 deleted. `toUiLine` maps every non-add/rem kind to `ctx`, so it rendered as
+ * a context row whose text is the `@@` range — which is why #157 removed the
+ * banner and left `@@` on screen (#161). (The working-tree builder, `diff`, drops
+ * `'H'` itself, so only commit diffs ever carried one.)
+ *
+ * Dropped HERE, in the row model, because there are two renderers —
+ * `PGWindowedDiff` and `CommitDiffPanel`'s own markup — and a filter in one would
+ * leave the other broken.
+ *
+ * The KIND stays on the wire: `git/lfs.rs` reads `HunkHeader` to reconstruct one
+ * side of a diff and to size a candidate pointer, so this is a frontend-side drop
+ * and not a backend change.
+ */
+function isFileContent(l: FileDiff["hunks"][number]["lines"][number]): boolean {
+  return l.kind.kind !== "HunkHeader";
+}
+
 function toUiLine(l: FileDiff["hunks"][number]["lines"][number]): DiffLineData {
   const k = l.kind.kind;
   if (k === "Addition") return { kind: "add", lnR: l.newLineno ?? undefined, text: l.content };
@@ -243,9 +267,16 @@ export function flattenDiffRows(
   const { rowH, foldH, syntax, text, gaps = "fold", expandedGaps } = o;
 
   const hunkRows = (h: FileDiff["hunks"][number], hunkIndex: number): DiffRow[] => {
-    // changedIndex FIRST, over the whole hunk, before anything slices rows.
+    // Header lines are dropped BEFORE the numbering pass, which cannot renumber
+    // anything: withChangedIndices counts `+`/`-` only and a header is neither.
+    // Asserted in diffRows.test.ts rather than assumed — changedIndex is the one
+    // index the line-staging ops accept.
+    // Then changedIndex, over the whole hunk, before anything slices rows.
     const lines = withWordSpans(
-      withSyntax(withChangedIndices(h.lines.map(toUiLine)), syntax),
+      withSyntax(
+        withChangedIndices(h.lines.filter(isFileContent).map(toUiLine)),
+        syntax,
+      ),
     );
     // The hunk's anchor is its first CHANGED row — F7 means "go to the next
     // change", and the Stage/Discard cluster belongs at the change block's top.
