@@ -75,7 +75,7 @@ import {
   totalAheadBehind,
 } from "@/lib/derive";
 
-type ScreenId =
+export type ScreenId =
   | "repo"
   | "commit"
   | "history"
@@ -597,6 +597,12 @@ function AppBody({
         }}
       >
         <div
+          // The screen the shell actually routed to, readable without depending
+          // on any screen's internals — deep views have no activity-bar slot to
+          // read it off. A nav intent that reaches no `case` in the routing
+          // switch leaves this on the previous screen, which is exactly what
+          // AppShell.navroutes.test.tsx asserts against.
+          data-pg-screen={screen}
           style={{
             flex: 1,
             minWidth: 0,

@@ -749,6 +749,19 @@ lib/
   be rebound apart. Register the pane handler as declining (`() => false`) when it
   has nothing to act on, or it swallows the chord from the other action.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
+- **A new `NavIntent` kind must be routed in AppShell, and both halves of that
+  are now enforced.** The routing switch ends in `default: assertNever(intent)`,
+  so an unrouted kind is a **compile** error — `stash-vs-wt` shipped declared in
+  the union, emitted by the stash menu and fully handled by `CommitDiff` with no
+  `case` in the switch, which made the menu item do nothing at all and passed
+  review, `tsc`, unit, component and e2e tests alike (#133). The compile check
+  cannot tell a real destination from `case "x": break;`, so
+  `AppShell.navroutes.test.tsx` drives every kind through the real shell and
+  asserts the screen changed; its `EXPECTED` table is a mapped type over
+  `NavIntent["kind"]` (a union has no runtime form — the type system does the
+  enumerating), and a kind that must deliberately NOT navigate needs an entry
+  there carrying a written reason. The test reads `data-pg-screen` off AppBody,
+  which is the routed screen with no screen-internal selectors involved.
 - **Compare is a deep view, not an activity-bar screen** (#131). `ref-compare`
   routes to `compare`; the intent carries the two sides for readability but the
   SCREEN reads them from `useCompareStore`, because they stay mutable once you
