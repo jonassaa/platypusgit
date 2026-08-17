@@ -75,7 +75,7 @@ import {
   totalAheadBehind,
 } from "@/lib/derive";
 
-type ScreenId =
+export type ScreenId =
   | "repo"
   | "commit"
   | "history"
@@ -102,6 +102,20 @@ const DEEP_VIEWS = new Set<ScreenId>([
   "fileHistory",
   "blame",
 ]);
+
+/**
+ * Compile-time exhaustiveness assertion for the nav-intent routing switch
+ * below: an unrouted `NavIntent` kind reaches the `default` clause as something
+ * other than `never`, and the build fails.
+ *
+ * Runtime is deliberately a no-op. It runs inside a React effect, where
+ * throwing would take the whole window down over a value TypeScript already
+ * proved impossible — and an intent that reaches nothing is a dead menu item,
+ * not a reason to lose the user's session.
+ */
+function assertNever(value: never): void {
+  void value;
+}
 
 // Maps each activity-bar item id to the navigation action whose chord it shows.
 const ACTIVITY_ACTION: Record<string, ActionId> = {
@@ -305,7 +319,12 @@ export function AppShell() {
       case "rebase-plan":
         setScreen("rebase");
         break;
+      // Both stash comparisons are `CommitDiff` targets (#133) — the entry
+      // against its own first parent, and the entry against the working tree.
+      // They are one case because that screen's `Target` union carries both and
+      // fetches each on its own; the routing decision is identical.
       case "stash-diff":
+      case "stash-vs-wt":
         enterDeep("commitDiff");
         break;
       case "switch-screen":
@@ -314,6 +333,17 @@ export function AppShell() {
         enterScreen(intent.screen as ScreenId);
         clearIntent();
         break;
+      default:
+        // Every `NavIntent` kind must be routed above, and this is what forces
+        // it. `stash-vs-wt` was declared in the union, emitted by the stash
+        // context menu and fully handled by `CommitDiff` — but had no case
+        // here, so the menu item set an intent and NOTHING navigated (#133).
+        // Nothing failed: not the type-checker, not the unit tests, not e2e.
+        //
+        // A kind that must deliberately leave the user where they are still
+        // needs an explicit `case … break;` saying so, plus an entry in
+        // `AppShell.navroutes.test.tsx`'s allow-list with the reason.
+        assertNever(intent);
     }
   }, [intent]);
 
@@ -567,6 +597,12 @@ function AppBody({
         }}
       >
         <div
+          // The screen the shell actually routed to, readable without depending
+          // on any screen's internals — deep views have no activity-bar slot to
+          // read it off. A nav intent that reaches no `case` in the routing
+          // switch leaves this on the previous screen, which is exactly what
+          // AppShell.navroutes.test.tsx asserts against.
+          data-pg-screen={screen}
           style={{
             flex: 1,
             minWidth: 0,
