@@ -18,6 +18,9 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-18-diff-minimap-*` — the scrubable canvas gutter down the side of every
+  diff: per-line bars from the flat `DiffRow[]` + heights, a viewport band, click /
+  drag scrubbing, and one measured width below which it hides (#161 part 2).
 - `2026-08-17-continuous-diff-view-*` — the `@@` hunk banners removed for a
   Rider-style continuous file; hunk Stage/Discard moved to a gutter cluster with
   two chords, per-hunk collapse retired, chunked mode given fold separators (#157).
@@ -678,7 +681,9 @@ features/            Per-feature: components + Zustand store colocated
 │                    a feature store), useCompareStore (sides + results + the
 │                    compare mark, its own store so RepoSlice is untouched),
 │                    CompareSidePicker
-├── diff/            CommitDiffPanel (shared commit-diff view), useDiffGaps (the
+├── diff/            CommitDiffPanel (shared commit-diff view), DiffMinimap (the
+│                    canvas gutter, #161 — the only impure half of the minimap:
+│                    measuring, painting, and the gesture), useDiffGaps (the
 │                    `gaps` + `text` options for `flattenDiffRows` — one hook so
 │                    four surfaces cannot drift on which setting they read; plus
 │                    useExpandedGaps, the fold separator's expand state, which
@@ -743,6 +748,17 @@ lib/
 │                    `fold` = chunked mode's separator; there is deliberately no
 │                    `@@` header row (#157). Also `hunkAnchorRows`, the hunk
 │                    index → flat row index map F7 scrolls by
+├── diffMinimap.ts   The minimap gutter's PURE core (#161): per-row marks, the one
+│                    content-px ⇄ minimap-px scale, the viewport band, the scrub
+│                    (and its inverse), and `buildMinimapBands` — which buckets
+│                    rows into DEVICE PIXEL rows so a 20 000-line file costs a
+│                    bounded number of `fillRect`s and a lone changed line is
+│                    guaranteed one visible pixel. No React, no DOM
+├── cssColor.ts      `parseCssColor` / `rgbaCss` — hex, rgb() and **oklch()** →
+│                    sRGB bytes, in TypeScript. A canvas cannot be handed a CSS
+│                    variable, and the values behind ours are `oklch(...)`; see
+│                    the minimap convention below for why passing one on is a
+│                    silent no-op rather than an error
 ├── wordDiff.ts      Intra-line (word) diff for one rem/add pair (#61 D8)
 ├── pairChangedLines.ts  WHICH rem pairs with WHICH add — one definition shared
 │                    by the unified hunk, the split view and the commit panel
@@ -971,6 +987,40 @@ module and every `src/features/*/` directory is named somewhere in here.
   windowing, so the DOM route silently does nothing (the #68 G10 trap). It
   no-ops for an out-of-range index or an unmeasured viewport rather than jumping
   to the top.
+- **The minimap gutter derives from the ROW MODEL, never the DOM** (#161). Rows are
+  windowed, so most of the file is unmounted; the gutter is painted from
+  `DiffRow[]` + `heights` alone (`lib/diffMinimap.ts`, pure and tested in node) and
+  sits OUTSIDE the scroll container, beside it in a flex wrapper. Three rules that
+  each cost a bug to learn:
+  - **Measure the WRAPPER, not the scroll area.** The hide threshold
+    (`MINIMAP_MIN_CONTAINER_W`, 530px — derived from `PGDiffRow`'s 112px of fixed
+    chrome plus 48 mono columns plus the 64px gutter) is read off the box that
+    contains both, so showing the gutter cannot change the number that decides
+    whether to show it. Measuring the scroller would close that loop and flicker
+    while a resize handle crossed the threshold. Width 0 means UNMEASURED and must
+    not hide it (the `useElementSize` contract).
+  - **A canvas cannot be handed a CSS variable, and `--git-*` are `oklch()`.**
+    `getComputedStyle(root).getPropertyValue("--git-added")` returns the literal
+    `oklch(…)` token stream on every engine, and `ctx.fillStyle = "oklch(…)"` on an
+    engine that cannot parse it is a SILENT no-op that keeps the previous fill — so
+    it would paint black on WebKitGTK while looking right on macOS. `lib/cssColor.ts`
+    converts to `rgb()`/`rgba()` in TypeScript, which also makes the render
+    byte-identical across engines. Repaint is a `useSettingsStore` subscription on
+    `activeThemeId` AND `customThemes` (editing the live theme keeps its id).
+  - **Light mode needs its own ALPHAS, not its own colours.** The tokens are
+    already mode-calibrated (#61 B4) and inherited; how much of them to lay down is
+    not — a third of `--fg-3` reads on near-black and vanishes on near-white. Hence
+    the `ALPHA` table keyed on `data-theme-mode`. Verified by rendering both.
+- **A pointer-events-only gesture is not enough on the e2e/CI webview** (#161).
+  MEASURED on WebKitGTK 605.1.15 under xvfb: a real WebDriver pointer action
+  delivers `mousedown` and NO `pointerdown`, although `window.PointerEvent` is a
+  function. `features/dnd` gets away with it because every drag it owns has a
+  keyboard equivalent by rule; the minimap scrub IS the feature, so it carries a
+  `mousedown` fallback gated on a `sawPointer` flag — a compliant browser fires
+  `pointerdown` first, so the flag is set before `mousedown` arrives and the
+  fallback declines. Any future control whose only affordance is a pointer gesture
+  needs the same pair, and must not assume a green dnd spec proves pointer events
+  are delivered (those specs synthesize `MouseEvent`s NAMED `pointerdown`).
 - **Line ops inherit the ignore-whitespace gate.** That flag rewrites hunk
   boundaries, so both the click path and the keyboard cursor are switched off by
   `useHunkActionsDisabledReason` — the keyboard must never reach what the mouse

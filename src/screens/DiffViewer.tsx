@@ -36,6 +36,7 @@ import {
 } from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
+import { DiffMinimap } from "@/features/diff/DiffMinimap";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { pairChangedLines } from "@/lib/pairChangedLines";
@@ -223,6 +224,11 @@ export function DiffViewerScreen() {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = React.useState(0);
   const { viewportH, remeasure } = useViewportH(scrollRef, [mode]);
+  // The minimap gutter sits BESIDE the scroll container (panes own their
+  // scrolling), so it needs the wrapper's box — and the wrapper is what is
+  // measured, not the scroll area, so showing the gutter cannot change the width
+  // that decides whether to show it (#161).
+  const diffBox = useElementSize();
 
   // Wrap makes row heights genuinely unknown — pre-wrap rows are as tall as they
   // need to be — so windowing is off and every row renders. A very large wrapped
@@ -472,25 +478,46 @@ export function DiffViewerScreen() {
               replacement. */}
           {!diffLoading && diff?.lfs && <LfsDiffNotice diff={diff} />}
           {!diffLoading && isTextualDiff(findFiltered) && findFiltered && mode === "unified" && (
-            <FocusableScroll
-              style={{ flex: 1 }}
-              ariaLabel="Diff"
-              innerRef={scrollRef}
-              onScroll={() => {
-                setScrollTop(scrollRef.current?.scrollTop ?? 0);
-                remeasure();
-              }}
+            <div
+              ref={diffBox.ref}
+              style={{ flex: 1, minWidth: 0, display: "flex", minHeight: 0 }}
             >
-              {findFiltered.hunks.length === 0 && findQuery.trim() && (
-                <PGEmpty icon="search" title="No matches" />
+              <FocusableScroll
+                style={{ flex: 1, minWidth: 0 }}
+                ariaLabel="Diff"
+                innerRef={scrollRef}
+                onScroll={() => {
+                  setScrollTop(scrollRef.current?.scrollTop ?? 0);
+                  remeasure();
+                }}
+              >
+                {findFiltered.hunks.length === 0 && findQuery.trim() && (
+                  <PGEmpty icon="search" title="No matches" />
+                )}
+                <PGWindowedDiff
+                  rows={rows}
+                  window={win}
+                  activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
+                  onExpandGap={expandGap}
+                />
+              </FocusableScroll>
+              {/* Wrap makes row heights genuinely unknown — the same reason
+                  windowing is off — so `heights` no longer describes the rendered
+                  file and a scrub would land on the wrong line. No gutter there. */}
+              {!wrap && (
+                <DiffMinimap
+                  rows={rows}
+                  heights={heights}
+                  rowH={rowH}
+                  scrollTop={scrollTop}
+                  viewportH={viewportH}
+                  scrollRef={scrollRef}
+                  onScrollTop={setScrollTop}
+                  containerWidth={diffBox.width}
+                  containerHeight={diffBox.height}
+                />
               )}
-              <PGWindowedDiff
-                rows={rows}
-                window={win}
-                activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
-                onExpandGap={expandGap}
-              />
-            </FocusableScroll>
+            </div>
           )}
           {!diffLoading && isTextualDiff(findFiltered) && findFiltered && mode === "split" && (
             <PGSideBySideDiff
