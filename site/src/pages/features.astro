@@ -1,8 +1,22 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import Screenshot from '../components/Screenshot.astro';
 import { site } from '../data/site.ts';
 import { featureGroups, roadmap } from '../data/features.ts';
 import { descriptions } from '../data/seo.ts';
+
+// Keyed by group TITLE, not index: the group order in features.ts changes as
+// features land, and an index would silently file the shot under whatever
+// moved into that slot.
+const shotAfterGroup: Record<string, { name: string; alt: string; caption: string }> = {
+  'Diff & viewing': {
+    name: 'commit-dark',
+    alt:
+      'The platypusgit commit screen. A file list on the left has one staged file, parser.ts, with its checkbox ticked under a STAGED heading, and three more under CHANGES — NOTES.md untracked, engine.ts modified, lexer.test with 7 added and 6 removed lines. The middle of the window shows src/engine.ts as a side-by-side diff with syntax highlighting: removed lines tinted red on the left, added lines tinted green on the right, and the added text reads "UNCOMMITTED: descriptions being made explicit about overflow and domain errors". On the right, a commit message box above checkboxes for amending the previous commit, adding a Signed-off-by trailer and signing the commit, author and co-author fields, a "1 file, +6 -0" summary, and Commit and Commit & Push buttons.',
+    caption:
+      'Staged and unstaged files, the diff of the file you picked, and the message you are writing — one screen, no dialogs.',
+  },
+};
 ---
 <Layout title={'Features — ' + site.name + ' git client'} description={descriptions.features}>
   <section class="container page-head">
@@ -10,17 +24,35 @@ import { descriptions } from '../data/seo.ts';
     <p class="lead">Everything implemented end-to-end today. platypusgit is in active development — the list grows.</p>
   </section>
 
+  <section class="container opening">
+    <Screenshot
+      name="welcome-dark"
+      maxWidth={760}
+      alt="The platypusgit window with no repository open. A centred card reads “Welcome to PlatypusGit — open, clone, or create a repository to get started”, above an Open repository button and, below it, Clone repository and New repository buttons. A line under them reads “Pick any directory containing a .git folder.” The status bar reads “No repository open” on the left and “⌘O to open…” on the right."
+      caption="Where every session starts: point it at a directory that already has a .git folder, clone a remote, or create a repository from nothing."
+    />
+  </section>
+
   <section class="container groups">
     {featureGroups.map((g) => (
-      <div class="group">
-        <div class="group-head">
-          <h2>{g.title}</h2>
-          <p>{g.blurb}</p>
+      <>
+        <div class="group">
+          <div class="group-head">
+            <h2>{g.title}</h2>
+            <p>{g.blurb}</p>
+          </div>
+          <ul class="group-list">
+            {g.items.map((i) => <li><span class="tick">✓</span>{i}</li>)}
+          </ul>
         </div>
-        <ul class="group-list">
-          {g.items.map((i) => <li><span class="tick">✓</span>{i}</li>)}
-        </ul>
-      </div>
+        {shotAfterGroup[g.title] && (
+          <Screenshot
+            name={shotAfterGroup[g.title].name}
+            alt={shotAfterGroup[g.title].alt}
+            caption={shotAfterGroup[g.title].caption}
+          />
+        )}
+      </>
     ))}
   </section>
 
@@ -35,6 +67,7 @@ import { descriptions } from '../data/seo.ts';
 
 <style>
   .page-head { padding-top: var(--s-12); }
+  .opening { margin-top: var(--s-9); }
   .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
   .lead { color: var(--fg-2); font-size: 16px; max-width: 600px; margin: 0; }
   .groups { margin-top: var(--s-11); display: grid; gap: var(--s-9); }
@@ -56,6 +89,7 @@ import { descriptions } from '../data/seo.ts';
     .page-head { padding-top: var(--s-11); }
     .page-head h1 { font-size: 30px; }
     .groups, .roadmap { margin-top: var(--s-10); }
+    .opening { margin-top: var(--s-8); }
   }
   @media (max-width: 480px) {
     .page-head h1 { font-size: 26px; }

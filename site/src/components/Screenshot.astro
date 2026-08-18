@@ -1,0 +1,84 @@
+---
+// A real capture of the app. Replaces the hand-built replica of the History
+// screen that used to live in AppShowcase.astro, which drifted from the app on
+// every UI change with nothing to catch it.
+//
+// The files are pre-encoded WebP in public/screenshots/ (`pnpm screenshots`
+// regenerates them from the PNG masters in screenshots/), so there is no image
+// pipeline in the build and no dependency for CI to install.
+interface Props {
+  /** Basename under public/screenshots/, no extension. */
+  name: string;
+  /** Describes what is IN the window. These are the only images on the site
+      that carry product information, so "screenshot of platypusgit" is not alt
+      text — a reader who cannot see it would learn nothing. */
+  alt: string;
+  /** Rendered under the image. */
+  caption?: string;
+  /** The hero only. Everything else stays out of the critical path. */
+  priority?: boolean;
+  /** Cap the rendered width, in px. The Welcome capture is mostly empty
+      window, so at the full 1040px column it is a large dark block carrying
+      very little — it reads as an illustration at 760. */
+  maxWidth?: number;
+}
+const { name, alt, caption, priority = false, maxWidth } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+// Every capture is this size. Set on the element so the box is reserved before
+// the bytes arrive — without it the taller-than-before hero shifts the whole
+// page down on load.
+const WIDTH = 1600;
+const HEIGHT = 1112;
+---
+<figure class="shot" style={maxWidth ? `max-width: ${maxWidth}px` : undefined}>
+  <img
+    src={`${base}/screenshots/${name}.webp`}
+    alt={alt}
+    width={WIDTH}
+    height={HEIGHT}
+    loading={priority ? 'eager' : 'lazy'}
+    decoding={priority ? 'auto' : 'async'}
+    fetchpriority={priority ? 'high' : 'auto'}
+  />
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>
+
+<style>
+  /* No border, no radius, no box-shadow. The capture already carries the macOS
+     window chrome AND its drop shadow, over a transparent margin (measured:
+     ~4.3% each side, 4.2% above, 8.2% below). A frame of our own would draw a
+     second one around the first and square off the shadow's corners. */
+  .shot { margin: 0 auto; }
+  .shot img {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+  }
+  .shot figcaption {
+    margin-top: var(--s-5);
+    text-align: center;
+    color: var(--fg-3);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* One asset, both themes — there is no light capture, and a framed dark app
+     window on a light page reads as a photograph of an app rather than as a
+     mistake. What it does need is something to sit ON: against near-white its
+     own shadow is the only separation, which reads as a hole punched in the
+     page. A faint accent halo behind it fixes that. Dark mode needs none of
+     this and gets none. */
+  :root[data-theme-mode='light'] .shot {
+    background: radial-gradient(
+      70% 60% at 50% 45%,
+      color-mix(in oklab, var(--accent) 13%, transparent),
+      transparent 72%
+    );
+  }
+
+  @media (max-width: 480px) {
+    .shot figcaption { font-size: 12px; margin-top: var(--s-4); }
+  }
+</style>
