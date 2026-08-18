@@ -233,6 +233,13 @@ export function DiffViewerScreen() {
   // Wrap makes row heights genuinely unknown — pre-wrap rows are as tall as they
   // need to be — so windowing is off and every row renders. A very large wrapped
   // diff stays slow; that combination is rare and this keeps the toggle.
+  //
+  // `wrap` is the ONLY thing that makes a row elastic, and it reaches the rows as
+  // a prop now: unconditional `pre-wrap` under a fixed-pitch row is what drew each
+  // long line over its neighbours, in every unified surface, whatever this toggle
+  // said. Everything below that reads `heights` is switched off in the same
+  // breath — the window here, the minimap and `scrollToHunk` further down — so one
+  // heights array stays the single source of truth for whoever is still reading it.
   const win = wrap ? undefined : varWin;
 
   // F7/⇧F7 walk the viewed file's hunks from either pane. Scroll to the hunk's
@@ -255,7 +262,12 @@ export function DiffViewerScreen() {
     paneIds: ["diff.files", "diff.view"],
     count: findFiltered?.hunks.length ?? 0,
     resetKey: selectedPath,
-    scrollToHunk,
+    // Wrap mode: `heights` no longer describes the rendered rows, so an
+    // offset-based scroll lands on the wrong line — the same reason the window and
+    // the minimap are off. Omitting it takes useHunkNav's documented DOM fallback,
+    // which is exactly correct here: with windowing off, every anchor row is
+    // mounted, so `scrollIntoView` cannot silently no-op (the #68 G10 trap).
+    scrollToHunk: wrap ? undefined : scrollToHunk,
   });
 
   if (status.length === 0) {
@@ -493,6 +505,7 @@ export function DiffViewerScreen() {
                 <PGWindowedDiff
                   rows={rows}
                   window={win}
+                  wrap={wrap}
                   activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
                   onExpandGap={expandGap}
                 />

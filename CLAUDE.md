@@ -863,6 +863,28 @@ module and every `src/features/*/` directory is named somewhere in here.
   model until #157; it was false when written, and anything shared between the
   surfaces has to be verified in `CommitDiffPanel.tsx` separately — the row model
   is the only thing you get for free. Unifying the two is a wanted follow-up.
+- **A code line must NOT wrap in a unified diff row, and `white-space: pre` is what
+  enforces it.** The row's height IS the window's pitch (`DiffRow.h`, prefix-summed
+  by `rowOffset` / `scrollTopForRow` / `hunkAnchorRows`' consumers / the minimap),
+  so a wrapped line is not a taller row — it is a row whose text draws over the
+  rows below it. `PGDiffRow` shipped with `pre-wrap` under a fixed `height` and did
+  exactly that: two source lines composited on top of each other, worst in the repo
+  browser, whose diff pane is squeezed between the tree and the file-info sidebar.
+  Long lines overflow to the RIGHT instead and the pane scrolls (`FocusableScroll`
+  is `overflow: auto`), which is what every other diff viewer does; the row also
+  carries `min-width: max-content` so the add/rem background and the gutter stripe
+  cover the whole line rather than stopping at the pane's edge. `CommitDiffPanel`
+  was already `pre`, and the SPLIT view's `PGSideBySideDiff` may keep `pre-wrap`
+  because its rows are `minHeight` and unwindowed — nothing reads their heights.
+- **Wrapping is opt-in, and it comes with the whole heights contract switched
+  off.** `PGWindowedDiff`'s `wrap` prop makes rows elastic (`minHeight`, not
+  `height`), so a caller passing it must also drop `window`, the minimap AND the
+  offset-based `scrollToHunk` — the DiffViewer's Wrap toggle is the one caller, and
+  it drops all three (`useHunkNav` then takes its documented DOM fallback, which is
+  correct precisely because nothing is unmounted). One heights array stays the
+  single source of truth for everything still reading it. Before this the toggle
+  changed only the window and the minimap while `pre-wrap` was unconditional, so
+  it wrapped in every mode and overlapped in every mode.
 - **Whole file is the default view** (`diffContextMode: "wholeFile"`), and it is
   composed on the FRONTEND: the canonical diff is left exactly as fetched and the
   unchanged remainder is filled in around it as `fill` rows, from text

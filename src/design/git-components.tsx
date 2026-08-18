@@ -736,6 +736,7 @@ export const PGDiffRow = React.memo(function PGDiffRow({
   line,
   selected,
   focused,
+  wrap,
   onLineClick,
 }: {
   line: DiffLineData;
@@ -746,6 +747,14 @@ export const PGDiffRow = React.memo(function PGDiffRow({
    * single line Space acts on, and the two are frequently different rows.
    */
   focused?: boolean;
+  /**
+   * Soft-wrap long lines. OFF by default, and that default is load-bearing: a
+   * wrapped row is as tall as its content, which the flat row model's known
+   * heights cannot describe (`h: rowH` per row, prefix-summed). Only a caller
+   * that also switches OFF every heights consumer — the window, the minimap and
+   * the hunk scroll — may pass it; the DiffViewer's Wrap toggle is the one.
+   */
+  wrap?: boolean;
   onLineClick?: (changedIndex: number, range: boolean) => void;
 }) {
   const kind = line.kind;
@@ -779,7 +788,24 @@ export const PGDiffRow = React.memo(function PGDiffRow({
             lineHeight: "var(--lh-code)",
             // Fixed pitch, read from CSS by the window's arithmetic. Was
             // minHeight: an elastic row would put the window out of step.
-            height: "var(--diff-row-h)",
+            //
+            // Wrap mode is the ONE case that may be elastic, and then it must be:
+            // a `height` with wrapped text inside is not a shorter row, it is a
+            // row whose text draws over its neighbours (the overlap bug). The
+            // caller that turns wrapping on has already turned off everything
+            // that reads the heights array.
+            ...(wrap
+              ? { minHeight: "var(--diff-row-h)" }
+              : {
+                  height: "var(--diff-row-h)",
+                  // With no wrapping a long line overflows to the RIGHT, and the
+                  // pane scrolls (FocusableScroll is `overflow: auto`). Sizing the
+                  // row to its content carries the add/rem background, the gutter
+                  // stripe and the focus ring across the whole line instead of
+                  // cutting them off at the pane's edge. Short lines are
+                  // unaffected: max-content is then narrower than the pane.
+                  minWidth: "max-content",
+                }),
             cursor: selectable ? "pointer" : undefined,
             background: isSelected
               ? "oklch(from var(--accent) l c h / 0.18)"
@@ -838,7 +864,15 @@ export const PGDiffRow = React.memo(function PGDiffRow({
           <span
             style={{
               flex: 1,
-              whiteSpace: "pre-wrap",
+              // `pre`, not `pre-wrap`: this row's height is the window's pitch,
+              // and a wrapped line is taller than that — so pre-wrap here drew
+              // each long line over the rows below it. Wrapping is opt-in, and
+              // only for the elastic-row mode above.
+              whiteSpace: wrap ? "pre-wrap" : "pre",
+              // `pre-wrap` alone breaks at spaces only, so a minified line or a
+              // long token would keep overflowing the pane in the very mode whose
+              // point is that nothing does.
+              overflowWrap: wrap ? "anywhere" : undefined,
               color: kind === "ctx" ? "var(--fg-0)" : textColor[kind],
               paddingRight: 10,
             }}

@@ -980,3 +980,79 @@ export async function waitHeadMarkerOn(
     },
   );
 }
+
+export interface DiffRowInk {
+  /** Diff code rows measured (`fill` and hunk rows alike; folds and spacers skipped). */
+  rows: number;
+  /** Rows whose drawn text is taller than the row box the window sized for them. */
+  tall: number;
+  /** Rows whose text reaches past the next row's top edge. */
+  overlaps: number;
+  /** Tallest ink / row-box ratio seen, for the failure message. */
+  worst: { rowH: number; inkH: number; lineBoxes: number; text: string } | null;
+}
+
+/**
+ * Measure whether any unified diff row DRAWS taller than the box the row model
+ * sized for it — i.e. whether a code line wrapped under a fixed-pitch row and is
+ * therefore painting over its neighbours.
+ *
+ * Read-only, so bare `browser.execute` is correct.
+ *
+ * Two things make this the only layer that can catch the regression. jsdom
+ * performs no layout, so a component test can pin the `white-space` declaration
+ * and nothing more. And the code span is a FLEX ITEM stretched to the row's
+ * height, so its own `getBoundingClientRect()` reports the row's height whatever
+ * its content does — the honest measurement is a `Range` over its contents, which
+ * yields one client rect per line box.
+ */
+export async function diffRowInk(paneId: string): Promise<DiffRowInk> {
+  return (await browser.execute((pane: string) => {
+    const anchor = document.querySelector(`[data-pg-pane="${pane}"] [data-hunk-index]`);
+    const root = anchor?.parentElement;
+    const empty = { rows: 0, tall: 0, overlaps: 0, worst: null };
+    if (!root) return empty;
+    const metrics: { rowH: number; inkH: number; top: number; lineBoxes: number; text: string }[] = [];
+    for (const child of Array.from(root.children)) {
+      if (child.hasAttribute("data-pg-spacer")) continue;
+      const row = (
+        child.hasAttribute("data-hunk-index") ? child.firstElementChild : child
+      ) as HTMLElement | null;
+      // A diff row is the line-number gutters + marker + code span; a fold
+      // separator is not, and has nothing to overflow.
+      if (!row || row.children.length < 4) continue;
+      const span = row.lastElementChild as HTMLElement;
+      const range = document.createRange();
+      range.selectNodeContents(span);
+      const rects = Array.from(range.getClientRects());
+      const box = row.getBoundingClientRect();
+      metrics.push({
+        rowH: box.height,
+        inkH: rects.length
+          ? Math.max(...rects.map((r) => r.bottom)) - Math.min(...rects.map((r) => r.top))
+          : 0,
+        top: box.top,
+        lineBoxes: rects.length,
+        text: (row.textContent ?? "").slice(0, 60),
+      });
+    }
+    let tall = 0;
+    let overlaps = 0;
+    let worst: (typeof metrics)[number] | null = null;
+    for (let i = 0; i < metrics.length; i++) {
+      const m = metrics[i];
+      if (m.inkH - m.rowH > 1) tall++;
+      if (!worst || m.inkH - m.rowH > worst.inkH - worst.rowH) worst = m;
+      const next = metrics[i + 1];
+      if (next && m.top + m.inkH - next.top > 1) overlaps++;
+    }
+    return {
+      rows: metrics.length,
+      tall,
+      overlaps,
+      worst: worst
+        ? { rowH: worst.rowH, inkH: worst.inkH, lineBoxes: worst.lineBoxes, text: worst.text }
+        : null,
+    };
+  }, paneId)) as DiffRowInk;
+}

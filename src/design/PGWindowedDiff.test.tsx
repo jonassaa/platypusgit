@@ -175,6 +175,49 @@ describe("PGWindowedDiff", () => {
     expect(document.querySelector("[data-pg-fold]")?.textContent).toContain("1–4");
   });
 
+  // The wrap/height invariant. A row's height IS the window's pitch (`DiffRow.h`,
+  // prefix-summed by rowOffset / scrollTopForRow / the minimap), so a row that can
+  // grow taller than that pitch draws over the rows below it — which is exactly
+  // what unconditional `pre-wrap` under a fixed `height` did, in every unified
+  // surface. jsdom performs no layout, so what is pinned here is the DECLARATION:
+  // the geometry itself is covered in e2e, where a real engine wraps.
+  it("does not wrap code lines by default, and keeps the fixed row pitch", () => {
+    render(<PGWindowedDiff rows={rows} />);
+    const code = screen.getByText("line 0");
+    const row = code.closest("div") as HTMLElement;
+    expect(code.style.whiteSpace).toBe("pre");
+    expect(row.style.height).toBe("var(--diff-row-h)");
+    expect(row.style.minHeight).toBe("");
+    // The line overflows to the RIGHT instead, and the row grows with it so its
+    // add/rem background and gutter stripe cover the whole line.
+    expect(row.style.minWidth).toBe("max-content");
+  });
+
+  it("wraps only when asked, and then makes the row elastic instead", () => {
+    render(<PGWindowedDiff rows={rows} wrap />);
+    const code = screen.getByText("line 0");
+    const row = code.closest("div") as HTMLElement;
+    expect(code.style.whiteSpace).toBe("pre-wrap");
+    // Elastic: a fixed height with wrapped text inside is the overlap bug.
+    expect(row.style.minHeight).toBe("var(--diff-row-h)");
+    expect(row.style.height).toBe("");
+    expect(row.style.minWidth).toBe("");
+  });
+
+  it("wraps the whole-file filler rows too, not just the hunk's own", () => {
+    // `fill` rows go through a second PGDiffRow call site, and it was the one a
+    // prop-threading fix would silently miss — the file would then wrap inside the
+    // hunk and not around it.
+    const filled = flattenDiffRows(gapped, {
+      foldH: 22,
+      rowH: 19,
+      gaps: "fill",
+      text: { newText: "a\nb\nc\nd\nnow\n", oldText: "a\nb\nc\nd\nwas\n" },
+    });
+    render(<PGWindowedDiff rows={filled} wrap />);
+    expect(screen.getByText("a").style.whiteSpace).toBe("pre-wrap");
+  });
+
   it("renders no spacer when the window covers everything", () => {
     render(
       <PGWindowedDiff

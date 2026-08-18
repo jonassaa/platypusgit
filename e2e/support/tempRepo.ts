@@ -92,6 +92,32 @@ export function nestedDirtyRepo(): TempRepo {
   return r;
 }
 
+/**
+ * One tracked file whose CHANGED line is far longer than any diff pane — about
+ * 1 100 characters, in space-separated tokens so a soft wrap has somewhere to
+ * break.
+ *
+ * The fixture for the fixed-pitch row invariant. A unified diff row's height IS
+ * the window's pitch, so a line that wraps draws over the rows below it, and
+ * nothing shorter than the pane can show that: at 548px (the repo browser's diff
+ * pane on the e2e window) this line takes 20 line boxes.
+ */
+export function longLineRepo(): TempRepo {
+  const body = (tag: string) =>
+    Array.from(
+      { length: 24 },
+      (_, i) => `segment-${tag}-${i}-of-a-very-long-single-source-line`,
+    ).join(" ");
+  const r = new TempRepo();
+  r.commitFile(
+    "long.ts",
+    `// header\nexport const value = "${body("old")}";\n// footer\n`,
+    "feat: long line",
+  );
+  r.write("long.ts", `// header\nexport const value = "${body("new")}";\n// footer\n`);
+  return r;
+}
+
 export function branchyRepo(): TempRepo {
   const r = basicRepo();
   r.git("checkout", "-b", "feature");

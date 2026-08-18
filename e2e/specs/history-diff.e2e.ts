@@ -1,7 +1,14 @@
 import { browser, $, $$, expect } from "@wdio/globals";
-import { basicRepo, branchyRepo, dirtyRepo, TempRepo } from "../support/tempRepo";
+import {
+  basicRepo,
+  branchyRepo,
+  dirtyRepo,
+  longLineRepo,
+  TempRepo,
+} from "../support/tempRepo";
 import {
   commitListTotal,
+  diffRowInk,
   jsClickMenuItem,
   jsContextMenu,
   openRepo,
@@ -273,5 +280,81 @@ describe("history — the commit menu's diff entries (#158)", () => {
       timeout: 20_000,
       timeoutMsg: `the commit-diff header never showed ${sha} → HEAD`,
     });
+  });
+});
+
+/**
+ * The fixed-pitch row invariant, in a real engine.
+ *
+ * Its own describe because it belongs to neither of the two above: the subject is
+ * `PGDiffRow`'s geometry, which every unified diff surface shares.
+ */
+describe("diff rows — a code line never draws outside its row", () => {
+  let repo: TempRepo;
+
+  afterEach(async () => {
+    await resetApp();
+    repo.dispose();
+  });
+
+  // A unified diff row's height IS the window's pitch (`DiffRow.h`, prefix-summed
+  // by rowOffset / scrollTopForRow / the minimap), so a row that draws taller than
+  // that pitch paints over the rows beneath it — which is what an unconditional
+  // `pre-wrap` on the code span did: the repo browser's diff pane is squeezed
+  // between the tree and the file-info sidebar, so ordinary source lines wrapped
+  // there and the diff came out as two lines composited on top of each other.
+  //
+  // This lives in e2e because it cannot live anywhere else: jsdom performs no
+  // layout, so a component test can pin the `white-space` declaration and nothing
+  // more. See `diffRowInk` for why the measurement is a Range, not a rect.
+  it("keeps a very long changed line inside its own row in the repo browser", async () => {
+    repo = longLineRepo();
+    await openRepo(repo.path);
+    await switchScreen("repo");
+
+    const row = $('[data-path="long.ts"]');
+    await row.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "long.ts tree row never appeared",
+    });
+    await row.click();
+    // The hunk's gutter cluster is the diff pane's "rendered" signal.
+    await $('[data-testid="hunk-stage"]').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the diff never rendered for long.ts",
+    });
+
+    const ink = await diffRowInk("repo.preview");
+    expect(ink.rows).toBeGreaterThan(0);
+    expect(ink.overlaps).toBe(0);
+    // Every row draws inside the box the row model sized for it.
+    expect(ink.tall).toBe(0);
+    // …and it is a genuinely long line, not a fixture that quietly got short.
+    expect(ink.worst?.lineBoxes).toBe(1);
+  });
+
+  it("wraps that line only when Wrap is on, and grows the row to fit it", async () => {
+    repo = longLineRepo();
+    await openRepo(repo.path);
+    await switchScreen("diff");
+    await $('[data-hunk-index="0"]').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the Diff screen never rendered a hunk",
+    });
+
+    const before = await diffRowInk("diff.view");
+    expect(before.worst?.lineBoxes).toBe(1);
+
+    await $('[data-testid="diff-wrap-toggle"]').click();
+    // Wrapping is the only elastic-row mode, so the invariant is unchanged and the
+    // ROW is what moved: same "ink never leaves its box", more line boxes.
+    await browser.waitUntil(
+      async () => ((await diffRowInk("diff.view")).worst?.lineBoxes ?? 0) > 1,
+      { timeout: 10_000, timeoutMsg: "Wrap did not wrap the long line" },
+    );
+    const after = await diffRowInk("diff.view");
+    expect(after.overlaps).toBe(0);
+    expect(after.tall).toBe(0);
+    expect(after.worst!.rowH).toBeGreaterThan(before.worst!.rowH);
   });
 });
