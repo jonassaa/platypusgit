@@ -288,6 +288,11 @@ update.rs        Update discovery — semver compare (semver crate, cmp_preceden
                  GitHub release parsing, ureq agent w/ timeout + https_only.
                  The LOGIC; its Tauri handlers are commands/update.rs. Two
                  different files with the same basename — see the note there
+proc.rs          THE ONLY sanctioned way to spawn a child process (issue 172):
+                 `git` / `git_async` / `git_async_in` (+ CREATE_NO_WINDOW,
+                 GIT_TERMINAL_PROMPT=0, stdin closed), `program` /
+                 `program_async` (flag only), and the two
+                 `*_keeping_console` exceptions. See "Spawning processes"
 forge/           Forge (GitHub / GitLab) integration — PR/MR list, create, checkout,
                  CI status (#92). The trait is split into URL BUILDERS + RESPONSE
                  PARSERS, not `list_pull_requests()`, so every forge-specific line
@@ -1546,6 +1551,44 @@ module and every `src/features/*/` directory is named somewhere in here.
   copy anywhere. Crash-safety would need a journal, which is the `rebase_state`
   instrument applied to a case git owns (the `bisect.rs` reasoning). Building it
   needs its own spec; do not stub an affordance for it in the meantime.
+
+### Spawning processes (issue 172)
+
+- **Never write `Command::new` outside `src-tauri/src/proc.rs`.**
+  `tests/spawn_no_window.rs` fails the build if you do, and the allow-list it
+  carries names the two files that may (the module itself, and `detach.rs`'s
+  `#[cfg(unix)]` re-exec) with the reason.
+- The reason is Windows. `main.rs` sets `windows_subsystem = "windows"`, so a
+  **release** build is a GUI-subsystem process with no console; every
+  console-subsystem child (`git.exe`, `gpg.exe`, `powershell.exe`) is therefore
+  given a *fresh* console with a visible `conhost.exe` window unless it is created
+  with `CREATE_NO_WINDOW`. It reproduces only in a release/bundled build — a debug
+  build already owns a console and children inherit it, so `pnpm tauri dev`
+  concludes there is no bug.
+- **Constructors, not a `no_window(&mut cmd)` helper.** A helper is something a new
+  spawn site can forget, and 19 of 20 did. `proc::git(workdir)` /
+  `proc::git_async(workdir)` hand back a `Command` that already carries the flag,
+  `GIT_TERMINAL_PROMPT=0` and a closed stdin; `proc::git_async_in(dir)` is the
+  clone shape (working directory instead of `-C`, because the repository does not
+  exist yet); `proc::program(prog)` / `proc::program_async(prog)` apply the flag and
+  nothing else, for children that are not git and own their stdio (the signing
+  program pipes all three streams). A caller that pipes stdin overrides the
+  constructor's `null` afterwards — later builder calls win.
+- **The two console-KEEPING exceptions are deliberate**:
+  `proc::git_async_keeping_console` (`git mergetool`) and
+  `proc::program_async_keeping_console` (`$VISUAL`/`$EDITOR`). A console mergetool
+  or `EDITOR=vim` *is* a terminal program: silencing it leaves an invisible process
+  holding the file with `status().await` never returning and no cancel button. The
+  asymmetry decides it — a stray console window is cosmetic, an invisible editor is
+  Task Manager. The guard test allow-lists both call sites by name, so a third one
+  is an argued decision rather than a copy-paste.
+- **Decide with libgit2 before you spawn.** `verify_commit` shelled out
+  unconditionally, so an unsigned commit — which renders NO badge — cost a console
+  flash per commit selected in History. It now reads the `gpgsig` header through
+  `extract_signature` first and answers `SigState::None` with no subprocess at all,
+  the same pre-check `verify_tag` has had since #132. That is a cost win on every
+  platform, not a Windows workaround, and the same question is worth asking of any
+  new shell-out.
 
 ### Bisect: git's state is the only state of record (#93)
 

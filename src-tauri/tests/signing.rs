@@ -253,6 +253,103 @@ fn verify_commit_reports_an_unsigned_commit_as_none() {
     );
 }
 
+/// `ssh_signing_repo`, plus an allowed-signers file naming the generated key, so
+/// `%G?` can reach a `Good` verdict rather than only "signature present" — git
+/// grades an ssh signature it cannot attribute as `U` or refuses it outright.
+/// Mirrors `tag_signing.rs`'s fixture.
+fn ssh_signing_repo_with_allowed_signers() -> Option<(TempRepo, tempfile::TempDir)> {
+    let (tr, keydir) = ssh_signing_repo()?;
+    let key = keydir.path().join("id_ed25519");
+
+    // "<principal> <keytype> <base64>" — the principal must match the committer
+    // email TempRepo uses, or ssh-keygen finds no principal for it.
+    let pubkey = std::fs::read_to_string(key.with_extension("pub")).ok()?;
+    let mut fields = pubkey.split_whitespace();
+    let (kind, blob) = (fields.next()?, fields.next()?);
+    let email = tr
+        .repo
+        .config()
+        .unwrap()
+        .get_string("user.email")
+        .unwrap_or_default();
+    let allowed = keydir.path().join("allowed_signers");
+    std::fs::write(&allowed, format!("{email} {kind} {blob}\n")).ok()?;
+    tr.repo
+        .config()
+        .unwrap()
+        .set_str("gpg.ssh.allowedSignersFile", allowed.to_str().unwrap())
+        .unwrap();
+    Some((tr, keydir))
+}
+
+/// The other half of the issue-172 pre-check: skipping the subprocess for
+/// unsigned commits must not skip it for signed ones. `verify_commit` still
+/// shells out to `git show --format=%G?` and still reports git's own verdict.
+#[test]
+fn verify_commit_grades_our_own_signature_good() {
+    let Some((tr, _keydir)) = ssh_signing_repo_with_allowed_signers() else {
+        eprintln!("ssh-keygen unavailable — skipping verify_commit good test");
+        return;
+    };
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .stage(&handle.id, &[std::path::PathBuf::from("b.txt")])
+        .unwrap();
+    let oid = backend
+        .commit(&handle.id, opts("signed", Some(true)))
+        .expect("signed commit");
+
+    let status = backend.verify_commit(&handle.id, &oid).expect("verify");
+    assert_eq!(
+        status.state,
+        platypusgit_lib::git::signing::SigState::Good,
+        "signer={:?} key={:?}",
+        status.signer,
+        status.key
+    );
+}
+
+/// The pre-check reads the commit HEADER, not the signature's validity: a commit
+/// carrying `gpgsig` must reach git even when what it carries is nonsense, or a
+/// tampered signature would silently read as "unsigned" instead of `Bad`.
+#[test]
+fn verify_commit_does_not_report_a_broken_signature_as_unsigned() {
+    let Some((tr, _keydir)) = ssh_signing_repo_with_allowed_signers() else {
+        eprintln!("ssh-keygen unavailable — skipping broken-signature test");
+        return;
+    };
+    let (backend, handle) = tr.open_with_backend();
+
+    // A commit object whose gpgsig header holds garbage.
+    let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    let buf = tr
+        .repo
+        .commit_create_buffer(
+            &head.author(),
+            &head.committer(),
+            "tampered",
+            &head.tree().unwrap(),
+            &[&head],
+        )
+        .unwrap();
+    let oid = tr
+        .repo
+        .commit_signed(
+            std::str::from_utf8(&buf).unwrap(),
+            "-----BEGIN SSH SIGNATURE-----\ngarbage\n-----END SSH SIGNATURE-----\n",
+            None,
+        )
+        .unwrap()
+        .to_string();
+
+    let state = backend.verify_commit(&handle.id, &oid).expect("verify").state;
+    assert_ne!(
+        state,
+        platypusgit_lib::git::signing::SigState::None,
+        "a commit carrying a gpgsig header must never grade as unsigned"
+    );
+}
+
 #[test]
 fn a_signing_failure_fails_the_commit_instead_of_committing_unsigned() {
     let tr = TempRepo::with_initial_commit("hello\n");

@@ -2,7 +2,6 @@ use std::path::{Component, Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 
 use crate::{
     error::{AppError, AppResult},
@@ -244,9 +243,11 @@ pub async fn run_clone(
     let target = validate_clone_target(parent, name)?;
     let args = clone_args(url, name, recurse_submodules);
 
-    let mut cmd = Command::new("git");
-    cmd.current_dir(parent)
-        .args(&args)
+    // `git_async_in` and not `git_async`: a clone's working directory is the
+    // PARENT of a repository that does not exist yet, so there is nothing for
+    // `-C` to name. It carries CREATE_NO_WINDOW and the prompt-less policy.
+    let mut cmd = crate::proc::git_async_in(parent);
+    cmd.args(&args)
         // Never let the child read from our stdin. Nothing in this codebase
         // feeds it anything, so an unexpected read would just block forever
         // — and a clone has no cancel button, so a hang here is force-quit
