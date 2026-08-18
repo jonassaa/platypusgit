@@ -1,7 +1,7 @@
 // 9 hero feature areas (from README "Features")
 export const heroFeatures = [
   { icon: 'git-commit', title: 'Staging & commit', blurb: 'Stage/unstage/discard files and individual hunks. Commit with amend + author override.' },
-  { icon: 'diff', title: 'Diff & viewing', blurb: 'Worktree/index/HEAD diffs, commit-to-commit diffs, branch compare, blame, repo browser.' },
+  { icon: 'diff', title: 'Diff & viewing', blurb: 'Continuous whole-file diffs with a scrubable minimap, commit-to-commit diffs, branch compare, blame, repo browser.' },
   { icon: 'git-branch', title: 'Branches & tags', blurb: 'List/create/checkout/rename/delete branches. Lightweight, annotated and signed tags.' },
   { icon: 'history', title: 'History', blurb: 'Commit graph, file history, reflog viewer, detached-HEAD checkout.' },
   { icon: 'rewind', title: 'History manipulation', blurb: 'Reset (soft/mixed/hard), cherry-pick, revert.' },
@@ -26,12 +26,13 @@ export const featureGroups = [
   ]},
   { title: 'Diff & viewing', blurb: 'See exactly what changed, anywhere.', items: [
     'Worktree / index / HEAD diffs',
-    'Whole-file diffs by default — the file reads continuously, each change block still stages on its own',
+    'Whole-file diffs by default — a continuous file with no `@@` banners, changed lines coloured, and Stage / Discard in the gutter beside each change block',
+    'Scrubable minimap beside the diff — the shape and spread of a change at a glance, click or drag to jump',
     'Unified and side-by-side (split) diff views, with a persisted default',
     'Syntax highlighting on every diff, blame and preview surface — tokenized off the main thread',
     'Word-level highlighting within a changed line',
-    'Configurable diff context lines',
-    'Commit-to-commit diffs',
+    'Configurable diff context lines, with a fold separator that names what it hides and expands it in place',
+    'Commit-to-commit diffs — one commit, or the combined diff across a selected range',
     'Branch compare — any two refs, or a ref against the working tree, with ahead/behind, both commit lists and the combined diff',
     'Line-by-line blame',
     'Repo file browser at HEAD, or any revision',
@@ -110,9 +111,10 @@ export const featureGroups = [
     'Command palette (⌘P) — branches, files, commits, and actions',
     'Rider-style default keymap, with a Classic preset',
     'Type-to-jump speed-search in lists',
-    'Commit chords and F7 / ⇧F7 hunk navigation',
+    'Commit chords, F7 / ⇧F7 hunk navigation, and stage / discard of the hunk you are on from the keyboard',
     'Spatial Alt+Arrow pane focus and a ? cheat sheet',
-    '`pgit` command-line launcher — open a repo from the terminal, installed by the `.deb` and `.msi` packages or from Settings',
+    'Resizable panels — drag any panel to whatever the window allows, double-click a handle to reset it',
+    '`pgit` command-line launcher — open a repo from the terminal and get the prompt straight back, installed by the `.deb` and `.msi` packages or from Settings',
   ]},
 ];
 
@@ -123,6 +125,19 @@ export const roadmap = [
 ];
 
 export const changelog = [
+  {
+    version: '0.0.13',
+    date: '2026-08-18',
+    status: 'feature',
+    notes: [
+      'The diff reads as a file now, not as a stack of labelled sections. The `@@ -12,7 +12,9 @@` banner is gone from every diff surface, and so are the `@@` lines that travelled inside each hunk and outlived the bar — a changed line carries a coloured background and nothing else, red for removed and green for added. Deleting the bar was the easy half; rehoming the four things it carried was the work. Stage and Discard are now a gutter cluster on the first changed row of each block, drawn at rest rather than only under the pointer, because a windowed diff cannot wrap a hunk in one element and a control you can find only by hovering the exact row it sits on is not a control. `F7` / `⇧F7` anchor on that same first changed row, which is where the change actually starts. Per-hunk collapse is retired: it hid a change while leaving its context on screen, and its chevron would have sat beside a fold separator\'s chevron meaning the opposite. And in chunked-context mode every gap between blocks is a fold separator that says how many lines it is hiding and which range they cover, and expands them in place. Two things broken for as long as per-hunk staging has existed are fixed on the way past: the old banner\'s Stage and Discard buttons were mouse-only — no key sequence could reach either — so staging and discarding the hunk you are on are real chords now, `⌘⇧H` and `⌘⇧⌫`, in both presets; and `F7` did nothing whatsoever in the commit panel or the repo browser, two of the four diff surfaces, where the hunk cursor had never been wired in. One place is unchanged: the side-by-side view still shows its own `@@` separator rows. It fills no gaps, so those rows have to stay, and turning them into folds needs counts that view does not compute — a follow-up.',
+      'A minimap down the side of the diff, and you can scrub it. Every diff surface wide enough for one gets a narrow canvas showing the whole file at a glance — where the changes are, how large they are, how they are spread through the file — with a band marking the slice currently on screen. Click it to jump, or drag to scrub: pressing inside the band keeps your grab offset, pressing outside centres the row you pointed at, and a drag past either end pins at the limit instead of sliding away with the cursor. It is painted from the diff the app already holds in memory rather than read off the page, because a long file is windowed and most of its rows are not there to measure, and it hides itself below a container width derived from the diff\'s own geometry rather than picked by eye — so the narrow commit panel earns one on a wide display, and a pane you drag narrow gives it up. It follows the active theme, light modes included, and repaints when you edit the theme you are on. One thing worth saying plainly: everything new in the diff area — the continuous view, the gutter cluster, the fold separators and the minimap — has so far only been rendered on the Linux webview, at a single device-pixel ratio. How it looks on a high-density display, and on macOS in particular, is unverified, so a report about it is more useful here than usual.',
+      'The diff of what you have selected in History, from the menu or `⌘D`. One commit selected shows that commit\'s diff; several show the combined diff across the range they span. Both paths now do it: a single commit\'s context menu gained a View diff entry — it used to offer Compare with HEAD and nothing else diff-shaped, so it answered a different question for one commit than it did for several — and `⌘D` reads the selection while the commit list has focus, without losing its meaning anywhere else, since it still opens the Diff viewer from every other pane, the activity bar and the palette. A range diff necessarily covers every commit between the outermost two, including ones you never clicked, so a selection with gaps in it now says so in the detail pane instead of leaving you to work it out from the result.',
+      'Panels grow to the window instead of to a number somebody typed. Every resizable pane had a hard-coded pixel ceiling — a 520px file list, a 640px composer, a 600px tree — so on a large display the side and bottom panels stayed far smaller than the space allowed. The constraint is expressed the other way round now, as how small the pane on the other side of the handle may get, and that removes the ceiling on its own: a panel can take everything the window has while its neighbour always keeps enough room to hold the handle and be dragged back. The size you drag is kept as your preference and clamped to whatever window it is being drawn in, so reopening a 720px panel on a laptop narrows it there without discarding what the external monitor earned, and moving to a smaller display re-fits the panels rather than leaving a handle off the edge. Double-click a handle to reset that pane to its default size — every handle in the app, twelve of them.',
+      '`pgit` hands the terminal back. `pgit .` held the prompt for as long as the app stayed open, and `Ctrl+C` killed the app; it returns immediately now, the way `code .` does. The detach lives in the binary rather than in the launcher shims, because a symlink cannot detach by construction — the Unix install and the Homebrew cask both symlink the executable — and four shim-side implementations would have drifted apart. Three cases deliberately stay in the foreground: `--help`, which prints and exits; a launch whose output is not a terminal, so `pgit . > file` still blocks; and the askpass helper git runs when it needs a credential, which answers on its own standard output while git waits for it — a version of that which detached would hand git an empty password and break every authenticated fetch, pull and push with nothing to trace the failure back to. Unix for now; Windows is unchanged.',
+      'Fixes — the merge resolver window leaked the browser\'s own context menu. Right-clicking anywhere in the resolver, over the editable result pane included, offered reload and inspect-element on top of merged work that exists nowhere else yet, and on Linux that menu is a real GTK popup with spell-check and IME submenus hanging off it. The suppression the rest of the app uses is document-scoped, and the resolver is a separate window with its own document, so it had never applied there. It is not a fix for the Linux freeze it was found while investigating: that one is still unreproduced and its evidence increasingly points at WSLg rather than at this app.',
+    ],
+  },
   {
     version: '0.0.12',
     date: '2026-08-17',
