@@ -50,10 +50,22 @@ semver = "1"
 # Content log search (#61 D10) compiles the user's pattern once per walk.
 regex = "1"
 
+# `setsid()` between fork and exec, for the detached `pgit` launch (#163) —
+# nothing in std reaches it (`Command::process_group` only makes a new process
+# group, which leaves the app attached to the terminal it was launched from).
+# Already in the tree transitively, so this declares it rather than adding it.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 # Compile + wire the WebDriver plugin. Set only by the e2e debug build.
 e2e = ["dep:tauri-plugin-wdio-webdriver"]
 
 [dev-dependencies]
 tempfile = "3"
+
+# The detach tests drive the real binary through a pty, which is the only way to
+# prove the tty gate does not capture the askpass and --help paths.
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
 

@@ -38,6 +38,11 @@ pub struct Credentials {
 ///   carry arguments — hence `ASKPASS_MODE_ENV` rather than a `--askpass` flag.
 /// * The secret travels in the environment, never in argv: argv is
 ///   world-readable via `ps` on macOS and Linux, a process's environment is not.
+/// * It points at the **bare executable**, never at the installed `pgit` shim
+///   (which on every Unix channel is a symlink to this same binary): `pgit`
+///   detaches from the terminal on launch, and git reads the credential from the
+///   askpass's stdout synchronously. See `detach::should_detach` and the fork
+///   site in `lib.rs::run`.
 pub fn apply_auth_env(cmd: &mut tokio::process::Command, creds: Option<&Credentials>) {
     cmd.env("GIT_TERMINAL_PROMPT", "0");
     match creds {

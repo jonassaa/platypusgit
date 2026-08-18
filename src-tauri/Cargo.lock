@@ -3222,6 +3222,7 @@ name = "platypusgit"
 version = "0.0.0"
 dependencies = [
  "git2",
+ "libc",
  "log",
  "regex",
  "semver",

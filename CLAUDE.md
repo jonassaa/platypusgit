@@ -329,6 +329,11 @@ cli.rs           CLI arg parsing (LaunchIntent, parse_args, resolve_repo_root)
                  point of use, so all three platform tables are testable from
                  any host — two of the three cannot be exercised otherwise.
                  Not to be confused with git/cli.rs (CliBackend) below
+detach.rs        Handing the terminal back on a `pgit …` launch (#163):
+                 `should_detach` (PURE — the whole gate, and the reason the
+                 askpass path still authenticates) + `spawn_detached`, the
+                 re-exec that carries argv and cwd into a child with no stdio
+                 and its own session. See "The `pgit` launch detaches"
 windows/         add-user-path.ps1 — the per-user PATH append, `include_str!`'d
                  as `WINDOWS_PATH_SCRIPT` and fed to powershell on stdin
 deb/             pgit (the /usr/bin wrapper, committed 100755) + postinst
@@ -1760,6 +1765,41 @@ module and every `src/features/*/` directory is named somewhere in here.
   prompts and every choice is a flag or an env var. Watch `set -e` around
   `[ … ] && cmd` as a function's or loop body's last command, and feed loops from
   a here-doc rather than a pipe when they assign to an outer variable.
+
+### The `pgit` launch detaches — and one variant must not (#163)
+
+- **`pgit .` hands the prompt straight back**, like `code .`. The detach is in
+  the BINARY (`detach.rs`, called from one site in `lib.rs::run`), not in the
+  shims: two of the four shapes are symlinks to this executable, so there is no
+  script to put a `&` in, and `setsid` does not exist on macOS.
+- **`Parsed::Askpass` must never detach, and that is the whole risk of this
+  feature.** git runs this binary as `GIT_ASKPASS` and reads the credential from
+  its stdout, **synchronously**; a process that spawned a child and exited hands
+  git an empty credential, so every authenticated fetch, pull and push fails with
+  nothing in any error to trace it back to. `should_detach` therefore answers
+  yes for `Parsed::Launch` only, and additionally refuses while
+  `ASKPASS_MODE_ENV` is set — git's prompt string parses as a *path*, so a
+  reordering that let it reach the gate would otherwise read as a launch.
+  `Parsed::Help` stays synchronous for the same reason at a lower stake.
+- **`GIT_ASKPASS` points at the bare executable, never at the `pgit` shim**, and
+  since this landed there are two independent reasons: `GIT_ASKPASS` is exec'd
+  directly and cannot carry arguments (#61 D5), *and* `pgit` now detaches.
+- **It re-execs; it does not `fork()` and carry on.** macOS forbids using
+  CoreFoundation, AppKit or WebKit's XPC services in a forked child that has not
+  `exec`'d (fork(2) says so outright), and the child here IS the GUI. cwd is
+  passed to it explicitly even though an exec'd child inherits it, because
+  `parse_args` resolves `pgit ../other-repo` against it.
+- **Gated on stdout being a terminal**, so Finder, the Dock, a `.desktop` entry
+  and the e2e harness's pipes are untouched. Consequence worth knowing:
+  `pgit . > file` still blocks, by design.
+- **Windows is deliberately unchanged.** The release binary is GUI-subsystem, so
+  `cmd.exe` and PowerShell already return; Git Bash waits, but its stdout is an
+  MSYS named pipe that `IsTerminal` reports as not a terminal, so the gate would
+  refuse there anyway. Fixing that shell needs a Windows machine to verify on.
+- `tests/cli_detach.rs` drives the real binary through a **pty** for the two
+  paths that must stay synchronous, and `git credential fill` — git's own
+  credential machinery, offline — for the credentialed one. A pure-function test
+  cannot show that git still gets its answer.
 
 ### Permissions (Tauri 2)
 - Shared permissions in `src-tauri/capabilities/default.json`. Current set: `core:default`, `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, `core:window:allow-close`, `core:window:allow-start-dragging`, `core:window:allow-set-title`, `core:webview:allow-create-webview-window`, `core:webview:allow-set-webview-zoom` (the `view.zoom*` chords), `dialog:default`, `dialog:allow-open`, `os:default`, `log:default`. Capability scopes `windows: ["main", "merge"]` (merge resolver runs as a second window).
