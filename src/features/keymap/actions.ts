@@ -322,11 +322,13 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   // Its own catalog entry rather than a second meaning hung off nav.diff, so the
   // cheat sheet names both behaviors and the two can be rebound apart.
   //
-  // The handler (History.tsx) claims a MULTI-commit selection only. One selected
-  // commit already has its diff on screen inline and on Enter, and History is the
-  // launch screen — claiming the single case there would leave the Diff viewer
-  // with no chord anywhere a user starts.
-  "diff.viewCombined": { id: "diff.viewCombined", title: "View combined diff of selected commits", category: "Diff", scope: "pane" },
+  // The handler (History.tsx) claims ANY non-empty commit selection — one commit
+  // routes to its own diff, 2+ to the combined diff of the range, exactly as
+  // Enter does (#164). It declines only on an empty log, which is what keeps the
+  // fall-through to nav.diff alive there. The id keeps its "combined" spelling
+  // (rebindings and presets.test.ts are keyed on it); the title does not, because
+  // the single-commit case is not a combined anything.
+  "diff.viewCombined": { id: "diff.viewCombined", title: "View diff of selected commits", category: "Diff", scope: "pane" },
   // The keyboard half of the hunk gutter cluster (#157). The `@@` banner's
   // Stage/Discard buttons were reachable by mouse only — Tab is pane traversal, so
   // DOM focus never enters a pane's buttons — and the cluster that replaced them

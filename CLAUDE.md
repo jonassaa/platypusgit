@@ -1064,10 +1064,11 @@ module and every `src/features/*/` directory is named somewhere in here.
   silently; the pane entry must come earlier in the preset table (`COMMON` is
   spread before the per-preset `nav.*`, which is why it lands there), and
   `presets.test.ts` pins the resulting `rev.get("Mod+D")` order. The pane
-  handler's decline is then what keeps the global chord working — and since
-  History always has one commit selected, "decline" there means *fewer than two*,
-  not "nothing selected": claiming the single case would take `Mod+D` away from the
-  Diff viewer on the launch screen.
+  handler's decline is then what keeps the global chord working — in History that
+  means an EMPTY selection, i.e. an empty log and nothing else (#164). It shipped
+  with a floor of *two* to keep `Mod+D` → Diff viewer on the launch screen; one
+  commit now routes to its own diff, because #158 asked for "a commit or commits"
+  and Rider's ⌘D on a selected commit shows that commit's diff.
 - `useNavStore.intent` drives deep-view switches (e.g. "show this commit's diff" → sets screen to `commitDiff`). Consumers write an intent; `AppShell` effect routes the screen.
 - **A new `NavIntent` kind must be routed in AppShell, and both halves of that
   are now enforced.** The routing switch ends in `default: assertNever(intent)`,
