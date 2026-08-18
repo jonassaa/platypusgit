@@ -28,15 +28,11 @@ import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
-import {
-  flattenDiffRows,
-  hunkAnchorRows,
-  rowOffset,
-  windowVariable,
-} from "@/lib/diffRows";
+import { flattenDiffRows, hunkAnchorRows, rowOffset } from "@/lib/diffRows";
+import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
-import { DiffMinimap } from "@/features/diff/DiffMinimap";
+import { MinimapGutter } from "@/features/diff/DiffMinimap";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { pairChangedLines } from "@/lib/pairChangedLines";
@@ -222,22 +218,22 @@ export function DiffViewerScreen() {
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = React.useState(0);
   const { viewportH, remeasure } = useViewportH(scrollRef, [mode]);
   // The minimap gutter sits BESIDE the scroll container (panes own their
   // scrolling), so it needs the wrapper's box — and the wrapper is what is
   // measured, not the scroll area, so showing the gutter cannot change the width
   // that decides whether to show it (#161).
   const diffBox = useElementSize();
+  const { win: varWin, onScroll: onDiffScroll } = useVariableWindow({
+    heights,
+    viewportH,
+    scrollRef,
+  });
 
   // Wrap makes row heights genuinely unknown — pre-wrap rows are as tall as they
   // need to be — so windowing is off and every row renders. A very large wrapped
   // diff stays slow; that combination is rare and this keeps the toggle.
-  const win = React.useMemo(
-    () =>
-      wrap ? undefined : windowVariable(heights, { scrollTop, viewportH, overscan: 8 }),
-    [wrap, heights, scrollTop, viewportH],
-  );
+  const win = wrap ? undefined : varWin;
 
   // F7/⇧F7 walk the viewed file's hunks from either pane. Scroll to the hunk's
   // ANCHOR row BY OFFSET (#157): a querySelector would find nothing whenever that
@@ -487,7 +483,7 @@ export function DiffViewerScreen() {
                 ariaLabel="Diff"
                 innerRef={scrollRef}
                 onScroll={() => {
-                  setScrollTop(scrollRef.current?.scrollTop ?? 0);
+                  onDiffScroll();
                   remeasure();
                 }}
               >
@@ -505,14 +501,12 @@ export function DiffViewerScreen() {
                   windowing is off — so `heights` no longer describes the rendered
                   file and a scrub would land on the wrong line. No gutter there. */}
               {!wrap && (
-                <DiffMinimap
+                <MinimapGutter
                   rows={rows}
                   heights={heights}
                   rowH={rowH}
-                  scrollTop={scrollTop}
                   viewportH={viewportH}
                   scrollRef={scrollRef}
-                  onScrollTop={setScrollTop}
                   containerWidth={diffBox.width}
                   containerHeight={diffBox.height}
                 />

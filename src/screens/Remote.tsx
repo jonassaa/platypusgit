@@ -19,7 +19,9 @@ import type { RemoteInfo } from "@/lib/types";
 export function RemoteScreen() {
   const branches = useRepoStore((s) => s.branches);
   const remotes = useRepoStore((s) => s.remotes);
-  const store = useRepoStore();
+  // Actions only run inside event handlers, so read them off getState() — the
+  // selector-less useRepoStore() re-rendered this screen on every store write.
+  const store = useRepoStore.getState;
 
   const head = currentBranch(branches);
   const { ahead, behind } = totalAheadBehind(branches);
@@ -33,14 +35,14 @@ export function RemoteScreen() {
     return [head.upstream.slice(0, idx), head.upstream.slice(idx + 1)];
   })();
 
-  const handleFetchAll = () => store.fetchAll();
+  const handleFetchAll = () => store().fetchAll();
 
   const handlePull = () => {
     if (!defaultRemote || !defaultBranch) {
       pgFlash("No upstream configured for current branch");
       return;
     }
-    store.pull(defaultRemote, defaultBranch);
+    store().pull(defaultRemote, defaultBranch);
   };
 
   const handlePush = () => {
@@ -48,7 +50,7 @@ export function RemoteScreen() {
       pgFlash("No upstream configured — run git push -u origin <branch> first");
       return;
     }
-    store.push(defaultRemote, defaultBranch);
+    store().push(defaultRemote, defaultBranch);
   };
 
   const handleAddRemote = async () => {
@@ -69,7 +71,7 @@ export function RemoteScreen() {
       mono: true,
     });
     if (!url) return;
-    store.addRemote(name, url);
+    store().addRemote(name, url);
   };
 
   const { onContextMenu: onRemoteCtx, menu: remoteMenu } =
@@ -254,7 +256,7 @@ export function RemoteScreen() {
               onContextMenu={(e) => onRemoteCtx(e, r)}
               ahead={0}
               behind={0}
-              onFetch={() => store.fetch(r.name)}
+              onFetch={() => store().fetch(r.name)}
               onPull={() => {
                 // Pull the current branch from this remote (uses HEAD branch name).
                 const branch = head?.name;
@@ -262,7 +264,7 @@ export function RemoteScreen() {
                   pgFlash("No branch checked out");
                   return;
                 }
-                store.pull(r.name, branch);
+                store().pull(r.name, branch);
               }}
               onPush={() => {
                 const branch = head?.name;
@@ -270,7 +272,7 @@ export function RemoteScreen() {
                   pgFlash("No branch checked out");
                   return;
                 }
-                store.push(r.name, branch);
+                store().push(r.name, branch);
               }}
             />
           ))}

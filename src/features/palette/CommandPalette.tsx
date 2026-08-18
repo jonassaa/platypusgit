@@ -101,9 +101,14 @@ export function CommandPalette() {
   // The row shapes come from commands.ts — same builders the pick steps use, so
   // a row kind cannot drift between the root step and a pick step. Only the id
   // namespace differs (root rows have their own frecency keys).
+  // Gated on `open`: this component is always mounted (AppShell), and its
+  // inputs — `commits`, `allFiles` — change on every refresh and page load.
+  // Without the gate, every git op rebuilt one row object + closure per tracked
+  // file and loaded commit, then the scoring memo below sorted them, all for a
+  // palette nobody could see. Closed ⇒ empty; the real list builds on open.
   const candidates = React.useMemo<PaletteItem[]>(
     () =>
-      step.kind !== "root"
+      !open || step.kind !== "root"
         ? []
         : [
             ...buildCommands(),
@@ -126,7 +131,7 @@ export function CommandPalette() {
               onPick: (oid) => setIntent({ kind: "commit-vs-wt", oid }),
             }),
           ],
-    [step.kind, branches, allFiles, commits, setIntent],
+    [open, step.kind, branches, allFiles, commits, setIntent],
   );
 
   // Source list for the active step: root → candidates; pick → step.items.

@@ -196,14 +196,43 @@ export function usePaneSize(
     }
   });
 
+  // Debounced: `preferred` changes on every mousemove of a drag, and
+  // localStorage.setItem is a synchronous disk write — per-move persistence
+  // stuttered the drag itself. Trailing write only: the last timer fires after
+  // the drag settles, and unmount flushes whatever is still pending. The timer
+  // reads the latest value through a ref so rescheduling never has to flush.
+  const persistTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latest = React.useRef({ storageKey, preferred });
+  latest.current = { storageKey, preferred };
   React.useEffect(() => {
     if (!storageKey) return;
-    try {
-      localStorage.setItem(storageKey, String(Math.round(preferred)));
-    } catch {
-      // quota errors are non-fatal
-    }
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      persistTimer.current = null;
+      try {
+        localStorage.setItem(storageKey, String(Math.round(latest.current.preferred)));
+      } catch {
+        // quota errors are non-fatal
+      }
+    }, 250);
   }, [preferred, storageKey]);
+  React.useEffect(
+    () => () => {
+      // Unmount with a write still pending: flush it rather than lose it.
+      if (persistTimer.current) {
+        clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+        const { storageKey: k, preferred: w } = latest.current;
+        if (!k) return;
+        try {
+          localStorage.setItem(k, String(Math.round(w)));
+        } catch {
+          // quota errors are non-fatal
+        }
+      }
+    },
+    [],
+  );
 
   const size = clampPaneSize(preferred, clamp);
 

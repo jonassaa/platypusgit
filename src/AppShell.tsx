@@ -60,6 +60,7 @@ import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { UpdateChip } from "@/features/update/UpdateChip";
 import { UpdatePanel } from "@/features/update/UpdatePanel";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
+import { warmSyntax } from "@/lib/syntax";
 import { BranchPicker } from "@/features/branches/BranchPicker";
 import {
   DUBIOUS_OWNERSHIP_HELP,
@@ -238,6 +239,15 @@ export function AppShell() {
       void useUpdateStore.getState().check(false);
     }, 2000);
     return () => clearTimeout(t);
+  }, []);
+
+  // Warm the syntax worker at idle, so the first file the user opens pays only
+  // its own grammar + tokenize rather than worker spawn + Shiki set-up too.
+  // Idle, not launch: highlighting must never compete with first paint.
+  React.useEffect(() => {
+    if (typeof requestIdleCallback !== "function") return;
+    const id = requestIdleCallback(() => warmSyntax());
+    return () => cancelIdleCallback(id);
   }, []);
 
   // The merge resolver window stages resolutions out-of-band; reflect them.
@@ -625,7 +635,6 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const activity = useRepoStore((s) => s.activity);
   const refresh = useRepoStore((s) => s.refreshAll);
   const activePath = useTabsStore((s) => s.activePath);
-  const store = useRepoStore();
   const defaultPullMode = useSettingsStore((s) => s.defaultPullMode);
 
   const head = currentBranch(branches);
@@ -646,8 +655,12 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   };
 
   // Same ops the keymap default runners and palette use (features/repo/ops.ts).
+  // getState(), not a hook: these run inside event handlers, so they need no
+  // subscription — the selector-less `useRepoStore()` that used to sit here
+  // re-rendered the whole titlebar (BranchChip, UpdateChip, picker) on EVERY
+  // store write, including per-page log appends and loading flags.
   const onFetch = () => {
-    store.fetchAll();
+    useRepoStore.getState().fetchAll();
   };
 
   const onPull = () => {
@@ -655,7 +668,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       pgFlash("No upstream configured for current branch");
       return;
     }
-    store.pull(upstream[0], upstream[1], defaultPullMode);
+    useRepoStore.getState().pull(upstream[0], upstream[1], defaultPullMode);
   };
 
   const onPush = () => {
@@ -663,7 +676,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       pgFlash("No upstream configured — run git push -u origin <branch> first");
       return;
     }
-    store.push(upstream[0], upstream[1]);
+    useRepoStore.getState().push(upstream[0], upstream[1]);
   };
 
   return (

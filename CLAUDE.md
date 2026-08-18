@@ -775,6 +775,9 @@ lib/
 │                    event, a ResizeObserver when there is one, and a bounded
 │                    rAF poll while it still reads 0
 ├── useWindowedList.ts  Fixed-pitch windowing for the plain lists
+├── useVariableWindow.ts  Scroll → windowVariable state for the diff surfaces;
+│                    updates state only when the window RANGE changes, so
+│                    scrolling inside the overscan band costs zero re-renders
 ├── useDiffRowHeight.ts  Resolves `--diff-row-h` to px, with a fallback for
 │                    jsdom (which does not evaluate `calc()`); CSS stays the
 │                    source of truth — NaN here would collapse every row to zero
@@ -1568,7 +1571,7 @@ module and every `src/features/*/` directory is named somewhere in here.
   the first bad commit rather than let the user read a sha off the titlebar.
 
 ### Async / threading (Rust)
-- `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Mutex<Repository>` inside a `Mutex<HashMap<RepoId, ...>>`. Several repositories are genuinely open at once (multi-repo tabs); `close` is the only thing that removes an entry.
+- `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Arc<Mutex<Repository>>` inside a `Mutex<HashMap<RepoId, ...>>` — `with_repo` clones the Arc and RELEASES the map lock before running the op, so different repositories run in parallel while same-repo ops still serialize on the inner mutex (which the stash TOCTOU note relies on). Several repositories are genuinely open at once (multi-repo tabs); `close` is the only thing that removes an entry.
 - Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block async runtime.
 
 ### Styling

@@ -1,4 +1,10 @@
-export { tokenizeFile, type SyntaxLine, type SyntaxToken } from "./tokenize";
+export {
+  tokenizeFile,
+  peekTokens,
+  warmSyntax,
+  type SyntaxLine,
+  type SyntaxToken,
+} from "./tokenize";
 export { useSyntax } from "./useSyntax";
 export {
   useDiffSyntax,

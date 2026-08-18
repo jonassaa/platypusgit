@@ -8,6 +8,7 @@
 // navigation and the e2e specs address hunks through — live on each hunk's ANCHOR
 // row, the first changed line, marked as such by flattenDiffRows. The hunk's
 // Stage/Discard cluster is pinned to that same row.
+import React from "react";
 import type { DiffRow } from "@/lib/diffRows";
 import type { WindowRange } from "@/lib/useWindowedList";
 import { PGDiffRow, PGFoldSeparator, PGHunkActions } from "./git-components";
@@ -57,6 +58,26 @@ export function PGWindowedDiff({
   const end = win?.end ?? rows.length;
   const slice = rows.slice(start, end);
 
+  // Stable per-hunk click handlers, so PGDiffRow's React.memo holds: an inline
+  // closure per row would hand every row a fresh prop each render and re-render
+  // the whole window slice for any parent state change. Each wrapper's identity
+  // is permanent (keyed by hunk index) and it reads the LATEST onLineClick
+  // through a ref at call time, so no row ever sees a stale handler.
+  const onLineClickRef = React.useRef(onLineClick);
+  onLineClickRef.current = onLineClick;
+  const hunkClickHandlers = React.useRef(
+    new Map<number, (changedIndex: number, range: boolean) => void>(),
+  );
+  const clickHandlerFor = (hunkIndex: number) => {
+    let h = hunkClickHandlers.current.get(hunkIndex);
+    if (!h) {
+      h = (changedIndex, range) =>
+        onLineClickRef.current?.(hunkIndex, changedIndex, range);
+      hunkClickHandlers.current.set(hunkIndex, h);
+    }
+    return h;
+  };
+
   return (
     <div>
       {win && win.topPad > 0 && (
@@ -96,9 +117,7 @@ export function PGWindowedDiff({
             }
             focused={focusedRow === start + i}
             onLineClick={
-              onLineClick && !disabled
-                ? (changedIndex, range) => onLineClick(row.hunkIndex, changedIndex, range)
-                : undefined
+              onLineClick && !disabled ? clickHandlerFor(row.hunkIndex) : undefined
             }
           />
         );

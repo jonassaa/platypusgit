@@ -41,19 +41,29 @@ function tokenize(text: string): Token[] {
   return out;
 }
 
-/** Classic LCS table over token text. Returns matched index pairs. */
+/**
+ * Classic LCS table over token text. Returns matched index pairs.
+ *
+ * The table is one flat Int32Array rather than an array of arrays: a single
+ * allocation the engine zero-fills, indexed by row stride, instead of n+1 heap
+ * arrays with per-row bounds objects. Same DP, same tie-breaking, same pairs —
+ * this runs once per changed line pair in every diff, so its constant factor is
+ * a large share of what a diff costs to flatten.
+ */
 function lcsPairs(a: Token[], b: Token[]): Array<[number, number]> {
   const n = a.length;
   const m = b.length;
-  const table: number[][] = Array.from({ length: n + 1 }, () =>
-    new Array<number>(m + 1).fill(0),
-  );
+  const w = m + 1;
+  const table = new Int32Array((n + 1) * w);
   for (let i = n - 1; i >= 0; i--) {
+    const ai = a[i].text;
+    const row = i * w;
+    const below = row + w;
     for (let j = m - 1; j >= 0; j--) {
-      table[i][j] =
-        a[i].text === b[j].text
-          ? table[i + 1][j + 1] + 1
-          : Math.max(table[i + 1][j], table[i][j + 1]);
+      table[row + j] =
+        ai === b[j].text
+          ? table[below + j + 1] + 1
+          : Math.max(table[below + j], table[row + j + 1]);
     }
   }
   const pairs: Array<[number, number]> = [];
@@ -64,7 +74,7 @@ function lcsPairs(a: Token[], b: Token[]): Array<[number, number]> {
       pairs.push([i, j]);
       i++;
       j++;
-    } else if (table[i + 1][j] >= table[i][j + 1]) {
+    } else if (table[(i + 1) * w + j] >= table[i * w + j + 1]) {
       i++;
     } else {
       j++;

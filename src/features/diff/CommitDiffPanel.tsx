@@ -8,7 +8,7 @@ import {
   type DiffLineData,
 } from "@/design";
 import { useElementSize } from "@/lib/useElementSize";
-import { DiffMinimap } from "./DiffMinimap";
+import { MinimapGutter } from "./DiffMinimap";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
@@ -19,8 +19,8 @@ import {
   flattenDiffRows,
   hunkAnchorRows,
   scrollTopForRow,
-  windowVariable,
 } from "@/lib/diffRows";
+import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
@@ -36,9 +36,19 @@ import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
  * (via the shared pairing rule) and resolves each row's syntax from the correct
  * side, so this only has to render.
  */
-function CommitDiffRowText({ line }: { line: DiffLineData }) {
+const CommitDiffRowText = React.memo(function CommitDiffRowText({
+  line,
+}: {
+  line: DiffLineData;
+}) {
   const text = line.text ?? "";
-  const rendered = buildLineSpans(text, line.syntax ?? null, line.spans);
+  // Memoized (and the component memo'd on the row's stable identity): this
+  // panel renders a window of rows per frame and the span tiling is the only
+  // non-trivial work per row.
+  const rendered = React.useMemo(
+    () => buildLineSpans(text, line.syntax ?? null, line.spans),
+    [text, line.syntax, line.spans],
+  );
   if (rendered.length === 0) return <>{text}</>;
   if (rendered.length === 1 && !rendered[0].cls && !rendered[0].changed) {
     return <>{text}</>;
@@ -61,7 +71,7 @@ function CommitDiffRowText({ line }: { line: DiffLineData }) {
       ))}
     </>
   );
-}
+});
 
 export interface CommitDiffPanelProps {
   diffs: FileDiff[];
@@ -191,17 +201,17 @@ export function CommitDiffPanel({
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = React.useState(0);
   const { viewportH, remeasure } = useViewportH(scrollRef);
   // Measured on the WRAPPER holding the scroll area and the minimap, so adding
   // the gutter cannot change the width that decides whether to add it (#161).
   // This is the panel that most often falls UNDER the threshold — History's
   // beside layout is ~480px — and it does so by width, not by being this panel.
   const diffBox = useElementSize();
-  const win = React.useMemo(
-    () => windowVariable(heights, { scrollTop, viewportH, overscan: 8 }),
-    [heights, scrollTop, viewportH],
-  );
+  const { win, onScroll: onDiffScroll } = useVariableWindow({
+    heights,
+    viewportH,
+    scrollRef,
+  });
 
   // F7/⇧F7. The cursor lands on each hunk's ANCHOR row — its first changed line —
   // and scrolling goes BY OFFSET, because that row is usually unmounted (#157).
@@ -391,7 +401,7 @@ export function CommitDiffPanel({
           ariaLabel="Diff"
           innerRef={scrollRef}
           onScroll={() => {
-            setScrollTop(scrollRef.current?.scrollTop ?? 0);
+            onDiffScroll();
             remeasure();
           }}
         >
@@ -472,14 +482,12 @@ export function CommitDiffPanel({
             <div data-pg-spacer="bottom" style={{ height: `${win.bottomPad}px` }} />
           )}
         </FocusableScroll>
-        <DiffMinimap
+        <MinimapGutter
           rows={rows}
           heights={heights}
           rowH={rowH}
-          scrollTop={scrollTop}
           viewportH={viewportH}
           scrollRef={scrollRef}
-          onScrollTop={setScrollTop}
           containerWidth={diffBox.width}
           containerHeight={diffBox.height}
         />

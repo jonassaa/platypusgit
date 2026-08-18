@@ -100,8 +100,16 @@ export function useWindowedList<T extends HTMLElement = HTMLDivElement>(o: {
 
   const onScroll = React.useCallback(() => {
     const el = viewportRef.current;
-    if (el) setScrollTop(el.scrollTop);
-  }, []);
+    if (!el) return;
+    // Quantize to the row pitch: windowRange only ever reads
+    // Math.floor(scrollTop / rowHeight), so two positions inside the same row
+    // produce byte-identical windows — but a raw setScrollTop re-rendered the
+    // whole owning screen for every one of the 100+ scroll events per second a
+    // trackpad fires. Snapping first makes the state (and so the render) change
+    // only when the window actually can.
+    const quantized = Math.floor(el.scrollTop / rowHeight) * rowHeight;
+    setScrollTop((prev) => (prev === quantized ? prev : quantized));
+  }, [rowHeight]);
 
   /**
    * Scroll a row into view BY INDEX. Must not go through the DOM: under
