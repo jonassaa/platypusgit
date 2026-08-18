@@ -90,6 +90,32 @@ if (!Range.prototype.getClientRects) {
     }) as DOMRect;
 }
 
+// The diff minimap paints to a canvas (#161), and jsdom implements
+// `getContext` as a hard "Not implemented" that prints a stack trace to the
+// virtual console for EVERY mount — every diff surface has one now, so an
+// unstubbed context buries real test output under hundreds of lines.
+//
+// A recording no-op rather than `() => null`: the component already survives a
+// null context (a webview without one must not crash), but with a real object
+// the paint pass actually RUNS in component tests, so an exception in the
+// painter surfaces there instead of only in a screenshot. Fidelity is
+// irrelevant — nothing asserts pixels.
+HTMLCanvasElement.prototype.getContext = function stubGetContext(
+  this: HTMLCanvasElement,
+  kind: string,
+) {
+  if (kind !== "2d") return null;
+  return {
+    canvas: this,
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 1,
+    clearRect() {},
+    fillRect() {},
+    strokeRect() {},
+  } as unknown as CanvasRenderingContext2D;
+} as never;
+
 afterEach(() => {
   cleanup();
   resetInvokeMock();
