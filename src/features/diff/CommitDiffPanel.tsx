@@ -8,6 +8,7 @@ import {
   type DiffLineData,
 } from "@/design";
 import { useElementSize } from "@/lib/useElementSize";
+import { DiffMinimap } from "./DiffMinimap";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
@@ -192,6 +193,11 @@ export function CommitDiffPanel({
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = React.useState(0);
   const { viewportH, remeasure } = useViewportH(scrollRef);
+  // Measured on the WRAPPER holding the scroll area and the minimap, so adding
+  // the gutter cannot change the width that decides whether to add it (#161).
+  // This is the panel that most often falls UNDER the threshold — History's
+  // beside layout is ~480px — and it does so by width, not by being this panel.
+  const diffBox = useElementSize();
   const win = React.useMemo(
     () => windowVariable(heights, { scrollTop, viewportH, overscan: 8 }),
     [heights, scrollTop, viewportH],
@@ -376,8 +382,12 @@ export function CommitDiffPanel({
         id={viewPaneId}
         style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}
       >
+        <div
+          ref={diffBox.ref}
+          style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}
+        >
         <FocusableScroll
-          style={{ flex: 1, padding: 12 }}
+          style={{ flex: 1, minWidth: 0, padding: 12 }}
           ariaLabel="Diff"
           innerRef={scrollRef}
           onScroll={() => {
@@ -462,6 +472,18 @@ export function CommitDiffPanel({
             <div data-pg-spacer="bottom" style={{ height: `${win.bottomPad}px` }} />
           )}
         </FocusableScroll>
+        <DiffMinimap
+          rows={rows}
+          heights={heights}
+          rowH={rowH}
+          scrollTop={scrollTop}
+          viewportH={viewportH}
+          scrollRef={scrollRef}
+          onScrollTop={setScrollTop}
+          containerWidth={diffBox.width}
+          containerHeight={diffBox.height}
+        />
+        </div>
       </PGPane>
     </div>
   );

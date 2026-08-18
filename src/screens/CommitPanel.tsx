@@ -75,6 +75,7 @@ import {
 } from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
+import { DiffMinimap } from "@/features/diff/DiffMinimap";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import {
   WhitespaceToggle,
@@ -610,6 +611,9 @@ export function CommitPanelScreen() {
     diffScrollRef,
     [diffMode],
   );
+  // Measured on the WRAPPER holding the scroll area and the minimap, so adding
+  // the gutter cannot change the width that decides whether to add it (#161).
+  const diffBox = useElementSize();
   const win = React.useMemo(
     () =>
       windowVariable(heights, {
@@ -1256,8 +1260,12 @@ export function CommitPanelScreen() {
             }}
           />
         </div>
+        <div
+          ref={diffBox.ref}
+          style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}
+        >
         <FocusableScroll
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 0 }}
           ariaLabel="Diff"
           innerRef={diffScrollRef}
           onScroll={() => {
@@ -1323,6 +1331,20 @@ export function CommitPanelScreen() {
               <PGSideBySideDiff {...diffToSplit(diff)} />
             )}
         </FocusableScroll>
+        {diffMode === "unified" && (
+          <DiffMinimap
+            rows={rows}
+            heights={heights}
+            rowH={rowH}
+            scrollTop={diffScrollTop}
+            viewportH={diffViewportH}
+            scrollRef={diffScrollRef}
+            onScrollTop={setDiffScrollTop}
+            containerWidth={diffBox.width}
+            containerHeight={diffBox.height}
+          />
+        )}
+        </div>
         {moreMenu.menu}
       </PGPane>
 

@@ -62,6 +62,7 @@ import {
 } from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
+import { DiffMinimap } from "@/features/diff/DiffMinimap";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
 import { splitCodeLines } from "@/lib/codeLines";
@@ -664,6 +665,9 @@ export function RepoBrowserScreen() {
   const [diffScrollTop, setDiffScrollTop] = React.useState(0);
   const { viewportH: diffViewportH, remeasure: remeasureDiff } =
     useViewportH(diffScrollRef);
+  // Measured on the WRAPPER holding the scroll area and the minimap, so adding
+  // the gutter cannot change the width that decides whether to add it (#161).
+  const diffBox = useElementSize();
   // ── Hunk cursor + hunk-level chords (#157) ───────────────────────────────
   // This pane had no F7 either; the `@@` banner's Stage/Discard was mouse-only.
   // Scroll BY OFFSET — the anchor row is usually unmounted under windowing.
@@ -1083,8 +1087,12 @@ export function RepoBrowserScreen() {
               Blame
             </PGButton>
           </div>
+          <div
+            ref={diffBox.ref}
+            style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}
+          >
           <FocusableScroll
-            style={{ flex: 1 }}
+            style={{ flex: 1, minWidth: 0 }}
             ariaLabel="File preview"
             innerRef={diffScrollRef}
             onScroll={() => {
@@ -1165,6 +1173,22 @@ export function RepoBrowserScreen() {
                 </PGEmpty>
               )}
           </FocusableScroll>
+          {/* Only for a DIFF: this pane also renders plain file content, which has
+              no row model and no heights array for a gutter to derive from. */}
+          {selectedFile && !diffLoading && isTextualDiff(diff) && diff && (
+            <DiffMinimap
+              rows={diffRows}
+              heights={diffHeights}
+              rowH={diffRowH}
+              scrollTop={diffScrollTop}
+              viewportH={diffViewportH}
+              scrollRef={diffScrollRef}
+              onScrollTop={setDiffScrollTop}
+              containerWidth={diffBox.width}
+              containerHeight={diffBox.height}
+            />
+          )}
+          </div>
         </PGPane>
 
         <PGResizeHandle
