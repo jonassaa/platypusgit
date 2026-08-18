@@ -10,12 +10,19 @@
 // Shiki is configured with engine-javascript (no WASM asset to fetch through the
 // Tauri custom protocol), so it is pure JS and safe to run here.
 import { tokenizeToPacked } from "./tokenizeShiki";
+import { getHighlighter } from "./shiki";
 import type { PackedSyntax } from "./tokenizeCore";
 
 export interface TokenizeRequest {
   id: number;
   path: string;
   text: string;
+  /**
+   * Initialize the highlighter (Shiki core + the sentinel theme) and reply
+   * null without tokenizing anything. Sent at idle after launch so the first
+   * real request pays only its own grammar + tokenize, not the engine set-up.
+   */
+  warm?: boolean;
 }
 
 export interface TokenizeReply {
@@ -24,7 +31,12 @@ export interface TokenizeReply {
 }
 
 self.onmessage = async (e: MessageEvent<TokenizeRequest>) => {
-  const { id, path, text } = e.data;
+  const { id, path, text, warm } = e.data;
+  if (warm) {
+    await getHighlighter().catch(() => undefined);
+    (self as unknown as Worker).postMessage({ id, packed: null } satisfies TokenizeReply);
+    return;
+  }
   const packed = await tokenizeToPacked(path, text);
   const reply: TokenizeReply = { id, packed };
   // Transfer the buffers rather than copying them across.

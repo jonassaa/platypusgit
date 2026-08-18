@@ -71,11 +71,11 @@ import {
   flattenDiffRows,
   hunkAnchorRows,
   scrollTopForRow,
-  windowVariable,
 } from "@/lib/diffRows";
+import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
-import { DiffMinimap } from "@/features/diff/DiffMinimap";
+import { MinimapGutter } from "@/features/diff/DiffMinimap";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import {
   WhitespaceToggle,
@@ -605,8 +605,14 @@ export function CommitPanelScreen() {
     [diff, foldH, rowH, syntax, diffText, gaps, expandedGaps],
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
+  // Split mode's model, memoized: computed inline in JSX it re-derived the
+  // whole two-column model (word diff included) on every render of this panel
+  // — which happens per keystroke in the commit message box.
+  const split = React.useMemo(
+    () => (diffMode === "split" && isTextualDiff(diff) && diff ? diffToSplit(diff) : null),
+    [diffMode, diff],
+  );
   const diffScrollRef = React.useRef<HTMLDivElement>(null);
-  const [diffScrollTop, setDiffScrollTop] = React.useState(0);
   const { viewportH: diffViewportH, remeasure: remeasureDiff } = useViewportH(
     diffScrollRef,
     [diffMode],
@@ -614,15 +620,11 @@ export function CommitPanelScreen() {
   // Measured on the WRAPPER holding the scroll area and the minimap, so adding
   // the gutter cannot change the width that decides whether to add it (#161).
   const diffBox = useElementSize();
-  const win = React.useMemo(
-    () =>
-      windowVariable(heights, {
-        scrollTop: diffScrollTop,
-        viewportH: diffViewportH,
-        overscan: 8,
-      }),
-    [heights, diffScrollTop, diffViewportH],
-  );
+  const { win, onScroll: onDiffScroll } = useVariableWindow({
+    heights,
+    viewportH: diffViewportH,
+    scrollRef: diffScrollRef,
+  });
 
   React.useEffect(() => {
     if (!selected || !repo) {
@@ -1269,7 +1271,7 @@ export function CommitPanelScreen() {
           ariaLabel="Diff"
           innerRef={diffScrollRef}
           onScroll={() => {
-            setDiffScrollTop(diffScrollRef.current?.scrollTop ?? 0);
+            onDiffScroll();
             remeasureDiff();
           }}
         >
@@ -1327,19 +1329,17 @@ export function CommitPanelScreen() {
               />
             )}
           {!diffLoading && !diffError && isTextualDiff(diff) && diff && diff.hunks.length > 0 &&
-            diffMode === "split" && (
-              <PGSideBySideDiff {...diffToSplit(diff)} />
+            diffMode === "split" && split && (
+              <PGSideBySideDiff {...split} />
             )}
         </FocusableScroll>
         {diffMode === "unified" && (
-          <DiffMinimap
+          <MinimapGutter
             rows={rows}
             heights={heights}
             rowH={rowH}
-            scrollTop={diffScrollTop}
             viewportH={diffViewportH}
             scrollRef={diffScrollRef}
-            onScrollTop={setDiffScrollTop}
             containerWidth={diffBox.width}
             containerHeight={diffBox.height}
           />
@@ -1662,12 +1662,22 @@ function SectionTree({
   onRowContextMenu: (e: React.MouseEvent, navKey: string) => void;
   onStageToggle: (navKey: string, next: boolean) => void;
 }) {
+  // Tree key → slot, built once per file list. findStatusByTreeKey is a linear
+  // scan, and PGFileTree asks stageState for every row — per-row .find made the
+  // section quadratic in changed files, paid on every keystroke in the message
+  // box (the whole panel re-renders per keystroke).
+  const slotByTreeKey = React.useMemo(() => {
+    const out = new Map<string, FileSlot>();
+    for (const f of files) out.set(`/${f.path.replace(/\/+$/, "")}`, f);
+    return out;
+  }, [files]);
+
   const navKeyFor = React.useCallback(
     (treeKey: string): string => {
-      const slot = findStatusByTreeKey(treeKey, files);
+      const slot = slotByTreeKey.get(treeKey);
       return slot ? keyOf(slot) : dirKeyOf(side, treeKeyToPath(treeKey));
     },
-    [files, side],
+    [slotByTreeKey, side],
   );
 
   // Every row in a section shares that section's staged-ness: the STAGED list
@@ -1675,11 +1685,28 @@ function SectionTree({
   // exception — they can't be staged at all, so they get no checkbox.
   const stageState = React.useCallback(
     (treeKey: string): PGStageState | undefined => {
-      const slot = findStatusByTreeKey(treeKey, files);
+      const slot = slotByTreeKey.get(treeKey);
       if (slot?.status.embedded) return undefined;
       return side === "staged" ? "all" : "none";
     },
-    [files, side],
+    [slotByTreeKey, side],
+  );
+
+  const treeSelectedKeys = React.useMemo(
+    () =>
+      new Set(
+        [...selectedKeys]
+          .filter((k) => k.startsWith(`${side}:`))
+          .map((k) =>
+            k.startsWith(`${side}:dir:`)
+              ? `/${k.slice(`${side}:dir:`.length)}`
+              : `/${k.slice(`${side}:`.length)}`,
+          )
+          // An embedded repo's status path keeps a trailing slash the row key
+          // has already lost.
+          .map((k) => k.replace(/\/+$/, "")),
+      ),
+    [selectedKeys, side],
   );
 
   return (
@@ -1687,20 +1714,7 @@ function SectionTree({
       nodes={nodes}
       expanded={expanded}
       onToggle={onExpandedChange}
-      selectedKeys={
-        new Set(
-          [...selectedKeys]
-            .filter((k) => k.startsWith(`${side}:`))
-            .map((k) =>
-              k.startsWith(`${side}:dir:`)
-                ? `/${k.slice(`${side}:dir:`.length)}`
-                : `/${k.slice(`${side}:`.length)}`,
-            )
-            // An embedded repo's status path keeps a trailing slash the row key
-            // has already lost.
-            .map((k) => k.replace(/\/+$/, "")),
-        )
-      }
+      selectedKeys={treeSelectedKeys}
       onSelect={(treeKey, _node, e) => onSelect(navKeyFor(treeKey), e)}
       onRowContextMenu={(e, treeKey) => onRowContextMenu(e, navKeyFor(treeKey))}
       stageState={stageState}

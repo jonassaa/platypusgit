@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     path::{Component, Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use git2::{
@@ -56,7 +56,7 @@ pub struct RebaseState {
 }
 
 pub struct Libgit2Backend {
-    repos: Mutex<HashMap<RepoId, Mutex<Repository>>>,
+    repos: Mutex<HashMap<RepoId, Arc<Mutex<Repository>>>>,
     rebases: Mutex<HashMap<RepoId, RebaseState>>,
     /// Serializes the guard → write → cleanup window in `init` to prevent two
     /// concurrent calls on the same path from interfering. Without this lock, call
@@ -74,18 +74,31 @@ impl Libgit2Backend {
         }
     }
 
-    fn with_repo<F, T>(&self, repo_id: &RepoId, f: F) -> AppResult<T>
-    where
-        F: FnOnce(&Repository) -> AppResult<T>,
-    {
+    /// Clone the repo's own `Arc<Mutex<_>>` out of the map and RELEASE the map
+    /// lock before running `f`. The map guard used to stay alive for the whole
+    /// operation, so every git op in the process — any repository, any window —
+    /// serialized on one mutex: a 500-commit log walk in one tab blocked a
+    /// status refresh in another, and `refreshAll`'s parallel commands ran
+    /// strictly one after another. Same-repo ops still serialize on the inner
+    /// mutex (`git2::Repository` is Send but not Sync — that part is
+    /// load-bearing, e.g. the stash TOCTOU note relies on it); different repos
+    /// now genuinely run in parallel.
+    fn repo_cell(&self, repo_id: &RepoId) -> AppResult<Arc<Mutex<Repository>>> {
         let map = self
             .repos
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        let repo_cell = map
-            .get(repo_id)
-            .ok_or_else(|| AppError::UnknownRepo(repo_id.0.clone()))?;
-        let repo = repo_cell
+        map.get(repo_id)
+            .cloned()
+            .ok_or_else(|| AppError::UnknownRepo(repo_id.0.clone()))
+    }
+
+    fn with_repo<F, T>(&self, repo_id: &RepoId, f: F) -> AppResult<T>
+    where
+        F: FnOnce(&Repository) -> AppResult<T>,
+    {
+        let cell = self.repo_cell(repo_id)?;
+        let repo = cell
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
         f(&repo)
@@ -95,14 +108,8 @@ impl Libgit2Backend {
     where
         F: FnOnce(&mut Repository) -> AppResult<T>,
     {
-        let map = self
-            .repos
-            .lock()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let repo_cell = map
-            .get(repo_id)
-            .ok_or_else(|| AppError::UnknownRepo(repo_id.0.clone()))?;
-        let mut repo = repo_cell
+        let cell = self.repo_cell(repo_id)?;
+        let mut repo = cell
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
         f(&mut repo)
@@ -1060,6 +1067,13 @@ fn map_status_flag(s: Status, side: StatusSide) -> StatusFlag {
 fn worktree_index_diff_opts(path: &Path, context_lines: u32) -> DiffOptions {
     let mut opts = DiffOptions::new();
     opts.pathspec(path);
+    // The pathspec is one concrete file from the status listing, never a glob.
+    // Without this flag libgit2 treats the pathspec as a POST-filter: the diff
+    // still readdirs and lstats the whole worktree (and descends every
+    // untracked directory, given the untracked family below) only to throw all
+    // but one file away. With it, the iterators prune to the path — and a file
+    // literally named `*.rs` stops glob-matching its siblings.
+    opts.disable_pathspec_match(true);
     opts.context_lines(context_lines);
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
@@ -1561,7 +1575,12 @@ fn side_line_stats(
         .include_untracked(true)
         .recurse_untracked_dirs(true)
         .show_untracked_content(true)
-        .include_typechange(true);
+        .include_typechange(true)
+        // Refresh the index's stat cache while walking, exactly as `git status`
+        // does: a file whose stat data went stale (checkout, clock, touch) gets
+        // re-hashed ONCE here instead of on every later status/diff. This runs
+        // after every stage/unstage/discard, so the difference compounds.
+        .update_index(true);
     let unstaged = repo.diff_index_to_workdir(None, Some(&mut unstaged_opts))?;
 
     Ok((diff_line_stats(&staged)?, diff_line_stats(&unstaged)?))
@@ -1574,6 +1593,9 @@ fn side_line_stats(
 fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
     let num_deltas = diff.deltas().len();
     let mut out: Vec<FileDiff> = Vec::with_capacity(num_deltas);
+    // Each delta's new-file path, kept as a Path for the callback to compare
+    // against without building a String per printed line.
+    let mut paths: Vec<Option<std::path::PathBuf>> = Vec::with_capacity(num_deltas);
 
     for delta_idx in 0..num_deltas {
         let delta = diff.get_delta(delta_idx).expect("valid delta index");
@@ -1594,88 +1616,101 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
         // learns; the callback can only ever turn this true, never back.
         // Without it an untracked PNG came through as N added lines of
         // `from_utf8(...).unwrap_or("")` mojibake instead of "binary file".
-        let mut binary = delta.new_file().is_binary() || delta.old_file().is_binary();
-
-        let mut hunks: Vec<DiffHunk> = Vec::new();
-        let mut current: Option<DiffHunk> = None;
-        let mut additions: u32 = 0;
-        let mut deletions: u32 = 0;
-
-        diff.print(DiffFormat::Patch, |d, hunk, line| {
-            if d.new_file()
-                .path()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
-                != new_path
-            {
-                return true;
-            }
-            if d.flags().contains(git2::DiffFlags::BINARY) {
-                binary = true;
-                return true;
-            }
-            if let Some(h) = hunk {
-                if current
-                    .as_ref()
-                    .map(|c| c.old_start != h.old_start() || c.new_start != h.new_start())
-                    .unwrap_or(true)
-                {
-                    if let Some(done) = current.take() {
-                        hunks.push(done);
-                    }
-                    current = Some(DiffHunk {
-                        header: std::str::from_utf8(h.header()).unwrap_or("").to_string(),
-                        old_start: h.old_start(),
-                        old_lines: h.old_lines(),
-                        new_start: h.new_start(),
-                        new_lines: h.new_lines(),
-                        lines: Vec::new(),
-                    });
-                }
-            }
-            let kind = match line.origin() {
-                '+' => {
-                    additions += 1;
-                    DiffLineKind::Addition
-                }
-                '-' => {
-                    deletions += 1;
-                    DiffLineKind::Deletion
-                }
-                'H' | 'F' => DiffLineKind::HunkHeader,
-                _ => DiffLineKind::Context,
-            };
-            if let Some(h) = current.as_mut() {
-                h.lines.push(DiffLine {
-                    kind,
-                    old_lineno: line.old_lineno(),
-                    new_lineno: line.new_lineno(),
-                    content: std::str::from_utf8(line.content())
-                        .unwrap_or("")
-                        .to_string(),
-                });
-            }
-            true
-        })?;
-
-        if let Some(done) = current.take() {
-            hunks.push(done);
-        }
-
-        let mut file_diff = FileDiff {
+        let binary = delta.new_file().is_binary() || delta.old_file().is_binary();
+        paths.push(delta.new_file().path().map(|p| p.to_path_buf()));
+        out.push(FileDiff {
             path: new_path,
             old_path: old_path_opt,
             binary,
-            additions,
-            deletions,
-            hunks,
+            additions: 0,
+            deletions: 0,
+            hunks: Vec::new(),
             lfs: None,
+        });
+    }
+
+    // ONE print pass for the whole diff. `git_diff_print` generates each
+    // delta's patch — full blob load + xdiff — as it goes, so printing inside a
+    // per-delta loop and filtering by path (the previous shape) generated every
+    // file's patch once per file: O(deltas²) blob loads for a commit diff.
+    // Deltas are printed in order, so the callback tracks which delta it is in
+    // and appends to that entry.
+    let mut idx: usize = 0;
+    let mut current: Option<DiffHunk> = None;
+    diff.print(DiffFormat::Patch, |d, hunk, line| {
+        let d_path = d.new_file().path();
+        if paths.get(idx).map(|p| p.as_deref()) != Some(d_path) {
+            // A new delta begins: flush the previous one's open hunk, then
+            // advance to the entry this callback belongs to (a delta that
+            // printed nothing is skipped over here).
+            if let Some(done) = current.take() {
+                out[idx].hunks.push(done);
+            }
+            while idx < out.len() && paths[idx].as_deref() != d_path {
+                idx += 1;
+            }
+            if idx >= out.len() {
+                return true; // not a known delta; nothing to record it against
+            }
+        }
+        if d.flags().contains(git2::DiffFlags::BINARY) {
+            out[idx].binary = true;
+            return true;
+        }
+        if let Some(h) = hunk {
+            if current
+                .as_ref()
+                .map(|c| c.old_start != h.old_start() || c.new_start != h.new_start())
+                .unwrap_or(true)
+            {
+                if let Some(done) = current.take() {
+                    out[idx].hunks.push(done);
+                }
+                current = Some(DiffHunk {
+                    header: std::str::from_utf8(h.header()).unwrap_or("").to_string(),
+                    old_start: h.old_start(),
+                    old_lines: h.old_lines(),
+                    new_start: h.new_start(),
+                    new_lines: h.new_lines(),
+                    lines: Vec::new(),
+                });
+            }
+        }
+        let kind = match line.origin() {
+            '+' => {
+                out[idx].additions += 1;
+                DiffLineKind::Addition
+            }
+            '-' => {
+                out[idx].deletions += 1;
+                DiffLineKind::Deletion
+            }
+            'H' | 'F' => DiffLineKind::HunkHeader,
+            _ => DiffLineKind::Context,
         };
+        if let Some(h) = current.as_mut() {
+            h.lines.push(DiffLine {
+                kind,
+                old_lineno: line.old_lineno(),
+                new_lineno: line.new_lineno(),
+                content: std::str::from_utf8(line.content())
+                    .unwrap_or("")
+                    .to_string(),
+            });
+        }
+        true
+    })?;
+    if idx < out.len() {
+        if let Some(done) = current.take() {
+            out[idx].hunks.push(done);
+        }
+    }
+
+    for file_diff in &mut out {
         // Derived from the diff just built — no extra I/O (#93). Both commit-diff
         // paths come through here, so they cannot disagree with `diff()` about what
         // an LFS pointer diff is.
-        crate::git::lfs::annotate(&mut file_diff);
-        out.push(file_diff);
+        crate::git::lfs::annotate(file_diff);
     }
 
     Ok(out)
@@ -1840,9 +1875,13 @@ fn push_log_start(
             for glob in ["refs/heads/*", "refs/remotes/*/*"] {
                 if let Ok(refs) = repo.references_glob(glob) {
                     for r in refs.flatten() {
-                        // A remote's symbolic HEAD (refs/remotes/origin/HEAD)
-                        // peels to a tip already pushed — dedup handles it.
-                        if let Ok(commit) = r.peel_to_commit() {
+                        // A head's or remote head's target IS the commit oid —
+                        // no peel (an object read per ref, per page) needed.
+                        if let Some(oid) = r.target() {
+                            push(oid, walk)?;
+                        } else if let Ok(commit) = r.peel_to_commit() {
+                            // A remote's symbolic HEAD (refs/remotes/origin/HEAD)
+                            // peels to a tip already pushed — dedup handles it.
                             push(commit.id(), walk)?;
                         }
                     }
@@ -1918,7 +1957,12 @@ impl FrontierBuilder {
                 continue;
             }
             // Absent in a shallow/grafted clone → not a resumable point.
-            if repo.find_commit(p).is_ok() {
+            // odb.exists is an index probe; find_commit parsed the object.
+            let exists = repo
+                .odb()
+                .map(|odb| odb.exists(p))
+                .unwrap_or_else(|_| repo.find_commit(p).is_ok());
+            if exists {
                 out.push(p.to_string());
             }
         }
@@ -1961,23 +2005,36 @@ fn push_page_start(
 }
 
 /// Map git2's per-ref lookup by target OID. Scans once per log call.
-fn collect_ref_map(repo: &Repository) -> Vec<(git2::Oid, String)> {
-    let mut out = Vec::new();
+fn collect_ref_map(repo: &Repository) -> HashMap<git2::Oid, Vec<String>> {
+    // A map, not a list: every log walk decorates each of its rows from this,
+    // and a linear scan per row was O(refs x rows) with a clone per hit.
+    let mut out: HashMap<git2::Oid, Vec<String>> = HashMap::new();
     if let Ok(refs) = repo.references() {
         for r in refs.flatten() {
             let name = match r.shorthand() {
                 Some(n) => n.to_string(),
                 None => continue,
             };
-            // Peel annotated tags to the commit they point at.
-            if let Ok(peeled) = r.peel(git2::ObjectType::Commit) {
-                if let Some(c) = peeled.as_commit() {
-                    out.push((c.id(), name));
-                    continue;
+            // Peel annotated tags to the commit they point at. Only TAGS: a
+            // branch or remote ref's target already IS the commit oid, and
+            // peeling costs an object read per ref — thousands, on a repo with
+            // many remote branches, on every page fetch.
+            if r.is_tag() {
+                if let Ok(peeled) = r.peel(git2::ObjectType::Commit) {
+                    if let Some(c) = peeled.as_commit() {
+                        out.entry(c.id()).or_default().push(name);
+                        continue;
+                    }
                 }
             }
             if let Some(oid) = r.target() {
-                out.push((oid, name));
+                out.entry(oid).or_default().push(name);
+            } else if let Ok(peeled) = r.peel(git2::ObjectType::Commit) {
+                // Symbolic refs (origin/HEAD) have no direct target; resolve
+                // them the way the old always-peel did so their pill survives.
+                if let Some(c) = peeled.as_commit() {
+                    out.entry(c.id()).or_default().push(name);
+                }
             }
         }
     }
@@ -2234,7 +2291,7 @@ impl GitBackend for Libgit2Backend {
             .repos
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        map.insert(id.clone(), Mutex::new(repo));
+        map.insert(id.clone(), Arc::new(Mutex::new(repo)));
 
         Ok(RepoHandle {
             id,
@@ -2252,8 +2309,9 @@ impl GitBackend for Libgit2Backend {
             .repos
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        // Dropping the removed Mutex<Repository> here releases libgit2's file
-        // handles. An absent id is success on purpose (see the trait doc).
+        // Dropping the removed Arc<Mutex<Repository>> here releases libgit2's
+        // file handles once any in-flight op's clone finishes. An absent id is
+        // success on purpose (see the trait doc).
         map.remove(repo_id);
         // `rebases` is deliberately left alone: its entries are bytes, not
         // handles, they are keyed by an id a re-open can never mint again, and
@@ -2399,7 +2457,10 @@ impl GitBackend for Libgit2Backend {
             let mut opts = StatusOptions::new();
             opts.include_untracked(true)
                 .recurse_untracked_dirs(true)
-                .include_ignored(false);
+                .include_ignored(false)
+                // Same-result, cheaper next time: refresh the stat cache the
+                // way `git status` itself does (see side_line_stats).
+                .update_index(true);
             let statuses = repo.statuses(Some(&mut opts))?;
             // Read once for the whole listing, not per entry: it only feeds the
             // gitlink-mode shortcut in `listed_entry_is_embedded_repo`, so a repo
@@ -2516,11 +2577,7 @@ impl GitBackend for Libgit2Backend {
             for oid in walk.by_ref().take(limit) {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
-                let refs: Vec<String> = ref_map
-                    .iter()
-                    .filter(|(o, _)| *o == oid)
-                    .map(|(_, name)| name.clone())
-                    .collect();
+                let refs: Vec<String> = ref_map.get(&oid).cloned().unwrap_or_default();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
                 frontier.visit(oid, commit.parent_ids());
@@ -2636,9 +2693,11 @@ impl GitBackend for Libgit2Backend {
                 let commit = repo.find_commit(oid)?;
                 frontier.visit(oid, commit.parent_ids());
 
-                // sha prefix — cheap, check first.
+                // sha prefix — cheap, check first. Compared nibble-by-nibble
+                // off the raw bytes: `oid.to_string()` allocated 40 hex chars
+                // for EVERY commit the walk visits, matching or not.
                 if let Some(ref q) = sha_q {
-                    if !oid.to_string().starts_with(q.as_str()) {
+                    if !oid_has_hex_prefix(&oid, q) {
                         continue;
                     }
                 }
@@ -2690,11 +2749,7 @@ impl GitBackend for Libgit2Backend {
                     }
                 }
 
-                let refs: Vec<String> = ref_map
-                    .iter()
-                    .filter(|(o, _)| *o == oid)
-                    .map(|(_, name)| name.clone())
-                    .collect();
+                let refs: Vec<String> = ref_map.get(&oid).cloned().unwrap_or_default();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
                 out.push(info);
@@ -2741,11 +2796,7 @@ impl GitBackend for Libgit2Backend {
             for oid in walk {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
-                let refs: Vec<String> = ref_map
-                    .iter()
-                    .filter(|(o, _)| *o == oid)
-                    .map(|(_, name)| name.clone())
-                    .collect();
+                let refs: Vec<String> = ref_map.get(&oid).cloned().unwrap_or_default();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
                 out.push(info);
@@ -2782,11 +2833,7 @@ impl GitBackend for Libgit2Backend {
                 }
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
-                let refs: Vec<String> = ref_map
-                    .iter()
-                    .filter(|(o, _)| *o == oid)
-                    .map(|(_, name)| name.clone())
-                    .collect();
+                let refs: Vec<String> = ref_map.get(&oid).cloned().unwrap_or_default();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
                 out.push(info);
@@ -2829,6 +2876,9 @@ impl GitBackend for Libgit2Backend {
             reject_embedded_repo(repo, path)?;
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
+            // One concrete path — prune the walk to it instead of post-filtering
+            // a whole-worktree diff (see worktree_index_diff_opts).
+            opts.disable_pathspec_match(true);
             opts.context_lines(context_lines);
             opts.ignore_whitespace(ignore_whitespace);
             // Include untracked files as if their full content were a new addition
@@ -2872,12 +2922,14 @@ impl GitBackend for Libgit2Backend {
             let mut hunks: Vec<DiffHunk> = Vec::new();
 
             diff.print(DiffFormat::Patch, |delta, hunk, line| {
-                let new_path = delta
-                    .new_file()
-                    .path()
-                    .map(|p| p.to_string_lossy().to_string());
+                // Paths are read once, on the first callback — building the
+                // String on every printed line allocated twice per line for a
+                // value that never changes within a single-path diff.
                 if current_path.is_none() {
-                    current_path = new_path.clone();
+                    current_path = delta
+                        .new_file()
+                        .path()
+                        .map(|p| p.to_string_lossy().to_string());
                     old_path = delta
                         .old_file()
                         .path()
@@ -2905,17 +2957,15 @@ impl GitBackend for Libgit2Backend {
                 if let Some(h) = hunk {
                     // Compare the stored header (newline-stripped) against the
                     // raw header bytes (also stripped) so lines within the same
-                    // hunk don't create duplicate DiffHunk entries.
-                    let raw_header_trimmed = h
-                        .header()
-                        .iter()
-                        .copied()
-                        .collect::<Vec<u8>>();
-                    let raw_header_trimmed = raw_header_trimmed
+                    // hunk don't create duplicate DiffHunk entries. Trim the
+                    // borrowed bytes in place — collecting them into a fresh
+                    // Vec allocated once per printed line.
+                    let raw = h.header();
+                    let raw_header_trimmed = raw
                         .iter()
                         .rposition(|&b| b != b'\n')
-                        .map(|i| &raw_header_trimmed[..=i])
-                        .unwrap_or(&raw_header_trimmed);
+                        .map(|i| &raw[..=i])
+                        .unwrap_or(raw);
                     let is_new_hunk = hunks
                         .last()
                         .map(|last| last.header.as_bytes() != raw_header_trimmed)
@@ -2987,11 +3037,13 @@ impl GitBackend for Libgit2Backend {
             if abs.is_file() {
                 let bytes = std::fs::read(&abs)?;
                 let size = bytes.len() as u64;
-                return Ok(Some(match std::str::from_utf8(&bytes) {
+                // String::from_utf8 MOVES the buffer on success — from_utf8 +
+                // to_string held two full copies of every opened file.
+                return Ok(Some(match String::from_utf8(bytes) {
                     Ok(s) => FileContent {
                         path: path_str,
                         binary: false,
-                        text: Some(s.to_string()),
+                        text: Some(s),
                         from_head: false,
                         size,
                     },
@@ -3570,6 +3622,7 @@ impl GitBackend for Libgit2Backend {
         let patch_text = self.with_repo(repo_id, |repo| {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
+            opts.disable_pathspec_match(true);
             opts.context_lines(context_lines);
             let head_tree = match repo.head() {
                 Ok(h) => Some(h.peel_to_tree()?),
@@ -3644,6 +3697,7 @@ impl GitBackend for Libgit2Backend {
         let patch_text = self.with_repo(repo_id, |repo| {
             let mut opts = DiffOptions::new();
             opts.pathspec(path);
+            opts.disable_pathspec_match(true);
             opts.context_lines(context_lines);
             let head_tree = match repo.head() {
                 Ok(h) => Some(h.peel_to_tree()?),
@@ -3802,6 +3856,10 @@ impl GitBackend for Libgit2Backend {
                         Ok(up) => {
                             let up_name = up.name().ok().flatten().map(String::from);
                             let counts = match (branch.get().target(), up.get().target()) {
+                                // In-sync (the common case for most rows) needs
+                                // no graph walk — graph_ahead_behind is a
+                                // merge-base computation per branch per refresh.
+                                (Some(local), Some(remote)) if local == remote => (0, 0),
                                 (Some(local), Some(remote)) => repo
                                     .graph_ahead_behind(local, remote)
                                     .unwrap_or((0, 0)),
@@ -3842,25 +3900,28 @@ impl GitBackend for Libgit2Backend {
                     .unwrap_or("")
                     .trim_start_matches("refs/tags/")
                     .to_string();
-                // Peel annotated tags to the commit.
-                let tip_oid = repo
-                    .find_object(oid, None)
-                    .ok()
+                // Peel annotated tags to the commit. Keep the object around:
+                // `signed` below reads the same tag object, and looking it up
+                // again (the old `find_tag`) was a second ODB read per tag.
+                let obj = repo.find_object(oid, None).ok();
+                let tip_oid = obj
+                    .as_ref()
                     .and_then(|o| o.peel(git2::ObjectType::Commit).ok())
                     .map(|c| c.id())
                     .unwrap_or(oid);
                 // Free: a lightweight tag has no tag object, and an annotated
                 // one already had to be read to peel it. No subprocess — the
                 // VERDICT costs one, which is why verify_tag is separate (#132).
-                let signed = repo
-                    .find_tag(oid)
-                    .ok()
+                let signed = obj
+                    .as_ref()
+                    .and_then(|o| o.as_tag())
                     .and_then(|t| t.message().map(crate::git::tag::has_signature_block))
                     .unwrap_or(false);
+                let oid_str = tip_oid.to_string();
                 out.push(TagInfo {
                     name,
-                    short_oid: tip_oid.to_string()[..7].to_string(),
-                    oid: tip_oid.to_string(),
+                    short_oid: oid_str[..7].to_string(),
+                    oid: oid_str,
                     signed,
                 });
                 true
@@ -3882,10 +3943,12 @@ impl GitBackend for Libgit2Backend {
             })?;
             let out = raw
                 .into_iter()
-                .map(|(index, oid, message)| StashInfo {
+                .map(|(index, oid, message)| {
+                    let oid_str = oid.to_string();
+                    StashInfo {
                     index,
-                    short_oid: oid.to_string()[..7].to_string(),
-                    oid: oid.to_string(),
+                    short_oid: oid_str[..7].to_string(),
+                    oid: oid_str,
                     message,
                     // An unreadable entry is reported as carrying no untracked
                     // side rather than taking the whole list down with it —
@@ -3894,7 +3957,7 @@ impl GitBackend for Libgit2Backend {
                         .find_commit(oid)
                         .map(|c| c.parent_count() > 2)
                         .unwrap_or(false),
-                })
+                }})
                 .collect();
             Ok(out)
         })
@@ -4682,13 +4745,16 @@ impl GitBackend for Libgit2Backend {
             })
         };
 
-        let mut status = match in_memory {
-            Some(status) => status,
-            // No in-memory entry: either there is no rebase, or this process
-            // did not start it (the app was restarted mid-rebase). The state
-            // file is the authority in that case.
-            None => self.with_repo(repo_id, |repo| {
-                Ok(match crate::git::rebase_state::load(repo)? {
+        // ONE repo-lock acquisition for both small file reads (state + summary);
+        // this is polled by every refreshStatus, so a second acquisition was a
+        // second queue-up behind whatever op the repo is busy with.
+        self.with_repo(repo_id, |repo| {
+            let mut status = match in_memory {
+                Some(status) => status,
+                // No in-memory entry: either there is no rebase, or this process
+                // did not start it (the app was restarted mid-rebase). The state
+                // file is the authority in that case.
+                None => match crate::git::rebase_state::load(repo)? {
                     Some(state) => RebaseStatus {
                         in_progress: true,
                         next_index: state.completed,
@@ -4703,17 +4769,16 @@ impl GitBackend for Libgit2Backend {
                         pause_reason: None,
                         last_completed: None,
                     },
-                })
-            })?,
-        };
+                },
+            };
 
-        // The completed-rebase summary outlives the rebase it describes, so it
-        // is read here rather than derived from state that no longer exists.
-        // It is written only on completion and dropped on start/abort/ack, so
-        // it is always absent while `in_progress` is true.
-        status.last_completed =
-            self.with_repo(repo_id, crate::git::rebase_state::load_summary)?;
-        Ok(status)
+            // The completed-rebase summary outlives the rebase it describes, so it
+            // is read here rather than derived from state that no longer exists.
+            // It is written only on completion and dropped on start/abort/ack, so
+            // it is always absent while `in_progress` is true.
+            status.last_completed = crate::git::rebase_state::load_summary(repo)?;
+            Ok(status)
+        })
     }
 
     fn rebase_acknowledge(&self, repo_id: &RepoId) -> AppResult<()> {
@@ -5544,18 +5609,42 @@ fn run_git_capture_env(
 
 /// Build a `CommitInfo` from a git2 commit. The `refs` field is left empty;
 /// callers that need ref labels (e.g. `log`) fill it in separately.
+/// Does `oid`'s lowercase hex spelling start with `prefix`? Allocation-free
+/// equivalent of `oid.to_string().starts_with(prefix)` for an already
+/// lowercased prefix (the filter lowercases its query once, up front).
+fn oid_has_hex_prefix(oid: &git2::Oid, prefix: &str) -> bool {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = oid.as_bytes();
+    for (i, pc) in prefix.bytes().enumerate() {
+        if i / 2 >= bytes.len() {
+            return false;
+        }
+        let b = bytes[i / 2];
+        let nibble = if i % 2 == 0 { b >> 4 } else { b & 0xf };
+        if pc != HEX[nibble as usize] {
+            return false;
+        }
+    }
+    true
+}
+
 fn commit_to_info(commit: &git2::Commit<'_>) -> CommitInfo {
-    let oid = commit.id();
+    // Runs once per row, 500 rows per page: stringify the oid once and derive
+    // `body` from the borrowed message instead of allocating the whole message
+    // only to slice it.
+    let oid = commit.id().to_string();
+    let short_oid = oid[..7].to_string();
     let summary = commit.summary().unwrap_or("").to_string();
-    let full_message = commit.message().unwrap_or("").to_string();
-    let body = full_message
+    let body = commit
+        .message()
+        .unwrap_or("")
         .split_once("\n\n")
         .map(|(_, rest)| rest.trim_end().to_string())
         .filter(|s| !s.is_empty());
     let author = commit.author();
     CommitInfo {
-        oid: oid.to_string(),
-        short_oid: oid.to_string()[..7].to_string(),
+        oid,
+        short_oid,
         summary,
         body,
         author: author.name().unwrap_or("").to_string(),
@@ -5646,6 +5735,36 @@ fn commit_touches_path(
     let commit_tree = commit.tree()?;
     if commit.parent_count() == 0 {
         return Ok(commit_tree.get_path(path).is_ok());
+    }
+    // Fast path for a literal path (no pathspec magic — which is what
+    // file_history always passes, and what the History path filter usually
+    // holds): look the entry up in each tree and compare (oid, filemode).
+    // Exactly equivalent to the diff for a concrete file or directory — a
+    // directory's tree oid differs iff anything beneath it differs, and a
+    // filemode-only change differs in the mode — but with no per-parent
+    // whole-tree diff, which made file_history O(commits × tree size).
+    // A trailing slash also takes the slow path: the pathspec's leading-dir
+    // rule accepts "src/", tree lookup spells it "src".
+    let literal = path
+        .to_str()
+        .map(|s| !s.contains(['*', '?', '[', '\\']) && !s.ends_with('/'))
+        .unwrap_or(false);
+    if literal {
+        let ours = commit_tree
+            .get_path(path)
+            .ok()
+            .map(|e| (e.id(), e.filemode()));
+        for i in 0..commit.parent_count() {
+            let parent_tree = commit.parent(i)?.tree()?;
+            let theirs = parent_tree
+                .get_path(path)
+                .ok()
+                .map(|e| (e.id(), e.filemode()));
+            if ours != theirs {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
     }
     for i in 0..commit.parent_count() {
         let parent = commit.parent(i)?;

@@ -148,7 +148,7 @@ export function HistoryScreen() {
       }),
     [filter, authorQ, pathQ, sinceDate, untilDate, contentQ, contentRegex],
   );
-  const filterKey = JSON.stringify(logFilter);
+  const filterKey = React.useMemo(() => JSON.stringify(logFilter), [logFilter]);
   React.useEffect(() => {
     const handle = window.setTimeout(() => {
       void searchCommits(logFilter);
@@ -193,6 +193,21 @@ export function HistoryScreen() {
     siblingMin: DETAIL_DIFF_MIN_W,
     storageKey: "pg-history-detail-msg-w",
   });
+
+  // Stable drag handlers: PGResizeHandle re-registers its document listeners
+  // whenever onDrag changes identity, and a drag re-renders this screen per
+  // mousemove — inline arrows meant a listener rebind per move.
+  const onMessagePaneDrag = messagePane.resize;
+  const detailPaneResize = detailPane.resize;
+  const onDetailPaneDrag = React.useCallback(
+    (d: number) => detailPaneResize(-d),
+    [detailPaneResize],
+  );
+  const detailHeightResize = detailHeight.resize;
+  const onDetailHeightDrag = React.useCallback(
+    (d: number) => detailHeightResize(-d),
+    [detailHeightResize],
+  );
   const [diffLayout, setDiffLayout] = React.useState<DiffLayout>(() => {
     try {
       return localStorage.getItem(DIFF_LAYOUT_KEY) === "beside" ? "beside" : "below";
@@ -227,8 +242,11 @@ export function HistoryScreen() {
   );
   const { onContextMenu: onCommitContext, menu: commitMenu } =
     useContextMenu<{ sha: string; subject: string }>(commitMenuItems);
+  // The imported builder directly — an inline arrow here changed onCommitMulti's
+  // identity every render, which cascaded through onRowContext into every row
+  // and made PGCommitRow's memo dead (#68 G9, regressed).
   const { onContextMenu: onCommitMulti, menu: commitMultiMenu } =
-    useContextMenu<string[]>((oids) => commitMultiMenuItems(oids));
+    useContextMenu<string[]>(commitMultiMenuItems);
 
   // Text/author/path/date/sha filtering happens on the backend (baseCommits),
   // and so is the "all"/"branch" scope (see the logRef effect below), so
@@ -254,9 +272,10 @@ export function HistoryScreen() {
 
   // Re-layout on every search keystroke would otherwise hand each row a fresh
   // lanes/node object and re-render all 500 SVGs, even where nothing moved.
-  const rowCache = React.useRef(createRowCache());
+  const rowCache = React.useRef<ReturnType<typeof createRowCache> | null>(null);
+  rowCache.current ??= createRowCache();
   const rows = React.useMemo(
-    () => rowCache.current.stabilize(visible, rawRows),
+    () => rowCache.current!.stabilize(visible, rawRows),
     [visible, rawRows],
   );
 
@@ -541,9 +560,10 @@ export function HistoryScreen() {
   // ("rendered more hooks than during the previous render"), which showed up
   // as a window with nothing in it at all.
   const primaryOid = primarySelectedKey(sel);
-  const current =
-    visible.find((c) => c.oid === primaryOid) ?? visible[cursorIdx] ?? visible[0];
-  const selectedSet = new Set(sel.keys);
+  // selectedSet memoized on the keys array: a fresh Set per render was a
+  // dependency of onRowContext, handing every visible row a new prop each
+  // render and silently disabling PGCommitRow's memo.
+  const selectedSet = React.useMemo(() => new Set(sel.keys), [sel.keys]);
   const multiSelected = sel.keys.length > 1;
 
   // Both row handlers are shared across every row and stable across renders —
@@ -566,6 +586,10 @@ export function HistoryScreen() {
     () => new Map(visible.map((c) => [c.oid, c])),
     [visible],
   );
+  const current =
+    (primaryOid ? byOid.get(primaryOid) : undefined) ??
+    visible[cursorIdx] ??
+    visible[0];
 
   // Ref pills, built once per commit instead of twice per row per render
   // (mapCommitRefs allocated an array, then .filter() allocated another).
@@ -926,7 +950,7 @@ export function HistoryScreen() {
         </div>
         <PGResizeHandle
           side="right"
-          onDrag={(d) => messagePane.resize(d)}
+          onDrag={onMessagePaneDrag}
           onReset={messagePane.reset}
         />
         <div
@@ -991,7 +1015,7 @@ export function HistoryScreen() {
         {showDetail && diffLayout === "beside" && (
           <>
             <PGResizeHandle
-              onDrag={(d) => detailPane.resize(-d)}
+              onDrag={onDetailPaneDrag}
               onReset={detailPane.reset}
               side="left"
             />
@@ -1018,7 +1042,7 @@ export function HistoryScreen() {
               orientation="vertical"
               side="top"
               testId="history-detail-resize"
-              onDrag={(d) => detailHeight.resize(-d)}
+              onDrag={onDetailHeightDrag}
               onReset={detailHeight.reset}
             />
             <div

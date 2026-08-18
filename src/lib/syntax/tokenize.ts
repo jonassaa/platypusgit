@@ -20,7 +20,11 @@ function hash(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-const CACHE_MAX = 24;
+// Tokens are line-relative ranges plus a small class table — a fraction of the
+// source text's own size — so a larger cache is nearly free and every hit skips
+// a full Shiki pass. 64 comfortably covers both sides of a commit's files plus
+// the prefetch warm-up without evicting what the user is looking at.
+const CACHE_MAX = 64;
 const cache = new Map<string, SyntaxLine[]>();
 
 export function clearSyntaxCache(): void {
@@ -35,6 +39,25 @@ function remember(key: string, value: SyntaxLine[]): SyntaxLine[] {
     if (oldest !== undefined) cache.delete(oldest);
   }
   return value;
+}
+
+function cacheKey(path: string, text: string): string | null {
+  const lang = langForPath(path);
+  if (!lang || skipHighlight(path, text)) return null;
+  return `${lang}:${hash(text)}:${text.length}`;
+}
+
+/**
+ * Synchronous cache lookup: the tokens for this exact content, if a previous
+ * call already produced them, else null.
+ *
+ * Lets useSyntax hand cached tokens to the FIRST render of a revisited file
+ * instead of painting plain and re-rendering when the promise resolves — the
+ * async path exists for tokenizing, not for reading a Map.
+ */
+export function peekTokens(path: string, text: string): SyntaxLine[] | null {
+  const key = cacheKey(path, text);
+  return key ? (cache.get(key) ?? null) : null;
 }
 
 // undefined = not tried yet, null = unavailable, so fall back to this thread.
@@ -90,39 +113,70 @@ function getWorker(): Worker | null {
  * Results are cached on THIS thread, so a repeat never crosses the boundary and
  * a re-render never re-tokenizes.
  */
+/**
+ * In-flight requests by cache key, so two callers asking for the same content
+ * (both diff sides of an unmodified file, a prefetch racing the real open, two
+ * surfaces showing one file) share a single tokenize instead of queueing the
+ * identical job on the worker twice.
+ */
+const inFlight = new Map<string, Promise<SyntaxLine[] | null>>();
+
 export async function tokenizeFile(
   path: string,
   text: string,
 ): Promise<SyntaxLine[] | null> {
-  const lang = langForPath(path);
   // Guards run here as well as in the core so an oversized or unknown file costs
   // no worker round trip.
-  if (!lang || skipHighlight(path, text)) return null;
+  const key = cacheKey(path, text);
+  if (!key) return null;
 
-  const key = `${lang}:${hash(text)}:${text.length}`;
   const hit = cache.get(key);
   if (hit) return hit;
+  const running = inFlight.get(key);
+  if (running) return running;
 
+  const job = (async () => {
+    const w = getWorker();
+    let packed: PackedSyntax | null = null;
+    if (w) {
+      const id = nextId++;
+      packed = await new Promise<PackedSyntax | null>((resolve) => {
+        pending.set(id, resolve);
+        w.postMessage({ id, path, text } satisfies TokenizeRequest);
+      });
+    }
+    // Only when there is no worker to ask. Note the asymmetry: `!worker` is true
+    // only after disableWorker ran (or construction failed), so a legitimate null —
+    // unknown grammar, Shiki failure — is NOT retried on the main thread.
+    //
+    // Imported dynamically so Shiki stays out of the main bundle on the normal path.
+    if (!packed && !worker) {
+      const { tokenizeToPacked } = await import("./tokenizeShiki");
+      packed = await tokenizeToPacked(path, text);
+    }
+    if (!packed) return null;
+    return remember(key, unpackLines(packed));
+  })();
+  inFlight.set(key, job);
+  try {
+    return await job;
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+/**
+ * Spin the tokenize worker up and let it initialize Shiki, at a moment nothing
+ * needs it yet. Idempotent and fire-and-forget: the app shell calls this once
+ * at idle after launch, so the first file the user actually opens pays only its
+ * own grammar load + tokenize instead of worker spawn + engine set-up too.
+ */
+export function warmSyntax(): void {
   const w = getWorker();
-  let packed: PackedSyntax | null = null;
-  if (w) {
-    const id = nextId++;
-    packed = await new Promise<PackedSyntax | null>((resolve) => {
-      pending.set(id, resolve);
-      w.postMessage({ id, path, text } satisfies TokenizeRequest);
-    });
-  }
-  // Only when there is no worker to ask. Note the asymmetry: `!worker` is true
-  // only after disableWorker ran (or construction failed), so a legitimate null —
-  // unknown grammar, Shiki failure — is NOT retried on the main thread.
-  //
-  // Imported dynamically so Shiki stays out of the main bundle on the normal path.
-  if (!packed && !worker) {
-    const { tokenizeToPacked } = await import("./tokenizeShiki");
-    packed = await tokenizeToPacked(path, text);
-  }
-  if (!packed) return null;
-  return remember(key, unpackLines(packed));
+  if (!w) return;
+  const id = nextId++;
+  pending.set(id, () => undefined);
+  w.postMessage({ id, path: "", text: "", warm: true } satisfies TokenizeRequest);
 }
 
 export {

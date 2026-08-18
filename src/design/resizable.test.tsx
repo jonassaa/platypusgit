@@ -133,27 +133,39 @@ describe("usePaneSize", () => {
     expect(paneSize(getByTestId("pane"))).toBe("180px");
   });
 
-  it("persists a dragged size", () => {
+  it("persists a dragged size — debounced, and flushed by unmount", () => {
     restore = stubContainerSize({ width: 1600 });
     const { getByTestId, unmount } = render(<Split />);
     drag(getByTestId("handle"), 100);
-    expect(localStorage.getItem(KEY)).toBe("400");
-    unmount();
+    // Deliberately NOT on disk yet: the write is debounced off the drag, so a
+    // mousemove never pays a synchronous localStorage.setItem.
+    expect(localStorage.getItem(KEY)).toBeNull();
+    unmount(); // a pending write is flushed rather than lost
 
+    expect(localStorage.getItem(KEY)).toBe("400");
     const again = render(<Split />);
     expect(paneSize(again.getByTestId("pane"))).toBe("400px");
   });
 
   it("resets to the initial size on a double-click of the handle", () => {
-    restore = stubContainerSize({ width: 1600 });
-    const { getByTestId } = render(<Split />);
-    drag(getByTestId("handle"), 200);
-    expect(paneSize(getByTestId("pane"))).toBe("500px");
+    vi.useFakeTimers();
+    try {
+      restore = stubContainerSize({ width: 1600 });
+      const { getByTestId } = render(<Split />);
+      drag(getByTestId("handle"), 200);
+      expect(paneSize(getByTestId("pane"))).toBe("500px");
 
-    fireEvent.doubleClick(getByTestId("handle"));
+      fireEvent.doubleClick(getByTestId("handle"));
 
-    expect(paneSize(getByTestId("pane"))).toBe("300px");
-    expect(localStorage.getItem(KEY)).toBe("300");
+      expect(paneSize(getByTestId("pane"))).toBe("300px");
+      // The trailing debounce write lands once the drag settles.
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(localStorage.getItem(KEY)).toBe("300");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reads the axis it was told, not always the width", () => {

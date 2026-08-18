@@ -281,13 +281,21 @@ export function PGFileTree({
   onStageToggle,
   window: win,
 }: PGFileTreeProps) {
-  const flat = flattenFileTree(nodes, expanded);
-  const rowStage = flat.map((f) => stageState?.(f.key, f.node));
+  // Memoized: in "all files" mode `nodes` covers the whole worktree, and
+  // re-walking tens of thousands of nodes per render — twice, since the owning
+  // screen usually flattened the same tree for its own keyboard list — is what
+  // made large trees scroll poorly even though only ~40 rows are mounted.
+  const flat = React.useMemo(() => flattenFileTree(nodes, expanded), [nodes, expanded]);
   // Reserve the checkbox column for the whole tree as soon as one row uses it,
   // so a mixed tree (changed + unmodified files) keeps its names aligned.
   // Computed over EVERY row, not the visible slice: deriving it from the
-  // window would make the column appear and disappear while scrolling.
-  const stageSlot = rowStage.some((s) => s !== undefined);
+  // window would make the column appear and disappear while scrolling. Memoized
+  // so the full walk reruns only when the tree or the callback changes — which
+  // needs callers to pass a STABLE stageState (they do; keep it that way).
+  const stageSlot = React.useMemo(
+    () => flat.some((f) => stageState?.(f.key, f.node) !== undefined),
+    [flat, stageState],
+  );
   const range = win ?? { start: 0, end: flat.length, topPad: 0, bottomPad: 0 };
 
   // Keyboard navigation lives with the owning screen, not here: it goes
@@ -305,8 +313,7 @@ export function PGFileTree({
       {range.topPad > 0 && (
         <div data-tree-spacer="top" style={{ height: range.topPad }} />
       )}
-      {flat.slice(range.start, range.end).map((f, sliceIndex) => {
-        const i = range.start + sliceIndex;
+      {flat.slice(range.start, range.end).map((f) => {
         return (
         <PGFileTreeRow
           key={f.key}
@@ -318,7 +325,7 @@ export function PGFileTree({
           }
           status={f.node.status}
           hideStatus={!showStatus}
-          stageState={rowStage[i]}
+          stageState={stageState?.(f.key, f.node)}
           stageSlot={stageSlot}
           onStageToggle={(next) => onStageToggle?.(f.key, f.node, next)}
           expanded={f.isExpanded}
@@ -698,7 +705,34 @@ function DiffText({
  *
  * Exported so the windowed renderer reuses this markup rather than restating it.
  */
-export function PGDiffRow({
+// PGDiffRow's per-kind lookup tables, at module scope: they are constant, and a
+// windowed diff renders dozens of rows per frame — four fresh objects per row
+// per render was pure allocator churn.
+const DIFF_ROW_BG: Partial<Record<DiffLineKind, string>> = {
+  add: "var(--git-added-bg)",
+  rem: "var(--git-removed-bg)",
+  info: "var(--bg-2)",
+};
+const DIFF_ROW_BORDER: Partial<Record<DiffLineKind, string>> = {
+  add: "var(--git-added-gutter)",
+  rem: "var(--git-removed-gutter)",
+};
+const DIFF_ROW_MARKER: Record<DiffLineKind, string> = {
+  add: "+",
+  rem: "−",
+  ctx: " ",
+  info: "i",
+  empty: "",
+};
+const DIFF_ROW_TEXT_COLOR: Record<DiffLineKind, string> = {
+  ctx: "var(--fg-0)",
+  add: "var(--git-added)",
+  rem: "var(--git-removed)",
+  info: "var(--fg-2)",
+  empty: "var(--fg-3)",
+};
+
+export const PGDiffRow = React.memo(function PGDiffRow({
   line,
   selected,
   focused,
@@ -715,29 +749,10 @@ export function PGDiffRow({
   onLineClick?: (changedIndex: number, range: boolean) => void;
 }) {
   const kind = line.kind;
-  const bg: Partial<Record<DiffLineKind, string>> = {
-    add: "var(--git-added-bg)",
-    rem: "var(--git-removed-bg)",
-    info: "var(--bg-2)",
-  };
-  const borderColor: Partial<Record<DiffLineKind, string>> = {
-    add: "var(--git-added-gutter)",
-    rem: "var(--git-removed-gutter)",
-  };
-  const marker: Record<DiffLineKind, string> = {
-    add: "+",
-    rem: "−",
-    ctx: " ",
-    info: "i",
-    empty: "",
-  };
-  const textColor: Record<DiffLineKind, string> = {
-    ctx: "var(--fg-0)",
-    add: "var(--git-added)",
-    rem: "var(--git-removed)",
-    info: "var(--fg-2)",
-    empty: "var(--fg-3)",
-  };
+  const bg = DIFF_ROW_BG;
+  const borderColor = DIFF_ROW_BORDER;
+  const marker = DIFF_ROW_MARKER;
+  const textColor = DIFF_ROW_TEXT_COLOR;
 
   // A separator row keeps its own renderer. `flattenDiffRows` produces no `info`
   // rows — the split view does, through PGSideBySideDiff — so this is the total
@@ -837,7 +852,7 @@ export function PGDiffRow({
           </span>
         </div>
   );
-}
+});
 
 /** Shared button shape for the two hunk-action controls. */
 function hunkActionStyle(disabled: boolean): React.CSSProperties {

@@ -179,6 +179,57 @@ export interface DiffMinimapProps {
   testId?: string;
 }
 
+/**
+ * DiffMinimap with the per-pixel scroll tracking held INSIDE the gutter.
+ *
+ * The band must follow every scroll frame, but that is the only thing on a
+ * diff surface that does — the row window moves at most once per row of
+ * scroll (useVariableWindow). So this wrapper subscribes to the scroll
+ * element's own `scroll` event and keeps `scrollTop` as ITS state: per-pixel
+ * scrolling re-renders this small component (a canvas repaint), never the
+ * owning screen. DiffMinimap's controlled API is untouched — a caller that
+ * wants to drive `scrollTop` itself still can.
+ */
+export function MinimapGutter(
+  props: Omit<DiffMinimapProps, "scrollTop" | "onScrollTop">,
+) {
+  const { scrollRef } = props;
+  const [scrollTop, setScrollTop] = React.useState(0);
+  // No dependency array, identity-guarded, listener kept in a ref: a ref's
+  // `.current` is not reactive and the scroll element mounts after this (same
+  // reasoning as useWindowedList's observer binding). The cleanup must NOT be
+  // returned from the no-deps effect — React would run it before every render
+  // and the identity guard's early return would never re-attach.
+  const boundRef = React.useRef<HTMLElement | null>(null);
+  const handlerRef = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (el === boundRef.current) return;
+    if (boundRef.current && handlerRef.current) {
+      boundRef.current.removeEventListener("scroll", handlerRef.current);
+    }
+    boundRef.current = el;
+    handlerRef.current = null;
+    if (!el) return;
+    setScrollTop(el.scrollTop);
+    const onScroll = () => setScrollTop(el.scrollTop);
+    handlerRef.current = onScroll;
+    el.addEventListener("scroll", onScroll, { passive: true });
+  });
+  // Unmount-only teardown; the binding effect above cannot own it (see note).
+  React.useEffect(
+    () => () => {
+      if (boundRef.current && handlerRef.current) {
+        boundRef.current.removeEventListener("scroll", handlerRef.current);
+      }
+      boundRef.current = null;
+      handlerRef.current = null;
+    },
+    [],
+  );
+  return <DiffMinimap {...props} scrollTop={scrollTop} onScrollTop={setScrollTop} />;
+}
+
 export function DiffMinimap({
   rows,
   heights,

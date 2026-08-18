@@ -607,3 +607,46 @@ fn discard_lines_refuses_an_untracked_file_with_a_clear_error() {
         "got {err:?}"
     );
 }
+
+#[test]
+fn a_glob_special_filename_diffs_as_a_literal_path() {
+    // The single-path diff ops set disable_pathspec_match: the pathspec names
+    // one concrete file from the status listing, never a glob. This pins the
+    // two things that flag changes: a file literally named like a glob still
+    // resolves to ITSELF (fnmatch would have let `*.txt` match siblings), and
+    // an untracked file still produces its creation diff (the untracked family
+    // in worktree_index_diff_opts keeps working with the pruned walk).
+    let tr = TempRepo::fresh();
+    write_file(tr.path(), "*.txt", "star\n");
+    write_file(tr.path(), "other.txt", "other\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    let diff = backend
+        .diff(
+            &handle.id,
+            &PathBuf::from("*.txt"),
+            platypusgit_lib::git::types::DiffKind::WorktreeToHead,
+            3,
+            false,
+        )
+        .expect("diff of a glob-special literal filename");
+
+    assert_eq!(diff.path, "*.txt");
+    assert_eq!(diff.additions, 1, "only the file itself, not glob matches");
+    let lines: Vec<_> = diff
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .map(|l| l.content.trim_end().to_string())
+        .collect();
+    assert!(lines.contains(&"star".to_string()), "got {lines:?}");
+    assert!(
+        !lines.contains(&"other".to_string()),
+        "the pathspec must not fnmatch other.txt: {lines:?}"
+    );
+
+    // And staging by hunk — the worktree_index_diff_opts path — still finds it.
+    backend
+        .stage_hunk(&handle.id, &PathBuf::from("*.txt"), 0, 3)
+        .expect("stage_hunk on the glob-special filename");
+}

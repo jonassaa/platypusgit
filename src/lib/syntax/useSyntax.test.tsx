@@ -3,8 +3,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 
 // vi.hoisted, because vi.mock's factory is hoisted above the module body: a
 // plain `const` above would still be uninitialised when the factory returns it.
-const { tokenizeFile } = vi.hoisted(() => ({ tokenizeFile: vi.fn() }));
-vi.mock("./tokenize", () => ({ tokenizeFile }));
+const { tokenizeFile, peekTokens } = vi.hoisted(() => ({
+  tokenizeFile: vi.fn(),
+  peekTokens: vi.fn(),
+}));
+vi.mock("./tokenize", () => ({ tokenizeFile, peekTokens }));
 
 import { useSyntax } from "./useSyntax";
 
@@ -21,6 +24,14 @@ describe("useSyntax", () => {
     expect(screen.getByTestId("out")).toHaveTextContent("none");
     resolve([[], []]);
     await waitFor(() => expect(screen.getByTestId("out")).toHaveTextContent("lines:2"));
+  });
+
+  it("returns cached tokens on the FIRST render, with no tokenize call", () => {
+    tokenizeFile.mockReset();
+    peekTokens.mockReturnValueOnce([[], []]);
+    render(<Probe path="a.ts" text="let" />);
+    expect(screen.getByTestId("out")).toHaveTextContent("lines:2");
+    expect(tokenizeFile).not.toHaveBeenCalled();
   });
 
   it("does not call the tokenizer without a path or text", () => {

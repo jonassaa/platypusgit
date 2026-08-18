@@ -115,5 +115,12 @@ export function unpackLines(p: PackedSyntax): SyntaxLine[] {
 export function skipHighlight(path: string, text: string): boolean {
   if (!langForPath(path)) return true;
   if (text.length > MAX_HIGHLIGHT_BYTES) return true;
-  return text.split("\n").length > MAX_HIGHLIGHT_LINES;
+  // Count separators instead of split("\n"): the split allocates one string per
+  // line — tens of thousands for exactly the files this guard exists to reject —
+  // and this runs on every tokenize request, twice (main-thread guard + core).
+  let lines = 1;
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
+    if (++lines > MAX_HIGHLIGHT_LINES) return true;
+  }
+  return false;
 }

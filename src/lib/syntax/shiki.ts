@@ -2,9 +2,15 @@
 // nothing, and shared so grammars register once.
 //
 // engine-javascript rather than the default WASM Oniguruma engine: it avoids
-// shipping and fetching a .wasm asset through the Tauri custom protocol.
+// shipping and fetching a .wasm asset through the Tauri custom protocol. The
+// RAW variant specifically, because every grammar in langs.ts comes from
+// @shikijs/langs-precompiled: the regexes are native JS RegExp already, so the
+// per-pattern oniguruma-to-es translation (and its bundle weight) is skipped
+// entirely. The raw engine only accepts precompiled grammars — a plain
+// shiki/langs grammar must not be loaded through it, which langs.ts guarantees
+// by importing exclusively from the precompiled package.
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import { createJavaScriptRawEngine } from "shiki/engine/javascript";
 import { SENTINEL_THEME } from "./scopes";
 import { LANG_LOADERS, type ShikiLang } from "./langs";
 
@@ -16,7 +22,7 @@ export function getHighlighter(): Promise<HighlighterCore> {
   highlighterPromise ??= createHighlighterCore({
     themes: [SENTINEL_THEME],
     langs: [],
-    engine: createJavaScriptRegexEngine(),
+    engine: createJavaScriptRawEngine(),
   });
   return highlighterPromise;
 }

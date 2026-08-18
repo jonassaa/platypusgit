@@ -173,15 +173,16 @@ function RebaseBanner({
 // ─── Plan builder ─────────────────────────────────────────────────────────────
 
 export function RebaseScreen() {
-  const {
-    current,
-    commits,
-    rebaseStatus,
-    rebaseStart,
-    rebaseContinue,
-    rebaseAbort,
-    rebaseAcknowledge,
-  } = useRepoStore();
+  const current = useRepoStore((s) => s.current);
+  const commits = useRepoStore((s) => s.commits);
+  const rebaseStatus = useRepoStore((s) => s.rebaseStatus);
+  // Store actions are stable identities; selecting them individually keeps this
+  // screen from re-rendering on every unrelated store write (the selector-less
+  // destructure subscribed to the whole store).
+  const rebaseStart = useRepoStore((s) => s.rebaseStart);
+  const rebaseContinue = useRepoStore((s) => s.rebaseContinue);
+  const rebaseAbort = useRepoStore((s) => s.rebaseAbort);
+  const rebaseAcknowledge = useRepoStore((s) => s.rebaseAcknowledge);
 
   const [plan, setPlan] = useState<PlanRow[]>([]);
   const [mergeMode, setMergeMode] = useRebaseMergeMode();

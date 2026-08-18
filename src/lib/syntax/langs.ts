@@ -1,9 +1,17 @@
 // Path → Shiki language, plus the grammar loaders.
 //
 // LANG_LOADERS is an EXPLICIT map of static import() calls, not
-// `import(`shiki/langs/${lang}.mjs`)`. A template-literal specifier is not
+// `import(`…/${lang}.mjs`)`. A template-literal specifier is not
 // statically analysable, so Vite can neither resolve nor code-split it; written
 // out, each grammar becomes its own lazily-fetched chunk.
+//
+// The grammars come from @shikijs/langs-precompiled, paired with
+// createJavaScriptRawEngine in shiki.ts: the regexes are already translated to
+// native JS RegExp at package build time, so loading a grammar skips the
+// oniguruma-to-es translation the plain JS engine runs per pattern — the
+// dominant cost of the first highlight in each language — and the translator
+// itself stays out of the bundle. Every language below exists in the
+// precompiled set (verified against @shikijs/langs-precompiled@4.4.3).
 //
 // Ported from the highlight.js table this replaces (src/lib/highlight.ts), with
 // Shiki's language ids: `tsx` and `jsx` are real grammars here rather than
@@ -17,41 +25,41 @@ export type ShikiLang =
   | "ini" | "diff" | "perl" | "r" | "objective-c";
 
 export const LANG_LOADERS: Record<ShikiLang, () => Promise<unknown>> = {
-  typescript: () => import("shiki/langs/typescript.mjs"),
-  tsx: () => import("shiki/langs/tsx.mjs"),
-  javascript: () => import("shiki/langs/javascript.mjs"),
-  jsx: () => import("shiki/langs/jsx.mjs"),
-  rust: () => import("shiki/langs/rust.mjs"),
-  python: () => import("shiki/langs/python.mjs"),
-  go: () => import("shiki/langs/go.mjs"),
-  java: () => import("shiki/langs/java.mjs"),
-  kotlin: () => import("shiki/langs/kotlin.mjs"),
-  swift: () => import("shiki/langs/swift.mjs"),
-  c: () => import("shiki/langs/c.mjs"),
-  cpp: () => import("shiki/langs/cpp.mjs"),
-  csharp: () => import("shiki/langs/csharp.mjs"),
-  ruby: () => import("shiki/langs/ruby.mjs"),
-  php: () => import("shiki/langs/php.mjs"),
-  lua: () => import("shiki/langs/lua.mjs"),
-  sql: () => import("shiki/langs/sql.mjs"),
-  shellscript: () => import("shiki/langs/shellscript.mjs"),
-  json: () => import("shiki/langs/json.mjs"),
-  yaml: () => import("shiki/langs/yaml.mjs"),
-  toml: () => import("shiki/langs/toml.mjs"),
-  xml: () => import("shiki/langs/xml.mjs"),
-  html: () => import("shiki/langs/html.mjs"),
-  css: () => import("shiki/langs/css.mjs"),
-  scss: () => import("shiki/langs/scss.mjs"),
-  less: () => import("shiki/langs/less.mjs"),
-  markdown: () => import("shiki/langs/markdown.mjs"),
-  docker: () => import("shiki/langs/docker.mjs"),
-  make: () => import("shiki/langs/make.mjs"),
-  graphql: () => import("shiki/langs/graphql.mjs"),
-  ini: () => import("shiki/langs/ini.mjs"),
-  diff: () => import("shiki/langs/diff.mjs"),
-  perl: () => import("shiki/langs/perl.mjs"),
-  r: () => import("shiki/langs/r.mjs"),
-  "objective-c": () => import("shiki/langs/objective-c.mjs"),
+  typescript: () => import("@shikijs/langs-precompiled/typescript"),
+  tsx: () => import("@shikijs/langs-precompiled/tsx"),
+  javascript: () => import("@shikijs/langs-precompiled/javascript"),
+  jsx: () => import("@shikijs/langs-precompiled/jsx"),
+  rust: () => import("@shikijs/langs-precompiled/rust"),
+  python: () => import("@shikijs/langs-precompiled/python"),
+  go: () => import("@shikijs/langs-precompiled/go"),
+  java: () => import("@shikijs/langs-precompiled/java"),
+  kotlin: () => import("@shikijs/langs-precompiled/kotlin"),
+  swift: () => import("@shikijs/langs-precompiled/swift"),
+  c: () => import("@shikijs/langs-precompiled/c"),
+  cpp: () => import("@shikijs/langs-precompiled/cpp"),
+  csharp: () => import("@shikijs/langs-precompiled/csharp"),
+  ruby: () => import("@shikijs/langs-precompiled/ruby"),
+  php: () => import("@shikijs/langs-precompiled/php"),
+  lua: () => import("@shikijs/langs-precompiled/lua"),
+  sql: () => import("@shikijs/langs-precompiled/sql"),
+  shellscript: () => import("@shikijs/langs-precompiled/shellscript"),
+  json: () => import("@shikijs/langs-precompiled/json"),
+  yaml: () => import("@shikijs/langs-precompiled/yaml"),
+  toml: () => import("@shikijs/langs-precompiled/toml"),
+  xml: () => import("@shikijs/langs-precompiled/xml"),
+  html: () => import("@shikijs/langs-precompiled/html"),
+  css: () => import("@shikijs/langs-precompiled/css"),
+  scss: () => import("@shikijs/langs-precompiled/scss"),
+  less: () => import("@shikijs/langs-precompiled/less"),
+  markdown: () => import("@shikijs/langs-precompiled/markdown"),
+  docker: () => import("@shikijs/langs-precompiled/docker"),
+  make: () => import("@shikijs/langs-precompiled/make"),
+  graphql: () => import("@shikijs/langs-precompiled/graphql"),
+  ini: () => import("@shikijs/langs-precompiled/ini"),
+  diff: () => import("@shikijs/langs-precompiled/diff"),
+  perl: () => import("@shikijs/langs-precompiled/perl"),
+  r: () => import("@shikijs/langs-precompiled/r"),
+  "objective-c": () => import("@shikijs/langs-precompiled/objective-c"),
 };
 
 const BY_EXT: Record<string, ShikiLang> = {

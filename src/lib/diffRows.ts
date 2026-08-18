@@ -260,23 +260,35 @@ export interface FlattenDiffOptions {
   expandedGaps?: ReadonlySet<number>;
 }
 
-export function flattenDiffRows(
-  hunks: FileDiff["hunks"],
-  o: FlattenDiffOptions,
-): DiffRow[] {
-  const { rowH, foldH, syntax, text, gaps = "fold", expandedGaps } = o;
+/**
+ * Per-hunk base lines (kind mapping, changedIndex, word spans) and each hunk's
+ * anchor index, cached by the hunks ARRAY's identity.
+ *
+ * None of it depends on syntax, row heights, or gap mode — yet flattenDiffRows
+ * is re-run for every one of those (tokens arriving per side, a gap expanded, a
+ * density change), and the word diff's LCS is by far the most expensive step of
+ * the flatten. One diff object is flattened several times over its life; its
+ * hunks array never changes identity, so this computes the invariant part once.
+ * Weak, so a superseded diff's lines go with it.
+ */
+const baseLinesCache = new WeakMap<
+  FileDiff["hunks"],
+  { lines: DiffLineData[]; anchor: number }[]
+>();
 
-  const hunkRows = (h: FileDiff["hunks"][number], hunkIndex: number): DiffRow[] => {
+function baseHunkLines(
+  hunks: FileDiff["hunks"],
+): { lines: DiffLineData[]; anchor: number }[] {
+  const hit = baseLinesCache.get(hunks);
+  if (hit) return hit;
+  const computed = hunks.map((h) => {
     // Header lines are dropped BEFORE the numbering pass, which cannot renumber
     // anything: withChangedIndices counts `+`/`-` only and a header is neither.
     // Asserted in diffRows.test.ts rather than assumed — changedIndex is the one
     // index the line-staging ops accept.
     // Then changedIndex, over the whole hunk, before anything slices rows.
     const lines = withWordSpans(
-      withSyntax(
-        withChangedIndices(h.lines.filter(isFileContent).map(toUiLine)),
-        syntax,
-      ),
+      withChangedIndices(h.lines.filter(isFileContent).map(toUiLine)),
     );
     // The hunk's anchor is its first CHANGED row — F7 means "go to the next
     // change", and the Stage/Discard cluster belongs at the change block's top.
@@ -285,6 +297,25 @@ export function flattenDiffRows(
     // unconditionally, or F7 and the actions lose a reachable host.
     let anchor = lines.findIndex((l) => l.kind === "add" || l.kind === "rem");
     if (anchor < 0 && lines.length > 0) anchor = 0;
+    return { lines, anchor };
+  });
+  baseLinesCache.set(hunks, computed);
+  return computed;
+}
+
+export function flattenDiffRows(
+  hunks: FileDiff["hunks"],
+  o: FlattenDiffOptions,
+): DiffRow[] {
+  const { rowH, foldH, syntax, text, gaps = "fold", expandedGaps } = o;
+
+  const base = baseHunkLines(hunks);
+  const hunkRows = (_h: FileDiff["hunks"][number], hunkIndex: number): DiffRow[] => {
+    const { lines: baseLines, anchor } = base[hunkIndex];
+    // Syntax is the one per-flatten input, applied over the cached base. Safe to
+    // attach AFTER the word spans: withSyntax spreads each line it touches, so
+    // spans and changedIndex ride along untouched.
+    const lines = withSyntax(baseLines, syntax);
     return lines.map((line, i) => ({
       kind: "line" as const,
       hunkIndex,

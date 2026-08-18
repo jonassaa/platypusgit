@@ -58,11 +58,11 @@ import {
   flattenDiffRows,
   hunkAnchorRows,
   scrollTopForRow,
-  windowVariable,
 } from "@/lib/diffRows";
+import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
-import { DiffMinimap } from "@/features/diff/DiffMinimap";
+import { MinimapGutter } from "@/features/diff/DiffMinimap";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
 import { splitCodeLines } from "@/lib/codeLines";
@@ -428,6 +428,14 @@ export function RepoBrowserScreen() {
     return out;
   }, [tree, filteredStatus, browsingRev]);
 
+  // Stable identity: PGFileTree memoizes its checkbox-column scan on this
+  // callback, so an inline arrow here would re-run that whole-tree walk on
+  // every render of this screen.
+  const stageStateForKey = React.useCallback(
+    (k: string) => stageStates.get(k),
+    [stageStates],
+  );
+
   const onStageToggle = React.useCallback(
     (key: string, _node: PGFileTreeNode, next: boolean) => {
       // Reuse the selection splitter: it already expands a folder key to every
@@ -662,12 +670,16 @@ export function RepoBrowserScreen() {
   );
   const diffHeights = React.useMemo(() => diffRows.map((r) => r.h), [diffRows]);
   const diffScrollRef = React.useRef<HTMLDivElement>(null);
-  const [diffScrollTop, setDiffScrollTop] = React.useState(0);
   const { viewportH: diffViewportH, remeasure: remeasureDiff } =
     useViewportH(diffScrollRef);
   // Measured on the WRAPPER holding the scroll area and the minimap, so adding
   // the gutter cannot change the width that decides whether to add it (#161).
   const diffBox = useElementSize();
+  const { win: diffWin, onScroll: onDiffScroll } = useVariableWindow({
+    heights: diffHeights,
+    viewportH: diffViewportH,
+    scrollRef: diffScrollRef,
+  });
   // ── Hunk cursor + hunk-level chords (#157) ───────────────────────────────
   // This pane had no F7 either; the `@@` banner's Stage/Discard was mouse-only.
   // Scroll BY OFFSET — the anchor row is usually unmounted under windowing.
@@ -733,16 +745,6 @@ export function RepoBrowserScreen() {
     },
     [hunkCursor, hunkActionsDisabled, discardHunkAt],
     { paneId: "repo.preview" },
-  );
-
-  const diffWin = React.useMemo(
-    () =>
-      windowVariable(diffHeights, {
-        scrollTop: diffScrollTop,
-        viewportH: diffViewportH,
-        overscan: 8,
-      }),
-    [diffHeights, diffScrollTop, diffViewportH],
   );
 
   React.useEffect(() => {
@@ -976,7 +978,7 @@ export function RepoBrowserScreen() {
               selectedKeys={selectedKeys}
               onSelect={onTreeSelect}
               onRowContextMenu={onTreeContextMenu}
-              stageState={(k) => stageStates.get(k)}
+              stageState={stageStateForKey}
               onStageToggle={onStageToggle}
               window={treeWin}
             />
@@ -1096,7 +1098,7 @@ export function RepoBrowserScreen() {
             ariaLabel="File preview"
             innerRef={diffScrollRef}
             onScroll={() => {
-              setDiffScrollTop(diffScrollRef.current?.scrollTop ?? 0);
+              onDiffScroll();
               remeasureDiff();
             }}
           >
@@ -1176,14 +1178,12 @@ export function RepoBrowserScreen() {
           {/* Only for a DIFF: this pane also renders plain file content, which has
               no row model and no heights array for a gutter to derive from. */}
           {selectedFile && !diffLoading && isTextualDiff(diff) && diff && (
-            <DiffMinimap
+            <MinimapGutter
               rows={diffRows}
               heights={diffHeights}
               rowH={diffRowH}
-              scrollTop={diffScrollTop}
               viewportH={diffViewportH}
               scrollRef={diffScrollRef}
-              onScrollTop={setDiffScrollTop}
               containerWidth={diffBox.width}
               containerHeight={diffBox.height}
             />
