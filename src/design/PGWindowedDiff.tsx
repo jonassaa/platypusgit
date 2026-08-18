@@ -3,6 +3,9 @@
 // Reuses PGDiffRow, PGFoldSeparator and PGHunkActions rather than restating their
 // markup, so the windowed and unwindowed paths cannot drift. `window` omitted
 // renders everything — that is the wrap-on case, where row heights are unknown.
+// `wrap` and `window` therefore travel together: wrapping makes rows elastic, so
+// it is only legal for a caller that has also dropped its window (and its minimap
+// and its offset-based hunk scroll). See the `wrap` prop.
 //
 // There is no `@@` banner (#157). data-hunk-index / data-hunk-active — which F7
 // navigation and the e2e specs address hunks through — live on each hunk's ANCHOR
@@ -42,6 +45,14 @@ export interface PGWindowedDiffProps {
    * mistake a refetched hunk's line for the focused one.
    */
   focusedRow?: number | null;
+  /**
+   * Soft-wrap long code lines. Forwarded to every `PGDiffRow`, which then renders
+   * an ELASTIC row — so a caller passing this must also omit `window` and switch
+   * off every other heights consumer it owns (minimap, hunk scroll), because
+   * `DiffRow.h` no longer describes what is on screen. Default off: with wrapping
+   * on and fixed-pitch rows, each long line draws over the rows beneath it.
+   */
+  wrap?: boolean;
 }
 
 export function PGWindowedDiff({
@@ -53,6 +64,7 @@ export function PGWindowedDiff({
   onLineClick,
   onExpandGap,
   focusedRow,
+  wrap,
 }: PGWindowedDiffProps) {
   const start = win?.start ?? 0;
   const end = win?.end ?? rows.length;
@@ -88,7 +100,7 @@ export function PGWindowedDiff({
         // no hunk, so it gets no selection and no click target — there is no hunk
         // index it could stage.
         if (row.kind === "fill") {
-          return <PGDiffRow key={`f${start + i}`} line={row.line} />;
+          return <PGDiffRow key={`f${start + i}`} line={row.line} wrap={wrap} />;
         }
         if (row.kind === "fold") {
           return (
@@ -116,6 +128,7 @@ export function PGWindowedDiff({
               row.line.changedIndex != null && sel.includes(row.line.changedIndex)
             }
             focused={focusedRow === start + i}
+            wrap={wrap}
             onLineClick={
               onLineClick && !disabled ? clickHandlerFor(row.hunkIndex) : undefined
             }

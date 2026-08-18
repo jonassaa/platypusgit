@@ -26,7 +26,7 @@ export const MINIMAP_COLS = 80;
 /** Minimap px per code row when the file is short enough not to be compressed. */
 export const MINIMAP_ROW_PITCH = 2;
 
-/** Tab expansion for column arithmetic — 8 is what `white-space: pre-wrap` uses. */
+/** Tab expansion for column arithmetic — 8 is the default `tab-size` the rows use. */
 export const MINIMAP_TAB_COLS = 8;
 
 /** Floor on the viewport indicator's height, so it stays grabbable. */
