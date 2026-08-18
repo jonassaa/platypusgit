@@ -12,7 +12,7 @@ import {
   PGStatusMark,
   PGToggle,
   PGToolbar,
-  usePaneWidth,
+  usePaneSize,
   type SideLine,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -35,6 +35,7 @@ import {
   windowVariable,
 } from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
+import { useElementSize } from "@/lib/useElementSize";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { pairChangedLines } from "@/lib/pairChangedLines";
@@ -68,9 +69,14 @@ export function DiffViewerScreen() {
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [diffError, setDiffError] = React.useState<string | null>(null);
-  const listPane = usePaneWidth(280, {
+  // The file list may take everything the split allows, as long as the diff it
+  // is a list OF keeps enough width to read a line of code (#162).
+  const layout = useElementSize();
+  const listPane = usePaneSize(280, {
+    axis: "width",
+    container: layout,
     min: 180,
-    max: 600,
+    siblingMin: 360,
     storageKey: "pg-diff-list-w",
   });
 
@@ -363,6 +369,7 @@ export function DiffViewerScreen() {
         </div>
       )}
       <div
+        ref={layout.ref}
         style={{
           flex: 1,
           minHeight: 0,
@@ -374,7 +381,7 @@ export function DiffViewerScreen() {
           id="diff.files"
           primary
           style={{
-            width: listPane.width,
+            width: listPane.size,
             flexShrink: 0,
             borderRight: "1px solid var(--border-0)",
             background: "var(--bg-1)",
@@ -418,7 +425,11 @@ export function DiffViewerScreen() {
           ))}
           </FocusableScroll>
         </PGPane>
-        <PGResizeHandle onDrag={listPane.resize} />
+        <PGResizeHandle
+          testId="diff-list-resize"
+          onDrag={listPane.resize}
+          onReset={listPane.reset}
+        />
         <PGPane
           id="diff.view"
           style={{

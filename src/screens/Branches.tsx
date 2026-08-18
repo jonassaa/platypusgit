@@ -21,8 +21,9 @@ import {
   type StashMenuTarget,
   tagMenuItems,
   useContextMenu,
-  usePaneWidth,
+  usePaneSize,
 } from "@/design";
+import { useElementSize } from "@/lib/useElementSize";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { orderBranches } from "@/features/branches/orderBranches";
 import { TagSignatureBadge } from "@/features/signing/TagSignatureBadge";
@@ -96,9 +97,14 @@ export function BranchesScreen() {
 
   const [widths, setWidths] = React.useState(() => COLS.map((c) => c.initial));
   const gridTemplate = widths.map((w) => `${w}px`).join(" ");
-  const inspectorPane = usePaneWidth(320, {
+  // The refs table keeps its five columns readable; beyond that the inspector may
+  // take whatever the window offers (#162).
+  const layout = useElementSize();
+  const inspectorPane = usePaneSize(320, {
+    axis: "width",
+    container: layout,
     min: 220,
-    max: 560,
+    siblingMin: 420,
     storageKey: "pg-branches-inspector-w",
   });
   const totalWidth = widths.reduce((a, b) => a + b, 0);
@@ -265,7 +271,7 @@ export function BranchesScreen() {
         onFetchAll={fetchAllOp}
         fetching={!!activity.fetch}
       />
-      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+      <div ref={layout.ref} style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <PGPane
           id="branches.list"
           primary
@@ -637,12 +643,13 @@ export function BranchesScreen() {
 
         <PGResizeHandle
           onDrag={(d) => inspectorPane.resize(-d)}
+          onReset={inspectorPane.reset}
           side="left"
         />
         <PGPane
           id="branches.detail"
           style={{
-            width: inspectorPane.width,
+            width: inspectorPane.size,
             borderLeft: "1px solid var(--border-0)",
             background: "var(--bg-1)",
             display: "flex",

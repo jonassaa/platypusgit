@@ -16,8 +16,9 @@ import {
   PGIcon,
   PGIconButton,
   PGResizeHandle,
-  usePaneWidth,
+  usePaneSize,
 } from "@/design";
+import { useElementSize } from "@/lib/useElementSize";
 import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
@@ -203,9 +204,14 @@ export function CompareScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repo?.id, leftKey, rightKey, diffContextLines, ignoreWhitespace]);
 
-  const listsHeight = usePaneWidth(200, {
+  // Vertical split: the two commit lists above, the file diff below. The lists
+  // may take the whole column height the diff does not need (#162).
+  const layout = useElementSize();
+  const listsHeight = usePaneSize(200, {
+    axis: "height",
+    container: layout,
     min: 90,
-    max: 600,
+    siblingMin: 220,
     storageKey: "pg-compare-lists-h",
   });
 
@@ -347,12 +353,15 @@ export function CompareScreen() {
         </div>
       )}
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div
+        ref={layout.ref}
+        style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+      >
         {showLists && (
           <>
             <div
               style={{
-                height: listsHeight.width,
+                height: listsHeight.size,
                 flexShrink: 0,
                 display: "flex",
                 minHeight: 0,
@@ -389,6 +398,7 @@ export function CompareScreen() {
               side="bottom"
               testId="compare-lists-resize"
               onDrag={(d) => listsHeight.resize(d)}
+              onReset={listsHeight.reset}
             />
           </>
         )}

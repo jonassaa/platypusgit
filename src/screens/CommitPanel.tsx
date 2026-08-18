@@ -22,7 +22,8 @@ import {
   pgFlash,
   pgPrompt,
   useContextMenu,
-  usePaneWidth,
+  usePaneSize,
+  PANE_HANDLE_PX,
   type PGFileTreeNode,
   type PGStageState,
   type SideLine,
@@ -73,6 +74,7 @@ import {
   windowVariable,
 } from "@/lib/diffRows";
 import { useViewportH } from "@/lib/useViewportH";
+import { useElementSize } from "@/lib/useElementSize";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import {
   WhitespaceToggle,
@@ -95,6 +97,11 @@ import type {
   FileDiff,
   FileStatus,
 } from "@/lib/types";
+
+/** The middle column renders a diff — a code column is its reason to exist. */
+const DIFF_MIN_W = 360;
+/** The composer's floor, and what the changes list reserves for it. */
+const COMPOSER_MIN_W = 280;
 
 interface FileSlot {
   path: string;
@@ -150,14 +157,25 @@ export function CommitPanelScreen() {
     Record<string, boolean>
   >({});
   const [sel, setSel] = React.useState<Selection>(emptySelection);
-  const changesPane = usePaneWidth(320, {
+  // Three panes: changes | diff (flexible) | composer (#162). Same asymmetry
+  // RepoBrowser uses — the first pane reserves the composer's MINIMUM, the
+  // composer reserves the changes list's ACTUAL size, so the two clamps are not
+  // circular and the diff column keeps its floor either way.
+  const layout = useElementSize();
+  const changesPane = usePaneSize(320, {
+    axis: "width",
+    container: layout,
     min: 220,
-    max: 720,
+    siblingMin: DIFF_MIN_W,
+    reserve: COMPOSER_MIN_W + PANE_HANDLE_PX,
     storageKey: "pg-commit-changes-w",
   });
-  const composerPane = usePaneWidth(360, {
-    min: 280,
-    max: 640,
+  const composerPane = usePaneSize(360, {
+    axis: "width",
+    container: layout,
+    min: COMPOSER_MIN_W,
+    siblingMin: DIFF_MIN_W,
+    reserve: changesPane.size + PANE_HANDLE_PX,
     storageKey: "pg-commit-composer-w",
   });
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
@@ -1005,13 +1023,13 @@ export function CommitPanelScreen() {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+    <div ref={layout.ref} style={{ flex: 1, display: "flex", minHeight: 0 }}>
       {/* Column 1: change list */}
       <PGPane
         id="commit.files"
         primary
         style={{
-          width: changesPane.width,
+          width: changesPane.size,
           flexShrink: 0,
           background: "var(--bg-1)",
           borderRight: "1px solid var(--border-0)",
@@ -1187,7 +1205,7 @@ export function CommitPanelScreen() {
           </div>
         </FocusableScroll>
       </PGPane>
-      <PGResizeHandle onDrag={changesPane.resize} />
+      <PGResizeHandle onDrag={changesPane.resize} onReset={changesPane.reset} />
 
       {/* Column 2: diff */}
       <PGPane
@@ -1308,13 +1326,17 @@ export function CommitPanelScreen() {
         {moreMenu.menu}
       </PGPane>
 
-      <PGResizeHandle onDrag={(d) => composerPane.resize(-d)} side="left" />
+      <PGResizeHandle
+        onDrag={(d) => composerPane.resize(-d)}
+        onReset={composerPane.reset}
+        side="left"
+      />
 
       {/* Column 3: message composer */}
       <PGPane
         id="commit.message"
         style={{
-          width: composerPane.width,
+          width: composerPane.size,
           flexShrink: 0,
           background: "var(--bg-1)",
           borderLeft: "1px solid var(--border-0)",

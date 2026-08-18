@@ -4,9 +4,10 @@ import {
   PGIcon,
   PGResizeHandle,
   PGSkeleton,
-  usePaneWidth,
+  usePaneSize,
   type DiffLineData,
 } from "@/design";
+import { useElementSize } from "@/lib/useElementSize";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
@@ -220,22 +221,30 @@ export function CommitDiffPanel({
 
   // Per mount site: History's bottom panel is wide and short, the full-screen
   // commit diff is not, so one shared width would fit neither.
-  const filesPane = usePaneWidth(240, {
+  const layout = useElementSize();
+  const filesPane = usePaneSize(240, {
+    axis: "width",
+    container: layout,
     min: 140,
-    max: 640,
+    // The diff this is a list OF keeps a readable column. That floor replaces the
+    // old `maxWidth: "60%"` on the pane: a CSS cap held the RENDERED width while
+    // the dragged number kept growing, so the handle drifted away from the box it
+    // was sizing. A measured clamp is the same protection without the lie (#162).
+    //
+    // 200 rather than the ~360 a full-screen diff would like, because this panel
+    // also mounts inside History's 440px-wide beside layout, where the two floors
+    // plus the handle are the whole container: a larger number there would shove
+    // the file column down to its own minimum and shrink a list that fits today.
+    siblingMin: 200,
     storageKey: `pg-${paneIdPrefix.replace(/\./g, "-")}-files-w`,
   });
 
   return (
-    <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+    <div ref={layout.ref} style={{ flex: 1, display: "flex", minHeight: 0 }}>
       <PGPane
         id={filesPaneId}
         style={{
-          width: filesPane.width,
-          // The column never shrinks, so cap it against the panel: in the
-          // narrow side-by-side History layout a wide drag would otherwise
-          // push the diff out of the detail pane entirely.
-          maxWidth: "60%",
+          width: filesPane.size,
           flexShrink: 0,
           borderRight: "1px solid var(--border-0)",
           fontFamily: "var(--font-mono)",
@@ -361,6 +370,7 @@ export function CommitDiffPanel({
         side="right"
         testId={`${paneIdPrefix}-files-resize`}
         onDrag={(d) => filesPane.resize(d)}
+        onReset={filesPane.reset}
       />
       <PGPane
         id={viewPaneId}

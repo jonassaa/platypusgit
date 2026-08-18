@@ -23,12 +23,13 @@ import {
   pgFlash,
   pgPrompt,
   useContextMenu,
-  usePaneWidth,
+  usePaneSize,
   type CommitRef,
 } from "@/design";
 import { layoutGraph } from "@/features/commits/graphLayout";
 import { createRowCache } from "@/features/commits/rowIdentity";
 import { useWindowedList } from "@/lib/useWindowedList";
+import { useElementSize } from "@/lib/useElementSize";
 import { buildLogFilter, isFilterEmpty } from "@/features/commits/logFilter";
 import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { headAncestryOf } from "@/features/commits/headAncestry";
@@ -84,6 +85,16 @@ const LOAD_MORE_SLACK = 8;
 const MAX_BARREN_PAGES = 3;
 /** Small debounce so arrow-scrolling the log doesn't fire a fetch per row. */
 const INLINE_DIFF_DEBOUNCE_MS = 100;
+
+/**
+ * Floors for what is left over when a detail panel is dragged open (#162). The
+ * commit list is a graph plus a message column, so it needs real width; below
+ * layout it only has to keep a few rows visible.
+ */
+const COMMIT_LIST_MIN_W = 420;
+const COMMIT_LIST_MIN_H = 200;
+/** The diff beside the message inside the below-layout detail panel. */
+const DETAIL_DIFF_MIN_W = 320;
 
 export function HistoryScreen() {
   const commits = useRepoStore((s) => s.commits);
@@ -150,24 +161,36 @@ export function HistoryScreen() {
   const searchActive = !isFilterEmpty(logFilter);
   // Base list: backend-filtered results when a search is active, else full log.
   const baseCommits = searchActive ? (searchResults ?? []) : commits;
-  const detailPane = usePaneWidth(440, {
+  // The layout container serves BOTH the beside-layout detail width and the
+  // below-layout detail height, so one measurement feeds two axes (#162).
+  const layout = useElementSize();
+  const detailPane = usePaneSize(440, {
+    axis: "width",
+    container: layout,
     min: 280,
-    max: 720,
+    siblingMin: COMMIT_LIST_MIN_W,
     storageKey: "pg-history-detail-w",
   });
   const repo = useRepoStore((s) => s.current);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const ignoreWhitespace = useIgnoreWhitespace();
-  // Below-layout panel height reuses the clamped/persisted pane-size hook.
-  const detailHeight = usePaneWidth(320, {
+  // Below-layout panel height reuses the clamped/persisted pane-size hook — on
+  // the HEIGHT axis, which is why the hook names its axis rather than assuming.
+  const detailHeight = usePaneSize(320, {
+    axis: "height",
+    container: layout,
     min: 140,
-    max: 800,
+    siblingMin: COMMIT_LIST_MIN_H,
     storageKey: "pg-history-diff-h",
   });
-  // Width of the message column inside the below-layout detail panel.
-  const messagePane = usePaneWidth(340, {
+  // Width of the message column inside the below-layout detail panel. Its
+  // container is that panel, not the screen, so it measures separately.
+  const detailLayout = useElementSize();
+  const messagePane = usePaneSize(340, {
+    axis: "width",
+    container: detailLayout,
     min: 220,
-    max: 640,
+    siblingMin: DETAIL_DIFF_MIN_W,
     storageKey: "pg-history-detail-msg-w",
   });
   const [diffLayout, setDiffLayout] = React.useState<DiffLayout>(() => {
@@ -879,10 +902,13 @@ export function HistoryScreen() {
     diffLayout === "below" ? (
       // Bottom panel is wide and short: message beside the diff, each with its
       // own scroll, so neither one starves the other vertically.
-      <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex" }}>
+      <div
+        ref={detailLayout.ref}
+        style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex" }}
+      >
         <div
           style={{
-            width: messagePane.width,
+            width: messagePane.size,
             flexShrink: 0,
             minWidth: 0,
             minHeight: 0,
@@ -892,7 +918,11 @@ export function HistoryScreen() {
         >
           {messageBlock}
         </div>
-        <PGResizeHandle side="right" onDrag={(d) => messagePane.resize(d)} />
+        <PGResizeHandle
+          side="right"
+          onDrag={(d) => messagePane.resize(d)}
+          onReset={messagePane.reset}
+        />
         <div
           style={{
             flex: 1,
@@ -943,6 +973,7 @@ export function HistoryScreen() {
       <PGToolbar left={toolbarLeft} right={toolbarRight} />
       {advancedPanel}
       <div
+        ref={layout.ref}
         style={{
           flex: 1,
           minHeight: 0,
@@ -953,11 +984,15 @@ export function HistoryScreen() {
         {listPane}
         {showDetail && diffLayout === "beside" && (
           <>
-            <PGResizeHandle onDrag={(d) => detailPane.resize(-d)} side="left" />
+            <PGResizeHandle
+              onDrag={(d) => detailPane.resize(-d)}
+              onReset={detailPane.reset}
+              side="left"
+            />
             <div
               data-testid="history-detail"
               style={{
-                width: detailPane.width,
+                width: detailPane.size,
                 flexShrink: 0,
                 borderLeft: "1px solid var(--border-0)",
                 background: "var(--bg-1)",
@@ -976,12 +1011,14 @@ export function HistoryScreen() {
             <PGResizeHandle
               orientation="vertical"
               side="top"
+              testId="history-detail-resize"
               onDrag={(d) => detailHeight.resize(-d)}
+              onReset={detailHeight.reset}
             />
             <div
               data-testid="history-detail"
               style={{
-                height: detailHeight.width,
+                height: detailHeight.size,
                 flexShrink: 0,
                 borderTop: "1px solid var(--border-0)",
                 background: "var(--bg-1)",
