@@ -4791,6 +4791,8 @@ impl GitBackend for Libgit2Backend {
         repo_id: &RepoId,
         oid: &str,
     ) -> AppResult<crate::git::signing::SignatureStatus> {
+        use crate::git::signing::{SigState, SignatureStatus};
+
         // Validated before it reaches an argv: `git show` would read a value
         // starting with '-' as an option rather than a revision. Every caller
         // passes an oid from our own log walk, so a hex check costs nothing and
@@ -4800,6 +4802,43 @@ impl GitBackend for Libgit2Backend {
             || !oid.chars().all(|c| c.is_ascii_hexdigit())
         {
             return Err(AppError::InvalidRef(oid.to_string()));
+        }
+
+        let unsigned = SignatureStatus {
+            state: SigState::None,
+            signer: None,
+            key: None,
+        };
+
+        // The common case costs no subprocess (issue 172). Most commits in most
+        // repositories are unsigned, `LOOK.None` renders NOTHING, and on Windows
+        // a GUI-subsystem release build pays a visible console window per
+        // `git show` — so the reported symptom was one console flash per commit
+        // selected, for a badge that never appeared. `verify_tag` below has had
+        // this pre-check since #132; this is the same shape.
+        //
+        // Resolving the revision here also does two other jobs: an unknown
+        // object is `InvalidRef` before anything is spawned (which is what the
+        // hex check above could only approximate), and what reaches argv is a
+        // full oid we produced, not caller text — the same reason
+        // `bisect::resolve` exists.
+        let (full_oid, signed) = self.with_repo(repo_id, |repo| {
+            let commit = repo
+                .revparse_single(oid)
+                .and_then(|obj| obj.peel_to_commit())
+                .map_err(|_| AppError::InvalidRef(oid.to_string()))?;
+            let id = commit.id();
+            // `gpgsig` is the header git writes for every signature FORMAT —
+            // openpgp, ssh and x509 all land there. `gpgsig-sha256` is the
+            // sha256-object-format spelling, checked so a signed commit in such a
+            // repository can never read as unsigned.
+            let signed = ["gpgsig", "gpgsig-sha256"]
+                .iter()
+                .any(|field| repo.extract_signature(&id, Some(field)).is_ok());
+            Ok((id.to_string(), signed))
+        })?;
+        if !signed {
+            return Ok(unsigned);
         }
 
         let repo_path = self.repo_path(repo_id)?;
@@ -4813,12 +4852,21 @@ impl GitBackend for Libgit2Backend {
                 "show",
                 "--no-patch",
                 "--format=%G?%x00%GS%x00%GK",
-                oid,
+                &full_oid,
             ])
             .output()
             .map_err(|e| AppError::Io(e.to_string()))?;
         if !out.status.success() {
-            return Err(AppError::InvalidRef(oid.to_string()));
+            // git's own message, not `InvalidRef(oid)`: the object is known to
+            // exist (resolved above), so a failure here is git or the signer
+            // — a broken gpg install used to be reported as a bad object id.
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let detail = if stderr.is_empty() {
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            } else {
+                stderr
+            };
+            return Err(AppError::Git(format!("git show --format=%G?: {detail}")));
         }
         Ok(crate::git::signing::parse_verify_output(
             &String::from_utf8_lossy(&out.stdout),
