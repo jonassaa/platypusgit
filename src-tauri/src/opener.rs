@@ -115,7 +115,10 @@ pub async fn open_with_default_app(target: &OsStr) -> AppResult<()> {
     let (_, pre) = OPENER;
     let prog = opener_program();
     let shown = prog.to_string_lossy().to_string();
-    let status = tokio::process::Command::new(&prog)
+    // `rundll32.exe` is GUI-subsystem, so CREATE_NO_WINDOW is documented as
+    // ignored for it — routed through `proc` anyway, because "the only sanctioned
+    // way to spawn" is worth more than the one site's exemption (issue 172).
+    let status = crate::proc::program_async(&prog)
         .args(pre)
         .arg(target)
         .status()

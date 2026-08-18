@@ -288,6 +288,11 @@ update.rs        Update discovery — semver compare (semver crate, cmp_preceden
                  GitHub release parsing, ureq agent w/ timeout + https_only.
                  The LOGIC; its Tauri handlers are commands/update.rs. Two
                  different files with the same basename — see the note there
+proc.rs          THE ONLY sanctioned way to spawn a child process (issue 172):
+                 `git` / `git_async` / `git_async_in` (+ CREATE_NO_WINDOW,
+                 GIT_TERMINAL_PROMPT=0, stdin closed), `program` /
+                 `program_async` (flag only), and the two
+                 `*_keeping_console` exceptions. See "Spawning processes"
 forge/           Forge (GitHub / GitLab) integration — PR/MR list, create, checkout,
                  CI status (#92). The trait is split into URL BUILDERS + RESPONSE
                  PARSERS, not `list_pull_requests()`, so every forge-specific line

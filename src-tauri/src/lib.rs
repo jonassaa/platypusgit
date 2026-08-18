@@ -5,6 +5,7 @@ pub mod error;
 pub mod forge;
 pub mod git;
 pub mod opener;
+pub mod proc;
 pub mod state;
 pub mod update;
 

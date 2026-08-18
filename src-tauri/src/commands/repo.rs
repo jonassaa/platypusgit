@@ -165,7 +165,11 @@ pub async fn open_in_editor(
         let mut parts = editor.split_whitespace();
         let prog = parts.next().unwrap_or("");
         let args: Vec<&str> = parts.collect();
-        let status = tokio::process::Command::new(prog)
+        // DELIBERATELY not silenced on Windows: `EDITOR=vim` names a console
+        // program, and hiding its console leaves an invisible editor holding the
+        // file with no way to reach it. See
+        // `proc::program_async_keeping_console` (issue 172).
+        let status = crate::proc::program_async_keeping_console(prog)
             .args(&args)
             .arg(&abs)
             .status()

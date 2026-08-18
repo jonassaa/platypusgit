@@ -93,11 +93,14 @@ pub async fn run_git_authenticated(
     args: &[&str],
     creds: Option<&Credentials>,
 ) -> AppResult<()> {
-    let mut cmd = tokio::process::Command::new("git");
-    cmd.arg("-C").arg(cwd).args(args);
+    // `proc::git_async` carries GIT_TERMINAL_PROMPT=0 (which `apply_auth_env`
+    // sets too), a closed stdin — nothing feeds it, so an unexpected read would
+    // block forever — and, on Windows, CREATE_NO_WINDOW: without it every fetch,
+    // pull and push flashed a console, including the ones auto-fetch runs on a
+    // timer with no user action at all (issue 172).
+    let mut cmd = crate::proc::git_async(cwd);
+    cmd.args(args);
     apply_auth_env(&mut cmd, creds);
-    // Nothing feeds the child stdin, so an unexpected read would block forever.
-    cmd.stdin(std::process::Stdio::null());
 
     let output = cmd.output().await.map_err(|e| AppError::Io(e.to_string()))?;
 
@@ -154,10 +157,9 @@ pub async fn credential_approve(cwd: &Path, host: &str, creds: &Credentials) {
     }
     input.push_str(&format!("password={}\n\n", creds.secret));
 
-    let mut child = match tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(cwd)
+    let mut child = match crate::proc::git_async(cwd)
         .args(["credential", "approve"])
+        // Overrides the constructor's closed stdin: the credential is fed here.
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

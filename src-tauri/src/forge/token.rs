@@ -137,11 +137,10 @@ fn credential_input(host: &str, token: Option<&Secret>) -> AppResult<String> {
 /// that answers with an empty string: `GIT_ASKPASS=true` would hand git an empty
 /// password, which `fill` would then report as a stored empty token.
 async fn run_credential(verb: &str, input: &str, want_stdout: bool) -> AppResult<Option<String>> {
-    let mut cmd = tokio::process::Command::new("git");
-    cmd.arg("-C")
-        .arg(credential_cwd())
-        .args(["credential", verb])
-        .env("GIT_TERMINAL_PROMPT", "0")
+    // `proc::git_async` supplies GIT_TERMINAL_PROMPT=0 and CREATE_NO_WINDOW; the
+    // askpass below is this runner's own, and deliberately not the shared one.
+    let mut cmd = crate::proc::git_async(&credential_cwd());
+    cmd.args(["credential", verb])
         // `false` exits non-zero on unix; on Windows there is no such builtin,
         // so name a path that cannot exist — git treats a failed askpass the
         // same way, and falls through to the (disabled) terminal prompt.
@@ -153,6 +152,7 @@ async fn run_credential(verb: &str, input: &str, want_stdout: bool) -> AppResult
                 "false"
             },
         )
+        // Overrides the constructor's closed stdin: the protocol goes in here.
         .stdin(Stdio::piped())
         .stderr(Stdio::null());
     cmd.stdout(if want_stdout {

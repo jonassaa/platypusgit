@@ -132,9 +132,13 @@ pub async fn run_mergetool(
     .await
     .map_err(|e| AppError::Internal(e.to_string()))??;
 
-    let status = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(&workdir)
+    // DELIBERATELY not silenced on Windows: `git mergetool` launches the tool the
+    // user configured, and a console mergetool (vimdiff) is a terminal program
+    // that needs the console it is given. See `proc::git_async_keeping_console`
+    // for the full reasoning — this is an exception with a rationale, not an
+    // oversight, and `tests/spawn_no_window.rs` allow-lists it by name so it
+    // cannot be "fixed" into consistency by accident (issue 172).
+    let status = crate::proc::git_async_keeping_console(&workdir)
         .arg("mergetool")
         .arg("--no-prompt")
         .arg("--")
@@ -164,9 +168,7 @@ pub async fn restart_conflict(
     .await
     .map_err(|e| AppError::Internal(e.to_string()))??;
 
-    let status = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(&workdir)
+    let status = crate::proc::git_async(&workdir)
         .arg("checkout")
         .arg("--merge")
         .arg("--")

@@ -16,7 +16,6 @@
 //! for free, and a bisect the user started in a terminal is picked up unchanged.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use git2::Repository;
 
@@ -186,14 +185,7 @@ fn run_bisect_vars(workdir: &Path, bad_ref: &str, good_refs: &[String]) -> Bisec
         args.push("--not".into());
         args.extend(good_refs.iter().cloned());
     }
-    let Ok(out) = Command::new("git")
-        .arg("-C")
-        .arg(workdir)
-        .args(&args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .output()
-    else {
+    let Ok(out) = crate::proc::git(workdir).args(&args).output() else {
         return BisectVars::default();
     };
     if !out.status.success() {
@@ -233,16 +225,14 @@ pub fn mark_word(mark: BisectMark, bad_term: &str, good_term: &str) -> String {
 /// there and exits 0, so callers re-read the state afterwards rather than trying to
 /// infer anything from the exit code.
 pub fn run(workdir: &Path, args: &[String]) -> AppResult<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(workdir)
+    let out = crate::proc::git(workdir)
         .arg("bisect")
         .args(args)
-        // No tty here, and `git bisect` can want a pager for the culprit's diff.
-        .env("GIT_TERMINAL_PROMPT", "0")
+        // `git bisect` can want a pager for the culprit's diff, and there is no
+        // tty for one. (The no-tty half — GIT_TERMINAL_PROMPT=0 and a closed
+        // stdin — comes from `proc::git`.)
         .env("GIT_PAGER", "cat")
         .env("PAGER", "cat")
-        .stdin(Stdio::null())
         .output()
         .map_err(|e| AppError::Io(e.to_string()))?;
     if !out.status.success() {

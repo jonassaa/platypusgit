@@ -370,17 +370,14 @@ impl Libgit2Backend {
     /// `git rebase --continue` / `--abort` in the worktree.
     fn run_rebase_flag(&self, repo_id: &RepoId, flag: &str) -> AppResult<()> {
         let repo_path = self.repo_path(repo_id)?;
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&repo_path)
+        let out = crate::proc::git(&repo_path)
             .args(["rebase", flag])
             // `--continue` commits the resolved tree, and git opens an editor
             // for the message unless told not to. There is no tty here, so an
-            // editor would block forever.
+            // editor would block forever. (`GIT_TERMINAL_PROMPT=0` and the
+            // closed stdin come from `proc::git`.)
             .env("GIT_EDITOR", "true")
             .env("GIT_SEQUENCE_EDITOR", "true")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .stdin(std::process::Stdio::null())
             .output()
             .map_err(|e| AppError::Io(e.to_string()))?;
         if !out.status.success() {
@@ -1268,7 +1265,15 @@ fn sign_payload(repo: &Repository, payload: &str) -> AppResult<String> {
 fn run_signer(program: &str, args: &[String], payload: &str) -> AppResult<String> {
     use std::io::Write as _;
 
-    let mut child = std::process::Command::new(program)
+    // `proc::program` and not `proc::git`: the payload goes in on stdin, so the
+    // prompt-less policy's closed stdin would be exactly wrong here.
+    //
+    // Windows caveat, deliberately not resolved by assertion (issue 172): the
+    // flag stops gpg/ssh-keygen being given a console of its own, and a gpg key
+    // with a passphrase asks for it through PINENTRY — Gpg4win's default is the
+    // GUI `pinentry-w32`, which is unaffected, but a curses pinentry would want a
+    // terminal this GUI-subsystem process never had one to give it either way.
+    let mut child = crate::proc::program(program)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -1719,9 +1724,7 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
 /// Run `git apply [extra_args...] -` with `patch_text` piped to stdin.
 fn git_apply(repo_path: &Path, extra_args: &[&str], patch_text: &str) -> AppResult<()> {
     use std::io::Write as _;
-    let mut child = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_path)
+    let mut child = crate::proc::git(repo_path)
         .arg("apply")
         .args(extra_args)
         .arg("--whitespace=nowarn")
@@ -4527,9 +4530,7 @@ impl GitBackend for Libgit2Backend {
     fn prune_remote(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
         // We need the path synchronously here (called from spawn_blocking context).
         let path = self.repo_path(repo_id)?;
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&path)
+        let output = crate::proc::git(&path)
             .arg("remote")
             .arg("prune")
             .arg(name)
@@ -4804,9 +4805,10 @@ impl GitBackend for Libgit2Backend {
         let repo_path = self.repo_path(repo_id)?;
         // Shells out rather than reimplementing trust evaluation: %G? is git's
         // own verdict, including keyring/allowed-signers lookup.
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&repo_path)
+        let out = crate::proc::git(&repo_path)
+            // `proc::git` carries GIT_TERMINAL_PROMPT=0 and a closed stdin:
+            // verification must never block on a prompt nobody can see, and
+            // `spawn_blocking` offers no cancellation if it did.
             .args([
                 "show",
                 "--no-patch",
@@ -4868,14 +4870,11 @@ impl GitBackend for Libgit2Backend {
         // placeholder, so `git show <tag> --format=%G?` reports the commit's
         // signature, and for-each-ref's %(signature:grade) atom is empty for a
         // tag object. `git verify-tag --raw` is git's own verdict on the tag.
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&repo_path)
+        // No tty: verification must never block on a prompt nobody can see —
+        // `proc::git` carries GIT_TERMINAL_PROMPT=0 and a closed stdin.
+        let out = crate::proc::git(&repo_path)
             .args(["verify-tag", "--raw", "--"])
             .arg(name)
-            // No tty: verification must never block on a prompt nobody can see.
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .stdin(std::process::Stdio::null())
             .output()
             .map_err(|e| AppError::Io(e.to_string()))?;
 
@@ -5582,18 +5581,18 @@ fn run_git_capture_env(
     args: &[String],
     env: &[(&str, &str)],
 ) -> Result<String, String> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("-C").arg(workdir).args(args);
+    // No tty: `proc::git` supplies GIT_TERMINAL_PROMPT=0 and a closed stdin, so
+    // an auth-requiring remote fails fast instead of hanging forever on a prompt
+    // nobody can see. The askpass pair is this runner's own addition — a helper
+    // that would otherwise pop its own UI must fail instead.
+    let mut cmd = crate::proc::git(workdir);
+    cmd.args(args);
     for (k, v) in env {
         cmd.env(k, v);
     }
     let out = cmd
-        // No tty: without this an auth-requiring remote hangs forever on a prompt
-        // nobody can see.
-        .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "true")
         .env("SSH_ASKPASS", "true")
-        .stdin(std::process::Stdio::null())
         .output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {

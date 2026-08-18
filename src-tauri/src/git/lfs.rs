@@ -12,7 +12,6 @@
 //!   diff's own lines and no subprocess or extra read is needed.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use git2::Repository;
 
@@ -187,12 +186,8 @@ pub fn declared_patterns(repo: &Repository) -> Vec<String> {
 /// *git* can find it, including a git-lfs installed somewhere only git's exec-path
 /// knows about.
 pub fn version(cwd: &Path) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
+    let out = crate::proc::git(cwd)
         .args(["lfs", "version"])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
         .output()
         .ok()?;
     if !out.status.success() {

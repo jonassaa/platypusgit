@@ -58,16 +58,13 @@ pub fn checkout_args(local: &str, exists: bool) -> Vec<&str> {
 /// `refs/heads/`, so it can never begin with `-`, and the name has already been
 /// through `validate_ref_name`.
 pub async fn branch_exists(cwd: &Path, name: &str) -> AppResult<bool> {
-    let status = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(cwd)
+    let status = crate::proc::git_async(cwd)
         .args([
             "rev-parse",
             "--verify",
             "--quiet",
             &format!("refs/heads/{name}"),
         ])
-        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

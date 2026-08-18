@@ -513,18 +513,20 @@ pub const WINDOWS_PATH_SCRIPT: &str = include_str!("../windows/add-user-path.ps1
 #[cfg(windows)]
 fn add_user_path(dir: &Path) -> bool {
     use std::io::Write;
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     // The directory travels in the environment, not argv: `-Command` takes a
     // script, and a path is user-controlled text.
-    let child = Command::new("powershell.exe")
+    //
+    // CREATE_NO_WINDOW comes from `proc::program` — this call site had it
+    // hand-rolled first, and its comment named the failure mode that then went
+    // ungeneralised across the other 19 spawn sites (issue 172).
+    let child = crate::proc::program("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", "-"])
         .env("PGIT_BIN_DIR", dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW — no console flash
         .spawn();
     let Ok(mut child) = child else {
         return false;
