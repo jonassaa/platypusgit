@@ -8,10 +8,11 @@ domain 301s to `www`).
 
 ```bash
 pnpm install
-pnpm dev      # http://localhost:4321
-pnpm build    # output -> dist/
-pnpm preview  # serve the build locally
-pnpm og       # regenerate public/og.png from scripts/og-image.html
+pnpm dev          # http://localhost:4321
+pnpm build        # output -> dist/
+pnpm preview      # serve the build locally
+pnpm og           # regenerate public/og.png from scripts/og-image.html
+pnpm screenshots  # re-encode public/screenshots/*.webp from screenshots/*.png
 ```
 
 ## Configuration
@@ -40,6 +41,28 @@ source is `scripts/og-image.html`; `pnpm og` screenshots it with headless
 Chrome (override the browser with `CHROME_PATH`). The PNG is committed, so CI
 never needs Chrome — but re-run `pnpm og` and commit the result whenever the
 template changes.
+
+## App screenshots
+
+The hero on `/` and the two figures on `/features/` are real captures of the
+app, replacing a hand-built HTML replica of the History screen that drifted
+from the UI on every change with nothing to catch it.
+
+- **Masters:** `screenshots/*.png`, 1600x1112, captured with the macOS window
+  chrome and drop shadow over a **transparent** margin. Outside `src/` and
+  `public/`, so Astro neither processes nor deploys them.
+- **Shipped:** `public/screenshots/*.webp`, encoded by `pnpm screenshots` at
+  quality 85 (1741 KB -> 345 KB for the three) and **committed**, so `astro
+  build` needs no image pipeline and CI installs nothing extra. Same
+  arrangement as `og.png`.
+- The transparent margin is why `Screenshot.astro` draws **no** border, radius
+  or shadow: the capture carries its own, and a frame of ours would double it.
+- There is one asset per view, not a light/dark pair. A framed dark window on
+  the light theme reads as a photograph of an app; it gets a faint accent halo
+  behind it so it has something to sit on.
+
+To replace one: capture at 1600x1112 with the window shadow on transparency,
+drop it in `screenshots/`, run `pnpm screenshots`, and commit both files.
 
 ## Search-engine setup (manual, one-time)
 

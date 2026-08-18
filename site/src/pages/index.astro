@@ -2,7 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import FeatureCard from '../components/FeatureCard.astro';
-import AppShowcase from '../components/AppShowcase.astro';
+import Screenshot from '../components/Screenshot.astro';
 import OsIcon from '../components/OsIcon.astro';
 import { site, downloads } from '../data/site.ts';
 import { heroFeatures } from '../data/features.ts';
@@ -73,13 +73,17 @@ const comingSoon = downloads.filter((d) => !d.available);
     </div>
   </section>
 
-  <!-- SHOWCASE — the real UI -->
+  <!-- SHOWCASE — a real capture of the app -->
   <section class="container showcase">
     <div class="showcase-head">
       <h2 class="section-title">The whole repo, at a glance.</h2>
-      <p class="showcase-sub">Real commit-graph rendering — branches, merges, tags, and refs. This is the actual history view, running right here.</p>
+      <p class="showcase-sub">The history view, captured from the app: the commit graph and its refs above, the selected commit’s message, files and diff below.</p>
     </div>
-    <AppShowcase />
+    <Screenshot
+      name="history-dark"
+      priority
+      alt="The platypusgit history view. A commit graph runs down the left of a table of commits, each row showing a short SHA, the branch and remote refs on that commit — HEAD→main, fix/div-by-zero-message, feat/repl, origin/feat/repl, origin/main, topic/docs-site, topic/bench — the subject line, the author and the age. Below the table, three panels: the selected commit’s full SHA, subject and body; the one file it changed; and that file’s diff with syntax highlighting and a minimap. The titlebar carries the repository name, a main branch chip 2 ahead, and Refresh, Fetch, Pull and Push buttons; the status bar reads 4 changed."
+    />
   </section>
 
   <!-- IN DEVELOPMENT notice -->
