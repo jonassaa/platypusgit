@@ -2282,12 +2282,14 @@ impl GitBackend for Libgit2Backend {
         // `workdir()` hands back a path WITH a trailing separator. That makes
         // `/repo` and `/repo/` two different strings for anything that keys on
         // the handle's path — repository tabs (#90) dedupe by it, recents store
-        // it, and a `pgit <path>` launch forwards the slashless form — so the
-        // same repository could open twice under two spellings. Normalize once,
-        // here, rather than at every comparison.
+        // it — so the same repository could open twice under two spellings.
+        // Normalize through the SHARED `repo_path_key`, not a local copy: a
+        // `pgit <path>` launch reads the same `workdir()` in
+        // `cli::resolve_repo_root`, and the two spellings must agree or the
+        // frontend opens the repository a second time (#177).
         let workdir = repo
             .workdir()
-            .map(strip_trailing_slash)
+            .map(super::repo_path_key)
             .unwrap_or_else(|| path.to_path_buf());
 
         let mut map = self

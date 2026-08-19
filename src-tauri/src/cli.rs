@@ -152,7 +152,14 @@ pub fn resolve_repo_root(intent: LaunchIntent) -> LaunchIntent {
     let path = intent.path.map(|p| {
         git2::Repository::discover(&p)
             .ok()
-            .and_then(|r| r.workdir().map(PathBuf::from))
+            // Through `repo_path_key`, because `workdir()` carries a trailing
+            // separator and this path crosses IPC as a STRING that the frontend
+            // compares against the one `open` returns. Spelled `/repo/` here it
+            // matches no open tab, so a launch with a path already in the
+            // restored open set opens the repository a second time and orphans
+            // one of the two `RepoId`s (#177). `PathBuf`'s own `==` is
+            // component-based and hides this — only the string form shows it.
+            .and_then(|r| r.workdir().map(crate::git::repo_path_key))
             // `discover` opens what it finds, so it fails outright on a
             // repository refused for ownership. The walk opens nothing, which
             // is what lets a `pgit` launch from a subdirectory of such a repo
@@ -797,6 +804,27 @@ mod tests {
             screen: None,
         });
         assert_eq!(out.path, Some(root));
+    }
+
+    #[test]
+    fn resolve_repo_root_spells_the_root_exactly_as_open_does() {
+        // libgit2's `workdir()` returns a path WITH a trailing separator, and a
+        // `LaunchIntent.path` crosses IPC as a STRING — so the frontend would
+        // compare "/repo/" against the "/repo" `open` hands back and conclude the
+        // repository is not open yet (#177). `PathBuf`'s own `==` is
+        // component-based and reports the two equal, which is why this has to
+        // assert on the string form.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        git2::Repository::init(&root).unwrap();
+        let sub = root.join("a/b");
+        std::fs::create_dir_all(&sub).unwrap();
+        let out = resolve_repo_root(LaunchIntent {
+            path: Some(sub),
+            screen: None,
+        });
+        let spelled = out.path.unwrap().to_string_lossy().to_string();
+        assert_eq!(spelled, root.to_string_lossy());
     }
 
     #[test]
