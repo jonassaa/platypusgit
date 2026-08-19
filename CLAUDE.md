@@ -1312,6 +1312,64 @@ module and every `src/features/*/` directory is named somewhere in here.
   lifetime. Closing an unknown or already-closed id is a silent success by
   contract; `close` deliberately leaves the `rebases` map alone (rehydratable
   from `.git/platypusgit-rebase.json`).
+- **One path is one `RepoId`, and the dedupe happens BEFORE `open_repo`** (issue
+  177). Two producers spell a workdir differently — libgit2's `workdir()` carries
+  a trailing separator, `open` answers without one — and `path` is a tab's
+  identity, so compared raw `/repo/` and `/repo` are two repositories. A launch
+  with a path already in the restored open set therefore opened it twice: the
+  session restore and `useCliLaunch` are two independent openers, and the loser's
+  `RepoId` was left in `useRepoStore.current` after the tab layer evicted it, so
+  every later call answered `UnknownRepo` with no banner (the diff pane silently
+  dead for the session, because `useLazyVerification` swallows its half).
+  Normalize through `git::repo_path_key` (Rust — `open` and
+  `cli::resolve_repo_root` both go through it) and `tabs.ts`'s `repoPathKey`
+  (every path entering the tab layer, `pg-open-repos` included). Note
+  `PathBuf`'s own `==` is component-based and reports the two spellings EQUAL, so
+  a Rust test that compares paths cannot see this — assert on the string form.
+- **`openRepoAt` adopts a handle only if it is still wanted, and closes it
+  otherwise.** It takes a `stillWanted` predicate — REQUIRED, not defaulted —
+  re-asked after `open_repo` resolves and before the first write; `hydrateTab`
+  passes its `stillCurrent(seq)`. A switch to an ALREADY-OPEN tab supersedes an
+  in-flight open without starting one, so the repo store cannot see that for
+  itself, and adopting first and cleaning up afterwards is what made the orphan
+  reachable. A default plus a monotonic `openSeq` counter in the store was tried
+  and REJECTED: it is a second, weaker answer to the question `stillWanted`
+  already answers, no test could tell it apart, and it gets the answer wrong when
+  one activation opens twice — the ownership-trust retry bumps the counter past a
+  concurrent, still-current activation's in-flight open, which is then discarded
+  and its tab marked failed. One authoritative guard, enforced by the signature.
+  `openRepoAt` returns the handle IT opened, never `get().current`: handing back
+  the winner's handle would have the caller evict the live repository as the
+  abandoned one.
+- **Two moments can strand a handle, and each has its own eviction.** Superseded
+  BEFORE adoption is `openRepoAt`'s (above). Superseded DURING the `refreshAll`
+  that follows adoption is `hydrateTab`'s `!stillCurrent(seq)` arm — the store has
+  already answered `stillWanted` by then, and `hydrateTab` returns before
+  recording the `repoId` on the tab, so nothing else could ever reach that handle.
+  A third case is a re-key: only the BACKEND can resolve a symlinked spelling
+  (`/var/x` → `/private/var/x`), so two tabs can still exist for one repository
+  and the surviving one may already hold a live `RepoId` — `hydrateTab` evicts the
+  displaced tab rather than overwriting its id. Every one of the three has a test
+  whose failing path was verified by mutation; an eviction leaks silently, so an
+  untested guard here is indistinguishable from no guard.
+- **`init_repo` answers with a REGISTERED `RepoId`, so `useCreateStore` evicts
+  it.** `Libgit2Backend::init` finishes by calling `self.open` (a handle that is
+  not in the map 404s on the next call), and `runInit` then hands the path to
+  `useTabsStore.openRepo`, which mints a second id for it — every "New
+  repository…" leaked one `git2::Repository` for the process lifetime. Nothing
+  reads that handle past its `path`, so it is closed BEFORE delegating. `clone_repo`
+  is unaffected: it answers with the destination PATH, not a handle. A future
+  command that returns a `RepoHandle` the frontend does not itself adopt inherits
+  this obligation.
+- **Compare paths on the TAB's own key, never the caller's spelling.**
+  `findTab`/`indexOfTab`/`removeTab` normalize, so a caller holding `/repo/` finds
+  the tab and then used to slip past every raw `===` after it: `activate`'s
+  `activating` guard (the one that keeps the launch race down to one open),
+  `close`'s `wasActive` (the tab left the strip while `activePath` went on naming
+  it, so the store sat on a repository it had just evicted) and `closeOthers`'s
+  filter (which matched nothing and closed the repository it was told to keep).
+  `openRepo` forwards its RAW argument to `close` on a failed open, so this is
+  reachable, not hypothetical.
 - **Closing a tab the merge resolver is using confirms first, then closes the
   resolver, then evicts.** The resolver is a separate window driving IPC with that
   `RepoId`, so evicting underneath it would fail its next call with `UnknownRepo`
