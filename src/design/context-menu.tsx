@@ -11,7 +11,8 @@ import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { headAncestryOf } from "@/features/commits/headAncestry";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
-import type { CommitInfo } from "@/lib/types";
+import type { BranchInfo, CommitInfo } from "@/lib/types";
+import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import {
   markedRefFor,
@@ -376,6 +377,10 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
   const baseOid = self?.parents[0] ?? null;
   return [
     { __menuTitle: `commit ${sha.slice(0, 7)}` },
+    // ABOVE the detached-HEAD entry (#179): when a branch is here, checking it
+    // out is both the safer and the far more common intent, and the detached
+    // entry stays for when it genuinely is what you want.
+    ...checkoutBranchItems(commit?.sha),
     {
       icon: "check",
       label: "Check out this commit",
@@ -590,6 +595,86 @@ function byOid(commits: CommitInfo[]): Map<string, CommitInfo> {
 function ancestryLog(): CommitInfo[] {
   const { commits, branches } = useRepoStore.getState();
   return headAncestryOf(commits, branches);
+}
+
+/**
+ * The branch refs pointing exactly AT one commit (#179) — what "check out the
+ * branch that is already here" is built from.
+ *
+ * Read off `useRepoStore.branches`, NOT off `CommitInfo.refs`: the store rows
+ * carry `isHead` / `isRemote` / `upstream`, which is what lets the current
+ * branch be disabled and a remote-only ref be routed through the
+ * tracking-branch flow instead of a silent detach. `mapCommitRefs`' names are
+ * display strings and lossy on purpose — HEAD reads `HEAD→main` and a remote
+ * ref is split into name + remote — so they are no use for naming an op.
+ *
+ * `BranchInfo.tip` is a FULL oid and is compared as one. It was once truncated
+ * to 7 chars and every comparison against `CommitInfo.oid` then failed
+ * silently, so never shorten either side here — `shortSha` belongs at display
+ * sites, and a prefix match would put a foreign branch on the menu. Both
+ * nullable ends are then stated rather than relied on: an unresolvable `tip` and
+ * a commit with no sha are both "no branch here", and writing that out is
+ * cheaper than re-deriving that `null === undefined` happens to be false.
+ *
+ * DELIBERATELY blind to History's `refFilter`. That control hides remote ref
+ * PILLS — a display choice about a crowded row — and hiding a pill must not
+ * remove an action from a menu; a user who narrowed the pills to "local" has
+ * said nothing about which branches they may check out. Deriving from the store
+ * rather than from History's filtered pill list makes that structural instead
+ * of a promise: the filter is never in scope here.
+ */
+function branchesAtCommit(oid: string | null | undefined): BranchInfo[] {
+  if (!oid) return [];
+  const at = useRepoStore.getState().branches.filter((b) => !!b.tip && b.tip === oid);
+  // Locals ahead of remotes, each group in the ONE branch ordering (#135).
+  // This renders as an undivided list, so the grouping has to happen here.
+  const ordered = orderBranchesGrouped(at);
+  // A remote ref whose local counterpart is at this very commit adds nothing:
+  // the local branch is already offered and checking it out lands on the same
+  // tree, while the remote entry would only prompt for a name already taken.
+  // Narrow on purpose — same commit AND same short name.
+  const locals = new Set(ordered.filter((b) => !b.isRemote).map((b) => b.name));
+  return ordered.filter(
+    (b) => !b.isRemote || !locals.has(withoutRemotePrefix(b.name)),
+  );
+}
+
+/**
+ * "Check out the branch that is on this commit" for a commit's context menu
+ * (#179).
+ *
+ * One branch → an inline entry; several → a submenu, so a commit carrying five
+ * refs does not push the rest of the menu off screen. EMPTY when no branch is
+ * here, which is what keeps `commitMenuItems` byte-identical to before for
+ * every other commit — and why the payload needed no new field.
+ */
+function checkoutBranchItems(oid: string | null | undefined): ContextMenuItem[] {
+  const entries: ContextMenuItem[] = branchesAtCommit(oid).map((b) =>
+    b.isRemote
+      ? {
+          icon: "branch",
+          label: `Check out "${b.name}" as a new local branch…`,
+          // Never a bare checkout: `origin/foo` is not a local branch, so
+          // checking the ref out would detach HEAD — the very thing the entry
+          // above the detached one exists to avoid.
+          onClick: () => checkoutRemoteAsLocalBranch(b.name),
+        }
+      : {
+          icon: "check",
+          // The current branch is LISTED rather than hidden — matching
+          // branchMenuItems' `disabled: isCurrent` — so "you are already here"
+          // reads off the menu instead of being an absence to interpret.
+          label: b.isHead
+            ? `Check out "${b.name}" — current branch`
+            : `Check out "${b.name}"`,
+          disabled: b.isHead,
+          // checkoutBranch owns auto-stash → checkout → pop and its own
+          // activity label. There is exactly one checkout path.
+          onClick: () => useRepoStore.getState().checkoutBranch(b.name),
+        },
+  );
+  if (entries.length <= 1) return entries;
+  return [{ icon: "check", label: "Check out branch", submenu: entries }];
 }
 
 /**
@@ -1085,31 +1170,47 @@ export function branchMenuItems(
   ];
 }
 
+/** `origin/feat/x` → `feat/x`. The remote prefix is the FIRST segment only. */
+function withoutRemotePrefix(name: string): string {
+  const i = name.indexOf("/");
+  return i >= 0 ? name.slice(i + 1) : name;
+}
+
+/**
+ * Check a remote-tracking ref out by creating a local branch that tracks it.
+ *
+ * ONE definition, shared by the remote-branch menu and the commit menu's remote
+ * entry (#179): a bare `checkoutRef("origin/foo")` would silently DETACH, which
+ * is the whole reason this flow exists, so a second copy is how one of the two
+ * call sites would come to detach.
+ */
+async function checkoutRemoteAsLocalBranch(name: string) {
+  if (!name) return;
+  const localName = await pgPrompt({
+    title: "Check out as new local branch",
+    body: `Tracking ${name}.`,
+    initialValue: withoutRemotePrefix(name),
+    confirmLabel: "Check out",
+    requireValue: true,
+    mono: true,
+  });
+  if (!localName) return;
+  await useRepoStore.getState().createBranch(localName, name);
+  await useRepoStore.getState().checkoutBranch(localName);
+}
+
 export function remoteBranchMenuItems(branch: { name?: string } | null): ContextMenuItem[] {
   const name = branch?.name || "";
   // name is like "origin/feature" — parse out the remote prefix
   const slashIdx = name.indexOf("/");
   const remoteName = slashIdx >= 0 ? name.slice(0, slashIdx) : name;
-  const shortName = slashIdx >= 0 ? name.slice(slashIdx + 1) : name;
+  const shortName = withoutRemotePrefix(name);
   return [
     { __menuTitle: name || "remote branch" },
     {
       icon: "branch",
       label: "Check out as new local branch…",
-      onClick: async () => {
-        if (!name) return;
-        const localName = await pgPrompt({
-          title: "Check out as new local branch",
-          body: `Tracking ${name}.`,
-          initialValue: shortName,
-          confirmLabel: "Check out",
-          requireValue: true,
-          mono: true,
-        });
-        if (!localName) return;
-        await useRepoStore.getState().createBranch(localName, name);
-        await useRepoStore.getState().checkoutBranch(localName);
-      },
+      onClick: () => checkoutRemoteAsLocalBranch(name),
     },
     {
       icon: "merge",
