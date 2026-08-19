@@ -13,6 +13,23 @@ name: release
 # assets WITHOUT moving Homebrew's releases/latest pointer; flip prerelease off
 # later to promote it to latest (no rebuild needed).
 #
+# PROMOTING A PRERELEASE TAKES TWO STEPS, and the second is not optional
+# (measured on v0.0.15). `gh release edit vX.Y.Z --prerelease=false` clears the
+# flag but does NOT move releases/latest: a release CREATED as a prerelease
+# cannot hold GitHub's `make_latest`, and clearing `prerelease` does not grant
+# it. Skip the second step and brew plus the in-app updater go on serving the
+# PREVIOUS version while the UI shows the new one as current. Follow it with
+#   gh api -X PATCH repos/jonassaa/platypusgit/releases/<id> -f make_latest=true
+# and then confirm the pointer actually moved:
+#   gh api repos/jonassaa/platypusgit/releases/latest --jq .tag_name
+#
+# `bump-cask` and `updater-manifest` are gated on prerelease == false (see their
+# `if:`), so a prerelease attaches the four bundles but touches NEITHER the
+# Homebrew cask NOR latest.json. Verifying the cask BEFORE promoting therefore
+# means running this workflow by workflow_dispatch against the tag while it is
+# still a prerelease — accepting that the cask then points at the new version
+# for as long as you wait before flipping the flag.
+#
 # Version is taken from the release tag (v0.0.4 -> 0.0.4) and injected into the
 # app manifests at build time. The .dmg is published under a STABLE filename so
 # the Homebrew cask can track releases/latest/download.
