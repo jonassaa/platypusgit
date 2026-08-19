@@ -539,7 +539,13 @@ AppShell.tsx         Primary shell: titlebar (branch chip + picker, remote butto
 store.ts             Re-export hub (keep thin — no global Zustand composition)
 
 design/              In-house design system (NOT components/ui/). Exports via design/index.ts.
-├── primitives.tsx       PGButton, PGIconButton, etc.
+├── primitives.tsx       PGButton, PGIconButton, PGSelect (an in-page listbox,
+│                        NOT a native <select> — see "No native <select>"), etc.
+├── selectPos.ts         PGSelect's popover placement as PURE arithmetic
+│                        (`selectPopoverPos`) — below the trigger, else above,
+│                        then clamped into the viewport on both axes AND both
+│                        ends. Separate for the reason paneSize.ts is: jsdom
+│                        measures everything as 0
 ├── chrome.tsx           PGTitlebar, PGTabStrip (repository tabs), PGActivityBar,
 │                        PGStatusBar, PGStatusItem
 ├── window-controls.tsx  Minimize / maximize / close (the titlebar is ours)
@@ -821,6 +827,10 @@ test/                Component-test harness for the jsdom suite. NOT shipped
 ├── dialog.tsx       `WithDialogs` — a screen rendered in isolation has no
 │                    <PGDialogHost/>, so every pgConfirm silently reads as
 │                    "cancelled" without this
+├── select.ts        `pgSelectTrigger` / `pgSelectValues` / `pgPickOption` —
+│                    driving a PGSelect, which has no `<option>` and fires no
+│                    `change`, so `userEvent.selectOptions` does not apply. Keeps
+│                    the same attributes e2e's `jsPickOption` selects on
 ├── elementSize.ts   `stubContainerSize` / `stubContainerWidth` — jsdom performs
 │                    no layout, so every `clientWidth` is 0, which is exactly
 │                    the "unmeasured" branch of the pane clamp. A test that wants
@@ -852,6 +862,21 @@ module and every `src/features/*/` directory is named somewhere in here.
   (`vite.config.ts`): `unit` is jsdom + the `src/test/setup.ts` mocks, `docs` is
   node with no setup file. That split is load-bearing — the harness above dies
   on a missing `Range` outside jsdom, and a doc test has no use for Tauri mocks.
+- **`test/nativeSelect.test.ts` is a SOURCE invariant, not a doc one**, and it
+  lives here because it reads the tree's text rather than rendering anything: no
+  `<select>` or `<option>` element anywhere in shipped `src/` (issue 146 — see
+  "No native `<select>`"). Comments are stripped first, and test files are out of
+  scope, so the prose explaining the rule cannot trip it. Same shape and same
+  justification as `src-tauri/tests/spawn_no_window.rs`: the failure it guards
+  against is invisible on the platforms anyone develops on.
+- **`test/e2eSelectors.test.ts` guards the `[data-testid="X"]*=text` substring
+  trap.** WebdriverIO's partial-text form compiles to an xpath whose attribute
+  test is `contains(@data-testid, "X")` plus `not(.//*[<same conditions>])`, so
+  ANY other testid containing `X` as a substring makes the outer element match
+  nothing — silently, reported as the spec's own `timeoutMsg`, and invisible to
+  `pnpm test` because jsdom's `getByTestId` is an exact match. Narrow on purpose:
+  only ids a spec actually drives with `*=` are constrained, so it cannot fire
+  for unrelated naming.
 - `tsconfig.json` has `include: ["src", "test"]` for the same reason. Without
   the second entry the file still RUNS but stops being typechecked, which is a
   silent hole rather than a visible one — a new top-level test directory needs
@@ -1458,10 +1483,20 @@ module and every `src/features/*/` directory is named somewhere in here.
   under `--rebase-merges`), and it rebuilds a whole-range plan in place while
   deliberately leaving a targeted plan (squash/fixup/reword) alone — rebuilding
   one would discard the message the user typed.
+- **A `data-testid` on a plan row's CHILD must not start with `rebase-row`.**
+  WebdriverIO compiles `[data-testid="rebase-row"]*=text` to an xpath whose
+  attribute test is `contains(@data-testid, "rebase-row")` — a SUBSTRING match —
+  plus `not(.//*[<same conditions>])` to keep the innermost hit. A child testid
+  sharing that stem therefore satisfies the row's own condition and the row
+  matches nothing, with no error beyond the spec's own `timeoutMsg`. Hence
+  `rebase-action` and `rebase-badge`, not `rebase-row-action` / `rebase-row-badge`
+  — the badge form hid the trap for months by only rendering on a merge row.
+  Invisible to `pnpm test`: jsdom's `getByTestId` is an exact CSS match.
 - **`PGRebaseRow` speaks exact `RebaseAction` strings** (`"Pick"`, `"Drop"`,
   `"MainlinePick"`), not lowercased ones — a two-word action cannot survive a
-  lowercase/re-capitalise round trip. E2E specs that drive the row's `<select>`
-  in-page must set the exact value.
+  lowercase/re-capitalise round trip. The row's action control is a `PGSelect`
+  (an in-page listbox, not a `<select>`), so specs drive it with `jsPickOption`
+  and component tests with `pgPickOption`, passing the exact value.
 - **Every transition is mirrored to `.git/platypusgit-rebase.json`**, and
   `rebase_status` / `repo_state` fall back to it when this process did not start
   the rebase. `repo_state` gives the file precedence over libgit2's
@@ -1776,6 +1811,91 @@ module and every `src/features/*/` directory is named somewhere in here.
 - New shared primitive → add to appropriate file in `src/design/` and re-export via `index.ts`.
 - `PGButton`/`PGInput` spread `...rest` onto their DOM node (so `data-testid` etc. pass through); `PGIconButton` does NOT (forwards `title` only). Row components (`PGChangeRow`, `PGCommitRow`, `PGFileTreeRow`, …) need explicit prop threading for new attributes.
 - Do NOT add `src/components/ui/`. The design system lives in `src/design/`.
+
+### No native `<select>` — every dropdown is an in-page listbox (issue 146)
+
+- **`PGSelect` renders a `role="combobox"` trigger plus a portalled
+  `role="listbox"`, and there is no `<select>` or `<option>` left in `src/`.**
+  WebKitGTK maps a native `<select>` as a **GDK popup surface**, and GDK's
+  Wayland backend refuses to map a popup that would not be the topmost one
+  (`Tried to map a popup with a non-top most parent`, gtk#5639 — the X11 backend
+  never emits it). Two of these were mounted at all times on History, the launch
+  screen, and Rebase mounts one per plan row, so the app asked for that surface
+  constantly. Firefox has the matching report under Weston specifically: native
+  `<select>` drop-downs unusable, drop-downs built out of buttons unaffected
+  (Mozilla 1600584). `test/nativeSelect.test.ts` is the guard, because
+  reintroducing one is invisible on macOS and Windows.
+  **This is a MITIGATION, not a verified fix** — the reported freeze was never
+  reproduced (our only Linux lane is xvfb/X11, which cannot emit a Wayland-only
+  warning), so issue 146 stays open. It removes the documented trigger shape, and
+  it is independently justified: every other picker in the app was already an
+  in-page portal, and a native `<select>` cannot be themed to match them.
+- **THE FOCUS HOST IS AN `<input readonly>`, AND THAT IS LOAD-BEARING.** The
+  keymap dispatcher listens in the CAPTURE phase on `window`
+  (`AppShell`), so it sees every key before the control does and
+  `stopPropagation` cannot preempt it. Its text-input policy is the only thing
+  that keeps bare-key chords out of the app's list navigation, and `isEditable`
+  recognises INPUT / TEXTAREA / contentEditable — **nothing else**. A
+  `<button>` or the ARIA-canonical `<div role="combobox" tabindex=0>` would let
+  ArrowDown ALSO move History's commit selection and a letter feed the focused
+  pane's speed-search. (A native `<select>` is not "editable" by that test
+  either, so this control never had the protection — an existing bug the swap
+  happens to fix.) Modifier chords still dispatch, as from any other input.
+- **Escape goes through the keymap's `app.closeOverlay`**, registered unscoped
+  while open and declining while closed — the `UpdatePanel` pattern. Not a
+  nicety: a PGSelect open inside a `PGModal` has to eat Escape, or the dialog
+  closes out from under an open dropdown. What guarantees it is the dispatcher's
+  own precedence, and note WHICH half — no dialog in the app *registers*
+  `app.closeOverlay`; they all rely on the catalog's DEFAULT RUNNER, which the
+  dispatcher reaches only when every registered handler declined. (Registration
+  order would not have helped: `useAction` is a `useEffect`, and effects run
+  child-first, so a child's handler is registered BEFORE its parent's and is
+  therefore the OUTER one. `usePaneList` is the only registrant, and it declines
+  unless its own pane has a live speed-search query.) The component's local
+  `onKeyDown` starts with `if (e.defaultPrevented) return;` for the same reason
+  every local key handler does.
+- **The hidden sizer span is the native intrinsic width.** A `<select>` is as
+  wide as its widest option; an `<input>` sizes to its `size` attribute. So the
+  trigger sits in a one-cell grid beside a `visibility: hidden` span holding the
+  longest label, and carries `size={1}` so it contributes no width of its own.
+  Most call sites pass no width and depended on that behaviour.
+- **Keyboard is re-provided deliberately, not partially**: arrows / Home / End /
+  PageUp / PageDown, Enter and Space to commit, Tab to commit and move on, Escape
+  to cancel, Alt+↓/↑ per the ARIA pattern, and type-to-jump with a 700ms buffer
+  where a single character CYCLES the matches and a longer one narrows by prefix
+  (a native `<select>`'s own rule). Mid-typeahead Space extends the query instead
+  of committing.
+- **Focus never leaves the trigger**, which is what makes "return focus to it"
+  free: the listbox has no focusable children and each option `preventDefault`s
+  its `mousedown` so the click cannot steal focus. Outside-click, a scroll and a
+  resize all CLOSE rather than chase — a `position: fixed` popup cannot follow a
+  moving anchor.
+- **Placement is `selectPos.ts`, and the FINAL clamp is not belt-and-braces.**
+  Below the trigger, else flipped above — and then clamped into the viewport on
+  both axes and **both ends**, because an anchor that is itself off the viewport
+  (a control below the fold of a scrolled pane, opened programmatically) puts
+  "above" off-screen too. That was found by looking at a WebKitGTK screenshot,
+  not by a test: Settings' keymap picker rendered at y≈1130 in an 800px window,
+  and since the shell is a fixed frame nothing could scroll it into view. Take
+  the screenshot.
+- **A capture-phase `scroll` listener sees the LIST's own scroll.** The
+  active-into-view effect scrolls it on every open, so an unguarded close-on-
+  scroll shuts a long option list the instant it appears; the listener skips
+  events originating inside the control. Pinned in both directions.
+- **Option rows are a list-row surface**, so they carry
+  `calc(24px + var(--row-step))` — see the UI-density rule.
+- **Driving it in tests**: `pgPickOption` / `pgSelectValues` / `pgSelectTrigger`
+  from `@/test/select` (component), `jsPickOption` (e2e). Both select on the same
+  attributes — `[data-pg-select-trigger]`, `[data-pg-listbox]`,
+  `[data-pg-option][data-value]` — so a change to one has to move the other.
+  `userEvent.selectOptions`, `fireEvent.change` and WebDriver's
+  `selectByAttribute` are all inapplicable: there is no `<option>` and no
+  `change` event.
+- **Still open from the same audit, deliberately NOT done here**: the 156 `title`
+  attributes (GTK draws each as its own popup surface), `<input type="date">` ×2
+  on History, `<input type="color">` per palette swatch in Settings, and
+  `tauri-plugin-dialog`'s in-process GTK3 folder picker. Each is its own change
+  with its own trade-off; see issue 146's audit comment.
 
 ### Resizable panes (#162)
 

@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import { cherryRepo, multiCherryRepo, TempRepo } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
-  jsContextMenu, jsHoverMenuItem, jsClickMenuItem, jsSelectValue, jsChord,
+  jsContextMenu, jsHoverMenuItem, jsClickMenuItem, jsPickOption, jsChord,
   scrollCommitListTo, waitHeadMarkerOn,
 } from "../support/app";
 
@@ -59,14 +59,15 @@ describe("history danger ops", () => {
   // (cherry.txt on `feature`) become browsable — and cherry-pickable via
   // the detail action row — while `main` is checked out.
   it("cherry-picks the feature commit onto main via the ref selector", async () => {
-    // Scope the log to the unmerged `feature` branch. jsSelectValue, not
-    // selectByAttribute: WebKitGTK accepts the option click without firing a
+    // Scope the log to the unmerged `feature` branch. jsPickOption drives the
+    // in-page listbox that replaced the native <select> (issue 146); the old
+    // WebDriver selectByAttribute route accepted the option click without firing a
     // React-visible change event (see helper doc), so the log never rescopes.
     await $('[data-testid="history-ref-select"]').waitForDisplayed({
       timeout: 10_000,
       timeoutMsg: "history ref selector missing",
     });
-    await jsSelectValue('[data-testid="history-ref-select"]', "feature");
+    await jsPickOption('[data-testid="history-ref-select"]', "feature");
     await scrollCommitListTo("feat: cherry commit");
     const row = $('[data-testid="commit-row"]*=feat: cherry commit');
     await row.waitForDisplayed({
@@ -170,11 +171,11 @@ describe("history multi cherry-pick", () => {
       timeout: 15_000, timeoutMsg: "history screen not ready",
     });
     // Scope the log to `feature` so its two unmerged commits are browsable
-    // while `main` stays checked out (jsSelectValue — see history-ref-select).
+    // while `main` stays checked out (jsPickOption — see history-ref-select).
     await $('[data-testid="history-ref-select"]').waitForDisplayed({
       timeout: 10_000, timeoutMsg: "history ref selector missing",
     });
-    await jsSelectValue('[data-testid="history-ref-select"]', "feature");
+    await jsPickOption('[data-testid="history-ref-select"]', "feature");
     await scrollCommitListTo("feat: add d.txt");
   });
 

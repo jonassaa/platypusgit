@@ -11,6 +11,7 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
 import { mockInvoke } from "@/test/invokeMock";
 import type { CommitInfo, RebaseStatus, RepoHandle } from "@/lib/types";
+import { pgPickOption, pgSelectTrigger } from "@/test/select";
 
 const handle: RepoHandle = { id: "repo-1", path: "/tmp/fake-repo", head: "refs/heads/main" };
 
@@ -169,12 +170,14 @@ describe("rebase plan reordering", () => {
     expect(subjects()[1]).toContain("feat: second");
   });
 
-  it("ignores a drag that starts on the action select", async () => {
+  it("ignores a drag that starts on the action picker", async () => {
     render(<RebaseScreen />);
     await waitFor(() => expect(subjects().length).toBe(3));
     const rows = stubGeometry();
 
-    const select = rows[0].querySelector("select")!;
+    // The action picker's trigger is an <input>, which is in the same
+    // controls opt-out list the native <select> used to be matched by.
+    const select = pgSelectTrigger(rows[0]);
     fireEvent(select, pointer("pointerdown", ROW_H / 2));
     fireEvent(window, pointer("pointermove", ROW_H / 2 + PITCH + 2));
     fireEvent(window, pointer("pointerup", ROW_H / 2 + PITCH + 2));
@@ -188,8 +191,8 @@ describe("rebase plan reordering", () => {
     render(<RebaseScreen />);
     await waitFor(() => expect(subjects().length).toBe(3));
 
-    const firstSelect = screen.getAllByTestId("rebase-row")[0].querySelector("select")!;
-    fireEvent.change(firstSelect, { target: { value: "Reword" } });
+    const firstSelect = pgSelectTrigger(screen.getAllByTestId("rebase-row")[0]);
+    pgPickOption(firstSelect, "Reword");
     const textarea = await screen.findByPlaceholderText("New commit message…");
     fireEvent.change(textarea, { target: { value: "reworded subject" } });
 

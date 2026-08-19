@@ -721,33 +721,85 @@ export function focusedPaneId(): Promise<string | null> {
   );
 }
 
-/** Set a native `<select>`'s value and fire the `change` event React listens
- *  for. Never drive selects with WebDriver's `selectByAttribute`: it clicks
- *  the `<option>`, which WebKitGTK under xvfb accepts WITHOUT surfacing a
- *  change event to React — observed on CI (#40 run 28663060615): the History
- *  ref selector "selected" the branch, yet the log never rescoped and the
- *  spec timed out. The prototype value setter bypasses React's input value
- *  tracking so the dispatched event is actually seen by the onChange. */
-export async function jsSelectValue(selector: string, value: string): Promise<void> {
-  // executeOnce: re-setting the same value on a driver retry is harmless,
-  // but every side-effectful in-page script keeps the once-per-call guard.
-  const ok = await executeOnce(
-    (sel: string, v: string) => {
-      const el = document.querySelector(sel) as HTMLSelectElement | null;
+/** Open a `PGSelect` and click one of its options (issue 146).
+ *
+ *  There is no `<select>` in the app any more — WebKitGTK maps one as a GDK
+ *  popup surface, and GDK's Wayland backend refuses to map a popup that would
+ *  not be the topmost one — so `jsSelectValue`, which set a native select's
+ *  value and dispatched `change`, has nothing left to drive. The control is a
+ *  `role="combobox"` trigger plus a portalled `[data-pg-listbox]`, so driving it
+ *  means the two steps a user takes.
+ *
+ *  Both steps are in-page MouseEvents rather than WebDriver actions, for the
+ *  reason `jsContextMenu` documents plus one measured on WebKitGTK 605 under
+ *  xvfb (#161): a real driver pointer action delivers `mousedown` and no
+ *  `pointerdown`, so a helper that assumed either alone is a coin flip. The
+ *  trigger opens on `mousedown`; the option commits on `click`.
+ *
+ *  `opts.within` + `opts.text` narrow to one instance when several are on
+ *  screen — the Rebase plan mounts one picker per row, so the row is named by
+ *  its own selector and its text, exactly like `jsContextMenu`'s `text`.
+ *
+ *  Only one listbox can be open at a time (opening a second closes the first),
+ *  so `[data-pg-listbox]` is an unambiguous scope once the trigger is open. */
+export async function jsPickOption(
+  selector: string,
+  value: string,
+  opts?: { within?: string; text?: string },
+): Promise<void> {
+  // executeOnce: a driver-retry re-run would toggle the list shut again, and
+  // the not-found throws all happen before any dispatch.
+  const opened = await executeOnce(
+    (sel: string, within: string | null, text: string | null) => {
+      let scope: ParentNode = document;
+      if (within) {
+        const hosts = Array.from(document.querySelectorAll(within));
+        const host = text
+          ? hosts.find((h) => h.textContent?.includes(text))
+          : hosts[0];
+        if (!host) return false;
+        scope = host;
+      }
+      const el = scope.querySelector(sel) as HTMLElement | null;
       if (!el) return false;
-      const desc = Object.getOwnPropertyDescriptor(
-        HTMLSelectElement.prototype,
-        "value",
-      );
-      if (desc && desc.set) desc.set.call(el, v);
-      else el.value = v;
-      el.dispatchEvent(new Event("change", { bubbles: true }));
+      if (el.getAttribute("aria-expanded") === "true") return true;
+      el.focus();
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       return true;
     },
     selector,
-    value,
+    opts?.within ?? null,
+    opts?.text ?? null,
   );
-  if (!ok) throw new Error(`jsSelectValue: select not found: ${selector}`);
+  if (!opened) {
+    throw new Error(
+      `jsPickOption: trigger not found: ${selector}` +
+        (opts?.within ? ` (within ${opts.within}${opts.text ? `, text: ${opts.text}` : ""})` : ""),
+    );
+  }
+
+  // The listbox is a portal rendered one React commit after the mousedown, so
+  // poll for the option rather than looking once (the `waitForMenuItem` rule).
+  const option = `[data-pg-listbox] [data-pg-option][data-value="${value}"]`;
+  await $(option).waitForExist({
+    timeout: 10_000,
+    timeoutMsg: `option "${value}" never appeared for ${selector}`,
+  });
+  const clicked = await executeOnce((sel: string) => {
+    const el = document.querySelector(sel) as HTMLElement | null;
+    if (!el) return false;
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+    el.click();
+    return true;
+  }, option);
+  if (!clicked) throw new Error(`jsPickOption: option "${value}" vanished before the click`);
+  // The listbox closing is the only in-page signal that the commit landed.
+  await $("[data-pg-listbox]").waitForExist({
+    reverse: true,
+    timeout: 10_000,
+    timeoutMsg: `the listbox never closed after picking "${value}"`,
+  });
 }
 
 /**

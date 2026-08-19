@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 
+import { pgPickOption, pgSelectValues } from "@/test/select";
 import { PGRebaseRow } from "./git-components";
 
 describe("PGRebaseRow", () => {
@@ -15,11 +15,13 @@ describe("PGRebaseRow", () => {
         onActionChange={onActionChange}
       />,
     );
+    // The action list is an in-page listbox now (issue 146), so its values come
+    // off `data-value` rather than off `<option>`s.
     const select = screen.getByRole("combobox");
-    expect(
-      [...select.querySelectorAll("option")].map((o) => o.getAttribute("value")),
-    ).toEqual(["Pick", "Reword", "Edit", "Squash", "Fixup", "Drop"]);
-    await userEvent.selectOptions(select, "Drop");
+    expect(pgSelectValues(select)).toEqual([
+      "Pick", "Reword", "Edit", "Squash", "Fixup", "Drop",
+    ]);
+    pgPickOption(select, "Drop");
     expect(onActionChange).toHaveBeenCalledWith("Drop");
   });
 
@@ -34,9 +36,7 @@ describe("PGRebaseRow", () => {
       />,
     );
     const select = screen.getByRole("combobox");
-    expect(
-      [...select.querySelectorAll("option")].map((o) => o.getAttribute("value")),
-    ).toEqual(["Drop", "MainlinePick"]);
-    expect(screen.getByTestId("rebase-row-badge").textContent).toBe("merge");
+    expect(pgSelectValues(select)).toEqual(["Drop", "MainlinePick"]);
+    expect(screen.getByTestId("rebase-badge").textContent).toBe("merge");
   });
 });

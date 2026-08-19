@@ -139,7 +139,7 @@ describe("dnd primitive", () => {
     expect(onDrop).not.toHaveBeenCalled();
   });
 
-  // A row's staging checkbox / action <select> / message textarea owns its own
+  // A row's staging checkbox / action picker / message textarea owns its own
   // pointer semantics — the same opt-out list useRowReorder uses.
   it("ignores a pointerdown that lands on a control", () => {
     const onDrop = vi.fn();

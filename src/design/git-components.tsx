@@ -1935,11 +1935,24 @@ export function PGRebaseRow({
           value: v,
           label: REBASE_ACTION_STYLE[v].label,
         }))}
+        // One per plan row, so specs and component tests reach it through the
+        // row they already found rather than by tag.
+        //
+        // NOT "rebase-row-action", and neither is the badge below "…-badge" any
+        // more: WebdriverIO compiles `[data-testid="rebase-row"]*=text` to an
+        // xpath whose attribute test is `contains(@data-testid, "rebase-row")`
+        // — a SUBSTRING match — plus `not(.//*[<same conditions>])` to keep the
+        // innermost hit. A descendant testid that merely STARTS WITH the row's
+        // therefore satisfies that `not(...)` and the row matches nothing, with
+        // no error: rebase.e2e.ts's "plan row missing", reproduced 2/2. The
+        // badge only renders on a merge row, which is why the trap sat armed
+        // and unfired until a control every row has joined it.
+        data-testid="rebase-action"
         style={{ width: 110, borderColor: current.color, color: current.color } as CSSProperties}
       />
       {badge && (
         <span
-          data-testid="rebase-row-badge"
+          data-testid="rebase-badge"
           style={{
             fontSize: "var(--fs-10)",
             textTransform: "uppercase",
