@@ -3,7 +3,16 @@ name: Deploy site
 on:
   push:
     branches: [main]
-    paths: ['site/**', '.github/workflows/site.yml']
+    # `scripts/install-pgit.*` are here because the build COPIES them into
+    # site/public/ (site/scripts/copy-installers.mjs) and the download page
+    # tells people to pipe those URLs into a shell. Without this path, editing
+    # an installer would leave the served copy stale until some unrelated
+    # site/** change happened to redeploy it.
+    paths:
+      - 'site/**'
+      - 'scripts/install-pgit.sh'
+      - 'scripts/install-pgit.ps1'
+      - '.github/workflows/site.yml'
   workflow_dispatch:
 
 permissions:

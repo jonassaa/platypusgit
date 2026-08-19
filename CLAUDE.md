@@ -1812,7 +1812,31 @@ module and every `src/features/*/` directory is named somewhere in here.
   `.msi`: `<INSTALLDIR>\pgit.cmd` plus `INSTALLDIR` on the machine PATH, via a
   WiX fragment. `.dmg` and AppImage have **no hook at all** — a drag-install runs
   no code and an AppImage is never installed — so they get Settings → Command
-  line and `scripts/install-pgit.sh`.
+  line and the installer scripts, served from the marketing site at
+  `https://www.platypusgit.com/install-pgit.sh` / `…/install-pgit.ps1` and
+  documented as a one-liner in the download page's `#cli` section.
+- **Those URLs are a BUILD-TIME COPY of `scripts/install-pgit.*`, never a second
+  committed file.** `site/scripts/copy-installers.mjs` copies both into
+  `site/public/` from `pnpm dev` and `pnpm build`, and `site/.gitignore` covers
+  the copies. A checked-in duplicate of a shell script drifts from the original,
+  and the drifted one is the one people pipe into `sh`; a build step makes the
+  served bytes the repo's bytes by construction. It is a plain byte copy — no
+  templating, because a substitution pass could break the `curl … | sh` safety
+  rules below without touching the file anyone reviews. Two consequences:
+  `.github/workflows/site.yml` must keep running `pnpm build` rather than
+  `astro build` (a 404 on a URL the page says to pipe into a shell is worse than
+  no link), and its `paths:` filter lists `scripts/install-pgit.*` alongside
+  `site/**` so editing an installer redeploys the served copy instead of leaving
+  it stale until some unrelated site change.
+- **The page presents the split, not the one-liner.** Homebrew / `.deb` / `.msi`
+  users must not be told to run a script — `plan_install` would refuse the
+  `package` shim anyway, so the instruction would be noise that reads as a
+  failure. The `#cli` section leads with "most installs already have it", and the
+  per-channel methods above it cross-link to it either way round: the `.dmg` and
+  AppImage rows say the command is separate, the `.msi` and Homebrew rows say it
+  came with the install. The one-liner ships beside a link to the script and a
+  download-then-inspect-then-run form, since piping a URL into a shell is only
+  auditable if reading it first is offered in the same place.
 - **Three parties can own `pgit`, and `shim_status` says which.**
   `CliShimSource` is `app` (a directory we write) / `package` (launches us from
   anywhere else) / `foreign` (does not launch us) / `none`, and `installed` means

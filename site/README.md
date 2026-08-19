@@ -13,7 +13,29 @@ pnpm build        # output -> dist/
 pnpm preview      # serve the build locally
 pnpm og           # regenerate public/og.png from scripts/og-image.html
 pnpm screenshots  # re-encode public/screenshots/*.webp from screenshots/*.png
+pnpm installers   # copy ../scripts/install-pgit.* into public/ (dev + build do this)
 ```
+
+## The `pgit` installer scripts
+
+`https://www.platypusgit.com/install-pgit.sh` and `install-pgit.ps1` are the
+copy-paste route to the `pgit` CLI for the two channels that run no install code
+— the macOS `.dmg` and the Linux AppImage (#144). Homebrew, the `.deb` and the
+`.msi` install `pgit` themselves; the download page's `#cli` section says so
+rather than presenting the one-liner as the general way to get it.
+
+The served files are **not committed here.** `scripts/copy-installers.mjs` copies
+`../scripts/install-pgit.sh` and `.ps1` into `public/` before every `dev` and
+`build`, and `.gitignore` covers the copies. A second checked-in copy of a shell
+script drifts from the first, and the drifted one is the one users pipe into
+`sh`; a build-time copy makes the served bytes the repo's bytes by construction.
+It is a plain byte copy with no templating — the scripts have to stay
+`curl … | sh`-safe, and a substitution pass here could break that without
+touching the file anyone reviews.
+
+`.github/workflows/site.yml` therefore triggers on `scripts/install-pgit.*` as
+well as `site/**`, and its build step runs `pnpm build` (not `astro build`), so
+the copy actually happens in CI.
 
 ## Configuration
 
