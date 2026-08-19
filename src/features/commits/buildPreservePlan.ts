@@ -25,9 +25,10 @@ export function buildPreservePlan(range: CommitInfo[]): RebaseStep[] {
 
     // Only name a base when it is not where the replay already sits. Naming it
     // unconditionally would work, but it would make every step a reset and hide
-    // the linear default from anyone reading the plan. The first step's base is
-    // the range's base, which `rebase_start` derives from its first parent, so
-    // it stays null too.
+    // the linear default from anyone reading the plan. The FIRST step stays null
+    // here on purpose: its base is the range's base, which the Rebase screen
+    // attaches with `withPlanBase` at submit (186) — and which `rebase_start`
+    // derives from the first parent when nothing names it.
     const onto =
       i > 0 && firstParent && firstParent !== previousOid ? firstParent : null;
 

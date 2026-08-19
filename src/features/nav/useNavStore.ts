@@ -23,6 +23,17 @@ export type NavIntent =
   | { kind: "blame"; path: string }
   | { kind: "rebase-plan"; plan: RebaseStep[] }
   /**
+   * Replay the current branch onto a NEW base, interactively (186) — the
+   * `git rebase -i <newbase>` half. `base` is any revspec (a full oid where the
+   * caller has one, else a branch name); `label` is what to call it on screen.
+   *
+   * Deliberately NOT a `rebase-plan` carrying a base: the range is `base..HEAD`
+   * and only the backend can walk it. The log is PAGED, so a plan assembled from
+   * `useRepoStore.commits` would silently come up short for exactly the diverged
+   * bases this exists for — and a branch context menu has a name, not commits.
+   */
+  | { kind: "rebase-onto"; base: string; label: string }
+  /**
    * A stash comparison (#133). Two targets, one screen.
    *
    * `oid` is the FULL stash-commit oid, never `stash@{N}` and never the index:

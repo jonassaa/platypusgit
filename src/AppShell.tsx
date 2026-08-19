@@ -327,6 +327,9 @@ export function AppShell() {
         enterDeep("blame");
         break;
       case "rebase-plan":
+      // The base-only variant (186). Same destination: the Rebase screen owns
+      // the range walk and the plan either way.
+      case "rebase-onto":
         setScreen("rebase");
         break;
       // Both stash comparisons are `CommitDiff` targets (#133) — the entry

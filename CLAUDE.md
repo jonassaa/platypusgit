@@ -18,6 +18,10 @@ Context for future Claude sessions working on this repo. Keep it current when ar
 New feature beyond MVP slice → write new spec + plan under these folders first.
 
 Recent specs/plans (for context on current direction):
+- `2026-08-19-rebase-onto-any-commit-*` — interactive rebase onto a base the
+  branch does not descend from: the range from `commitsBetween` with an
+  `aheadBehind`-derived limit, the base attached to the plan's first non-Drop
+  step at SUBMIT, and a `rebase-onto` NavIntent behind three menu items (186).
 - `2026-08-18-diff-minimap-*` — the scrubable canvas gutter down the side of every
   diff: per-line bars from the flat `DiffRow[]` + heights, a viewport band, click /
   drag scrubbing, and one measured width below which it hides (#161 part 2).
@@ -594,7 +598,7 @@ features/            Per-feature: components + Zustand store colocated
 │                    Resolve/Finish/Abort), ownership (the `safe.directory`
 │                    confirm — outside the store so store tests need no dialog)
 ├── nav/             useNavStore — cross-screen intents (diff-file, commit-vs-wt,
-│                    file-history, blame, rebase-plan, stash-diff) +
+│                    file-history, blame, rebase-plan, rebase-onto, stash-diff) +
 │                    DeepViewHeader (the origin crumb a deep view goes back to)
 ├── branches/        BranchChip (titlebar), BranchPicker (popover), orderBranches
 │                    (PURE, #135: default branch first, then newest `tipTime`
@@ -609,7 +613,8 @@ features/            Per-feature: components + Zustand store colocated
 │                    picker exists to leave
 ├── commits/         The log's pure logic, all tested: graphLayout + laneColors +
 │                    graphAncestry + rowIdentity (the graph — #68 G2/G4/G9),
-│                    buildRebasePlan / buildPreservePlan / runRebasePlan /
+│                    buildRebasePlan / buildPreservePlan / withPlanBase /
+│                    runRebasePlan /
 │                    planCommitSelection / squashMessage (the rebase plans), plus
 │                    headAncestry (`headAncestryOf`, see commands/commits.rs) and
 │                    logFilter (History's search inputs → a backend `LogFilter`)
@@ -1391,6 +1396,35 @@ module and every `src/features/*/` directory is named somewhere in here.
   worktree untouched. Before this, an unexecutable step (a merge commit, which
   libgit2 refuses to cherry-pick without a mainline) surfaced mid-replay with
   earlier picks already committed and the branch tip already moved.
+- **A plan may name a base the branch does not descend from — that is
+  `git rebase --onto`** (186). `rebase_plan::validate` accepts any existing
+  commit as an `onto`, with **no ancestry requirement**, so the diverged case
+  needed no engine change at all. Four things follow:
+  - **`onto` reaches the run through TWO sites, and either one alone places the
+    first step**: `rebase_start`'s initial `set_head_detached` (base =
+    `first_step.onto`, else that commit's first parent) and `advance_rebase`'s
+    per-step `move_to_base`. Verified by mutation — killing one leaves
+    `tests/rebase_onto_new_base.rs` green; only killing both replays the branch
+    on its own root. Anyone changing where a run starts has to find both.
+  - The base is attached at **submit**, by `withPlanBase`
+    (`features/commits/withPlanBase.ts`), never when the rows are built. Flatten
+    mode lets the user reorder, and the base belongs to whichever step ends up
+    first — baked into a row, a drag would carry it away. That is a bug which
+    PREDATES the diverged base: with every row's `onto` null, a reordered plan
+    detached at the new first step's own parent, i.e. the middle of its own
+    range. The Rebase screen therefore tracks a base for EVERY plan it can
+    submit, including one seeded by `Interactive rebase from here`; null (a root
+    commit, or an oldest step outside the loaded log) keeps the parent fallback.
+  - The frontend range is `commitsBetween(base, HEAD)` when the base is diverged
+    and `commitsSince` when it is an ancestor, chosen by `aheadBehind`'s
+    `behind === 0` (nothing reachable from the base is missing from HEAD — that
+    IS "ancestor"). **`commits_since` is not loosened** — its ancestor
+    requirement is the on-branch flow's invariant, and keeping the split leaves
+    it its only caller instead of making it dead code.
+  - `commits_between`'s handler defaults `limit` to **200** and breaks at the
+    cap, so the limit is derived from `aheadBehind`'s exact `ahead` and the
+    length is verified. A truncated plan leaves commits unreplayed and still
+    moves the branch ref, so a mismatch is refused rather than planned.
 - **The replay runs on a detached HEAD** and moves the branch ref exactly once,
   when the plan completes (`finish_rebase`). So a failed or paused rebase never
   leaves the branch mid-replay, and `rebase_abort` is "put HEAD back on the

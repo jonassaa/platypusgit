@@ -110,6 +110,13 @@ const EXPECTED: { [K in NavIntent["kind"]]: Expectation<K> } = {
     intent: { kind: "rebase-plan", plan: [] },
     screen: "rebase",
   },
+  // The diverged-base flow (186). The intent names a base and nothing else —
+  // the SCREEN resolves the range, because the log is paged and a branch menu
+  // has no commit list at all.
+  "rebase-onto": {
+    intent: { kind: "rebase-onto", base: OID2, label: "other" },
+    screen: "rebase",
+  },
   // The two stash comparisons (#133). `stash-vs-wt` is the regression: revert
   // AppShell's `case "stash-vs-wt":` and this row fails with "history".
   "stash-diff": {
