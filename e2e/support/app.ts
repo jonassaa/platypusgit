@@ -1108,3 +1108,77 @@ export async function diffRowInk(paneId: string): Promise<DiffRowInk> {
     };
   }, paneId)) as DiffRowInk;
 }
+
+/**
+ * Start recording every `pgFlash` toast the page raises, into `window.__pgFlashLog`.
+ *
+ * The toast removes itself after `PG_FLASH_MS` (1.7s) and reuses ONE element, so
+ * reading it in a round trip of its own is a race the moment CI is loaded — and a
+ * missed read is indistinguishable from a toast that never appeared. A recorder
+ * installed BEFORE the action turns that into an exact assertion: the keymap
+ * dispatcher runs synchronously on keydown and `pgFlash` appends synchronously
+ * inside it, so the mutation has landed by the time the dispatching script returns.
+ *
+ * Read-only observer, so no `executeOnce` token is needed for correctness — but it
+ * keeps one anyway, since a retry that re-installed the observer would double
+ * every entry from then on.
+ *
+ * Wiped by any reload; install after `openRepo`.
+ */
+export const watchFlashes = (): Promise<boolean> =>
+  executeOnce(() => {
+    const w = window as unknown as { __pgFlashLog?: string[] };
+    if (w.__pgFlashLog) return true;
+    const log: string[] = (w.__pgFlashLog = []);
+    // Sample on ANY body mutation rather than matching added nodes: the second
+    // flash reuses the element and only replaces its text node, so an
+    // added-node-only observer would see the first toast and nothing after it.
+    const sample = () => {
+      const t = document.querySelector("[data-pg-flash]")?.textContent ?? null;
+      if (t !== null && t !== log[log.length - 1]) log.push(t);
+    };
+    new MutationObserver(sample).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    return true;
+  });
+
+/** Toasts recorded since `watchFlashes()`, oldest first. Consecutive identical
+ *  messages collapse to one entry — assert on the LAST, not on the length. */
+export const flashLog = (): Promise<string[]> =>
+  browser.execute(
+    () => (window as unknown as { __pgFlashLog?: string[] }).__pgFlashLog ?? [],
+  );
+
+/**
+ * Wait for a selector to MATCH IN THE PAGE, re-querying it in page on each poll.
+ *
+ * For anything WINDOWING can mount and unmount — a diff row, its
+ * `[data-hunk-active]` marker — this is the wait to use rather than
+ * `waitForDisplayed`. That helper is `waitUntil(() => isDisplayed())` over an
+ * element HANDLE, and `isDisplayed` passes the handle into an in-page script:
+ * a detached node answers "not displayed" honestly instead of raising stale, so
+ * WebdriverIO's error handler never refetches and the wait can poll a dead node
+ * for its whole budget while the row it was looking for is on screen. A selector
+ * re-evaluated in page has nothing to bind to and cannot go stale.
+ *
+ * Read-only, so it stays on bare `browser.execute` (see `executeOnce`).
+ */
+export function waitForSelector(
+  selector: string,
+  timeoutMsg: string,
+  timeout = 20_000,
+): Promise<true | void> {
+  return browser.waitUntil(
+    async () =>
+      Boolean(
+        await browser.execute(
+          (sel: string) => !!document.querySelector(sel),
+          selector,
+        ),
+      ),
+    { timeout, timeoutMsg },
+  );
+}

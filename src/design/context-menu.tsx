@@ -23,6 +23,10 @@ import { WORKDIR } from "@/features/compare/compareSides";
 import { currentBranch } from "@/lib/derive";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { chordFor } from "@/features/keymap";
+// pgFlash lives in ui-helpers.tsx — a toast is not a context-menu concern, and
+// keeping it out of this module is what lets features/keymap import it without
+// closing a cycle back through this file (which imports chordFor from there).
+import { pgFlash } from "./ui-helpers";
 
 export interface ContextMenuItem {
   label?: ReactNode;
@@ -35,27 +39,6 @@ export interface ContextMenuItem {
   submenu?: ContextMenuItem[];
   /** May be async — the styled confirm/prompt dialogs are promise-based. */
   onClick?: () => void | Promise<void>;
-}
-
-// Tiny toast
-export function pgFlash(msg: string) {
-  const el = document.createElement("div");
-  el.textContent = msg;
-  el.style.cssText = `
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-    background: var(--bg-3); color: var(--fg-0);
-    border: 1px solid var(--border-1); border-radius: var(--r-3);
-    padding: 6px 12px; font-size: var(--fs-12);
-    font-family: var(--font-mono);
-    box-shadow: var(--shadow-2); z-index: 999999;
-    animation: pg-fade-in 160ms ease-out;
-  `;
-  document.body.appendChild(el);
-  setTimeout(() => {
-    el.style.transition = "opacity 200ms";
-    el.style.opacity = "0";
-  }, 1400);
-  setTimeout(() => el.remove(), 1700);
 }
 
 function ContextMenuItemView({

@@ -575,7 +575,8 @@ design/              In-house design system (NOT components/ui/). Exports via de
 │                        container-relative clamp; see "Resizable panes")
 ├── paneSize.ts          That clamp as PURE arithmetic: paneMaxSize /
 │                        clampPaneSize, PANE_HANDLE_PX, DEFAULT_SIBLING_MIN
-├── ui-helpers.tsx       pgFlash, misc helpers
+├── ui-helpers.tsx       pgFlash (ONE reused toast element — it used to append a
+│                        node per call) + PG_FLASH_MS, misc helpers
 └── use-prevent-browser-context-menu.ts
 
 screens/             One screen per activity-bar item + modal-ish deep views:
@@ -650,7 +651,9 @@ features/            Per-feature: components + Zustand store colocated
 │                    enforcement, DoubleShift, input policy, speed-search
 │                    fallback), useFocusStore (spatial Alt+Arrow + Tab cycling),
 │                    usePaneList (list nav + type-to-jump speed-search),
-│                    useHunkNav (F7/⇧F7 diff hunks), useDiffLineFocus (the
+│                    useHunkNav (F7/⇧F7 diff hunks — and opening a diff AT its
+│                    first change + carrying F7 into the next file, issue 188),
+│                    useDiffLineFocus (the
 │                    diff pane's per-LINE cursor + Space, see below),
 │                    useSpeedSearchStore, PGPane / FocusableScroll / CheatSheet
 ├── merge/           Merge resolver window — separate Tauri window (label
@@ -705,7 +708,9 @@ features/            Per-feature: components + Zustand store colocated
 │                    `gaps` + `text` options for `flattenDiffRows` — one hook so
 │                    four surfaces cannot drift on which setting they read; plus
 │                    useExpandedGaps, the fold separator's expand state, which
-│                    took the retired per-hunk `collapsed` set's place)
+│                    took the retired per-hunk `collapsed` set's place; plus
+│                    `diffOpenReady`, the one answer to "is the row model final
+│                    enough to scroll to the first change?" — issue 188)
 │                    + WhitespaceToggle
 │                    (ignore-whitespace control; also owns
 │                    useHunkActionsDisabledReason — hunk staging is disabled
@@ -795,7 +800,9 @@ lib/
 ├── useWindowedList.ts  Fixed-pitch windowing for the plain lists
 ├── useVariableWindow.ts  Scroll → windowVariable state for the diff surfaces;
 │                    updates state only when the window RANGE changes, so
-│                    scrolling inside the overscan band costs zero re-renders
+│                    scrolling inside the overscan band costs zero re-renders.
+│                    Also `scrollTo`, which a PROGRAMMATIC scroll goes through —
+│                    see the note below on why an assignment is not an event
 ├── useDiffRowHeight.ts  Resolves `--diff-row-h` to px, with a fallback for
 │                    jsdom (which does not evaluate `calc()`); CSS stays the
 │                    source of truth — NaN here would collapse every row to zero
@@ -1024,6 +1031,37 @@ module and every `src/features/*/` directory is named somewhere in here.
   `lib/useViewportH.ts` — or `lib/useElementSize.ts` when the answer is a
   container's width, or both axes (#162). Any new measurement obeys the same
   order: read first, observe second.
+- **And "read first" has a second half: the container usually mounts AFTER the
+  hook** (issue 188). Every diff surface renders its scroll container only once
+  the diff has arrived (`isTextualDiff(diff) && …`), so `useViewportH`'s
+  mount-time `measure()` read `ref.current === null`, its effect never ran again
+  (deps unchanged), and there was no element to observe even where
+  `ResizeObserver` exists. The height therefore stayed 0 until the reader
+  scrolled — `remeasure()` in the scroll handler is what quietly rescued it —
+  which meant that on the Linux webview the pane windowed against the 400px
+  fallback on first paint, and every consumer that treats 0 as "unmeasured"
+  (`scrollTopForRow`, `diffOpenReady`) was simply switched off. `useViewportH`
+  now carries a node-attach effect with no dep array: it compares `ref.current`
+  to the node it last saw and measures on a change, plus `useElementSize`'s
+  bounded rAF poll for a read that lands before layout. **A `RefObject`-taking
+  measurement hook cannot know when its element appears; it has to look.** This
+  is why the auto-open needed a Docker e2e run to be believed — it worked on
+  macOS/WKWebView (which has `ResizeObserver`, though even there the observer was
+  never attached) and did nothing at all on WebKitGTK.
+- **A container that goes AWAY reports 0 too, and that is load-bearing.** Every
+  diff surface unmounts its scroll container while `diffLoading`, and the diff and
+  the file text can both land before that flag clears — so there is a render where
+  every other readiness term is satisfied and `scrollRef.current` is `null`. With
+  `useViewportH` keeping its last known height, the issue-188 auto-open fired into
+  a pane that was not on screen: the scroll silently did nothing (there was no
+  element), the once-per-file budget was spent, and the file stayed at line 1. 0 is
+  the honest answer for "not any more" as well as "not yet", and it is the one term
+  that comes BACK when the container does, which is what makes the open happen at
+  the right moment instead of never. Note the failure was invisible to every other
+  consumer — `windowVariable` falls back to 400px and nothing renders anyway — so
+  it took a probe on the real webview to find, printing the readiness terms as a
+  `data-` attribute. (`PGPane` does not spread `...rest`, so such a probe has to go
+  on a plain element.)
 - **Two cursors, two index spaces, and they must not be confused.** `useHunkNav`
   keeps a HUNK cursor (F7/⇧F7, rendered as `data-hunk-active` on the hunk's
   ANCHOR row — its first changed line, marked `hunkAnchor` by `flattenDiffRows`;
@@ -1044,11 +1082,88 @@ module and every `src/features/*/` directory is named somewhere in here.
   `querySelector` + `scrollIntoView` survives only as the fallback for an
   unwindowed caller and its unit test. A line row is unmounted far more often
   than a header row was.
+- **A diff OPENS at its first change, and F7 carries into the next file** (issue
+  188). Both live in `useHunkNav`, not in the four screens that call it — the rule
+  F7 itself records: implemented per screen, two of the four silently went without
+  it for as long as they existed (#157). Five parts, each of which cost something:
+  - **The auto-open waits for `diffOpenReady`** (`features/diff/useDiffGaps.ts`),
+    which is where all four surfaces answer "may I scroll yet?" identically: the
+    row model belongs to the file now SHOWING (`diffFor === showing` — a switch
+    renders once with the outgoing diff still in state, because the fetch is
+    async, and auto-opening there spends the once-per-file budget on a row model
+    about to be replaced; measured on WebKitGTK as "the second file opens at line
+    1 every time"), rows exist, the viewport is MEASURED (0 is unmeasured, never
+    "no space"), and in whole-file mode the file TEXT has landed. The commit
+    panel's identity carries the SIDE as well as the path, because the two sides
+    of one file are two different diffs. Do NOT solve the staleness by keying the
+    hook's `resetKey` to the diff instead: a diff is refetched whenever the status
+    changes, so staging a hunk would then yank the reader back to the first
+    change. That last term is the non-obvious
+    one — until the text arrives `flattenDiffRows` degrades to fold separators, so
+    every anchor row sits near the top and is about to move tens of screens down;
+    scrolling before that puts the reader back at line 1, which is the bug being
+    fixed. A fill-mode diff whose two sides BOTH read as null text never settles
+    and keeps the old no-scroll behaviour: "not loaded yet" and "there is no text"
+    are the same value, and guessing wrong is worse than not moving.
+  - **The cursor starts at 0 only when the auto-open actually ran**, so
+    `data-hunk-active` and the scroll position can never disagree. Everything else
+    keeps -1 — and the backward edge test is `cursor === 0`, not `cursor <= 0`, or
+    a ⇧F7 on a file that never auto-opened would announce the previous file
+    instead of landing on hunk 0 the way it always has.
+  - **The reader wins, and a MISS costs nothing.** Two separate flags, and the
+    distinction is the whole robustness argument. `readerActed` is set by any
+    F7/⇧F7 press and locks the file for the rest of its life, so nothing that
+    settles later can yank someone who has already moved. `opened` is spent only
+    by a reveal that CONFIRMED it landed — every surface's `scrollToHunk` now
+    returns a boolean, checking `el.scrollTop` against what it asked for, because
+    a container mid-refetch clamps the write and a missing one swallows it
+    entirely. A miss therefore leaves the budget alone and the next qualifying
+    render tries again; and `ready` going false RETURNS the budget outright, since
+    a scroll container that unmounts and comes back has lost its position and the
+    first change is the right place to be again. Spending the budget on a miss is
+    exactly how the second file came to open at line 1 with its cursor claiming
+    hunk 0 — visible only on the e2e webview, and only under load, which is why
+    the probe was needed. `scrollToHunk`'s reveal-only guard stays, so a first
+    change already on screen does not jump.
+  - **Crossing files is the `files` prop, and the HOOK owns the arithmetic**:
+    `{ count, index, select }` per surface, and the hook decides legality
+    (`index ± 1` inside the list), so "stop at the ends, never cycle" has one
+    implementation. `select` must move the FILE-LIST selection, not just the diff
+    pane, or the two panes disagree about which file is open. Omitting `files`
+    keeps the old clamp — which is `RepoBrowser`, deliberately: its pane lists
+    every tracked file, not a changed set, so "the next file" would mean a
+    DIFFERENT list from the one on screen (and it can be showing a revision, where
+    the pane is a preview). `CommitPanel` DOES cross the staged/unstaged boundary,
+    because `usePaneList` already treats the two sections as one list in that
+    order, and two orderings for two keyboards is the drift a shared list prevents.
+  - **The hint names its own chord, and the arming expires with it.**
+    `chordFor("diff.nextChange")`, never the literal "F7" — bindings are
+    rebindable and there are two presets. The armed state lives exactly
+    `PG_FLASH_MS`, so an F7 pressed minutes later cannot teleport the reader out
+    of the file. `pgFlash` is SINGLE-INSTANCE for the same feature: it appended a
+    fresh node per call with no dedup, and a "press it again" hint is the one
+    message guaranteed to be raised twice in a row onto one fixed position.
 - **Scroll a diff row into view BY OFFSET** (`scrollTopForRow`), never by
   `querySelector` + `scrollIntoView`: the row is usually unmounted under
   windowing, so the DOM route silently does nothing (the #68 G10 trap). It
   no-ops for an out-of-range index or an unmeasured viewport rather than jumping
   to the top.
+- **A programmatic `scrollTop` write is not a scroll event, and the windowed range
+  does not update by itself** (issue 188). MEASURED on WebKitGTK 605 under xvfb: an
+  `el.scrollTop = 1881` assignment made inside an effect left the DOM scrolled while
+  `win` still described the TOP of the file — `start: 0`, one spacer — for SECONDS,
+  until an unrelated re-render recomputed it. The row being scrolled to is unmounted
+  for that whole time, so F7's `data-hunk-active`, the line cursor's focus ring and
+  the auto-open at the first change each appear to do nothing at all, on the engine
+  CI runs. It looks fine most of the time because the syntax tokens usually land
+  right after and rebuild `heights`, which recomputes the window from the ref during
+  render — but a token-cache hit removes even that, which is exactly what a second
+  file with identical text produced. So every programmatic diff scroll goes through
+  `useVariableWindow`'s `scrollTo`, which assigns AND publishes the new window in one
+  call; a real user scroll still arrives through `onScroll`. Two sites still write
+  `scrollTop` directly and inherit the hazard — `FocusableScroll`'s Home/End and
+  `DiffMinimap`'s scrub — and are named in that hook's own comment as follow-ups
+  rather than drive-bys.
 - **The minimap gutter derives from the ROW MODEL, never the DOM** (#161). Rows are
   windowed, so most of the file is unmounted; the gutter is painted from
   `DiffRow[]` + `heights` alone (`lib/diffMinimap.ts`, pure and tested in node) and

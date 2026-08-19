@@ -22,7 +22,11 @@ import {
   WhitespaceToggle,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
-import { useDiffGaps, useExpandedGaps } from "@/features/diff/useDiffGaps";
+import {
+  diffOpenReady,
+  useDiffGaps,
+  useExpandedGaps,
+} from "@/features/diff/useDiffGaps";
 import { isTextualDiff, statusMark } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
@@ -224,7 +228,11 @@ export function DiffViewerScreen() {
   // measured, not the scroll area, so showing the gutter cannot change the width
   // that decides whether to show it (#161).
   const diffBox = useElementSize();
-  const { win: varWin, onScroll: onDiffScroll } = useVariableWindow({
+  const {
+    win: varWin,
+    onScroll: onDiffScroll,
+    scrollTo: scrollDiffTo,
+  } = useVariableWindow({
     heights,
     viewportH,
     scrollRef,
@@ -247,16 +255,25 @@ export function DiffViewerScreen() {
   // row is outside the window, which for a line row is most of the time.
   const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
   const scrollToHunk = React.useCallback(
-    (hunkIndex: number) => {
+    (hunkIndex: number): boolean => {
       const el = scrollRef.current;
       const idx = anchorRows[hunkIndex];
-      if (!el || idx == null || idx < 0) return;
-      const top = rowOffset(heights, idx);
-      if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - rowH) {
-        el.scrollTop = top;
+      if (!el || idx == null || idx < 0) return false;
+      const want = rowOffset(heights, idx);
+      // Reveal-only: a first change already on screen must not jump.
+      if (want >= el.scrollTop && want <= el.scrollTop + el.clientHeight - rowH) {
+        return true;
       }
+      // Through the window's own setter: a bare `el.scrollTop = …` leaves the
+      // rendered range describing the old position until the engine gets round
+      // to a scroll event, which on WebKitGTK can be seconds (issue 188).
+      scrollDiffTo(want);
+      // Confirm the write: a container shorter than the offset CLAMPS it (a pane
+      // mid-refetch is), and a reveal that did not land must not count as this
+      // file having been opened — see `useHunkNav`'s `scrollToHunk`.
+      return Math.abs(el.scrollTop - want) <= 1;
     },
-    [anchorRows, heights, rowH],
+    [anchorRows, heights, rowH, scrollDiffTo],
   );
   const hunkCursor = useHunkNav({
     paneIds: ["diff.files", "diff.view"],
@@ -268,6 +285,32 @@ export function DiffViewerScreen() {
     // which is exactly correct here: with windowing off, every anchor row is
     // mounted, so `scrollIntoView` cannot silently no-op (the #68 G10 trap).
     scrollToHunk: wrap ? undefined : scrollToHunk,
+    // Split mode has no unified scroll container, and `useViewportH` keeps the
+    // last height it managed to read rather than resetting to 0 when the element
+    // goes away — so the mode is part of the question, not just the measurement.
+    ready:
+      mode === "unified" &&
+      diffOpenReady({
+        // The row model still describes the OUTGOING file for the render right
+        // after a switch — the fetch is async — and auto-opening there would burn
+        // the once-per-file budget on it.
+        diffFor: diff?.path,
+        showing: selectedPath,
+        rowCount: rows.length,
+        viewportH,
+        gaps,
+        text: diffText,
+      }),
+    // This screen's list is the filtered changed-file list — the one the pane
+    // beside the diff renders, so moving `selectedPath` moves both.
+    files: {
+      count: filtered.length,
+      index: filtered.findIndex((f) => f.path === selectedPath),
+      select: (i) => {
+        const f = filtered[i];
+        if (f) setSelectedPath(f.path);
+      },
+    },
   });
 
   if (status.length === 0) {
