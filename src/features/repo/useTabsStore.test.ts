@@ -3,7 +3,7 @@
 // repository you left must not land in the one you arrived at, and a failed open
 // must leave the tab you were on intact.
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
 import { REPO_SLICE_KEYS, emptySlice } from "./repoSlice";
@@ -184,6 +184,112 @@ describe("useTabsStore — concurrent opens", () => {
     // The abandoned handle must be closed — `open` never evicts on its own.
     expect(calls("close_repo").map((c) => c.args.repoId)).toContain("r-web");
     expect(useTabsStore.getState().activePath).toBe("/dev/api");
+  });
+
+  it("evicts the handle when the switch lands DURING the refresh that follows the open", async () => {
+    // The SECOND moment a superseded open needs cleaning up, and the one the
+    // repo store's own `stillWanted` guard cannot cover: the handle has already
+    // been adopted and `refreshAll` is in flight, so the switch arrives after
+    // the last question the store gets to ask. `hydrateTab` then returns before
+    // recording the repoId on the tab, so nothing else can ever reach this
+    // handle — it is a git2::Repository held for the life of the process.
+    await useTabsStore.getState().openRepo("/dev/api");
+    await useTabsStore.getState().openRepo("/dev/web");
+    await useTabsStore.getState().activate("/dev/api");
+    // Back to pending, so re-entering /dev/web opens the repository rather than
+    // replaying its frozen slice.
+    useTabsStore.setState((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.path === "/dev/web"
+          ? { ...t, status: "pending", slice: null, repoId: null }
+          : t,
+      ),
+    }));
+
+    // Hold the REFRESH, not the open: that is what puts the supersession after
+    // the adoption instead of before it.
+    let release = () => {};
+    mockInvoke("get_status", async (args) => {
+      if (args.repoId === "r-web") {
+        await new Promise<void>((res) => {
+          release = res;
+        });
+      }
+      return STATUS[args.repoId as string] ?? [];
+    });
+
+    const pending = useTabsStore.getState().activate("/dev/web");
+    // Adopted: `current` is the new handle, mid-refresh.
+    await vi.waitFor(() =>
+      expect(useRepoStore.getState().current?.id).toBe("r-web"),
+    );
+    await useTabsStore.getState().activate("/dev/api");
+    release();
+    await pending;
+
+    expect(calls("close_repo").map((c) => c.args.repoId)).toEqual(["r-web"]);
+    expect(useTabsStore.getState().activePath).toBe("/dev/api");
+    expect(useRepoStore.getState().current?.id).toBe("r-api");
+    // Nothing recorded the evicted id, which is why only this branch can free it.
+    expect(
+      useTabsStore.getState().tabs.find((t) => t.path === "/dev/web")?.repoId,
+    ).toBeNull();
+  });
+});
+
+describe("useTabsStore — one RepoId per repository (#177)", () => {
+  it("evicts the handle a re-key displaces", async () => {
+    // Only the BACKEND can resolve a symlinked spelling, so the frontend cannot
+    // know these are one repository until `open` answers — and then the tab it
+    // re-keys onto already holds a live RepoId of its own.
+    mockInvoke("open_repo", (args) => {
+      const asked = args.path as string;
+      const canonical = asked === "/dev/link" ? "/dev/real" : asked;
+      return { id: `r-${asked}`, path: canonical, head: "main" };
+    });
+
+    await useTabsStore.getState().openRepo("/dev/real");
+    expect(useTabsStore.getState().tabs[0].repoId).toBe("r-/dev/real");
+
+    await useTabsStore.getState().openRepo("/dev/link");
+
+    // One tab, the newer RepoId — and the displaced one closed rather than left
+    // holding a git2::Repository for the life of the process.
+    expect(useTabsStore.getState().tabs.map((t) => t.path)).toEqual(["/dev/real"]);
+    expect(useTabsStore.getState().tabs[0].repoId).toBe("r-/dev/link");
+    expect(calls("close_repo").map((c) => c.args.repoId)).toEqual(["r-/dev/real"]);
+    expect(useRepoStore.getState().current?.id).toBe("r-/dev/link");
+  });
+
+  it("closes and keeps the TAB, not the caller's spelling of it", async () => {
+    // `openRepo`'s own failed-open cleanup forwards the raw argument, so a
+    // producer's `/repo/` reaches `close` directly. Compared raw, the tab was
+    // removed while `activePath` stayed pointing at it — and `current` was left
+    // holding the repository just evicted, which is the #177 symptom arrived at
+    // from the other direction.
+    await useTabsStore.getState().openRepo("/dev/api");
+    await useTabsStore.getState().openRepo("/dev/web");
+    await useTabsStore.getState().close("/dev/web/");
+    expect(useTabsStore.getState().tabs.map((t) => t.path)).toEqual(["/dev/api"]);
+    expect(useTabsStore.getState().activePath).toBe("/dev/api");
+    expect(useRepoStore.getState().current?.id).toBe("r-api");
+  });
+
+  it("keeps the right tab when closeOthers is named with another spelling", async () => {
+    await useTabsStore.getState().openRepo("/dev/api");
+    await useTabsStore.getState().openRepo("/dev/web");
+    await useTabsStore.getState().closeOthers("/dev/api/");
+    expect(useTabsStore.getState().tabs.map((t) => t.path)).toEqual(["/dev/api"]);
+    expect(useTabsStore.getState().activePath).toBe("/dev/api");
+    expect(useRepoStore.getState().current?.id).toBe("r-api");
+  });
+
+  it("focuses the tab instead of re-opening when the spelling only differs by a trailing separator", async () => {
+    await useTabsStore.getState().openRepo("/dev/api");
+    await useTabsStore.getState().openRepo("/dev/api/");
+    expect(calls("open_repo")).toHaveLength(1);
+    expect(useTabsStore.getState().tabs).toHaveLength(1);
+    expect(calls("close_repo")).toHaveLength(0);
   });
 });
 
