@@ -41,9 +41,35 @@ export interface RepoTab {
   conflicts: number;
 }
 
+/**
+ * The one spelling of a repository path on this side of the IPC boundary.
+ *
+ * `path` is a tab's identity, and the app receives paths from several producers
+ * that do not agree on their spelling: `open_repo` returns the workdir with its
+ * trailing separator stripped, a `pgit <path>` launch intent used to forward it
+ * WITH one (#177), and a user-typed or dropped path can carry any number of
+ * them. Compared raw, `/repo/` and `/repo` are two repositories — so the second
+ * spelling opened the same repository again, minting a `RepoId` nothing would
+ * ever close and leaving the store pointing at the losing one.
+ *
+ * Every path entering the tab layer goes through here, so no producer's
+ * spelling can split one repository into two tabs. This is deliberately NOT
+ * canonicalisation — a webview cannot resolve symlinks — the backend owns that
+ * and `open`'s answer is what a tab is finally re-keyed onto.
+ *
+ * A path that is only separators is left alone: trimming `/` yields `""`, and
+ * trimming a Windows drive root yields a drive-RELATIVE `C:`, so both would be
+ * a different path rather than a tidier spelling of the same one.
+ */
+export function repoPathKey(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, "");
+  if (!trimmed || trimmed.endsWith(":")) return path;
+  return trimmed;
+}
+
 export function newTab(path: string, over: Partial<RepoTab> = {}): RepoTab {
   return {
-    path,
+    path: repoPathKey(path),
     repoId: null,
     status: "pending",
     // Every tab starts on History, restored tabs included.
@@ -57,12 +83,14 @@ export function newTab(path: string, over: Partial<RepoTab> = {}): RepoTab {
 
 export function findTab(tabs: RepoTab[], path: string | null): RepoTab | null {
   if (!path) return null;
-  return tabs.find((t) => t.path === path) ?? null;
+  const key = repoPathKey(path);
+  return tabs.find((t) => t.path === key) ?? null;
 }
 
 export function indexOfTab(tabs: RepoTab[], path: string | null): number {
   if (!path) return -1;
-  return tabs.findIndex((t) => t.path === path);
+  const key = repoPathKey(path);
+  return tabs.findIndex((t) => t.path === key);
 }
 
 /**
@@ -70,10 +98,11 @@ export function indexOfTab(tabs: RepoTab[], path: string | null): number {
  * re-opening a repository must not shuffle the strip under the user's cursor.
  */
 export function upsertTab(tabs: RepoTab[], patch: RepoTab): RepoTab[] {
-  const i = indexOfTab(tabs, patch.path);
-  if (i < 0) return [...tabs, patch];
+  const entry = { ...patch, path: repoPathKey(patch.path) };
+  const i = indexOfTab(tabs, entry.path);
+  if (i < 0) return [...tabs, entry];
   const next = [...tabs];
-  next[i] = { ...next[i], ...patch };
+  next[i] = { ...next[i], ...entry };
   return next;
 }
 
@@ -86,12 +115,19 @@ export function patchTab(
   const i = indexOfTab(tabs, path);
   if (i < 0) return tabs;
   const next = [...tabs];
-  next[i] = { ...next[i], ...patch };
+  // A re-key (`open` answered with a different spelling) goes through the same
+  // normalisation as any other incoming path.
+  next[i] = {
+    ...next[i],
+    ...patch,
+    ...(patch.path === undefined ? {} : { path: repoPathKey(patch.path) }),
+  };
   return next;
 }
 
 export function removeTab(tabs: RepoTab[], path: string): RepoTab[] {
-  return tabs.filter((t) => t.path !== path);
+  const key = repoPathKey(path);
+  return tabs.filter((t) => t.path !== key);
 }
 
 /**
@@ -170,17 +206,22 @@ export function loadOpenRepos(): OpenRepos {
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object") return { paths: [], active: null };
     const rec = parsed as Record<string, unknown>;
+    // Normalize on the way in, and dedupe AFTER: a set written by an older
+    // build (or by two producers disagreeing about the trailing separator) can
+    // hold the same repository twice under two spellings, and restoring both
+    // would open it twice — the very thing #177 was.
     const paths = Array.isArray(rec.paths)
       ? Array.from(
           new Set(
-            rec.paths.filter((p): p is string => typeof p === "string" && !!p),
+            rec.paths
+              .filter((p): p is string => typeof p === "string" && !!p)
+              .map(repoPathKey),
           ),
         ).slice(0, OPEN_LIMIT)
       : [];
+    const activeKey = typeof rec.active === "string" ? repoPathKey(rec.active) : null;
     const active =
-      typeof rec.active === "string" && paths.includes(rec.active)
-        ? rec.active
-        : (paths[0] ?? null);
+      activeKey && paths.includes(activeKey) ? activeKey : (paths[0] ?? null);
     return { paths, active };
   } catch {
     return { paths: [], active: null };
@@ -189,10 +230,11 @@ export function loadOpenRepos(): OpenRepos {
 
 export function saveOpenRepos(tabs: RepoTab[], active: string | null): void {
   try {
-    const paths = tabs.map((t) => t.path).slice(0, OPEN_LIMIT);
+    const paths = tabs.map((t) => repoPathKey(t.path)).slice(0, OPEN_LIMIT);
+    const activeKey = active ? repoPathKey(active) : null;
     const value: OpenRepos = {
       paths,
-      active: active && paths.includes(active) ? active : (paths[0] ?? null),
+      active: activeKey && paths.includes(activeKey) ? activeKey : (paths[0] ?? null),
     };
     localStorage.setItem(OPEN_REPOS_KEY, JSON.stringify(value));
   } catch {

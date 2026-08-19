@@ -7,6 +7,7 @@ import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useAuthStore } from "@/features/auth/useAuthStore";
 import {
   cloneRepo,
+  closeRepo as closeRepoIpc,
   initRepo,
   rememberCredential,
   trustRepoPath,
@@ -139,7 +140,16 @@ export const useCreateStore = create<CreateState>((set, get) => ({
     const finish = async (handle: RepoHandle) => {
       useSettingsStore.getState().set("lastCreateDir", parentDir);
       set({ busy: false, open: "none" });
-      await useTabsStore.getState().openRepo(handle.path);
+      // `init_repo` goes through `open` so the repository lands in the backend's
+      // map, which means the handle it answers with is a REGISTERED RepoId — and
+      // `openRepo` below mints a second one for the same path, because `open`
+      // never reuses an entry and only `close_repo` removes one. Nothing here
+      // reads the handle past its path, so evict it BEFORE delegating, or it is a
+      // git2::Repository held for the life of the process (issue 177's leak,
+      // through the New-repository door instead of the launch one).
+      const path = handle.path;
+      await closeRepoIpc(handle.id).catch(() => {});
+      await useTabsStore.getState().openRepo(path);
     };
     try {
       await finish(await initRepo(path, branch));

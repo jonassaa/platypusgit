@@ -29,6 +29,34 @@ use types::{
 };
 
 
+/// The one spelling of a repository's workdir path.
+///
+/// libgit2's `workdir()` hands back a path WITH a trailing separator, so the
+/// same repository has two spellings — `/repo/` and `/repo` — and every
+/// consumer that keys on the path treats them as two repositories: repository
+/// tabs (#90) dedupe by it, recents store it, the `pg-open-repos` session file
+/// persists it.
+///
+/// `open` normalizes through here, and so must every OTHER producer of a
+/// repository path — otherwise two producers disagree, the frontend concludes
+/// the repository is not open yet, and one `git2::Repository` gets opened twice
+/// under two names with two `RepoId`s, one of which nothing will ever close
+/// (#177). The other producer is `cli::resolve_repo_root`, which reads the same
+/// `workdir()`.
+///
+/// A path that is ONLY separators (`/`, or a bare Windows drive root) is left
+/// alone: trimming it yields a different path — `""` or a drive-relative `C:` —
+/// rather than a tidier spelling of the same one.
+pub fn repo_path_key(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    let trimmed = s.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() || trimmed.ends_with(':') {
+        return path.to_path_buf();
+    }
+    PathBuf::from(trimmed)
+}
+
+
 pub trait GitBackend: Send + Sync {
     // === existing reads ===
     fn open(&self, path: &Path) -> AppResult<RepoHandle>;
@@ -583,4 +611,33 @@ pub trait GitBackend: Send + Sync {
     /// `git bisect reset` — return to `BISECT_START`. NOT `abort_operation`, which
     /// hard-resets to HEAD and mid-bisect that is a detached test commit.
     fn bisect_reset(&self, repo_id: &RepoId) -> AppResult<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_path_key_strips_the_trailing_separator() {
+        // The #177 asymmetry: libgit2's `workdir()` spelling vs `open`'s.
+        assert_eq!(repo_path_key(Path::new("/dev/api/")), PathBuf::from("/dev/api"));
+        assert_eq!(repo_path_key(Path::new("/dev/api//")), PathBuf::from("/dev/api"));
+        assert_eq!(repo_path_key(Path::new("/dev/api")), PathBuf::from("/dev/api"));
+        assert_eq!(
+            repo_path_key(Path::new("C:\\dev\\api\\")),
+            PathBuf::from("C:\\dev\\api")
+        );
+    }
+
+    #[test]
+    fn repo_path_key_leaves_a_separators_only_path_alone() {
+        // Trimming these yields a DIFFERENT path — "" is nothing at all, and a
+        // bare `C:` is drive-RELATIVE — so the tidier spelling would be a lie.
+        // Asserted on the STRING form: `PathBuf`'s own `==` is component-based
+        // and would report `/dev/api/` and `/dev/api` equal, which is exactly
+        // how the trailing separator crossed IPC unnoticed.
+        assert_eq!(repo_path_key(Path::new("/")).to_string_lossy(), "/");
+        assert_eq!(repo_path_key(Path::new("//")).to_string_lossy(), "//");
+        assert_eq!(repo_path_key(Path::new("C:\\")).to_string_lossy(), "C:\\");
+    }
 }

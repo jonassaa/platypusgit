@@ -12,11 +12,17 @@
 //   2. write the incoming tab's frozen slice as a WHOLE (repoSlice.ts),
 //   3. refresh, because a cached view is not disk truth.
 //
-// Two guards keep concurrency honest:
+// Four guards keep concurrency honest, and #177 is what each of the last three
+// costs when it is missing:
 //   - `activationSeq` — bumped on every activate/open, re-checked after each
 //     await, so a session restore racing a forwarded CLI launch cannot both win.
 //   - `useRepoStore`'s own `setFor`, which drops a fetch that resolved after the
 //     user moved on.
+//   - `repoPathKey` (tabs.ts) — path identity, so two producers spelling one
+//     workdir differently cannot open the repository twice.
+//   - the `stillWanted` predicate handed to `openRepoAt`, re-asked at the moment
+//     the open resolves: a switch to an already-open tab supersedes an in-flight
+//     open without starting one, which the repo store cannot see for itself.
 
 import { create } from "zustand";
 
@@ -42,6 +48,7 @@ import {
   newTab,
   patchTab,
   removeTab,
+  repoPathKey,
   saveOpenRepos,
   upsertTab,
   type RepoTab,
@@ -60,6 +67,11 @@ interface TabsState {
    * Open `path` in a tab: focuses the existing tab when the path is already
    * open, otherwise opens the repository and appends a tab. The single entry
    * point for opening a repository anywhere in the app.
+   *
+   * "Already open" is decided on the NORMALIZED path (`repoPathKey`), so two
+   * producers spelling one repository differently — a restored `pg-open-repos`
+   * entry and a `pgit <path>` launch intent, say — focus one tab instead of
+   * opening the repository twice (#177).
    */
   openRepo: (path: string) => Promise<void>;
   /** Make the tab at `path` active, opening it if it is still pending. */
@@ -132,14 +144,23 @@ export const useTabsStore = create<TabsState>((set, get) => {
     set({ activating: tab.path });
     let handle: RepoHandle | null = null;
     try {
-      handle = await useRepoStore.getState().openRepoAt(tab.path);
+      // The predicate is re-asked at the moment the open resolves, before the
+      // repo store adopts it: a switch to an ALREADY-OPEN tab supersedes this
+      // open without starting one of its own, so the store cannot see that for
+      // itself and would otherwise make this handle `current` after the winner
+      // had already hydrated (#177). It then closes the handle and answers null.
+      handle = await useRepoStore
+        .getState()
+        .openRepoAt(tab.path, () => stillCurrent(seq));
     } finally {
       if (get().activating === tab.path) set({ activating: null });
     }
     if (!stillCurrent(seq)) {
-      // Superseded mid-open (the user moved to another tab). Nobody will ever
-      // use this handle, and `open` never evicts on its own — so evict it here
-      // or it is a leaked git2::Repository for the rest of the session.
+      // Superseded AFTER the adoption (the refresh inside the open is awaited,
+      // so the user can move on during it). `current` has since been overwritten
+      // by whoever superseded us, so the handle is unreachable — and `open`
+      // never evicts on its own, so evict it here or it is a leaked
+      // git2::Repository for the rest of the session.
       if (handle) {
         void closeRepoIpc(handle.id).catch(() => {});
       }
@@ -153,6 +174,15 @@ export const useTabsStore = create<TabsState>((set, get) => {
     // `open` returns the canonicalised workdir, which may differ from the path
     // we asked for. Re-key the tab onto it, dropping any tab that already had it.
     const resolved = handle.path;
+    // That drop is where the LAST orphan lived. `repoPathKey` settles every
+    // spelling the frontend can settle, but only the backend can resolve a
+    // symlinked one (`/var/x` → `/private/var/x` on macOS), so two tabs can still
+    // exist for one repository — and re-keying used to overwrite the surviving
+    // tab's `repoId` with this one, abandoning a `git2::Repository` for the rest
+    // of the process. Evict it: this is the "close the loser when the duplicate
+    // open could not be prevented" case, and it is the only one left.
+    const displaced = resolved === tab.path ? null : findTab(get().tabs, resolved);
+    if (displaced?.repoId && displaced.repoId !== handle.id) evict(displaced);
     set((s) => {
       let tabs = s.tabs;
       if (resolved !== tab.path && indexOfTab(tabs, resolved) >= 0) {
@@ -223,15 +253,20 @@ export const useTabsStore = create<TabsState>((set, get) => {
     async activate(path) {
       const tab = findTab(get().tabs, path);
       if (!tab) return;
+      // Every comparison below is against `tab.path`, the NORMALIZED key, never
+      // the caller's spelling of it: `findTab` normalizes, so a caller holding
+      // `/repo/` finds the tab and then slipped past both guards (#177). The
+      // first of them is what keeps the launch race down to one open.
+      //
       // An open for this very tab is already in flight — a second one would
       // mint a second RepoId for the same repository and leak the loser.
-      if (get().activating === path) return;
+      if (get().activating === tab.path) return;
       // Already active AND actually loaded: nothing to do. The `current` check
       // is not redundant — it is the invariant. Without it, a tab the store no
       // longer holds (a store reset, a failed reopen) would look live and the
       // app would sit on an empty slice forever.
       if (
-        get().activePath === path &&
+        get().activePath === tab.path &&
         tab.status === "open" &&
         useRepoStore.getState().current?.id === tab.repoId
       ) {
@@ -239,7 +274,7 @@ export const useTabsStore = create<TabsState>((set, get) => {
       }
       const seq = beginActivation();
       const outgoing = get().activePath;
-      if (outgoing && outgoing !== path) snapshotInto(outgoing);
+      if (outgoing && outgoing !== tab.path) snapshotInto(outgoing);
       await hydrateTab(tab, seq);
     },
 
@@ -266,12 +301,16 @@ export const useTabsStore = create<TabsState>((set, get) => {
         await closeMergeWindow();
       }
       // Re-read: the confirm above is an await, and the strip may have moved.
+      // Keyed on `target.path` throughout, for the reason `activate` gives:
+      // `openRepo`'s failed-open cleanup forwards its RAW argument here, so a
+      // `/repo/` would have been removed from the strip while `activePath` went
+      // on naming it — leaving the store on a repository this call just evicted.
       const tabs = get().tabs;
-      const idx = indexOfTab(tabs, path);
+      const idx = indexOfTab(tabs, target.path);
       if (idx < 0) return;
       evict(tabs[idx]);
-      const remaining = removeTab(tabs, path);
-      const wasActive = get().activePath === path;
+      const remaining = removeTab(tabs, target.path);
+      const wasActive = get().activePath === target.path;
       if (!wasActive) {
         set({ tabs: remaining });
         persist();
@@ -290,10 +329,13 @@ export const useTabsStore = create<TabsState>((set, get) => {
     },
 
     async closeOthers(keepPath) {
-      for (const t of get().tabs.filter((t) => t.path !== keepPath)) {
+      // Normalized first: an unnormalized spelling matches no tab, so the filter
+      // kept nothing and this closed the repository it was asked to keep (#177).
+      const keep = repoPathKey(keepPath);
+      for (const t of get().tabs.filter((t) => t.path !== keep)) {
         await get().close(t.path);
       }
-      await get().activate(keepPath);
+      await get().activate(keep);
     },
 
     async closeAll() {

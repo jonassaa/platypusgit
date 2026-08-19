@@ -56,6 +56,7 @@ import {
   markResolved,
   mergeBranch as mergeBranchFn,
   openRepo,
+  closeRepo as closeRepoIpc,
   trustRepoPath,
   pruneRemote,
   pull as pullRemote,
@@ -141,7 +142,28 @@ interface RepoStoreState extends RepoSlice {
    * `useTabsStore.openRepo` is the entry point everything else calls — it
    * dedupes by path, creates the tab, and snapshots the outgoing one.
    */
-  openRepoAt: (path: string) => Promise<RepoHandle | null>;
+  /**
+   * Open `path` and adopt it as the live repository.
+   *
+   * `stillWanted` is re-asked AFTER the open resolves and BEFORE anything is
+   * written: only the caller knows whether the user has moved on in the
+   * meantime, and adopting a repository nobody is looking at is what left the
+   * store holding a handle the tab layer then evicted (#177). Answer `false`
+   * and the handle is closed and `null` returned, with the slice untouched.
+   *
+   * REQUIRED, deliberately: the store cannot answer this question for itself,
+   * and a caller that omitted the predicate would silently reinstate the bug.
+   * A default (`() => true`) plus a counter in here was tried and dropped — the
+   * counter is a second, weaker answer to the same question, and it gets the
+   * answer WRONG when one activation opens twice: the ownership-trust retry
+   * bumps it past a concurrent, still-current activation's in-flight open, which
+   * is then discarded and its tab marked failed. One authoritative guard,
+   * enforced by the signature.
+   */
+  openRepoAt: (
+    path: string,
+    stillWanted: () => boolean,
+  ) => Promise<RepoHandle | null>;
   /** Replace every per-repo field with `slice` (activating a tab). Total write
    *  by contract — see repoSlice.ts. */
   hydrate: (slice: RepoSlice) => void;
@@ -389,23 +411,53 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       return { activity: next };
     });
   };
-  /** Open `path` into a freshly reset slice. Throws on failure. */
-  const applyOpenedRepo = async (path: string) => {
+  /**
+   * Open `path` into a freshly reset slice. Throws on failure.
+   *
+   * Answers null WITHOUT writing anything when the open turned out to be
+   * unwanted by the time it resolved. `open_repo` mints a fresh `RepoId` per
+   * call and only `close_repo` ever removes one, so two opens in flight at once
+   * (a session restore racing a `pgit <path>` launch intent, #177) are two live
+   * `git2::Repository`s of which exactly one is wanted. Whichever RESOLVED last
+   * used to win `current` regardless of which was asked for last — so the
+   * loser's handle became the store's open repository and was then evicted by
+   * the tab layer, leaving every later call answering `UnknownRepo` for the rest
+   * of the session with no banner to explain it (the diff pane silently dead,
+   * because `useLazyVerification` swallows its half).
+   *
+   * The guard sits BEFORE the first write on purpose: adopting first and
+   * cleaning up afterwards is exactly what made the orphan reachable.
+   */
+  const applyOpenedRepo = async (
+    path: string,
+    stillWanted: () => boolean,
+  ): Promise<RepoHandle | null> => {
     const handle = await openRepo(path);
+    if (!stillWanted()) {
+      // Nobody will ever use this handle and `open` never evicts on its own, so
+      // close it here — this is the only moment at which it is both known to be
+      // unwanted and still known at all.
+      void closeRepoIpc(handle.id).catch(() => {});
+      return null;
+    }
     useRecentsStore.getState().addRecent(handle.path);
     // Total write: every per-repo field is reset, so nothing of the previously
     // open repository can survive into this one (see repoSlice.ts).
     set({ ...emptySlice(), current: handle });
     await get().refreshAll();
+    return handle;
   };
   return ({
   ...emptySlice(),
 
-  async openRepoAt(path) {
+  async openRepoAt(path, stillWanted) {
     set({ loading: true, error: null });
     try {
-      await applyOpenedRepo(path);
-      return get().current;
+      // The handle THIS call opened, never `get().current`: a superseded open
+      // resolves with the winner's repository sitting in `current`, and handing
+      // that back would have the caller evict the live repository as if it were
+      // the abandoned one (#177).
+      return await applyOpenedRepo(path, stillWanted);
     } catch (e) {
       // git refuses a repository owned by another user, which a Windows drive
       // mounted under WSL routinely looks like. That refusal is remediable,
@@ -420,8 +472,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
             await trustRepoPath(target);
             // Deliberately not recursive: one retry. If the exception did not
             // help, show the error rather than asking again forever.
-            await applyOpenedRepo(path);
-            return get().current;
+            return await applyOpenedRepo(path, stillWanted);
           } catch (retryError) {
             set({ loading: false, error: toAppError(retryError) });
             return null;
