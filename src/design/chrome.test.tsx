@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 const platformMock = vi.hoisted(() => vi.fn());
@@ -7,7 +7,7 @@ vi.mock("@/lib/platform", () => ({
   __esModule: true,
 }));
 
-import { PGTitlebar } from "./chrome";
+import { PGTabStrip, PGTitlebar, type PGTabItem } from "./chrome";
 
 beforeEach(() => {
   platformMock.mockReset();
@@ -47,5 +47,79 @@ describe("PGTitlebar", () => {
     const { container } = render(<PGTitlebar repoName="demo" branch="main" />);
     const root = container.querySelector("[data-tauri-drag-region]");
     expect(root).not.toBeNull();
+  });
+});
+
+// ── PGTabStrip: the `+` placement (issue 178) ──────────────────────────────
+
+/** jsdom implements no scrollIntoView, so the effect's optional call is a
+ *  no-op there. Install one that records its receiver — WHICH element the
+ *  strip scrolls to is the whole of decision 3. */
+function trackScrollIntoView(): { calls: Element[]; restore: () => void } {
+  const proto = Element.prototype as unknown as {
+    scrollIntoView?: (arg?: unknown) => void;
+  };
+  const prev = proto.scrollIntoView;
+  const calls: Element[] = [];
+  proto.scrollIntoView = function (this: Element) {
+    calls.push(this);
+  };
+  return {
+    calls,
+    restore: () => {
+      if (prev) proto.scrollIntoView = prev;
+      else delete proto.scrollIntoView;
+    },
+  };
+}
+
+function stripTabs(activeIndex: number): PGTabItem[] {
+  return ["/repos/alpha", "/repos/beta", "/repos/gamma"].map((id, i) => ({
+    id,
+    label: id.split("/").pop() as string,
+    active: i === activeIndex,
+  }));
+}
+
+describe("PGTabStrip", () => {
+  let tracked: { calls: Element[]; restore: () => void } | null = null;
+
+  afterEach(() => {
+    tracked?.restore();
+    tracked = null;
+  });
+
+  it("puts the + immediately after the last tab, in the same scroller", () => {
+    const { container } = render(<PGTabStrip tabs={stripTabs(0)} />);
+    const plus = screen.getByTestId("repo-tab-new");
+    const rows = Array.from(container.querySelectorAll('[data-testid="repo-tab"]'));
+    const last = rows[rows.length - 1];
+
+    expect(last.nextElementSibling).toBe(plus);
+    // Same parent as the tabs = inside the overflow-x scroller, so it travels
+    // with them instead of pinning to the strip's right edge (issue 178).
+    expect(plus.parentElement).toBe(last.parentElement);
+  });
+
+  it("draws no left border — the tab's own right border is the divider", () => {
+    render(<PGTabStrip tabs={stripTabs(0)} />);
+    const style = screen.getByTestId("repo-tab-new").getAttribute("style") ?? "";
+    expect(style).not.toContain("border-left");
+  });
+
+  it("reveals the + when the LAST tab is active, not just that tab", () => {
+    tracked = trackScrollIntoView();
+    render(<PGTabStrip tabs={stripTabs(2)} />);
+    // Scrolling the last tab into view stops at its right edge and clips the
+    // button that follows it; the button is the scroller's final child, so
+    // aiming at it scrolls to the end and shows both.
+    expect(tracked.calls).toEqual([screen.getByTestId("repo-tab-new")]);
+  });
+
+  it("still scrolls the active tab into view when it is not the last", () => {
+    tracked = trackScrollIntoView();
+    const { container } = render(<PGTabStrip tabs={stripTabs(1)} />);
+    const rows = Array.from(container.querySelectorAll('[data-testid="repo-tab"]'));
+    expect(tracked.calls).toEqual([rows[1]]);
   });
 });
