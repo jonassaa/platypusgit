@@ -126,6 +126,18 @@ export interface PGTabItem {
  * (see CLAUDE.md's density rule). The strip owns its own `overflow-x`, and each
  * tab is `flexShrink: 0` with a max width, so a long tab list scrolls INSIDE
  * the strip and can never widen the window (the shell is a fixed frame).
+ *
+ * The `+` sits INSIDE that scroller, immediately after the last tab (issue 178),
+ * where browsers and editors put it — not pinned to the far right, which is the
+ * overflow layout applied unconditionally and leaves a window-wide gap at two
+ * tabs. Consequence, accepted: once the tabs overflow, the button scrolls off
+ * with them. It is then no less reachable than the tabs themselves — you are
+ * already scrolling the strip to see those — and "Open repository…" also has
+ * ⌘O, the palette and the Welcome screen, none of which the strip owns. The
+ * alternative (pin it whenever the strip overflows) means measuring
+ * `scrollWidth` vs `clientWidth` on every tab change and window resize to pick
+ * between two layouts, on a webview with no `ResizeObserver` — a measurement
+ * trap this codebase has paid for twice, for a button with three other doors.
  */
 export function PGTabStrip({
   tabs,
@@ -141,15 +153,24 @@ export function PGTabStrip({
   onTabContextMenu?: (id: string, e: React.MouseEvent) => void;
 }) {
   const activeRef = React.useRef<HTMLDivElement | null>(null);
+  const newRef = React.useRef<HTMLButtonElement | null>(null);
   const activeId = tabs.find((t) => t.active)?.id ?? null;
+  const lastId = tabs.length ? tabs[tabs.length - 1].id : null;
   // Keep the active tab reachable after a keyboard switch into an off-screen
   // tab. `inline: "nearest"` scrolls the strip, never the page.
   React.useEffect(() => {
+    // The `+` lives INSIDE the scroller, after the last tab, so scrolling that
+    // tab into view stops at its right edge and leaves the button clipped.
+    // Aim at the button whenever the last tab is the active one: it is the
+    // scroller's final child, so "make it visible" IS "scroll to the end",
+    // which reveals the tab as well.
+    const target =
+      activeId !== null && activeId === lastId ? newRef.current : activeRef.current;
     // Optional call: jsdom has no scrollIntoView, and this is presentation —
     // unlike a viewport MEASUREMENT, skipping it changes nothing but the scroll
     // position (see CLAUDE.md on why measurements must not be guarded).
-    activeRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [activeId]);
+    target?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeId, lastId]);
 
   return (
     <div
@@ -280,26 +301,30 @@ export function PGTabStrip({
             </button>
           </div>
         ))}
+        {/* Immediately after the last tab, INSIDE the scroller — see the
+            component doc for why it scrolls away with the tabs rather than
+            pinning to the right edge. No `borderLeft`: the tab it follows
+            already draws a `borderRight`, and the two rendered a double line. */}
+        <button
+          ref={newRef}
+          data-testid="repo-tab-new"
+          title="Open repository…"
+          onClick={onNew}
+          style={{
+            flexShrink: 0,
+            width: 28,
+            background: "transparent",
+            border: "none",
+            color: "var(--fg-2)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <PGIcon name="plus" size={12} />
+        </button>
       </div>
-      <button
-        data-testid="repo-tab-new"
-        title="Open repository…"
-        onClick={onNew}
-        style={{
-          flexShrink: 0,
-          width: 28,
-          background: "transparent",
-          border: "none",
-          borderLeft: "1px solid var(--border-0)",
-          color: "var(--fg-2)",
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <PGIcon name="plus" size={12} />
-      </button>
     </div>
   );
 }
