@@ -24,6 +24,11 @@ services:
     environment:
       CARGO_BUILD_JOBS: "2"
       CARGO_PROFILE_DEV_DEBUG: "0"
+      # Reproduce ONE CI shard locally: `E2E_SHARD=2 E2E_SHARDS=4 pnpm
+      # test:e2e:docker run`. Unset on the host means unset in the container,
+      # which is the unsharded whole-suite run (issue 189).
+      E2E_SHARD: "${E2E_SHARD:-}"
+      E2E_SHARDS: "${E2E_SHARDS:-}"
     volumes:
       # Source is bind-mounted so host edits are picked up without a rebuild.
       - .:/app

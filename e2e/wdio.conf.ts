@@ -2,6 +2,7 @@ import path from "node:path";
 import type { TauriCapabilities } from "@wdio/tauri-service";
 import { $, browser } from "@wdio/globals";
 import { armDriverBridge, ensureMacAppFocus } from "./support/app";
+import { listSpecFiles, shardFromEnv, shardSpecs } from "./shardSpecs";
 
 // The app registers tauri-plugin-single-instance; a test binary starting
 // while any platypusgit instance runs would forward-and-exit instead of
@@ -24,9 +25,39 @@ const tauriCapability: TauriCapabilities = {
   },
 };
 
+// One runner cannot run two app instances (an e2e-feature binary serves
+// WebDriver on a fixed port), so `maxInstances` has to stay 1 and the suite is
+// parallelised across CI RUNNERS instead: the workflow's matrix sets E2E_SHARD /
+// E2E_SHARDS and each job runs its own slice (issue 189). With neither set —
+// every local and Docker run — `specs` keeps the plain glob and the run is
+// byte-for-byte what it was. See e2e/shardSpecs.ts for the split itself.
+const shard = shardFromEnv(process.env);
+const specs = shard
+  ? shardSpecs(
+      listSpecFiles(path.resolve(import.meta.dirname, "./specs")),
+      shard.shard,
+      shard.total,
+    )
+  : ["./specs/**/*.e2e.ts"];
+
+if (shard) {
+  // The one line that makes a shard failure reproducible: it names the exact
+  // slice, so `--spec` can replay it locally.
+  console.log(
+    `[e2e] shard ${shard.shard}/${shard.total}: ${specs.length} spec(s)\n` +
+      specs.map((s) => `  ${path.basename(s)}`).join("\n"),
+  );
+  if (specs.length === 0) {
+    throw new Error(
+      `shard ${shard.shard}/${shard.total} resolved to no specs — more shards ` +
+        "than spec files, or e2e/specs/ is empty",
+    );
+  }
+}
+
 export const config: WebdriverIO.Config = {
   runner: "local",
-  specs: ["./specs/**/*.e2e.ts"],
+  specs,
   maxInstances: 1,
   capabilities: [tauriCapability],
   services: [
@@ -82,6 +113,31 @@ export const config: WebdriverIO.Config = {
       timeout: 30_000,
       timeoutMsg: "app never rendered Welcome screen",
     });
+  },
+  // Leave the slate clean for the NEXT spec file in this job.
+  //
+  // A spec file gets a fresh app PROCESS but not a fresh app data dir, so
+  // localStorage survives between spec files — and `pg-open-repos` makes the
+  // next launch restore a repository instead of rendering Welcome, the screen
+  // the `before` hook above and every `openRepo` wait for. Two specs leave that
+  // key behind (`repo-tabs`, `open-persisted-screen`); today it never bites only
+  // because they also dispose their temp repos, so the restore fails and Welcome
+  // renders anyway. That is a property of two OTHER files, and sharding changes
+  // which spec follows which — so clear it here and the guarantee is structural.
+  //
+  // Deliberately at the END, and deliberately with NO refresh. Doing it in
+  // `before` instead cost ~30s per spec file and nearly DOUBLED the suite
+  // (measured: 528s -> 1064s over run 32246987758): the extra `browser.refresh()`
+  // re-rolled the reload race the conf documents above, and on Linux the W3C
+  // script timeout is uncapped, so each loss is a full 30s stall. Clearing
+  // after the last test needs no navigation, so it adds no refresh and no roll.
+  after: async () => {
+    try {
+      await browser.execute(() => localStorage.clear());
+    } catch {
+      // Session already gone (crashed spec). The next launch inherits whatever
+      // is on disk — exactly the pre-existing behaviour, so nothing to do.
+    }
   },
   // Heal mid-suite focus steals (another app grabbing foreground between
   // tests): one cheap execute per test when already focused, setFocus retry

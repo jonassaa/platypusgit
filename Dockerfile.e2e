@@ -5,8 +5,10 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Tauri/WebKitGTK build+run deps + xvfb — same apt set as the CI workflow,
-# plus curl/git/build-essential to bootstrap node & rust.
+# Tauri/WebKitGTK build+run deps + xvfb, plus curl/git/build-essential to
+# bootstrap node & rust. This container does BOTH phases in one image, so it
+# installs the union: CI's `TAURI_APT_BUILD_DEPS` (whose Depends already pull the
+# runtime libs) plus xvfb, which CI now installs only in the shard jobs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
       librsvg2-dev patchelf xvfb \

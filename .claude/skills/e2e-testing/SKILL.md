@@ -17,8 +17,18 @@ the `test:e2e:docker` wrapper, never directly on the host.
 pnpm test:e2e:docker full --spec e2e/specs/<file>  # build + run — REQUIRED after ANY src/ or src-tauri/ change
 pnpm test:e2e:docker run  --spec e2e/specs/<file>  # reuses this worktree's e2e/.bin snapshot — spec-only iterations
 pnpm test:e2e:docker                               # build + whole suite
+E2E_SHARD=2 E2E_SHARDS=4 pnpm test:e2e:docker run  # replay ONE CI shard (issue 189)
 pnpm exec tsc -p e2e/tsconfig.json --noEmit        # e2e typecheck gate (root tsc EXCLUDES e2e/)
 ```
+
+**CI runs the suite in four shards, one build.** `e2e/shardSpecs.ts` derives the
+slice from the files on disk and packs by measured duration, so a spec you ADD
+needs no edit there — it is picked up and weighted at the suite mean. Two things
+follow for debugging: a shard's log opens with the exact spec list it ran (replay
+it with `--spec`, or with the `E2E_SHARD` pair above), and `strategy` in
+`.github/workflows/e2e.yml` is where the shard count lives — `test/shardSpecs.test.ts`
+fails if the matrix and the splitter ever disagree about what runs. Unsharded
+(every local run) the conf keeps its plain glob.
 
 **Stale-binary trap:** the `run` phase tests whatever binary is in `e2e/.bin/`. A green run after touching `src/` proves nothing unless a `build`/`full` ran after the change. Plain `cargo build` silently rewrites `target/debug/platypusgit` WITHOUT `custom-protocol` (blank window) — that's why the snapshot exists. Close any running dev app first: debug builds all serve WebDriver on port 4445 and the runner may attach to the dev instance and clear its localStorage.
 
@@ -56,7 +66,29 @@ Two conf-level guards eliminate the historical "suite suddenly takes minutes" fl
 
 **Reload race:** after `browser.refresh()`, an immediate arm can land on the OUTGOING document (it also has `__TAURI__`), leaving the new page unarmed. The only trustworthy "navigation settled" signal is a matched WebDriver find. **Rule: any new `browser.refresh()` call site must wait for a real element, then call `armDriverBridge()` again** — see `resetApp`/`openRepo`/`waitRepoLoaded` for the pattern.
 
-**Flake bands:** healthy full suite ≈ 30s–1.5min. Sustained runs >2.5min, or single commands taking 5–30s, mean a guard above was lost or a new refresh site skipped the settle-gate pattern — check conf + the newest refresh site, not the specs.
+**Flake bands:** healthy full suite ≈ 30s–1.5min on macOS/WKWebView. Sustained runs >2.5min, or single commands taking 5–30s, mean a guard above was lost or a new refresh site skipped the settle-gate pattern — check conf + the newest refresh site, not the specs.
+
+**Under xvfb the band is different, and guard 2 does NOT apply there — so a
+stall costs the full 30s.** Measured (issue 189, run 32242497631): the whole
+suite is ~530s of spec time, and roughly **eight ~30s stalls** are inside that
+number. Every spec over 30s comes out as `n × 30` plus small change — `keymap`
+140s, `repo-tabs` 96s, `palette` 66s, then four in the 32–37s band — while the 18
+files with few refreshes total under 60s. WHICH specs pay moves run to run,
+because it is the reload race, not the spec. So:
+
+- **A ~30s multiple in a spec time is the race, not your selector.** Do not go
+  hunting a 5s selector penalty for it.
+- **Every `browser.refresh()` you add is another roll of that die.** Adding one
+  per spec file (a `resetApp()` in the conf `before` hook) took the suite from
+  528s to **1064s** — measured, run 32246987758, and reverted. Prefer a
+  no-navigation alternative whenever one exists.
+- Under the stalls the residual cost is real work: the heavy specs call
+  `openRepo()` once per `it()` (`keymap` 28×), and one of those is refresh +
+  re-arm + repo open + syncing settle.
+
+A per-shard time near its own `WEIGHTS` entry (`e2e/shardSpecs.ts`) is healthy; a
+3× jump on a shard whose specs you did not touch is the bridge or a new refresh
+site, and that is when to reread this section.
 
 ## Focus self-heal (macOS — `ensureMacAppFocus`, don't remove)
 
