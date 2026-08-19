@@ -24,16 +24,34 @@ function sameRange(a: WindowRange, b: WindowRange): boolean {
 /**
  * Exact variable-height window over `heights`, bound to a scroll container.
  *
- * Returns the window plus the scroll handler to attach. The window is
- * recomputed on scroll (from the ref, no state write unless it changed) and
- * whenever `heights` / `viewportH` change (new file, syntax arrival, layout).
+ * Returns the window, the scroll handler to attach, and `scrollTo` — which a
+ * PROGRAMMATIC scroll should go through. The window is recomputed on scroll (from
+ * the ref, no state write unless it changed) and whenever `heights` / `viewportH`
+ * change (new file, syntax arrival, layout).
+ *
+ * **A programmatic `scrollTop` write is not a scroll event you can count on**, and
+ * that is why `scrollTo` exists (issue 188). MEASURED on WebKitGTK 605 under xvfb:
+ * an `el.scrollTop = 1881` assignment made inside an effect left the DOM scrolled
+ * and `win` still describing the TOP of the file — start 0, one spacer — for
+ * seconds, until an unrelated re-render happened to recompute it during render.
+ * The target row is unmounted for that whole time, so anything waiting on it (F7's
+ * `data-hunk-active`, the line cursor's focus ring, the issue-188 auto-open) sees
+ * nothing at all, on the engine CI runs. It works often enough elsewhere to look
+ * fine: the syntax tokens usually land right after and rebuild `heights`, which
+ * recomputes the window from the ref — but a cache hit removes even that.
+ *
+ * Two programmatic scrolls still write `scrollTop` directly and inherit the same
+ * hazard, both outside this change's blast radius and neither yet observed to
+ * misbehave: `FocusableScroll`'s Home/End and `DiffMinimap`'s scrub. Both would
+ * need this handle threaded to them; route them through here when one of them is
+ * next touched rather than as a drive-by.
  */
 export function useVariableWindow(o: {
   heights: number[];
   viewportH: number;
   overscan?: number;
   scrollRef: React.RefObject<HTMLElement | null>;
-}): { win: WindowRange; onScroll: () => void } {
+}): { win: WindowRange; onScroll: () => void; scrollTo: (top: number) => void } {
   const { heights, viewportH, overscan = 8, scrollRef } = o;
   const scrollTopRef = React.useRef(0);
   const [win, setWin] = React.useState<WindowRange>(() =>
@@ -72,5 +90,18 @@ export function useVariableWindow(o: {
     setWin((p) => (sameRange(p, next) ? p : next));
   }, [heights, viewportH, overscan, scrollRef]);
 
-  return { win, onScroll };
+  // Assign AND publish, in one call, so a programmatic scroll never depends on
+  // the engine dispatching an event for it. A real user scroll still arrives
+  // through `onScroll`; this is the same computation, just not waiting.
+  const scrollTo = React.useCallback(
+    (top: number) => {
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollTop = top;
+      onScroll();
+    },
+    [onScroll, scrollRef],
+  );
+
+  return { win, onScroll, scrollTo };
 }

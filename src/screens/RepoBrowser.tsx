@@ -81,7 +81,11 @@ import {
   useHunkActionsDisabledReason,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
-import { useDiffGaps, useExpandedGaps } from "@/features/diff/useDiffGaps";
+import {
+  diffOpenReady,
+  useDiffGaps,
+  useExpandedGaps,
+} from "@/features/diff/useDiffGaps";
 import {
   PGPane,
   FocusableScroll,
@@ -675,7 +679,11 @@ export function RepoBrowserScreen() {
   // Measured on the WRAPPER holding the scroll area and the minimap, so adding
   // the gutter cannot change the width that decides whether to add it (#161).
   const diffBox = useElementSize();
-  const { win: diffWin, onScroll: onDiffScroll } = useVariableWindow({
+  const {
+    win: diffWin,
+    onScroll: onDiffScroll,
+    scrollTo: scrollDiffTo,
+  } = useVariableWindow({
     heights: diffHeights,
     viewportH: diffViewportH,
     scrollRef: diffScrollRef,
@@ -685,22 +693,46 @@ export function RepoBrowserScreen() {
   // Scroll BY OFFSET — the anchor row is usually unmounted under windowing.
   const diffAnchorRows = React.useMemo(() => hunkAnchorRows(diffRows), [diffRows]);
   const scrollToHunk = React.useCallback(
-    (hunkIndex: number) => {
+    (hunkIndex: number): boolean => {
       const el = diffScrollRef.current;
       const rowIndex = diffAnchorRows[hunkIndex];
-      if (!el || rowIndex == null || rowIndex < 0) return;
-      el.scrollTop = scrollTopForRow(diffHeights, rowIndex, {
+      if (!el || rowIndex == null || rowIndex < 0) return false;
+      // Through the window's own setter — see `useVariableWindow.scrollTo`.
+      const want = scrollTopForRow(diffHeights, rowIndex, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
       });
+      scrollDiffTo(want);
+      // Confirm the write: a container shorter than the offset CLAMPS it (a pane
+      // mid-refetch is), and a reveal that did not land must not count as this
+      // file having been opened — see `useHunkNav`'s `scrollToHunk`.
+      return Math.abs(el.scrollTop - want) <= 1;
     },
-    [diffAnchorRows, diffHeights],
+    [diffAnchorRows, diffHeights, scrollDiffTo],
   );
   const hunkCursor = useHunkNav({
     paneIds: ["repo.tree", "repo.preview"],
     count: isTextualDiff(diff) && diff ? diff.hunks.length : 0,
     resetKey: selectedFile?.path ?? null,
     scrollToHunk,
+    ready: diffOpenReady({
+      // The fetch is async, so this pane renders once with the outgoing file's
+      // rows while the selection already names the new one.
+      diffFor: diff?.path,
+      showing: selectedFile?.path,
+      rowCount: diffRows.length,
+      viewportH: diffViewportH,
+      gaps: browserGaps,
+      text: browserText,
+    }),
+    // NO `files` here, deliberately (issue 188). This pane's list is a TREE of
+    // every tracked file, not a changed set, so "the next file" would have to mean
+    // "the next file with changes" — a different list from the one the tree
+    // renders and the one the reader is navigating, so the selection would jump
+    // past rows they never asked to skip. It can also be showing a REVISION,
+    // where the pane is a preview rather than a change set, and a tree's "next"
+    // is not even defined without expanding folders. F7 stays inside the file
+    // here; the changed-file surfaces are where crossing belongs.
   });
   const stageHunkAt = React.useCallback((i: number) => {
     const path = selectedFile?.path;
@@ -724,8 +756,11 @@ export function RepoBrowserScreen() {
     },
     [selectedFile?.path],
   );
-  // Decline rather than guess at hunk 0 when the cursor has not moved: Discard is
+  // Decline rather than guess at hunk 0 when there is no cursor at all: Discard is
   // destructive, and ignore-whitespace makes hunk indices unusable (#61 D2).
+  // Since issue 188 an opened diff usually HAS a cursor at 0 — marked and scrolled
+  // to, so acting on it is not a guess. `< 0` still covers an unmeasured pane and
+  // a diff with no hunks.
   useAction(
     "diff.stageHunk",
     () => {

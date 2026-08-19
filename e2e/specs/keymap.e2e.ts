@@ -500,16 +500,18 @@ describe("keymap — rider preset (default)", () => {
     // scrolls it into view; requiring it here would fail for a reason that has
     // nothing to do with the keymap. The F7 sequence below proves both hunks
     // exist, and now also that F7's scroll-into-view works.
-    await $('[data-hunk-index="0"]').waitForDisplayed({
+    //
+    // Hunk 0 arrives ALREADY ACTIVE since issue 188: the screen opens at its
+    // first change, so the cursor starts there rather than at -1 and the first
+    // F7 moves to the SECOND change (Rider's behaviour). That the diff opens
+    // there at all is diff-nav.e2e.ts's subject; this test's subject is that
+    // F7/⇧F7 still walk from wherever the cursor is.
+    await $('[data-hunk-index="0"][data-hunk-active]').waitForDisplayed({
       timeout: 20_000, timeoutMsg: "first hunk never rendered — fixture geometry off?",
     });
     await jsChord("F7");
-    await $('[data-hunk-index="0"][data-hunk-active]').waitForDisplayed({
-      timeout: 10_000, timeoutMsg: "first F7 did not activate hunk 0",
-    });
-    await jsChord("F7");
     await $('[data-hunk-index="1"][data-hunk-active]').waitForDisplayed({
-      timeout: 10_000, timeoutMsg: "second F7 did not advance to hunk 1",
+      timeout: 10_000, timeoutMsg: "F7 did not advance to hunk 1",
     });
     await jsChord("Shift+F7");
     await $('[data-hunk-index="0"][data-hunk-active]').waitForDisplayed({

@@ -82,7 +82,11 @@ import {
   useHunkActionsDisabledReason,
   useIgnoreWhitespace,
 } from "@/features/diff/WhitespaceToggle";
-import { useDiffGaps, useExpandedGaps } from "@/features/diff/useDiffGaps";
+import {
+  diffOpenReady,
+  useDiffGaps,
+  useExpandedGaps,
+} from "@/features/diff/useDiffGaps";
 import { buildStatusTree, findStatusByTreeKey, treeKeyToPath } from "@/lib/tree";
 import { useTreeViewMode } from "@/lib/useTreeViewMode";
 import {
@@ -620,17 +624,30 @@ export function CommitPanelScreen() {
   // Measured on the WRAPPER holding the scroll area and the minimap, so adding
   // the gutter cannot change the width that decides whether to add it (#161).
   const diffBox = useElementSize();
-  const { win, onScroll: onDiffScroll } = useVariableWindow({
+  const {
+    win,
+    onScroll: onDiffScroll,
+    scrollTo: scrollDiffTo,
+  } = useVariableWindow({
     heights,
     viewportH: diffViewportH,
     scrollRef: diffScrollRef,
   });
 
+  // The file+side the diff in state was FETCHED for. The two sides of one file are
+  // two different diffs, so a path alone cannot say whether `diff` is the
+  // selection's yet — and `diffOpenReady` needs to know, or the auto-open spends
+  // itself on the outgoing side's row model (issue 188).
+  const selKey = `${selected?.path ?? ""}:${selected?.side ?? ""}`;
+  const [diffFor, setDiffFor] = React.useState<string | null>(null);
+
   React.useEffect(() => {
     if (!selected || !repo) {
       setDiff(null);
+      setDiffFor(null);
       return;
     }
+    const key = `${selected.path}:${selected.side}`;
     const kind: DiffKind =
       selected.side === "staged" ? "IndexToHead" : "WorktreeToIndex";
     setDiffError(null);
@@ -638,6 +655,7 @@ export function CommitPanelScreen() {
     // one and rendering the backend's terse refusal.
     if (selected.status.embedded) {
       setDiff(null);
+      setDiffFor(null);
       setDiffLoading(false);
       setDiffError(`${selected.path} — ${EMBEDDED_REPO_HELP}`);
       return;
@@ -646,10 +664,16 @@ export function CommitPanelScreen() {
     setDiffLoading(true);
     getDiff(repo.id, selected.path, kind, diffContextLines, ignoreWhitespace)
       .then((d) => {
-        if (!cancelled) setDiff(d);
+        if (!cancelled) {
+          setDiff(d);
+          setDiffFor(key);
+        }
       })
       .catch((e) => {
-        if (!cancelled) setDiffError(appErrorMessage(e));
+        if (!cancelled) {
+          setDiffFor(null);
+          setDiffError(appErrorMessage(e));
+        }
       })
       .finally(() => {
         if (!cancelled) setDiffLoading(false);
@@ -686,16 +710,26 @@ export function CommitPanelScreen() {
   // so a DOM query would find nothing and arrow keys would stop scrolling with no
   // error (#68 G10). clientHeight is read live so the callback's identity does
   // not change with the viewport — usePaneList's scroll effect depends on it.
+  /** True when the row was actually addressed — see `useHunkNav`'s `scrollToHunk`. */
   const scrollDiffRowIntoView = React.useCallback(
-    (rowIndex: number) => {
+    (rowIndex: number): boolean => {
       const el = diffScrollRef.current;
-      if (!el) return;
-      el.scrollTop = scrollTopForRow(heights, rowIndex, {
+      if (!el) return false;
+      // Through the window's own setter — see `useVariableWindow.scrollTo`: a bare
+      // assignment leaves the rendered range at the old position until the engine
+      // dispatches a scroll event, and the row being scrolled to stays unmounted
+      // until it does (issue 188).
+      const want = scrollTopForRow(heights, rowIndex, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
       });
+      scrollDiffTo(want);
+      // Confirm the write: a container shorter than the offset CLAMPS it (a pane
+      // mid-refetch is), and a reveal that did not land must not count as this
+      // file having been opened — see `useHunkNav`'s `scrollToHunk`.
+      return Math.abs(el.scrollTop - want) <= 1;
     },
-    [heights],
+    [heights, scrollDiffTo],
   );
 
   /**
@@ -737,29 +771,69 @@ export function CommitPanelScreen() {
     onToggle: toggleFocusedLine,
   });
 
+  // ONE list across both sections, staged first — the rendered order. Declared
+  // here because both `usePaneList` (arrows) and `useHunkNav` (F7 carrying into
+  // the next file, issue 188) address the same list: two orderings for two
+  // keyboards is exactly the drift a shared list prevents.
+  const combined = React.useMemo(() => [...staged, ...unstaged], [staged, unstaged]);
+  const combinedIndex = Math.max(
+    0,
+    combined.findIndex((f) => selected && keyOf(f) === keyOf(selected)),
+  );
+
   // ── Hunk cursor + hunk-level chords (#157) ───────────────────────────────
   // This pane had no F7 at all before, so the `@@` banner's Stage/Discard was
   // mouse-only. Both now hang off the hunk cursor.
   const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
   const scrollToHunk = React.useCallback(
-    (hunkIndex: number) => {
+    (hunkIndex: number): boolean => {
       const rowIndex = anchorRows[hunkIndex];
-      if (rowIndex == null || rowIndex < 0) return;
-      scrollDiffRowIntoView(rowIndex);
+      if (rowIndex == null || rowIndex < 0) return false;
+      return scrollDiffRowIntoView(rowIndex);
     },
     [anchorRows, scrollDiffRowIntoView],
   );
   const hunkCursor = useHunkNav({
     paneIds: ["commit.diff"],
     count: isTextualDiff(diff) && diff ? diff.hunks.length : 0,
-    resetKey: `${selected?.path ?? ""}:${selected?.side ?? ""}`,
+    resetKey: selKey,
     scrollToHunk,
+    // Split mode renders no unified scroll container, and `useViewportH` keeps the
+    // last height it read rather than resetting to 0 when that element goes away.
+    ready:
+      diffMode !== "split" &&
+      diffOpenReady({
+        diffFor,
+        showing: selKey,
+        rowCount: rows.length,
+        viewportH: diffViewportH,
+        gaps,
+        text: diffText,
+      }),
+    // F7 CROSSES the staged/unstaged boundary, because `usePaneList` already
+    // treats the two sections as one list in this order — the arrows do it, so
+    // stopping the diff cursor at each end would be a second answer to the same
+    // question. `combined` is that one list (issue 188).
+    files: {
+      count: combined.length,
+      index: combined.findIndex((f) => selected && keyOf(f) === keyOf(selected)),
+      select: (i) => {
+        const f = combined[i];
+        if (f) setSel({ keys: [keyOf(f)], anchor: keyOf(f) });
+      },
+    },
   });
 
   /**
-   * Which hunk a hunk-level chord acts on: the F7 cursor when it has moved, else
+   * Which hunk a hunk-level chord acts on: the F7 cursor when there is one, else
    * the hunk the line cursor sits in. `null` declines the chord rather than
    * guessing at hunk 0 — Discard is destructive.
+   *
+   * Since issue 188 the cursor is usually 0 the moment the pane opens, because
+   * the diff opens AT its first change. That is not the guess this guard was
+   * written against: the cursor is marked (`data-hunk-active`) and scrolled to,
+   * so it is the hunk the reader is looking at. The `null` arm still covers the
+   * cases where nothing auto-opened — an unmeasured pane, or no hunks at all.
    */
   const chordHunk =
     hunkCursor >= 0 ? hunkCursor : (lineFocus.focused?.hunkIndex ?? null);
@@ -850,11 +924,6 @@ export function CommitPanelScreen() {
 
   // Keyboard: one selection across both sections (staged first, matching the
   // rendered order). Space stages/unstages the selected file, Rider-style.
-  const combined = React.useMemo(() => [...staged, ...unstaged], [staged, unstaged]);
-  const combinedIndex = Math.max(
-    0,
-    combined.findIndex((f) => selected && keyOf(f) === keyOf(selected)),
-  );
   usePaneList({
     paneId: "commit.files",
     count: combined.length,

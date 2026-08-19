@@ -12,7 +12,7 @@ import { MinimapGutter } from "./DiffMinimap";
 import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
-import { useDiffGaps, useExpandedGaps } from "./useDiffGaps";
+import { diffOpenReady, useDiffGaps, useExpandedGaps } from "./useDiffGaps";
 import { SignatureBadge } from "@/features/signing/SignatureBadge";
 import { useDiffSyntax, usePrefetchSyntax, type SideSource } from "@/lib/syntax";
 import {
@@ -207,7 +207,11 @@ export function CommitDiffPanel({
   // This is the panel that most often falls UNDER the threshold — History's
   // beside layout is ~480px — and it does so by width, not by being this panel.
   const diffBox = useElementSize();
-  const { win, onScroll: onDiffScroll } = useVariableWindow({
+  const {
+    win,
+    onScroll: onDiffScroll,
+    scrollTo: scrollDiffTo,
+  } = useVariableWindow({
     heights,
     viewportH,
     scrollRef,
@@ -217,22 +221,49 @@ export function CommitDiffPanel({
   // and scrolling goes BY OFFSET, because that row is usually unmounted (#157).
   const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
   const scrollToHunk = React.useCallback(
-    (hunkIndex: number) => {
+    (hunkIndex: number): boolean => {
       const el = scrollRef.current;
       const rowIndex = anchorRows[hunkIndex];
-      if (!el || rowIndex == null || rowIndex < 0) return;
-      el.scrollTop = scrollTopForRow(heights, rowIndex, {
+      if (!el || rowIndex == null || rowIndex < 0) return false;
+      // Through the window's own setter — see `useVariableWindow.scrollTo`.
+      const want = scrollTopForRow(heights, rowIndex, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
       });
+      scrollDiffTo(want);
+      // Confirm the write: a container shorter than the offset CLAMPS it (a pane
+      // mid-refetch is), and a reveal that did not land must not count as this
+      // file having been opened — see `useHunkNav`'s `scrollToHunk`.
+      return Math.abs(el.scrollTop - want) <= 1;
     },
-    [anchorRows, heights],
+    [anchorRows, heights, scrollDiffTo],
   );
   const hunkCursor = useHunkNav({
     paneIds: [filesPaneId, viewPaneId],
     count: current?.hunks.length ?? 0,
     resetKey: selected,
     scrollToHunk,
+    ready: diffOpenReady({
+      // `current` falls back to `diffs[0]` while `selected` is still the previous
+      // commit's file, so these disagree for exactly the renders where the row
+      // model is not the selection's yet.
+      diffFor: current?.path,
+      showing: selected,
+      rowCount: rows.length,
+      viewportH,
+      gaps,
+      text: diffText,
+    }),
+    // This panel's list is the commit's own changed files, and it owns the
+    // selection, so moving it moves both panes (issue 188).
+    files: {
+      count: diffs.length,
+      index: diffs.findIndex((d) => d.path === current?.path),
+      select: (i) => {
+        const d = diffs[i];
+        if (d) setSelected(d.path);
+      },
+    },
   });
 
   // Per mount site: History's bottom panel is wide and short, the full-screen
