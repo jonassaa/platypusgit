@@ -7,9 +7,12 @@ import {
   labelTabs,
   loadOpenRepos,
   newTab,
+  findTab,
+  indexOfTab,
   patchTab,
   removeTab,
   repoDisplayName,
+  repoPathKey,
   saveOpenRepos,
   upsertTab,
   type RepoTab,
@@ -79,6 +82,44 @@ describe("tabs — list reducers", () => {
     it("is null with no tabs", () => {
       expect(cycle([], null, 1)).toBeNull();
     });
+  });
+});
+
+describe("tabs — path identity (#177)", () => {
+  it("one spelling for a repository, whatever the producer wrote", () => {
+    // libgit2's `workdir()` — and so a `pgit <path>` launch intent — carries a
+    // trailing separator; `open_repo` answers without one.
+    expect(repoPathKey("/dev/api/")).toBe("/dev/api");
+    expect(repoPathKey("/dev/api//")).toBe("/dev/api");
+    expect(repoPathKey("C:\\dev\\api\\")).toBe("C:\\dev\\api");
+    expect(repoPathKey("/dev/api")).toBe("/dev/api");
+  });
+
+  it("leaves a separators-only path alone", () => {
+    // Trimming would make these a DIFFERENT path, not a tidier spelling: "" is
+    // nothing, and a bare `C:` is drive-RELATIVE on Windows.
+    expect(repoPathKey("/")).toBe("/");
+    expect(repoPathKey("C:\\")).toBe("C:\\");
+  });
+
+  it("two spellings of one repository are ONE tab", () => {
+    let tabs = [t("/dev/api")];
+    // The bug: this second spelling used to append a second tab, and its open
+    // minted a second RepoId that nothing ever closed.
+    tabs = upsertTab(tabs, t("/dev/api/"));
+    expect(tabs).toHaveLength(1);
+    expect(indexOfTab(tabs, "/dev/api/")).toBe(0);
+    expect(findTab(tabs, "/dev/api/")?.path).toBe("/dev/api");
+    expect(removeTab(tabs, "/dev/api/")).toEqual([]);
+    expect(patchTab(tabs, "/dev/api/", { repoId: "r1" })[0].repoId).toBe("r1");
+  });
+
+  it("a persisted set holding both spellings restores as one repository", () => {
+    localStorage.setItem(
+      OPEN_REPOS_KEY,
+      JSON.stringify({ paths: ["/dev/api", "/dev/api/"], active: "/dev/api/" }),
+    );
+    expect(loadOpenRepos()).toEqual({ paths: ["/dev/api"], active: "/dev/api" });
   });
 });
 
