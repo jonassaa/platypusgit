@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
+    "dev": "pnpm installers && astro dev",
+    "build": "pnpm installers && astro build",
     "preview": "astro preview",
+    "installers": "node scripts/copy-installers.mjs",
     "og": "node scripts/og-image.mjs",
     "screenshots": "node scripts/screenshots.mjs"
   },

@@ -4,7 +4,26 @@ import CTAButton from '../components/CTAButton.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 import OsIcon from '../components/OsIcon.astro';
 import { site, assets } from '../data/site.ts';
-import { descriptions, softwareApplicationSchema } from '../data/seo.ts';
+import { descriptions, softwareApplicationSchema, ORIGIN } from '../data/seo.ts';
+
+// The two installer URLs. Built from `site` in astro.config.mjs rather than
+// spelled out, so the copy people pipe into a shell cannot drift from the
+// canonical origin (the apex domain 301s to www — a redirect a reader of the
+// command should not have to reason about). The files themselves are copied
+// into public/ by scripts/copy-installers.mjs at build time; there is no
+// committed second copy to fall behind scripts/install-pgit.*.
+const installBase = Astro.site ?? new URL(ORIGIN);
+const installShUrl = new URL('install-pgit.sh', installBase).href;
+const installPs1Url = new URL('install-pgit.ps1', installBase).href;
+
+const cliUnix = `curl -fsSL ${installShUrl} | sh`;
+const cliWindows = `irm ${installPs1Url} | iex`;
+const cliUnixAudit = `curl -fsSL ${installShUrl} -o install-pgit.sh
+less install-pgit.sh        # read it, then run it
+sh install-pgit.sh`;
+const cliWindowsAudit = `irm ${installPs1Url} -OutFile install-pgit.ps1
+notepad install-pgit.ps1    # read it, then run it
+powershell -ExecutionPolicy Bypass -File .\\install-pgit.ps1`;
 
 const buildSteps = `# Prerequisites: Node 22+, pnpm, Rust stable
 #   macOS:   xcode-select --install
@@ -58,7 +77,7 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
     <div class="method method-primary">
       <h3>Homebrew <span class="badge">Recommended</span></h3>
       <CodeBlock code={'brew install --cask jonassaa/platypusgit/platypusgit'} lang="bash" />
-      <p class="method-note">Taps the cask and installs the universal build straight into <code>/Applications</code>. The app is ad-hoc signed but not notarized — the cask clears the macOS Gatekeeper quarantine flag on install, so it launches with no "unidentified developer" prompt and there is nothing to run by hand.</p>
+      <p class="method-note">Taps the cask and installs the universal build straight into <code>/Applications</code> — and the <a href="#cli"><code>pgit</code> command</a> with it. The app is ad-hoc signed but not notarized — the cask clears the macOS Gatekeeper quarantine flag on install, so it launches with no "unidentified developer" prompt and there is nothing to run by hand.</p>
     </div>
 
     <div class="method method-primary">
@@ -70,7 +89,7 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 
     <div class="method">
       <h3>DMG (manual)</h3>
-      <p class="method-note">No Homebrew? Download the universal <code>.dmg</code> and drag <code>PlatypusGit.app</code> into <code>/Applications</code>. Updates are then manual — repeat the download for every release.</p>
+      <p class="method-note">No Homebrew? Download the universal <code>.dmg</code> and drag <code>PlatypusGit.app</code> into <code>/Applications</code>. Updates are then manual — repeat the download for every release. A drag-install runs no code, so the <a href="#cli"><code>pgit</code> command</a> is a separate one-liner.</p>
       <CTAButton href={assets.macosDmg} external>Download .dmg</CTAButton>
     </div>
 
@@ -91,7 +110,7 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 
     <div class="method">
       <h3>Installer (.msi)</h3>
-      <p class="method-note">Download the 64-bit <code>.msi</code> and run it.</p>
+      <p class="method-note">Download the 64-bit <code>.msi</code> and run it. It installs the <a href="#cli"><code>pgit</code> command</a> too, and puts it on your PATH.</p>
       <CTAButton href={assets.windowsMsi} external>Download .msi</CTAButton>
     </div>
 
@@ -110,16 +129,53 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 
     <div class="method">
       <h3>Debian / Ubuntu (.deb)</h3>
-      <p class="method-note">Download the package, then install it:</p>
+      <p class="method-note">Download the package, then install it — it ships <code>/usr/bin/pgit</code>, so the <a href="#cli"><code>pgit</code> command</a> works straight away:</p>
       <CodeBlock code={'sudo apt install ./PlatypusGit_amd64.deb'} lang="bash" />
       <CTAButton href={assets.linuxDeb} external>Download .deb</CTAButton>
     </div>
 
     <div class="method">
       <h3>AppImage (portable)</h3>
-      <p class="method-note">Download, make it executable, and run — no install needed:</p>
+      <p class="method-note">Download, make it executable, and run — no install needed. Nothing is installed, so the <a href="#cli"><code>pgit</code> command</a> is a separate one-liner:</p>
       <CodeBlock code={'chmod +x PlatypusGit_amd64.AppImage\n./PlatypusGit_amd64.AppImage'} lang="bash" />
       <CTAButton href={assets.linuxAppImage} external>Download .AppImage</CTAButton>
+    </div>
+  </section>
+
+  <!-- THE pgit COMMAND -->
+  <section class="container cli" id="cli">
+    <h2>The <code>pgit</code> command</h2>
+    <p class="lead"><code>pgit .</code> opens the repository you are standing in and hands the prompt straight back. <code>pgit log</code>, <code>pgit commit</code> and <code>pgit branches</code> open onto that screen; a path opens the repository containing it.</p>
+
+    <div class="notice">
+      <strong>Most installs already have it.</strong> The Homebrew cask, the Linux
+      <code>.deb</code> and the Windows <code>.msi</code> install <code>pgit</code> as part of
+      installing the app, and remove it again when you uninstall — there is nothing to run and
+      nothing to copy. Check with <code>pgit --help</code> in a new terminal. Only the macOS
+      <code>.dmg</code> and the Linux <code>.AppImage</code> run no install code — a drag-install
+      and a portable AppImage never execute a hook — so those two need the command below, or
+      <strong>Settings → Command line</strong> inside the app.
+    </div>
+
+    <div class="method">
+      <h3>macOS DMG &amp; Linux AppImage</h3>
+      <CodeBlock code={cliUnix} lang="bash" />
+      <p class="method-note">Links <code>pgit</code> to the app you already installed, from a directory you own — no <code>sudo</code>. If Homebrew or the <code>.deb</code> already put a <code>pgit</code> on your PATH, the script says so and exits without touching it.</p>
+    </div>
+
+    <div class="method">
+      <h3>Windows PowerShell</h3>
+      <CodeBlock code={cliWindows} lang="powershell" />
+      <p class="method-note">For the Windows installs the <code>.msi</code> does not cover: a build from source, an unpacked layout, or an <code>.msi</code> whose PATH change has not reached the shell you are in. Writes <code>pgit.cmd</code> into <code>%LOCALAPPDATA%\PlatypusGit\bin</code> and appends that directory to your <em>user</em> PATH — no admin rights, and nothing the machine PATH has to be edited for.</p>
+    </div>
+
+    <div class="method">
+      <h3>Read it before you run it</h3>
+      <p class="method-note">Piping a URL into a shell runs whatever that URL returns, so both scripts are plain text meant to be read first — <a href={installShUrl}>install-pgit.sh</a> and <a href={installPs1Url}>install-pgit.ps1</a> open in the browser, and the same files live in the repo under <a href={site.repo + '/tree/main/scripts'} target="_blank" rel="noopener">scripts/</a> (the site serves a build-time copy of exactly those bytes). Or download, inspect, then run:</p>
+      <CodeBlock code={cliUnixAudit} lang="bash" />
+      <p class="method-note method-note-tight">Windows PowerShell:</p>
+      <CodeBlock code={cliWindowsAudit} lang="powershell" />
+      <p class="method-note">Both take a dry run that prints what would happen and changes nothing: <code>curl -fsSL … | sh -s -- --dry-run</code>, or <code>-DryRun</code> for the PowerShell script.</p>
     </div>
   </section>
 
@@ -205,6 +261,13 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
     padding: 1px 5px; font-size: 12px; color: var(--fg-1); }
   .method-note a { color: var(--accent); }
 
+  .cli { margin-top: var(--s-11); padding-bottom: var(--s-9); border-bottom: 1px solid var(--border-0); scroll-margin-top: 72px; }
+  .cli h2 { font-size: 26px; margin: 0 0 var(--s-3); }
+  /* .notice is written for the top of the page, where it opens a section. */
+  .cli .notice { margin-top: var(--s-6); }
+  /* A label directly above its own code block, not a paragraph of prose. */
+  .method-note-tight { margin-top: var(--s-5); }
+
   .build { margin-top: var(--s-12); scroll-margin-top: 72px; }
   .build h2 { font-size: 26px; margin: 0 0 var(--s-3); }
   .build .lead { margin-bottom: var(--s-7); }
@@ -213,8 +276,9 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   @media (max-width: 720px) {
     .page-head { padding-top: var(--s-11); }
     .page-head h1 { font-size: 30px; }
-    .install-head h2, .build h2 { font-size: 22px; }
+    .install-head h2, .build h2, .cli h2 { font-size: 22px; }
     .install { margin-top: var(--s-10); }
+    .cli { margin-top: var(--s-10); }
     .build { margin-top: var(--s-11); }
     .notice { margin-top: var(--s-9); }
     .os-tabs { margin-top: var(--s-7); }
@@ -222,7 +286,7 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
   /* The nav becomes two rows at this width, so an anchored section landed
      underneath it with the 72px offset calibrated for the one-row bar. */
   @media (max-width: 640px) {
-    .install, .build { scroll-margin-top: 96px; }
+    .install, .build, .cli { scroll-margin-top: 96px; }
   }
   @media (max-width: 560px) {
     /* Three inline tabs at 18px side padding measured ~335px — wider than a
