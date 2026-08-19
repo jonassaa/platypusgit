@@ -11,7 +11,7 @@ import {
   type TempRepo, type RemotePair,
 } from "../support/tempRepo";
 import {
-  openRepo, resetApp, jsChord, jsDoubleShift, jsKey, jsSelectValue,
+  openRepo, resetApp, jsChord, jsDoubleShift, jsKey, jsPickOption,
   focusedPaneId, paletteDialog, paletteInput, changeRow, stagedRow,
   scrollCommitListTo, switchScreen,
 } from "../support/app";
@@ -522,7 +522,7 @@ describe("keymap — rider preset (default)", () => {
     await openRepo(repo.path);
     await jsChord("Mod+,");
     await waitScreen("div*=Choose a keymap preset", "Settings");
-    await jsSelectValue('[data-testid="keymap-preset-select"]', "platypusgit");
+    await jsPickOption('[data-testid="keymap-preset-select"]', "platypusgit");
     const persisted = await browser.execute(() =>
       localStorage.getItem("pg-keymap-preset"),
     );

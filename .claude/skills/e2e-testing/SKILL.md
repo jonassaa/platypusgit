@@ -73,6 +73,19 @@ Fix in tree: `ensureMacAppFocus()` (`e2e/support/app.ts`) — if the page report
 | Row by identity | `[data-testid="…"][data-path="…"]` or attr+text `[data-branch-row]*=main` | index/nth selectors |
 | Dialog option | `dialog.$('label*=Option title')` | `div*=` inside dialogs (matches the outer wrapper — XPath `contains(., t)` uses concatenated descendant text) |
 
+**A descendant `data-testid` must not START WITH its container's.** WebdriverIO
+compiles `[data-testid="row"]*=text` to
+`.//*[contains(@data-testid, "row") and contains(., "text") and not(.//*[contains(@data-testid, "row")])]`
+— the attribute test is a **substring** match, and the `not(...)` keeps only the
+innermost hit. So a child testid like `row-action` satisfies the container's own
+condition, the `not(...)` goes false, and the row matches **nothing**, silently:
+`waitForDisplayed` just reports your `timeoutMsg`. Bit issue 146's PR — a
+`rebase-row-action` picker added inside `rebase-row` broke "plan row missing"
+2 runs out of 2, while the pre-existing `rebase-row-badge` had hidden the same
+trap for months because it only renders on a merge row. Name children with a
+different stem (`rebase-action`, `rebase-badge`), and note that this is invisible
+to `pnpm test` — jsdom's `getByTestId` is an exact-match CSS lookup.
+
 **Substring traps (both happened):** `span*=conflict` matched the filename `conflict.txt`, making a status-badge assertion vacuous — fixed to `span*=1 conflict`. Pick text unique across the whole screen INCLUDING file names the fixture creates. `button*=Go` inside a dialog is fine only because Cancel/Go are the only buttons — verify scope before trusting short substrings.
 
 Adding hooks: `PGButton`/`PGInput` spread `...rest` (pass `data-testid` directly). `PGIconButton` does NOT (title only). Design-system rows need an explicit prop threaded. One screen mounts at a time, so testids may repeat across screens.
@@ -102,9 +115,16 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
 - The store reads status at `openRepo`; **dirty files must exist on disk BEFORE openRepo** or the UI won't know.
 - History defaults to HEAD-reachable commits. Unmerged-ref commits need the
   toolbar ref selector (`[data-testid="history-ref-select"]`) to scope the log
-  first — drive it with `jsSelectValue`, NEVER `selectByAttribute`: WebKitGTK
-  under xvfb accepts the option click without firing a React-visible change
-  event, so the onChange never runs (bit PR #40 on CI).
+  first — drive it with `jsPickOption`, never a WebDriver select action. There
+  is no native `<select>` left in the app (issue 146): every dropdown is a
+  `role="combobox"` trigger plus a portalled `[data-pg-listbox]`, so a pick is
+  "mousedown the trigger, wait for the option, click it" — which is what
+  `jsPickOption` does, in-page, for the same reason `jsContextMenu` is in-page.
+  `jsPickOption(sel, value, { within, text })` narrows to one instance when
+  several are mounted (the Rebase plan mounts one picker per row). It replaced
+  `jsSelectValue`, which existed because WebKitGTK under xvfb accepted the
+  `<option>` click WITHOUT firing a React-visible change event (bit PR #40 on
+  CI) — a trap that no longer has a subject.
 - Root commit's "Interactive rebase from here" silently no-ops.
 - `remoteRepo()` pairs a work repo with a local bare `origin`. `makeBehind`
   rewinds `refs/remotes/origin/main` so fetch has something to discover —

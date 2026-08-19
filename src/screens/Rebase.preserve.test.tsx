@@ -7,6 +7,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { mockInvoke } from "@/test/invokeMock";
 import type { CommitInfo, RebaseStatus, RepoHandle } from "@/lib/types";
+import { pgSelectTrigger, pgSelectValues } from "@/test/select";
 
 const handle: RepoHandle = { id: "repo-1", path: "/tmp/fake-repo", head: "refs/heads/main" };
 const SWEPT: RebaseStatus = { inProgress: false, nextIndex: 0, total: 0, pauseReason: null };
@@ -76,9 +77,7 @@ describe("RebaseScreen preserve mode", () => {
     const rows = screen.getAllByTestId("rebase-row");
     const mergeRow = rows.find((r) => r.getAttribute("data-sha") === M.slice(0, 7))!;
     expect(mergeRow.getAttribute("data-action")).toBe("Merge");
-    expect(
-      [...mergeRow.querySelectorAll("option")].map((o) => o.getAttribute("value")),
-    ).toEqual(["Merge", "Drop"]);
+    expect(pgSelectValues(pgSelectTrigger(mergeRow))).toEqual(["Merge", "Drop"]);
   });
 
   it("states the cost of preserving and disables reordering", async () => {

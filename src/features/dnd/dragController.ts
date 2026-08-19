@@ -270,7 +270,8 @@ export function beginDrag(e: React.PointerEvent, payload: DragPayload): void {
   if (e.button !== 0 || gesture) return;
   const target = e.target as HTMLElement | null;
   // Controls own their own pointer semantics (the staging checkbox, a row's
-  // <select>, the message textarea). Same opt-out list as useRowReorder.
+  // action picker, the message textarea). Same opt-out list as useRowReorder.
+  // `input` covers PGSelect: its trigger is an <input readonly> (issue 146).
   if (target?.closest?.(CONTROLS)) return;
 
   gesture = {

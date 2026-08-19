@@ -7,6 +7,7 @@ import { useForgeStore } from "./useForgeStore";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
 import type { BranchInfo, ForgeKind, PullRequest } from "@/lib/types";
+import { pgPickOption, pgSelectValues } from "@/test/select";
 
 function branch(name: string, isHead = false): BranchInfo {
   return {
@@ -80,9 +81,10 @@ describe("CreatePullRequestDialog", () => {
       "feat/forge-integration",
     );
     expect(screen.getByTestId("create-pr-target")).toHaveValue("main");
-    const options = [...screen.getByTestId("create-pr-target").querySelectorAll("option")]
-      .map((o) => o.getAttribute("value"));
-    expect(options).toEqual(["main", "develop"]);
+    expect(pgSelectValues(screen.getByTestId("create-pr-target"))).toEqual([
+      "main",
+      "develop",
+    ]);
   });
 
   it("uses GitLab's wording for a GitLab project", () => {
@@ -109,7 +111,7 @@ describe("CreatePullRequestDialog", () => {
     await userEvent.clear(screen.getByTestId("create-pr-title"));
     await userEvent.type(screen.getByTestId("create-pr-title"), "PR / MR integration");
     await userEvent.type(screen.getByTestId("create-pr-body"), "why this change");
-    await userEvent.selectOptions(screen.getByTestId("create-pr-target"), "develop");
+    pgPickOption(screen.getByTestId("create-pr-target"), "develop");
     await userEvent.click(screen.getByTestId("create-pr-draft"));
     await userEvent.click(screen.getByTestId("create-pr-submit"));
 

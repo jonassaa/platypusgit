@@ -6,6 +6,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { mockInvoke } from "@/test/invokeMock";
 import type { CommitInfo, RebaseStatus, RepoHandle } from "@/lib/types";
+import { pgSelectTrigger, pgSelectValues } from "@/test/select";
 
 const handle: RepoHandle = { id: "repo-1", path: "/tmp/fake-repo", head: "refs/heads/main" };
 const SWEPT: RebaseStatus = { inProgress: false, nextIndex: 0, total: 0, pauseReason: null };
@@ -79,12 +80,12 @@ describe("RebaseScreen with merge commits in the plan", () => {
     const mergeRow = rows.find((r) => r.getAttribute("data-sha") === M.slice(0, 7));
     expect(mergeRow).toBeDefined();
     expect(
-      mergeRow!.querySelector('[data-testid="rebase-row-badge"]')?.textContent,
+      mergeRow!.querySelector('[data-testid="rebase-badge"]')?.textContent,
     ).toBe("merge");
-    const values = [...mergeRow!.querySelectorAll("option")].map((o) =>
-      o.getAttribute("value"),
-    );
-    expect(values).toEqual(["Drop", "MainlinePick"]);
+    expect(pgSelectValues(pgSelectTrigger(mergeRow!))).toEqual([
+      "Drop",
+      "MainlinePick",
+    ]);
   });
 
   it("says nothing when the range has no merges", async () => {

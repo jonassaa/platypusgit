@@ -7,6 +7,10 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { PGIcon, type IconName } from "./icons";
+// Direct path, not the `@/features/keymap` barrel: that barrel pulls in
+// CheatSheet / PGPane, which import back from `@/design`.
+import { useAction } from "@/features/keymap/useAction";
+import { selectPopoverPos } from "./selectPos";
 
 type Tone = "default" | "accent" | "success" | "warn" | "danger" | "violet" | "muted";
 
@@ -554,6 +558,35 @@ export function PGToggle({ checked, onChange, label, testId }: PGToggleProps) {
   );
 }
 
+// ═════════════════════════════════════════════════════════
+// SELECT — an in-page listbox, deliberately NOT a native <select>
+// ═════════════════════════════════════════════════════════
+//
+// A native `<select>` is mapped by WebKitGTK as a GDK popup surface, and GDK's
+// Wayland backend refuses to map a popup that would not be the topmost one
+// ("Tried to map a popup with a non-top most parent", gtk#5639 — X11 never
+// emits it). Two of these are mounted at all times on History, the launch
+// screen, and Rebase mounts one per plan row, so the app was asking for that
+// surface constantly (issue 146). Firefox has the matching report under Weston
+// specifically: native `<select>` drop-downs unusable, drop-downs built out of
+// buttons unaffected (Mozilla 1600584). Rendering the list ourselves removes
+// the surface entirely rather than guessing which instance misbehaves.
+//
+// It is also the change this design system wanted anyway: every other picker in
+// the app (BranchPicker, PGContextMenu, the palette) is already an in-page
+// portal, and a native `<select>` cannot be themed to match them.
+//
+// THE FOCUS HOST IS AN <input readonly>, AND THAT IS LOAD-BEARING. The global
+// keymap dispatcher (features/keymap) listens in the capture phase on `window`,
+// so it sees every key before this component does, and its text-input policy is
+// the only thing that keeps bare-key chords out of the app's list navigation:
+// `isEditable` recognises INPUT / TEXTAREA / contentEditable, and nothing else.
+// A `<button>` or `<div role="combobox">` trigger would let ArrowDown ALSO move
+// History's commit selection and a letter feed the focused pane's speed-search.
+// (A native `<select>` is not "editable" by that test either — so this control
+// never had that protection, which is a bug this change happens to fix.)
+// Modifier chords still dispatch, exactly as they do from any other input.
+
 export interface PGSelectOption {
   value: string;
   label: string;
@@ -566,9 +599,19 @@ export interface PGSelectProps {
   size?: "sm" | "md" | "lg";
   style?: CSSProperties;
   title?: string;
-  /** Threaded onto the native <select> (e2e hooks target the real control). */
+  /** Threaded onto the combobox trigger — the one focusable element of the
+   *  control, and what every test hook and the `jsPickOption` e2e helper
+   *  target. */
   "data-testid"?: string;
 }
+
+/** How long a typeahead buffer survives between keystrokes, as a native
+ *  `<select>` does it. */
+const TYPEAHEAD_MS = 700;
+
+/** Fallback id source, for the (unreachable today) case where `useId`'s format
+ *  contains nothing an HTML id may keep. */
+let pgSelectSeq = 0;
 
 export function PGSelect({
   value,
@@ -580,8 +623,392 @@ export function PGSelect({
   "data-testid": testId,
 }: PGSelectProps) {
   const sizes = { sm: 24, md: 28, lg: 32 } as const;
+  const rawId = React.useId();
+  // `aria-activedescendant` and `aria-controls` are id REFERENCES, so the ids
+  // have to be real — and React's generated format has carried characters an
+  // `#id` selector cannot hold. Sanitising keeps them usable from a test.
+  const listId = React.useMemo(
+    () => `pgsel-${rawId.replace(/[^A-Za-z0-9_-]/g, "") || `n${++pgSelectSeq}`}`,
+    [rawId],
+  );
+  const optionId = (i: number) => `${listId}-opt-${i}`;
+
+  const [open, setOpen] = React.useState(false);
+  const [active, setActive] = React.useState(0);
+  /** The trigger's rect as of the moment the list opened. The clamp derives
+   *  from it, so setting `pos` cannot re-trigger the clamp. */
+  const [anchor, setAnchor] = React.useState<DOMRect | null>(null);
+  const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null);
+  const wrapRef = React.useRef<HTMLDivElement | null>(null);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const listRef = React.useRef<HTMLDivElement | null>(null);
+  const typed = React.useRef({ buf: "", at: 0 });
+
+  const selectedIndex = options.findIndex((o) => o.value === value);
+  const selectedLabel = selectedIndex >= 0 ? options[selectedIndex].label : "";
+
+  // The one thing a native <select> gave for free: an intrinsic width of its
+  // widest option. An <input> sizes to its `size` attribute instead, which is
+  // both far too wide for a two-option control and too narrow for a branch
+  // list — so a hidden sizer holding the longest label sets the width, and the
+  // trigger is told (size={1}) to contribute none of its own.
+  const widest = React.useMemo(
+    () =>
+      options.reduce(
+        (w, o) => (o.label.length > w.length ? o.label : w),
+        selectedLabel,
+      ),
+    [options, selectedLabel],
+  );
+
+  const close = React.useCallback(() => {
+    setOpen(false);
+    setAnchor(null);
+    setPos(null);
+  }, []);
+
+  const openList = React.useCallback(
+    (from: number) => {
+      if (options.length === 0) return;
+      const r = wrapRef.current?.getBoundingClientRect() ?? null;
+      setAnchor(r);
+      setPos(r ? { left: r.left, top: r.bottom + 2 } : { left: 0, top: 0 });
+      setActive(Math.max(0, Math.min(options.length - 1, from)));
+      setOpen(true);
+    },
+    [options.length],
+  );
+
+  const commit = React.useCallback(
+    (i: number, refocus = true) => {
+      const o = options[i];
+      close();
+      if (refocus) inputRef.current?.focus();
+      // A native <select> fires `change` only when the value actually moved,
+      // and callers persist on every call — so re-picking the current option
+      // must not write.
+      if (o && o.value !== value) onChange?.(o.value);
+    },
+    [options, value, onChange, close],
+  );
+
+  // Position: opened at the anchor, then placed once the list has a measured
+  // box. A layout effect, so the placed position is what paints; the arithmetic
+  // itself is pure and lives in `selectPos.ts`, where it can be tested with real
+  // numbers (jsdom measures everything as 0).
+  React.useLayoutEffect(() => {
+    if (!open || !anchor) return;
+    const el = listRef.current;
+    if (!el) return;
+    setPos(
+      selectPopoverPos({
+        anchor,
+        listW: el.offsetWidth,
+        listH: el.offsetHeight,
+        viewportW: window.innerWidth,
+        viewportH: window.innerHeight,
+      }),
+    );
+  }, [open, anchor, options.length]);
+
+  // Keep the active option visible. These rows are all mounted (no windowing),
+  // so the DOM route is sound; the optional call is for jsdom.
+  React.useLayoutEffect(() => {
+    if (!open) return;
+    const rows =
+      listRef.current?.querySelectorAll<HTMLElement>("[data-pg-option]");
+    rows?.[active]?.scrollIntoView?.({ block: "nearest" });
+  }, [open, active]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const inside = (t: Node | null) =>
+      !!t && !!(wrapRef.current?.contains(t) || listRef.current?.contains(t));
+    const outside = (e: Event) => {
+      if (inside(e.target as Node | null)) return;
+      close();
+    };
+    // A fixed popup cannot follow a scrolling anchor or a resized window — both
+    // detach it from the trigger, so close rather than chase. But the LIST
+    // scrolls too: capture-phase `scroll` sees its own, and the
+    // active-into-view effect above scrolls it on open, so an unguarded
+    // listener shuts a long option list the instant it appears.
+    const onScroll = (e: Event) => {
+      if (inside(e.target as Node | null)) return;
+      close();
+    };
+    // Deferred like PGContextMenu's: the mousedown that OPENED the list is
+    // still propagating when this effect runs.
+    const armed = window.setTimeout(() => {
+      document.addEventListener("mousedown", outside);
+      document.addEventListener("scroll", onScroll, true);
+      window.addEventListener("resize", close);
+    }, 0);
+    return () => {
+      window.clearTimeout(armed);
+      document.removeEventListener("mousedown", outside);
+      document.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open, close]);
+
+  // Escape arrives through the keymap's `app.closeOverlay`, not a local
+  // listener — the rule UpdatePanel already follows. It matters here: a PGSelect
+  // open inside a PGModal has to eat Escape, or the dialog closes out from under
+  // an open dropdown. What guarantees it is that no dialog REGISTERS this action
+  // — they all rely on the catalog's default runner, which the dispatcher
+  // reaches only once every registered handler has declined. (Registration order
+  // would not have helped: `useAction` is a useEffect, effects run child-first,
+  // so a child's handler is the OUTER one.) Registered always, declining while
+  // closed, so there is no handler churn per open.
+  useAction(
+    "app.closeOverlay",
+    () => {
+      if (!open) return false;
+      close();
+      return true;
+    },
+    [open, close],
+  );
+
+  /** Advance the typeahead buffer and answer which option it now points at,
+   *  or -1. A single character CYCLES through the options beginning with it
+   *  (native `<select>` behaviour); a longer buffer re-searches in place. */
+  const jump = (ch: string, from: number): number => {
+    const now = Date.now();
+    const prev = now - typed.current.at < TYPEAHEAD_MS ? typed.current.buf : "";
+    const buf = prev + ch.toLowerCase();
+    typed.current = { buf, at: now };
+    const n = options.length;
+    if (n === 0) return -1;
+    const start = buf.length === 1 ? from + 1 : from;
+    for (const hit of [
+      (s: string) => s.startsWith(buf),
+      (s: string) => s.includes(buf),
+    ]) {
+      for (let k = 0; k < n; k++) {
+        const i = (((start + k) % n) + n) % n;
+        if (hit(options[i].label.toLowerCase())) return i;
+      }
+    }
+    return -1;
+  };
+
+  const typing = () =>
+    typed.current.buf !== "" && Date.now() - typed.current.at < TYPEAHEAD_MS;
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // The dispatcher has already run (capture phase, window). A chord it
+    // CLAIMED is defaultPrevented and must not be handled twice — the rule
+    // AppShell states for every local key handler. Everything below is a chord
+    // it deliberately declined because this element is an input.
+    if (e.defaultPrevented) return;
+    if (e.metaKey || e.ctrlKey) return;
+    const n = options.length;
+    const eat = () => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const k = e.key;
+    const space = k === " " || k === "Spacebar";
+
+    if (e.altKey) {
+      // Alt+↓ opens and Alt+↑ commits, per the ARIA combobox pattern. Every
+      // other Alt chord belongs to the keymap (and reaches it: pane.focus*
+      // carries suppressInInput, so it is declined here, not stolen).
+      if (k === "ArrowDown" && !open) {
+        eat();
+        openList(selectedIndex >= 0 ? selectedIndex : 0);
+      } else if (k === "ArrowUp" && open) {
+        eat();
+        commit(active);
+      }
+      return;
+    }
+
+    if (!open) {
+      if (k === "ArrowDown" || k === "Enter" || space) {
+        eat();
+        openList(selectedIndex >= 0 ? selectedIndex : 0);
+        return;
+      }
+      if (k === "ArrowUp") {
+        eat();
+        openList(selectedIndex >= 0 ? selectedIndex : n - 1);
+        return;
+      }
+      if (k === "Home") {
+        eat();
+        openList(0);
+        return;
+      }
+      if (k === "End") {
+        eat();
+        openList(n - 1);
+        return;
+      }
+      if (k.length === 1) {
+        const i = jump(k, selectedIndex >= 0 ? selectedIndex : 0);
+        if (i >= 0) {
+          eat();
+          openList(i);
+        }
+      }
+      return;
+    }
+
+    if (k === "Escape") {
+      // Only reachable where no dispatcher is mounted (a component test).
+      eat();
+      close();
+      return;
+    }
+    if (k === "ArrowDown") {
+      eat();
+      setActive((i) => Math.min(n - 1, i + 1));
+      return;
+    }
+    if (k === "ArrowUp") {
+      eat();
+      setActive((i) => Math.max(0, i - 1));
+      return;
+    }
+    if (k === "PageDown") {
+      eat();
+      setActive((i) => Math.min(n - 1, i + 10));
+      return;
+    }
+    if (k === "PageUp") {
+      eat();
+      setActive((i) => Math.max(0, i - 10));
+      return;
+    }
+    if (k === "Home") {
+      eat();
+      setActive(0);
+      return;
+    }
+    if (k === "End") {
+      eat();
+      setActive(n - 1);
+      return;
+    }
+    if (k === "Enter") {
+      eat();
+      commit(active);
+      return;
+    }
+    if (k === "Tab") {
+      // Commit, then let the browser move focus — Tab's default is the whole
+      // point, and the dispatcher already declined `pane.focusNext` here.
+      commit(active, false);
+      return;
+    }
+    if (space) {
+      eat();
+      // Mid-typeahead a space belongs to the query ("All b|ranches"), not to
+      // the commit — again what a native <select> does.
+      if (typing()) {
+        const i = jump(" ", active);
+        if (i >= 0) setActive(i);
+      } else {
+        commit(active);
+      }
+      return;
+    }
+    if (k.length === 1) {
+      const i = jump(k, active);
+      if (i >= 0) {
+        eat();
+        setActive(i);
+      }
+    }
+  };
+
+  const list =
+    open && pos
+      ? createPortal(
+          <div
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            data-pg-listbox=""
+            style={{
+              position: "fixed",
+              left: pos.left,
+              top: pos.top,
+              minWidth: anchor?.width,
+              maxWidth: "min(420px, calc(100vw - 8px))",
+              maxHeight: 320,
+              overflowY: "auto",
+              background: "var(--bg-3)",
+              border: "1px solid var(--border-1)",
+              borderRadius: "var(--r-3)",
+              boxShadow: "var(--shadow-2)",
+              padding: "4px 0",
+              // Above PGModal (100) and level with PGContextMenu: a select
+              // inside a dialog has to draw over its backdrop.
+              zIndex: 100000,
+              fontFamily: "var(--font-sans)",
+              fontSize: "var(--fs-12)",
+              color: "var(--fg-0)",
+              userSelect: "none",
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {options.map((o, i) => (
+              <div
+                key={o.value}
+                id={optionId(i)}
+                role="option"
+                aria-selected={i === selectedIndex}
+                data-pg-option=""
+                data-value={o.value}
+                data-active={i === active ? "true" : undefined}
+                onMouseEnter={() => setActive(i)}
+                // No focus steal: the trigger is the only focusable part of the
+                // control, which is what makes "return focus to it" free.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => commit(i)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "0 10px",
+                  // A list-row surface opts into UI density or the Settings
+                  // toggle silently skips it.
+                  height: "calc(24px + var(--row-step))",
+                  cursor: "pointer",
+                  background: i === active ? "var(--bg-selection)" : "transparent",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span
+                  style={{
+                    width: 12,
+                    flexShrink: 0,
+                    display: "inline-flex",
+                    justifyContent: "center",
+                    opacity: i === selectedIndex ? 1 : 0,
+                    color: "var(--accent)",
+                  }}
+                >
+                  <PGIcon name="check" size={11} />
+                </span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {o.label}
+                </span>
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <div
+      ref={wrapRef}
+      data-pg-select=""
       style={{
         height: sizes[size],
         display: "inline-flex",
@@ -590,40 +1017,78 @@ export function PGSelect({
         border: "1px solid var(--border-1)",
         borderRadius: "var(--r-3)",
         position: "relative",
+        // Before `...style`, so a caller passing a colour (the rebase row tints
+        // its control by action) reaches the trigger, which inherits.
+        color: "var(--fg-0)",
         ...style,
       }}
     >
-      {/* The <select> carries the padding and fills the wrapper, so the whole
-          component is the hit target. Padding on the wrapper instead would
-          leave dead strips (and a fixed `width` a dead gap) where a click
-          lands on the div and opens nothing. */}
-      <select
-        value={value}
-        onChange={(e) => onChange?.(e.target.value)}
-        title={title}
-        data-testid={testId}
+      <div
         style={{
-          appearance: "none",
-          background: "transparent",
-          border: "none",
-          outline: "none",
-          color: "var(--fg-0)",
-          fontSize: "var(--fs-12)",
-          fontFamily: "var(--font-sans)",
-          padding: "0 20px 0 8px",
-          cursor: "pointer",
+          display: "grid",
           flex: 1,
           minWidth: 0,
-          width: "100%",
           height: "100%",
+          alignItems: "center",
         }}
       >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+        <span
+          aria-hidden="true"
+          style={{
+            gridArea: "1 / 1",
+            visibility: "hidden",
+            height: 0,
+            overflow: "hidden",
+            whiteSpace: "pre",
+            padding: "0 20px 0 8px",
+            fontSize: "var(--fs-12)",
+            fontFamily: "var(--font-sans)",
+          }}
+        >
+          {widest}
+        </span>
+        <input
+          ref={inputRef}
+          role="combobox"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-controls={listId}
+          aria-activedescendant={open ? optionId(active) : undefined}
+          aria-autocomplete="none"
+          readOnly
+          size={1}
+          autoComplete="off"
+          spellCheck={false}
+          value={selectedLabel}
+          title={title}
+          data-testid={testId}
+          data-pg-select-trigger=""
+          onKeyDown={onKeyDown}
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            if (open) close();
+            else openList(selectedIndex >= 0 ? selectedIndex : 0);
+          }}
+          style={{
+            gridArea: "1 / 1",
+            appearance: "none",
+            background: "transparent",
+            border: "none",
+            outline: "none",
+            color: "inherit",
+            fontSize: "var(--fs-12)",
+            fontFamily: "var(--font-sans)",
+            padding: "0 20px 0 8px",
+            cursor: "pointer",
+            width: "100%",
+            minWidth: 0,
+            height: "100%",
+            textOverflow: "ellipsis",
+            caretColor: "transparent",
+            userSelect: "none",
+          }}
+        />
+      </div>
       <PGIcon
         name="chevronDown"
         size={11}
@@ -636,9 +1101,11 @@ export function PGSelect({
           color: "var(--fg-2)",
         }}
       />
+      {list}
     </div>
   );
 }
+
 
 // ═════════════════════════════════════════════════════════
 // BADGES / PILLS

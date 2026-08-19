@@ -10,6 +10,7 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
 import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
 import { LOG_REF_ALL, type CommitInfo } from "@/lib/types";
+import { pgPickOption } from "@/test/select";
 
 const oid = (label: string) => label.repeat(40).slice(0, 40);
 
@@ -113,9 +114,7 @@ describe("History scope selector", () => {
       expect(screen.getAllByTestId("commit-row").length).toBeGreaterThan(0),
     );
 
-    fireEvent.change(screen.getByTestId("history-ref-select"), {
-      target: { value: "main" },
-    });
+    pgPickOption(screen.getByTestId("history-ref-select"), "main");
     await waitFor(() => expect(useRepoStore.getState().logRef).toBe("main"));
 
     // The scope group still reads "All"; the effect must not fight the pick.

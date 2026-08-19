@@ -7,7 +7,7 @@ import {
 } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
-  jsContextMenu, jsClickMenuItem, executeOnce, scrollCommitListTo,
+  jsContextMenu, jsClickMenuItem, jsPickOption, scrollCommitListTo,
 } from "../support/app";
 
 describe("interactive rebase", () => {
@@ -66,27 +66,21 @@ describe("interactive rebase", () => {
     // leading drop just shifts the reset point and never conflicts — the
     // dropped commit has to sit between two surviving picks.
     const dropRowText = "feat: middle edit";
-    // selectByVisibleText doesn't stick on the embedded driver (confirmed
-    // empirically: the row's action <select> stayed "pick" afterward), and
-    // passing a WebdriverIO element handle into browser.execute isn't
-    // supported here either (the tauri driver doesn't resolve it to a live
-    // DOM node) — so find the row and its <select> purely in-page by text,
-    // same technique as jsContextMenu/jsClickMenuItem, and dispatch the
-    // change event ourselves.
+    // The row's action picker is an in-page listbox, not a `<select>` (issue
+    // 146), so jsPickOption drives it: `within` names the row's own selector and
+    // `text` picks WHICH row, the same narrowing jsContextMenu takes. A
+    // WebdriverIO element handle cannot be passed into browser.execute here (the
+    // tauri driver does not resolve it to a live DOM node), so the resolution
+    // stays in-page.
     await $(`[data-testid="rebase-row"]*=${dropRowText}`).waitForDisplayed({
       timeout: 10_000, timeoutMsg: "plan row missing",
     });
-    // executeOnce: re-dispatching change with the same value is near-benign,
-    // but keep every side-effectful script under the no-double-run guard.
-    await executeOnce((rowText: string) => {
-      const rows = Array.from(document.querySelectorAll('[data-testid="rebase-row"]'));
-      const row = rows.find((r) => r.textContent?.includes(rowText));
-      const select = row?.querySelector("select") as HTMLSelectElement | null;
-      if (!select) throw new Error(`rebase row select not found: ${rowText}`);
-      // Exact RebaseAction value — the row used to lowercase its options.
-      select.value = "Drop";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    }, dropRowText);
+    // Exact RebaseAction value — a two-word action cannot survive a
+    // lowercase/re-capitalise round trip, so "Drop", never "drop".
+    await jsPickOption('[data-testid="rebase-action"]', "Drop", {
+      within: '[data-testid="rebase-row"]',
+      text: dropRowText,
+    });
     await $('[data-testid="rebase-start"]').click();
     await $('[data-testid="rebase-abort"]').waitForDisplayed({
       timeout: 20_000, timeoutMsg: "conflict banner (with Abort) never appeared",
