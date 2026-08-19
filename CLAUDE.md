@@ -602,9 +602,11 @@ features/            Per-feature: components + Zustand store colocated
 │                    because branches cut from one commit share a tip time and
 │                    that tiebreaker must not depend on the runtime's ICU data).
 │                    EVERY branch list goes through it — picker, Branches screen,
-│                    palette rows; a second ordering is how those three drifted
-│                    apart before. `isHead` is deliberately NOT a sort key: the
-│                    current branch is the one branch the picker exists to leave
+│                    palette rows, the commit menu's "check out the branch that is
+│                    on this commit" group (#179); a second ordering is how the
+│                    first three drifted apart before. `isHead` is deliberately
+│                    NOT a sort key: the current branch is the one branch the
+│                    picker exists to leave
 ├── commits/         The log's pure logic, all tested: graphLayout + laneColors +
 │                    graphAncestry + rowIdentity (the graph — #68 G2/G4/G9),
 │                    buildRebasePlan / buildPreservePlan / runRebasePlan /
