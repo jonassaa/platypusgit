@@ -2,9 +2,9 @@ import React, { useState, useCallback } from "react";
 import { PGRebaseRow } from "@/design/git-components";
 import { PGButton } from "@/design/primitives";
 import { PGEmpty, PGIcon } from "@/design";
-import type { CommitInfo } from "@/lib/types";
+import type { AheadBehind, CommitInfo } from "@/lib/types";
 import type { RebaseAction, RebaseStep, RebaseSummary } from "@/lib/types";
-import { commitsSince } from "@/lib/tauri";
+import { aheadBehind, commitsBetween, commitsSince } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
@@ -14,6 +14,7 @@ import {
   type RebaseMergeMode,
 } from "@/features/rebase/useRebaseMergeMode";
 import { buildPreservePlan } from "@/features/commits/buildPreservePlan";
+import { withPlanBase } from "@/features/commits/withPlanBase";
 import { useRowReorder } from "@/features/dnd";
 import { PGPane, FocusableScroll, useAction, usePaneList } from "@/features/keymap";
 
@@ -193,8 +194,18 @@ export function RebaseScreen() {
   // The drag needs the scroll element to auto-scroll near the edges.
   const planScrollRef = React.useRef<HTMLDivElement>(null);
   const [baseLabel, setBaseLabel] = useState<string | null>(null);
+  /**
+   * The revspec the run detaches at, carried to submit by `withPlanBase`. Any
+   * revspec is legal (a full oid where we have one, a prefix from the picker's
+   * hash row, a branch name from a branch menu) because both the validator and
+   * the engine `revparse_single` it. Null means "use the engine's parent
+   * fallback" — a root commit, or an oldest step outside the loaded log.
+   */
+  const [baseRev, setBaseRev] = useState<string | null>(null);
+  /** Counts for the summary strip; only a RESOLVED base has them. */
+  const [baseStats, setBaseStats] = useState<AheadBehind | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerNotice, setPickerNotice] = useState<string | null>(null);
+  const [baseNotice, setBaseNotice] = useState<string | null>(null);
   const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
 
   // The completed-rebase notice reads STRAIGHT off the backend's retained
@@ -218,35 +229,72 @@ export function RebaseScreen() {
     [rebaseAcknowledge],
   );
 
-  // Resolve the base through the backend so any revspec works — branch, tag,
-  // full or short hash, even commits outside the loaded log window. The backend
-  // returns base..HEAD (newest-first) and rejects a base that isn't an ancestor.
-  const handlePickBase = useCallback(
-    async (oid: string, label: string) => {
+  /**
+   * Resolve a base to a range and a plan. ONE path for the picker and for a
+   * `rebase-onto` intent, so the strip's counts and the plan can never describe
+   * different ranges. Any revspec works — branch, tag, full or short hash, even
+   * a commit outside the loaded log window.
+   *
+   * `aheadBehind` comes first because its answer chooses the range primitive,
+   * with no failed round trip:
+   *   - ahead === 0  → nothing to replay (base is HEAD, or a descendant of it).
+   *   - behind === 0 → base is an ANCESTOR of HEAD, by graph_ahead_behind's own
+   *     definition: nothing reachable from base is missing from HEAD. That is
+   *     `commitsSince`'s domain — the unchanged path, and the one primitive that
+   *     ENFORCES the invariant, so it keeps its only caller.
+   *   - behind > 0   → diverged (or unrelated): `commitsBetween`, which requires
+   *     no ancestry at all (#131). That is what makes a new base anywhere work.
+   *
+   * `commits_between`'s handler defaults `limit` to 200 and simply breaks at the
+   * cap, so the limit is derived from the exact count and the length is verified.
+   * A silently truncated plan would leave commits unreplayed and still move the
+   * branch ref — refuse instead.
+   */
+  const resolveBase = useCallback(
+    async (rev: string, label: string) => {
       if (!current) return;
       const baseName = label.split(" — ")[0];
       try {
-        const range = await commitsSince(current.id, oid);
-        if (range.length === 0) {
-          setPickerNotice(`No commits between HEAD and ${baseName}.`);
+        const stats = await aheadBehind(current.id, rev, "HEAD");
+        if (stats.ahead === 0) {
+          setBaseNotice(`No commits between HEAD and ${baseName}.`);
           return;
         }
-        setRange(range);
-        setPlan(commitsToPlan(range, mergeMode));
+        const next =
+          stats.behind === 0
+            ? await commitsSince(current.id, rev)
+            : await commitsBetween(current.id, rev, "HEAD", stats.ahead + 1);
+        if (next.length !== stats.ahead) {
+          setBaseNotice(
+            `Read ${next.length} of ${stats.ahead} commits between ${baseName} and HEAD — refusing to plan a partial rebase.`,
+          );
+          return;
+        }
+        setRange(next);
+        setPlan(commitsToPlan(next, mergeMode));
+        setBaseRev(rev);
         setBaseLabel(label);
-        setPickerNotice(null);
+        setBaseStats(stats);
+        setBaseNotice(null);
         setPickerOpen(false);
       } catch (e) {
-        setPickerNotice(appErrorMessage(e));
+        setBaseNotice(appErrorMessage(e));
       }
     },
-    [current],
+    [current, mergeMode],
   );
 
   // Seed the plan from a NavIntent when the context menu fires rebase-plan.
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
   React.useEffect(() => {
+    // The base-only variant (186): the SCREEN walks the range, because the log is
+    // paged and a branch menu hands over a name rather than commits.
+    if (intent?.kind === "rebase-onto") {
+      void resolveBase(intent.base, intent.label);
+      clearIntent();
+      return;
+    }
     if (intent?.kind !== "rebase-plan") return;
     const byOid = new Map(commits.map((c) => [c.oid, c]));
     const inRange = intent.plan
@@ -284,6 +332,13 @@ export function RebaseScreen() {
     const oldestCommit = oldest ? byOid.get(oldest.oid) : null;
     const baseOid = oldestCommit?.parents[0];
     const baseCommit = baseOid ? byOid.get(baseOid) : null;
+    // Remember the base for THIS plan too, not just for the label: `handleStart`
+    // pins it to the plan's first non-Drop step, which is what keeps a reorder
+    // from moving where the run detaches. Null (a root commit, or an oldest step
+    // outside the loaded log) leaves the engine's parent fallback in charge.
+    setBaseRev(baseOid ?? null);
+    setBaseStats(null);
+    setBaseNotice(null);
     setBaseLabel(
       baseCommit
         ? `${baseCommit.shortOid} — ${baseCommit.summary}`
@@ -292,7 +347,7 @@ export function RebaseScreen() {
           : "selected commit",
     );
     clearIntent();
-  }, [intent, commits, clearIntent, mergeMode]);
+  }, [intent, commits, clearIntent, mergeMode, resolveBase]);
 
   // Flipping the mode rebuilds a whole-range plan in place.
   React.useEffect(() => {
@@ -376,13 +431,19 @@ export function RebaseScreen() {
   });
 
   const handleStart = async () => {
-    const steps: RebaseStep[] = plan.map((r) => ({
-      oid: r.oid,
-      action: r.action,
-      message: r.action === "Reword" || r.action === "Squash" ? (r.message || null) : null,
-      onto: r.onto,
-      mergeParents: r.mergeParents,
-    }));
+    // The base rides on the plan's FIRST non-Drop step, attached HERE rather than
+    // when the rows were built: flatten mode lets the user reorder, and
+    // `rebase_start` reads the base off whatever step ends up first.
+    const steps: RebaseStep[] = withPlanBase(
+      plan.map((r) => ({
+        oid: r.oid,
+        action: r.action,
+        message: r.action === "Reword" || r.action === "Squash" ? (r.message || null) : null,
+        onto: r.onto,
+        mergeParents: r.mergeParents,
+      })),
+      baseRev,
+    );
     const status = await rebaseStart(steps);
     // The rebase consumed the plan — clear it so the completion summary (or
     // the in-progress banner) isn't hidden behind a stale plan builder. On
@@ -390,6 +451,8 @@ export function RebaseScreen() {
     if (status) {
       setPlan([]);
       setBaseLabel(null);
+      setBaseRev(null);
+      setBaseStats(null);
     }
   };
 
@@ -397,6 +460,9 @@ export function RebaseScreen() {
     setPlan([]);
     setRange([]);
     setBaseLabel(null);
+    setBaseRev(null);
+    setBaseStats(null);
+    setBaseNotice(null);
   };
 
   const mergeCount = plan.filter((r) => r.isMerge).length;
@@ -488,7 +554,7 @@ export function RebaseScreen() {
               icon="search"
               onClick={(e) => {
                 setPickerAnchor(e.currentTarget);
-                setPickerNotice(null);
+                setBaseNotice(null);
                 setPickerOpen((v) => !v);
               }}
             >
@@ -510,6 +576,62 @@ export function RebaseScreen() {
               Start rebase
             </PGButton>
           </div>
+
+          {/* What will be replayed. Once the base can be diverged, "everything
+              newer than the base" stops being obvious — so state how many commits
+              go over, what the base adds, and where the two histories met. */}
+          {baseStats && baseLabel && plan.length > 0 && (
+            <div
+              data-testid="rebase-base-summary"
+              style={{
+                padding: "6px 12px",
+                borderBottom: "1px solid var(--border-0)",
+                background: "var(--bg-1)",
+                color: "var(--fg-2)",
+                fontSize: "var(--fs-12)",
+              }}
+            >
+              {baseStats.ahead === 1
+                ? "1 commit will be replayed onto "
+                : `${baseStats.ahead} commits will be replayed onto `}
+              {baseLabel.split(" — ")[0]}.
+              {baseStats.behind > 0 && (
+                <>
+                  {" "}
+                  {baseLabel.split(" — ")[0]} has {baseStats.behind}{" "}
+                  {baseStats.behind === 1 ? "commit" : "commits"} this branch does
+                  not.
+                </>
+              )}
+              {/* The merge base only tells you something once the two sides have
+                  diverged — for an ancestor base it IS the base. */}
+              {baseStats.behind > 0 && baseStats.mergeBase && (
+                <> Merge base {baseStats.mergeBase.slice(0, 7)}.</>
+              )}
+              {baseStats.mergeBase === null && (
+                <> No common ancestor — the whole branch will be replayed.</>
+              )}
+            </div>
+          )}
+
+          {/* A base can also fail to resolve, and the picker is not always open to
+              say so: a context-menu intent has no anchor, so without this the menu
+              item would do nothing at all and explain nothing. One state, two
+              places that cannot both be on screen. */}
+          {baseNotice && !pickerOpen && (
+            <div
+              data-testid="rebase-base-notice"
+              style={{
+                padding: "6px 12px",
+                borderBottom: "1px solid var(--git-conflict)",
+                background: "oklch(from var(--git-conflict) l c h / 0.12)",
+                color: "var(--fg-0)",
+                fontSize: "var(--fs-12)",
+              }}
+            >
+              {baseNotice}
+            </div>
+          )}
 
           {/* What happens to the merges in this range — stated before the run,
               the way SmartGit and TortoiseGit do, rather than left for the user
@@ -734,8 +856,8 @@ export function RebaseScreen() {
         anchor={pickerAnchor}
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        onPick={handlePickBase}
-        notice={pickerNotice}
+        onPick={resolveBase}
+        notice={baseNotice}
       />
     </div>
   );

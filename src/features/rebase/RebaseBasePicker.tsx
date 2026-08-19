@@ -18,6 +18,13 @@ interface Row {
   commit?: CommitInfo;
 }
 
+// There is deliberately no "ineligible row" state (186). A prop for it existed
+// and nothing ever passed it — and what it encoded, "not on the current branch's
+// history", is now the primary reason to pick a base at all, so a live version
+// would grey out exactly the rows this picker exists to offer. The genuine
+// refusals (nothing to replay, an unresolvable revspec) are backend answers and
+// arrive through `notice`.
+
 interface Props {
   anchor: HTMLElement | null;
   open: boolean;
@@ -25,8 +32,6 @@ interface Props {
   onPick: (oid: string, label: string) => void;
   /** Optional notice shown above the search input (e.g. error). */
   notice?: string | null;
-  /** OIDs that are not on the current branch's history — used to mark rows as ineligible. */
-  invalidOids?: Set<string>;
 }
 
 const WIDTH = 460;
@@ -40,7 +45,6 @@ export function RebaseBasePicker({
   onClose,
   onPick,
   notice,
-  invalidOids,
 }: Props) {
   const branches = useRepoStore((s) => s.branches);
   const commits = useRepoStore((s) => s.commits);
@@ -169,7 +173,6 @@ export function RebaseBasePicker({
 
   const renderRow = (r: Row, idx: number) => {
     const active = idx === activeIndex;
-    const ineligible = invalidOids?.has(r.oid) ?? false;
     const iconName =
       r.kind === "branchLocal" || r.kind === "branchRemote" ? "branch" : "commit";
     return (
@@ -177,7 +180,6 @@ export function RebaseBasePicker({
         key={`${r.kind}:${r.oid}:${r.label}`}
         onClick={() => pick(r)}
         onMouseEnter={() => setActiveIndex(idx)}
-        title={ineligible ? "Not on current branch's history" : undefined}
         style={{
           display: "flex",
           alignItems: "center",
@@ -188,7 +190,6 @@ export function RebaseBasePicker({
           cursor: "pointer",
           fontFamily: "var(--font-mono)",
           fontSize: "var(--fs-12)",
-          opacity: ineligible ? 0.5 : 1,
         }}
       >
         <PGIcon

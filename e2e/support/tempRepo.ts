@@ -226,6 +226,35 @@ export function mergeRangeRepo(): TempRepo {
   return r;
 }
 
+/**
+ * Two branches diverged off a common root — the shape `git rebase -i <newbase>`
+ * exists for (186):
+ *
+ *   root ── A ── D ── E   (main, HEAD)
+ *       \
+ *        ─ B ── C         (other)
+ *
+ * Every commit touches its own file, so a replay of main onto `other` is
+ * conflict-free. `other`'s tip is NOT on HEAD's ancestry, which is exactly what
+ * every other rebase fixture here cannot express — and what disables the old
+ * "Interactive rebase from here" item on that row.
+ *
+ * History's default scope is `--all`, so `other`'s commits are on screen with no
+ * ref-selector step.
+ */
+export function divergedRepo(): TempRepo {
+  const r = new TempRepo();
+  r.commitFile("root.txt", "root\n", "feat: root");
+  r.git("checkout", "-b", "other");
+  r.commitFile("b.txt", "b\n", "feat: b on other");
+  r.commitFile("c.txt", "c\n", "feat: c on other");
+  r.git("checkout", "main");
+  r.commitFile("a.txt", "a\n", "feat: a on main");
+  r.commitFile("d.txt", "d\n", "feat: d on main");
+  r.commitFile("e.txt", "e\n", "feat: e on main");
+  return r;
+}
+
 /** A bare repository with real commits, for driving the clone path against
  *  local disk only — no network, no credentials, no flake.
  *

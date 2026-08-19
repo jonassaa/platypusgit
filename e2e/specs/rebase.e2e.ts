@@ -1,6 +1,7 @@
 import { browser, $, expect } from "@wdio/globals";
 import {
   cherryRepo,
+  divergedRepo,
   mergeRangeRepo,
   rebaseConflictRepo,
   TempRepo,
@@ -220,6 +221,66 @@ describe("interactive rebase", () => {
     expect(repo.git("rev-parse", "ORIG_HEAD").trim()).toBe(originalMerge);
     expect(repo.read("f.txt")).toBe("f\n");
     expect(repo.read("c.txt")).toBe("c\n");
+    expect(repo.git("status", "--porcelain").trim()).toBe("");
+  });
+  it("replays the branch onto a diverged commit", async () => {
+    // The half of interactive rebase the old menu item cannot reach (186): the
+    // clicked commit is the NEW BASE and is not in the plan, so it does not have
+    // to be on HEAD's ancestry.
+    repo = divergedRepo();
+    const before = repo.git("rev-parse", "HEAD").trim();
+    const newBase = repo.git("rev-parse", "other").trim();
+    await openRepo(repo.path);
+    await switchScreen("history");
+
+    await scrollCommitListTo("feat: c on other");
+    await $('[data-testid="commit-row"]*=feat: c on other').waitForDisplayed({
+      timeout: 15_000,
+      timeoutMsg: "other's tip never appeared in History",
+    });
+    await jsContextMenu('[data-testid="commit-row"]', { text: "feat: c on other" });
+    // The OLD item must be off on this row — the two are complements, never both
+    // enabled for one commit.
+    await $('span=Interactive rebase from here — not on this branch').waitForExist({
+      timeout: 10_000,
+      timeoutMsg: "the on-branch-only item was not shown as unavailable",
+    });
+    await jsClickMenuItem("Rebase current branch onto this…");
+
+    // Wait on a signal that exists ONLY on the Rebase screen, before touching
+    // anything else: the summary strip, which is rendered from the backend's own
+    // ahead/behind counts for the base just picked.
+    const summary = $('[data-testid="rebase-base-summary"]');
+    await summary.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the Rebase screen never explained what would be replayed",
+    });
+    await expect(summary).toHaveText(
+      expect.stringContaining("3 commits will be replayed onto"),
+    );
+    await expect(summary).toHaveText(
+      expect.stringContaining("has 2 commits this branch does not"),
+    );
+
+    await $('[data-testid="rebase-start"]').click();
+    await $('[data-testid="rebase-last-summary"]').waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "the rebase onto a diverged base never reported completion",
+    });
+
+    // main now sits on top of other's tip, with both sides' content present.
+    expect(repo.git("log", "--format=%s").trim().split("\n")).toEqual([
+      "feat: e on main",
+      "feat: d on main",
+      "feat: a on main",
+      "feat: c on other",
+      "feat: b on other",
+      "feat: root",
+    ]);
+    expect(repo.git("rev-parse", "HEAD~3").trim()).toBe(newBase);
+    expect(repo.git("symbolic-ref", "HEAD").trim()).toBe("refs/heads/main");
+    expect(repo.git("rev-parse", "other").trim()).toBe(newBase);
+    expect(repo.git("rev-parse", "ORIG_HEAD").trim()).toBe(before);
     expect(repo.git("status", "--porcelain").trim()).toBe("");
   });
 });

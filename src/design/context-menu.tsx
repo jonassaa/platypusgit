@@ -455,6 +455,28 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
         useNavStore.getState().setIntent({ kind: "rebase-plan", plan });
       },
     },
+    {
+      icon: "rebase",
+      // The OTHER half of interactive rebase (186), and a genuinely different
+      // action: "from here" makes the clicked commit the OLDEST REPLAYED commit
+      // (base = its parent); this makes it the NEW BASE, which is not in the plan
+      // at all. Disabled for a commit already on this branch, mirroring
+      // branchMenuItems' `disabled: isCurrent` — replaying onto your own ancestor
+      // is a no-op, and the item above is what that flow wants. So the two are
+      // never both enabled for one commit.
+      label: onBranch
+        ? "Rebase current branch onto this — already on this branch"
+        : "Rebase current branch onto this…",
+      disabled: onBranch || !commit?.sha,
+      onClick: () => {
+        if (!commit?.sha) return;
+        useNavStore.getState().setIntent({
+          kind: "rebase-onto",
+          base: commit.sha,
+          label: `${sha.slice(0, 7)} — ${commit.subject ?? ""}`.trim(),
+        });
+      },
+    },
     { divider: true },
     {
       icon: "edit",
@@ -595,6 +617,17 @@ function byOid(commits: CommitInfo[]): Map<string, CommitInfo> {
 function ancestryLog(): CommitInfo[] {
   const { commits, branches } = useRepoStore.getState();
   return headAncestryOf(commits, branches);
+}
+
+/**
+ * A branch's tip oid, for menu items that must name a fixed commit rather than a
+ * moving ref (186). `BranchInfo.tip` is a FULL oid and is used as one — it was
+ * once truncated to 7 chars and every comparison against `CommitInfo.oid` then
+ * failed silently. Null when the branch is unknown or its tip is unresolvable;
+ * the caller then falls back to the NAME, which the backend revparses anyway.
+ */
+function branchTipOid(name: string): string | null {
+  return useRepoStore.getState().branches.find((b) => b.name === name)?.tip ?? null;
 }
 
 /**
@@ -1065,6 +1098,21 @@ export function branchMenuItems(
           useRepoStore.getState().rebaseOnto(name);
       },
     },
+    {
+      icon: "rebase",
+      // No confirm, unlike the non-interactive sibling above: this rewrites
+      // nothing. It opens a plan, and `Start rebase` is the destructive step.
+      label: "Rebase current onto this — interactive…",
+      disabled: isCurrent,
+      onClick: () => {
+        if (!name) return;
+        useNavStore.getState().setIntent({
+          kind: "rebase-onto",
+          base: branchTipOid(name) ?? name,
+          label: name,
+        });
+      },
+    },
     { divider: true },
     ...compareMenuItems({ name, isCurrent }),
     { divider: true },
@@ -1239,6 +1287,19 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
           })
         )
           useRepoStore.getState().rebaseOnto(name);
+      },
+    },
+    {
+      icon: "rebase",
+      // Never disabled — a remote-tracking branch is never the current branch.
+      label: "Rebase current onto this — interactive…",
+      onClick: () => {
+        if (!name) return;
+        useNavStore.getState().setIntent({
+          kind: "rebase-onto",
+          base: branchTipOid(name) ?? name,
+          label: name,
+        });
       },
     },
     { divider: true },
