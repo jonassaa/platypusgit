@@ -11,9 +11,43 @@ concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
+# TWO apt lists, split by what the job actually does — and with four shards the
+# split is what makes sharding pay off at all.
+#
+# The build job LINKS the crate, so it needs the -dev packages and patchelf. The
+# shard jobs only RUN the binary the build job produced, so they need the
+# runtime libraries and xvfb, and nothing else. With ONE job the comment that
+# used to sit here was right that a single list was cheaper than "a split list
+# is a thing to get wrong"; with five jobs it inverts. MEASURED in run
+# 32257418277: the -dev set is 61.5 MB of packages on this image, and
+# `azure.archive.ubuntu.com` throttles per runner at wildly different rates —
+# the same 61.5 MB took 13 s on shard 3, 2 min 14 s on shard 2, 8 min 14 s on
+# shard 4 and 10 min 24 s on shard 1. Five draws from that distribution and the
+# gate waits for the slowest, which is the whole reason the first sharded run
+# came out at 19 min 20 s against 11 min 56 s unsharded.
+#
+# So the shards do not talk to an Ubuntu mirror at all: the build job resolves
+# the runtime closure with apt and ships the .debs as an artifact, and each
+# shard installs them offline. One mirror draw per run instead of five, and no
+# `apt-get update` in the shards either.
+#
+# The runtime names are RESOLVED, not guessed: they are what `apt-cache depends
+# <the -dev package>` names on ubuntu-24.04, which is where `libgtk-3-0t64`
+# comes from (Ubuntu 24.04 renamed it for the 64-bit time_t transition). They
+# are consumed only on the same runner image that resolved them, so there is no
+# hardcoded-name-vs-future-image trap: a name a later image drops fails the
+# BUILD job by name, and the shards' `ldd` check is the second net.
+env:
+  TAURI_APT_BUILD_DEPS: >-
+    libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
+    librsvg2-dev patchelf
+  TAURI_APT_RUN_DEPS: >-
+    libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1
+    librsvg2-2 xvfb
+
 jobs:
   # Decides whether the suite is worth running for this PR. Site- and docs-only
-  # changes cannot affect the app binary, so they skip a ~10 minute build.
+  # changes cannot affect the app binary, so they skip the build and every shard.
   #
   # The filter runs for pull_request events only. On push and workflow_dispatch
   # there is no reliable diff base, so `app` falls back to 'true' (a skipped
@@ -44,19 +78,63 @@ jobs:
             echo "-> no app code touched, skipping the E2E suite"
           fi
 
-  e2e:
+  # Build the debug binary ONCE and hand it to the shards as an artifact
+  # (issue 189). The binary is identical for every shard, so building it per
+  # shard would spend the ~50s cargo link N times to produce N identical files.
+  # This job needs no xvfb: nothing runs the app here.
+  build:
     needs: changes
     if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Tauri system deps
+      # apt runs twice here, in this order, and the order is the point:
+      #
+      #  1. the shards' RUNTIME closure is resolved and DOWNLOADED into an
+      #     archive directory, without installing it. This has to come first:
+      #     after the -dev install those packages are already installed, so apt
+      #     would have nothing to fetch and the artifact would be empty.
+      #  2. the -dev set is installed for linking, reusing the SAME archive
+      #     directory, so every .deb fetched in step 1 is reused instead of
+      #     downloaded twice. Measured on this image: 57 .debs / 44.6 MB staged,
+      #     after which the -dev install fetched 14.5 MB of its 59.1 MB.
+      #
+      # `APT::Sandbox::User=root` is required because apt drops to the `_apt`
+      # user to download and cannot write a runner-owned directory, and
+      # `partial/` has to exist before apt will use the directory at all.
+      #
+      # A package already present on the runner image is not fetched, and does
+      # not need to be: the shards run the same `ubuntu-latest` image.
+      - name: Install Tauri build deps, stage the shards' runtime libs
         run: |
+          mkdir -p apt-cache/partial apt-runtime
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev patchelf xvfb
+          sudo apt-get install -y --no-install-recommends --download-only \
+            -o APT::Sandbox::User=root \
+            -o Dir::Cache::archives="$GITHUB_WORKSPACE/apt-cache" \
+            $TAURI_APT_RUN_DEPS
+          cp apt-cache/*.deb apt-runtime/
+          echo "staged $(ls apt-runtime/*.deb | wc -l) runtime .debs" \
+            "($(du -sh apt-runtime | cut -f1))"
+          sudo apt-get install -y --no-install-recommends \
+            -o APT::Sandbox::User=root \
+            -o Dir::Cache::archives="$GITHUB_WORKSPACE/apt-cache" \
+            $TAURI_APT_BUILD_DEPS
+
+      # NOT a dot-prefixed directory: `upload-artifact` defaults to
+      # `include-hidden-files: false` and silently matches nothing under one, so
+      # `.apt-runtime/*.deb` failed the upload with 57 staged .debs on disk.
+      - name: Upload the shards' runtime libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-runtime-libs
+          path: apt-runtime/*.deb
+          retention-days: 1
+          # An empty set here would turn into four shards failing on a glob that
+          # matched nothing, so fail where the cause is.
+          if-no-files-found: error
 
       - uses: pnpm/action-setup@v4
         with:
@@ -76,24 +154,121 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      - name: Build E2E binary
+        run: pnpm test:e2e:build
+
+      - name: Upload E2E binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-binary
+          path: e2e/.bin/platypusgit
+          # One PR's worth. The shards consume it minutes later and nothing
+          # else ever wants it again.
+          retention-days: 1
+          # A silently empty artifact would turn into four confusing
+          # "app never rendered Welcome screen" failures instead of one here.
+          if-no-files-found: error
+
+  # The suite, split across runners. `maxInstances` has to stay 1 (an
+  # e2e-feature binary serves WebDriver on a fixed port, so two app instances in
+  # one container collide), so parallelism happens here, one wdio process per
+  # runner. `e2e/shardSpecs.ts` decides the slice, weighted by MEASURED per-spec
+  # duration — wdio's own `--shard` splits by file count, which put three of the
+  # four slowest specs in one slice.
+  #
+  # No Rust toolchain and no rust-cache: this job only runs the binary the build
+  # job produced.
+  e2e:
+    needs: [changes, build]
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # Every shard reports, so one broken spec does not hide the state of the
+      # other three. They run in parallel, so this costs no wall clock.
+      fail-fast: false
+      matrix:
+        # THE shard count, and the only place it is written down: the run step
+        # below reads the total from `strategy.job-total`. Keep it on one line —
+        # test/shardSpecs.test.ts reads this array to check that every spec on
+        # disk lands in exactly one shard.
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the runtime libs
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-runtime-libs
+          path: apt-runtime
+
+      # Offline on purpose — see the env block. Every .deb was resolved by the
+      # build job against this same runner image, so there is no `apt-get
+      # update` and no mirror in this job's path.
+      #
+      # `--no-install-recommends` is load-bearing rather than cosmetic here: the
+      # image ships package lists, so apt would otherwise try to satisfy
+      # Recommends over the network and put the mirror back in the path.
+      # `--allow-downgrades` covers the one case this shape can hit — the runner
+      # image rolling between the build job and a shard, leaving the shard with a
+      # newer build of one of these libs than the .deb carries.
+      - name: Install Tauri runtime deps
+        run: |
+          sudo apt-get install -y --no-install-recommends --allow-downgrades \
+            ./apt-runtime/*.deb
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Download E2E binary
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-binary
+          path: e2e/.bin
+
+      # The artifact format does not carry the exec bit. The `ldd` check is the
+      # net under the split apt lists: a runtime set that does not match what
+      # the binary was linked against becomes ONE named failure here instead of
+      # four shards each reporting "app never rendered the Welcome screen".
+      - name: Restore the exec bit and check the runtime libs
+        run: |
+          chmod +x e2e/.bin/platypusgit
+          if ldd e2e/.bin/platypusgit | grep 'not found'; then
+            echo "::error::Missing runtime libraries — TAURI_APT_RUN_DEPS does" \
+                 "not cover what this binary was linked against."
+            exit 1
+          fi
+
       - name: Configure git for fixtures
         run: |
           git config --global user.name "CI"
           git config --global user.email "ci@platypusgit.test"
           git config --global init.defaultBranch main
 
-      - name: Build E2E binary
-        run: pnpm test:e2e:build
-
-      - name: Run E2E
+      - name: Run E2E (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
+        env:
+          E2E_SHARD: ${{ matrix.shard }}
+          E2E_SHARDS: ${{ strategy.job-total }}
         run: xvfb-run --auto-servernum pnpm test:e2e:run
 
   # The required status check on main. It always runs and always reports, so a
   # PR that skipped the suite is not left waiting forever on a check that never
   # arrives — the trap that makes a path-filtered required check block a PR
   # permanently. Keep this job's name in sync with the branch ruleset.
+  #
+  # Sharding did not change what the ruleset requires: this gate is still the
+  # only required check, and it now needs the build plus every shard.
   e2e-linux:
-    needs: [changes, e2e]
+    needs: [changes, build, e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -101,25 +276,41 @@ jobs:
         env:
           FILTER: ${{ needs.changes.result }}
           APP: ${{ needs.changes.outputs.app }}
-          RESULT: ${{ needs.e2e.result }}
+          BUILD: ${{ needs.build.result }}
+          SHARDS: ${{ needs.e2e.result }}
         run: |
-          echo "filter job: $FILTER / app touched: $APP / E2E job: $RESULT"
-          # A failed filter job skips `e2e` too. Without this check the gate
-          # would read that skip as "not required" and pass a PR whose suite
-          # never ran at all.
+          echo "filter job: $FILTER / app touched: $APP"
+          echo "build job: $BUILD / shard jobs (aggregate): $SHARDS"
+          # A failed filter job skips everything downstream. Without this check
+          # the gate would read that skip as "not required" and pass a PR whose
+          # suite never ran at all.
           if [ "$FILTER" != "success" ]; then
             echo "The change-filter job did not succeed, so the suite never ran."
             exit 1
           fi
-          case "$RESULT" in
-            success) echo "E2E suite passed." ;;
-            skipped)
-              # Only legitimate when the filter decided no app code was touched.
-              if [ "$APP" != "false" ]; then
-                echo "E2E suite was skipped even though app code changed."
-                exit 1
-              fi
-              echo "No app code touched — E2E suite not required for this change."
-              ;;
-            *) echo "E2E suite did not pass."; exit 1 ;;
-          esac
+          if [ "$APP" = "false" ]; then
+            # The one legitimate skip. Both downstream jobs carry the same `if`,
+            # so anything other than a clean double skip means the workflow has
+            # been edited into a shape this gate cannot vouch for.
+            if [ "$BUILD" != "skipped" ] || [ "$SHARDS" != "skipped" ]; then
+              echo "No app code touched, but build=$BUILD shards=$SHARDS —" \
+                   "expected both to be skipped."
+              exit 1
+            fi
+            echo "No app code touched — E2E suite not required for this change."
+            exit 0
+          fi
+          if [ "$BUILD" != "success" ]; then
+            echo "The E2E binary did not build ($BUILD), so no shard ran."
+            exit 1
+          fi
+          # `needs.<matrix job>.result` is the AGGREGATE across the matrix:
+          # 'success' only when EVERY shard succeeded, 'failure' as soon as one
+          # of them fails. So this single comparison is "all shards passed" —
+          # and a 'skipped' here is unexplained by construction, because app
+          # code changed and the build succeeded.
+          if [ "$SHARDS" != "success" ]; then
+            echo "At least one E2E shard did not pass ($SHARDS)."
+            exit 1
+          fi
+          echo "Every E2E shard passed."

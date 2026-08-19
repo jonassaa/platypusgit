@@ -233,7 +233,8 @@ Four layers, each run independently:
     that answers each one as it appears. Call sites are unchanged;
     `confirmCallCount()` still counts confirm dialogs only.
   - CI: `.github/workflows/e2e.yml` (ubuntu-latest + xvfb, PRs to `main` +
-    push to `main`). Local runs use `pnpm test:e2e:docker` (same WebKitGTK +
+    push to `main`) — **one build, four sharded runners**; see "The e2e gate is
+    sharded" below. Local runs use `pnpm test:e2e:docker` (same WebKitGTK +
     xvfb stack) — see the "Headless e2e in Docker" section above.
   - `pnpm.overrides["@wdio/native-utils"] = "2.5.0"` pins around a broken
     dep pin in `@wdio/tauri-service@1.2.0` — don't remove.
@@ -266,6 +267,15 @@ and `workflow_dispatch`:
   network.
 - `.github/workflows/e2e.yml` — the webview suite.
 
+**A path filter must list the suite's INPUTS, not just its sources.** `tests.yml`'s
+`js` filter also matches `test/`, `CLAUDE.md` and `.github/workflows/e2e.yml`,
+because the `docs` vitest project reads all three — and each was skippable by
+exactly the change it polices: a CLAUDE.md-only edit skipped `docs.test.ts`
+(whose whole job is "CLAUDE.md matches the tree"), and an e2e-matrix-only edit
+skipped `shardSpecs.test.ts` (whose whole job is "the matrix covers every
+spec"). Both reported green. Any new assertion about a file outside `src/` has
+to put that file in the filter, or the guard is decorative.
+
 Each workflow front-loads a `changes` job that diffs against the PR base and
 skips suites the change cannot affect, then reports through an always-running
 gate job (`unit-tests`, `rust-tests`, `e2e-linux`). **The gate is what a branch
@@ -274,6 +284,118 @@ skipped never reports and blocks the PR forever. The gate also fails on a skip
 it cannot explain, so a green tick means the suite ran or was provably
 irrelevant. On `push`/`workflow_dispatch` there is no reliable diff base, so
 every filter output falls back to `true` and `main` is never left untested.
+
+**The push-to-`main` e2e run is a deliberate duplicate, not an oversight**
+(issue 189, option D). The same suite runs on the PR and again on the squash
+merge. It is not waste: required checks are non-strict and the merge is a
+squash, so the tree that lands on `main` can differ from the tree the PR tested
+— the push run is the only thing that ever tests `main` itself. It blocks
+nobody, `concurrency: cancel-in-progress` already collapses a burst of merges
+into one run, and sharding roughly halved what it costs. Moving it to nightly
+would trade "green main, known within minutes" for "broken main, found up to a
+day later, then bisect the merges" — the same failure mode the issue rejects for
+release-only e2e, at a smaller scale. Revisit only if runner minutes actually
+become the constraint.
+
+### The e2e gate is sharded (issue 189)
+
+`e2e.yml` is three jobs, and the shape is load-bearing:
+
+- **`build`** compiles the debug binary once and uploads `e2e/.bin/platypusgit`
+  as an artifact. The binary is identical for every shard, so building per shard
+  would spend the ~50 s cargo link N times over. The shard jobs then need no
+  Rust toolchain and no `rust-cache` at all — they only run what this produced.
+  The artifact format drops the exec bit, so each shard `chmod +x`es it.
+- **`e2e`** is a matrix of four runners. `maxInstances` must stay **1** — an
+  `e2e`-feature binary serves WebDriver on a fixed port, so two app instances in
+  one container collide — which is exactly why parallelism lives across
+  *runners*, one wdio process each. The matrix array in the workflow is the ONLY
+  place the shard count is written down; the run step reads the total from
+  `strategy.job-total` and passes `E2E_SHARD` / `E2E_SHARDS`. `fail-fast: false`,
+  so one broken spec does not hide the other three shards' state.
+**The two apt lists are what makes four runners cheaper than one**, and a single
+list was the first sharded run's whole regression. `TAURI_APT_BUILD_DEPS` is the
+`-dev` set plus `patchelf`, installed only by `build`, which links the crate.
+`TAURI_APT_RUN_DEPS` is the RUNTIME closure — `libwebkit2gtk-4.1-0`,
+`libgtk-3-0t64` (Ubuntu 24.04's 64-bit time_t rename), `libayatana-appindicator3-1`,
+`librsvg2-2`, `xvfb` — and no shard fetches it from a mirror: `build` resolves it
+with `apt-get --download-only` BEFORE its own `-dev` install (after, those
+packages are installed and apt would fetch nothing), into the same archive
+directory the `-dev` install then reuses, and ships the `.deb`s as a second
+artifact each shard installs offline with `apt-get install ./*.deb`. Reason:
+`azure.archive.ubuntu.com` throttles per runner, unpredictably — the SAME 61.5 MB
+of `-dev` packages took 13 s, 2 min 14 s, 8 min 14 s and **10 min 24 s** across
+one run's four shards — and a matrix job waits for the slowest draw. So it is one
+mirror draw per run instead of five, and no `apt-get update` in a shard at all.
+`ldd` on the downloaded binary is the second net: a runtime list that stops
+covering what the build linked fails ONE named step instead of four shards
+reporting "app never rendered the Welcome screen".
+
+- **`e2e-linux`** is unchanged in NAME and still the only required check on
+  `main`'s ruleset — sharding needed no ruleset edit, only a longer `needs:`. It
+  fails on a skip it cannot explain: a `changes` job that did not succeed, a
+  build that did not succeed, or a shard aggregate that is anything but
+  `success`. `needs.<matrix job>.result` is the AGGREGATE, so one comparison
+  already means "every shard passed".
+
+**The split is derived, never listed** (`e2e/shardSpecs.ts`, invariants in
+`test/shardSpecs.test.ts`). `listSpecFiles` walks `e2e/specs/`, so a spec added
+or renamed by another change is picked up with no edit; `shardSpecs` then packs
+by MEASURED per-spec duration (longest-processing-time-first, deterministic ties
+on the path). wdio's own `--shard x/y` was rejected because it slices the
+*alphabetical* list by count, and measured against this suite that put `keymap`,
+`palette` and `history-ops` in one slice — 256 s against 43 s for the lightest.
+`WEIGHTS` is a HINT with provenance in its comment, not a manifest: an unlisted
+spec gets `DEFAULT_WEIGHT` and still runs, a stale entry is dead weight, and
+neither can drop a spec. Re-measure when the distribution has visibly drifted.
+
+**LPT's bound is `max ≤ ideal + heaviest`, so the heaviest single spec is the
+gate's floor.** `keymap.e2e.ts` is 140 s of the suite's ~530 s, so four shards
+already sit at that floor and a fifth runner buys nothing — the next lever is
+splitting that file, not adding shards. And the reason it costs 140 s is
+structural, not a lost selector: it calls `openRepo()` once per `it()` (28
+times), and one `openRepo` is a refresh + re-arm + a repo open + the syncing
+settle, ~5 s under xvfb. The same shape holds for `repo-tabs` (10 `resetApp`s)
+and `palette` (8 `openRepo`s).
+
+**Every spec file LEAVES a cleared `localStorage`, and that is what makes any
+grouping safe.** A spec file gets a fresh app PROCESS but not a fresh app data
+dir, so `pg-open-repos` survives into the next spec and makes its launch restore
+a repository instead of rendering Welcome — the screen the conf `before` hook and
+every `openRepo` wait for. Before sharding that never bit only because the two
+specs that leave the key behind (`repo-tabs`, `open-persisted-screen`) also
+dispose their temp repos, so the restore fails and Welcome renders anyway — a
+property of two *other* files. The conf's `after` hook now clears the key, so the
+guarantee is structural.
+
+**It clears at the END, with no refresh, and that placement is the whole point.**
+Doing the same clear in `before` — where it reads more naturally — needs a
+`browser.refresh()` to un-restore the repository, and that MEASURED at 528 s →
+**1064 s** for the suite (run `32246987758`): one extra refresh per spec file
+re-rolls the reload race, and every loss is a full **30 s** stall because the W3C
+script timeout is uncapped on Linux. Clearing after the last test needs no
+navigation at all. Any future "just reset the app between specs" idea inherits
+this: on this suite a refresh costs ~30 s times the probability of losing that
+race, not the ~1 s a page reload looks like.
+
+**Those 30 s stalls are the suite's real cost, and they are not selector
+failures.** Serial baseline (run `32242497631`): 528 s of spec time, of which
+roughly **eight** ~30 s stalls — every spec over 30 s is `n × 30` plus small
+change, and which specs pay moves run to run. The mechanism is already documented
+in `wdio.conf.ts` guard 2: an `execute()` landing mid-document-swap has its
+completion handler dropped, the driver waits the FULL script timeout, and the
+caller retries. macOS caps that at 2.5 s; **Linux does not cap it at all**, which
+is why a stall there is 30 s rather than invisible. Capping it on Linux is the
+biggest single lever left on the gate and is deliberately NOT done here: the
+comment's objection (a truncated-but-completed script gets retried, double-running
+side effects) is what `executeOnce` exists to neutralise, so the change is
+plausible — but it re-opens a documented CI flake class and needs its own
+verification runs, not a drive-by.
+
+Reproduce one CI shard locally: `E2E_SHARD=2 E2E_SHARDS=4 pnpm test:e2e:docker
+run` (`docker-compose.e2e.yml` threads both through). With neither set — every
+ordinary local and Docker run — `specs` keeps its plain glob and the run is
+byte-for-byte what it was.
 
 ## Architecture
 
@@ -863,6 +985,15 @@ module and every `src/features/*/` directory is named somewhere in here.
   Remote, diff, merge and update are ordinary words that occur all over this
   file, so those assertions would pass for the wrong reason and could never
   fail. Further doc invariants belong in this file; add cases, not counts.
+- **`test/shardSpecs.test.ts` is the second tree invariant here** (issue 189),
+  and it guards a SILENT failure: a spec that lands in no CI shard simply never
+  runs and the gate goes green. It reads the real `e2e/specs/` directory and the
+  real `shard: [...]` matrix out of `.github/workflows/e2e.yml`, then asserts the
+  split is a partition — every spec in exactly one shard, no shard empty, stable
+  run to run, and an unmeasured (newly added) spec still placed. That is why the
+  matrix array must stay on one line. Same reason it lives in `test/` rather than
+  beside the module: it asserts a fact about the tree and about `.github/`, and
+  it needs node, not the jsdom harness.
 - **`test/` is the repo root, not `src/test/`** — the two are unrelated despite
   the name. This suite reads `src-tauri/`, `CLAUDE.md` and `e2e/`, so it is not
   a frontend test. `pnpm test` runs both suites as two vitest **projects**
