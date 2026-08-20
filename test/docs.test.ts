@@ -1,17 +1,20 @@
 /**
  * @vitest-environment node
  */
-// CLAUDE.md coverage (#147, #150).
+// Doc-set coverage (#147, #150).
 //
 // Lives at the repo root rather than under `src/` because it asserts things
-// about `src-tauri/`, `CLAUDE.md` and `e2e/` — it is not a frontend test in any
+// about `src-tauri/`, the docs and `e2e/` — it is not a frontend test in any
 // sense, and `test/` is the home for further doc invariants. `vite.config.ts`
 // adds `test/**/*.test.ts` to `test.include` for exactly this directory.
 //
-// CLAUDE.md is read as authoritative by assistant sessions, so an entry that
-// silently stopped existing sends work down the wrong path. It has now drifted
-// three times in the same two ways: a whole module landed without reaching the
-// file trees, and a command landed without reaching a command list.
+// CLAUDE.md and the `docs/dev/` set it points at are read as authoritative by
+// assistant sessions, so an entry that silently stopped existing sends work
+// down the wrong path. The doc drifted three times in the same two ways: a
+// whole module landed without reaching the file trees, and a command landed
+// without reaching a command list. The checked corpus is CLAUDE.md plus every
+// `docs/dev/*.md` — the annotated trees live in `docs/dev/architecture.md`,
+// and CLAUDE.md deliberately stays a short pointer file.
 //
 // Both of those are mechanically checkable from the tree itself, so they are
 // checked here instead of by hand. What is NOT checked is whether the prose is
@@ -33,7 +36,13 @@ import { describe, expect, it } from "vitest";
 const root = (rel: string) => resolve(process.cwd(), rel);
 const read = (rel: string) => readFileSync(root(rel), "utf8");
 
-const doc = read("CLAUDE.md");
+const doc = [
+  read("CLAUDE.md"),
+  ...readdirSync(root("docs/dev/"))
+    .filter((name) => name.endsWith(".md"))
+    .sort()
+    .map((name) => read(`docs/dev/${name}`)),
+].join("\n");
 
 /**
  * Every id registered in `invoke_handler!`.
@@ -95,14 +104,14 @@ function documentedCommands(): Set<string> {
   return named;
 }
 
-describe("CLAUDE.md stays in step with the tree", () => {
+describe("the doc set (CLAUDE.md + docs/dev/) stays in step with the tree", () => {
   it("names every command registered in invoke_handler!", () => {
     const documented = documentedCommands();
     const missing = registeredCommands().filter((id) => !documented.has(id));
 
     expect(
       missing,
-      `Not mentioned anywhere in CLAUDE.md: ${missing.join(", ")}.\n` +
+      `Not mentioned anywhere in CLAUDE.md or docs/dev/: ${missing.join(", ")}.\n` +
         "Add each to the relevant `commands/<area>.rs` entry in the backend " +
         "tree — as a real entry saying what it is for, not appended to a bare " +
         "list. Joining a sibling group (`stage/unstage/discard_paths`) counts; " +
@@ -127,7 +136,7 @@ describe("CLAUDE.md stays in step with the tree", () => {
 
     expect(
       missing,
-      `Backend modules absent from the src-tauri/src/ tree in CLAUDE.md: ${missing.join(", ")}`,
+      `Backend modules absent from the src-tauri/src/ tree in docs/dev/architecture.md: ${missing.join(", ")}`,
     ).toEqual([]);
   });
 
@@ -144,7 +153,7 @@ describe("CLAUDE.md stays in step with the tree", () => {
 
     expect(
       missing,
-      `Feature directories absent from the features/ tree in CLAUDE.md: ${missing.join(", ")}`,
+      `Feature directories absent from the features/ tree in docs/dev/architecture.md: ${missing.join(", ")}`,
     ).toEqual([]);
   });
 });
