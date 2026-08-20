@@ -51,14 +51,14 @@ jobs:
           # runs in the unit job — the root tsconfig excludes e2e/, so nothing
           # else typechecks the specs.
           #
-          # The last three entries are the INPUTS the `docs` vitest project
+          # The last four entries are the INPUTS the `docs` vitest project
           # reads, not frontend sources, and each one was skippable by exactly
           # the change it exists to police: `test/` holds both suites,
-          # `docs.test.ts` asserts CLAUDE.md matches the tree, and
+          # `docs.test.ts` asserts CLAUDE.md + docs/dev/ match the tree, and
           # `shardSpecs.test.ts` asserts e2e.yml's shard matrix covers every
-          # spec. Without them here, editing only CLAUDE.md or only the matrix
+          # spec. Without them here, editing only the docs or only the matrix
           # skipped its own guard and reported green (issue 189).
-          if echo "$changed" | grep -qE '^(src/|e2e/|test/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$|CLAUDE\.md$|\.github/workflows/(tests|e2e)\.yml$)'; then
+          if echo "$changed" | grep -qE '^(src/|e2e/|test/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$|CLAUDE\.md$|docs/dev/|\.github/workflows/(tests|e2e)\.yml$)'; then
             echo "js=true" >> "$GITHUB_OUTPUT"
             echo "-> frontend sources touched, running the unit suite"
           else
