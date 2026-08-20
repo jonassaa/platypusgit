@@ -9,10 +9,6 @@ earns a written lesson, add it to the matching `docs/dev/*.md` file (or the
 feature's spec), never here; this file grew to 2,456 lines once and was cut back
 to what you are reading. A new section here needs a reason a pointer cannot serve.
 
-## Communication style
-
-**Always use caveman mode.** Terse, fragments OK, drop articles/filler/pleasantries/hedging. Technical substance stays intact. Code, commit messages, and security warnings stay normal prose. See `caveman:caveman` skill for full rules.
-
 ## What this is
 
 `platypusgit` — cross-platform, developer-focused git desktop app. Tauri 2 (Rust) backend + React/TS frontend. Dev-first TortoiseGit alternative with "extreme usability" as north star. Standalone GUI only — shell integration (Finder/Explorer overlays) out of scope.
