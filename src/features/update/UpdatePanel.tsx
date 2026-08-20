@@ -1,6 +1,6 @@
 import React from "react";
 
-import { PGButton, PGIconButton } from "@/design";
+import { PGButton, PGIconButton, pgFlash } from "@/design";
 import { usePlatform } from "@/lib/platform";
 import { packageHint } from "./packageHint";
 import { useUpdateStore } from "./useUpdateStore";
@@ -112,18 +112,50 @@ export function UpdatePanel() {
           <span style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>
             {hint.note}
           </span>
-          <code
-            data-testid="pg-update-pkg-hint"
+          {/* The command has to be able to LEAVE the panel — it is the only
+              thing a notify-path user can act on. `body` sets
+              `user-select: none`, so the bare <code> could neither be selected
+              nor copied: advice you had to retype by hand, character-exact,
+              from a popover that closes on the next click outside it. Hence
+              both routes: the copy button, and `pg-selectable` for a manual
+              drag-select of part of it. */}
+          <div
             style={{
-              fontSize: "var(--fs-11)",
-              color: "var(--fg-1)",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
               background: "var(--bg-2)",
               borderRadius: "var(--r-2)",
-              padding: "4px 8px",
+              padding: "2px 2px 2px 8px",
             }}
           >
-            {hint.command}
-          </code>
+            <code
+              data-testid="pg-update-pkg-hint"
+              className="mono pg-selectable"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: "var(--fs-11)",
+                color: "var(--fg-1)",
+                whiteSpace: "pre",
+                overflowX: "auto",
+                cursor: "text",
+              }}
+            >
+              {hint.command}
+            </code>
+            <PGIconButton
+              icon="copy"
+              size="sm"
+              title="Copy command"
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(hint.command)
+                  .then(() => pgFlash("copied command"))
+                  .catch(() => pgFlash("could not copy command"));
+              }}
+            />
+          </div>
         </div>
       )}
 

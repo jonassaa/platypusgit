@@ -291,6 +291,14 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   comparison against `CommitInfo.oid` failed silently (HEAD indicator, graph
   ring, `headAncestryOf` degraded to "the whole log"). `shortSha` at display
   sites only.
+- **Text is unselectable app-wide.** `body` sets `user-select: none` (it makes
+  the shell feel native); only inputs, `contenteditable`, and `.pg-selectable`
+  opt back in. So any string a user may need to lift out by hand — a command,
+  a path, an error — needs `className="pg-selectable"`, and ideally a copy
+  button beside it too (`PGIconButton icon="copy"` + `pgFlash`), because a
+  string inside a click-outside-to-close popover is gone by the second drag.
+  The update panel's package-manager command shipped as a bare `<code>`: the
+  notify path's only actionable content, unselectable and uncopyable.
 - **New list-row surfaces must opt into UI density** (issue #70):
   `height: "calc(<base>px + var(--row-step))"` (or `/ 2` for padding-sized
   rows); `--row-h` for plain 24px rows. `--row-step` is 0 in compact, so each
