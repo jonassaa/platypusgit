@@ -73,6 +73,9 @@ const CommitDiffRowText = React.memo(function CommitDiffRowText({
   );
 });
 
+/** Stable empty list, so blanking the rendered model does not churn memos. */
+const NO_DIFFS: FileDiff[] = [];
+
 export interface CommitDiffPanelProps {
   diffs: FileDiff[];
   loading: boolean;
@@ -135,21 +138,32 @@ export function CommitDiffPanel({
     );
   }, [diffs]);
 
-  const selectedIndex = Math.max(0, diffs.findIndex((d) => d.path === selected));
+  // What the panel RENDERS, as opposed to what it holds. Every caller keeps the
+  // previous target's diffs while the next fetch is in flight — History
+  // debounces ↑/↓ through the log and leaves `inlineDiffs` alone until the new
+  // ones land — so `loading` arrives with the previous commit's files still in
+  // `diffs`, and rendering those put the loading skeleton directly above the
+  // file list it was standing in for, next to a diff from the commit before.
+  // Blanking the rendered model rather than the prop keeps the selection effect
+  // above on the real list, so a refetch of the SAME target still lands back on
+  // the file the user was reading.
+  const shown = loading ? NO_DIFFS : diffs;
+
+  const selectedIndex = Math.max(0, shown.findIndex((d) => d.path === selected));
   usePaneList({
     paneId: filesPaneId,
-    count: diffs.length,
+    count: shown.length,
     selectedIndex,
     onSelect: (i) => {
-      const d = diffs[i];
+      const d = shown[i];
       if (d) setSelected(d.path);
     },
-    searchText: (i) => diffs[i]?.path ?? "",
+    searchText: (i) => shown[i]?.path ?? "",
   });
 
   // Fall back to the first file so the diff pane is populated immediately when
   // a new diff arrives, before the selection-sync effect runs.
-  const current = diffs.find((d) => d.path === selected) ?? diffs[0] ?? null;
+  const current = shown.find((d) => d.path === selected) ?? shown[0] ?? null;
 
   const syntax = useDiffSyntax({
     repoId: syntaxSides?.repoId ?? null,
@@ -167,9 +181,9 @@ export function CommitDiffPanel({
   // the worker, so moving down the file list usually hits the cache. The selected
   // file goes first and the hook skips it — it is already loading above.
   const prefetchPaths = React.useMemo(() => {
-    const others = diffs.filter((d) => d.path !== current?.path).map((d) => d.path);
+    const others = shown.filter((d) => d.path !== current?.path).map((d) => d.path);
     return current ? [current.path, ...others] : others;
-  }, [diffs, current?.path]);
+  }, [shown, current?.path]);
   usePrefetchSyntax({
     repoId: syntaxSides?.repoId ?? null,
     paths: prefetchPaths,
@@ -257,10 +271,10 @@ export function CommitDiffPanel({
     // This panel's list is the commit's own changed files, and it owns the
     // selection, so moving it moves both panes (issue 188).
     files: {
-      count: diffs.length,
-      index: diffs.findIndex((d) => d.path === current?.path),
+      count: shown.length,
+      index: shown.findIndex((d) => d.path === current?.path),
       select: (i) => {
-        const d = diffs[i];
+        const d = shown[i];
         if (d) setSelected(d.path);
       },
     },
@@ -327,17 +341,17 @@ export function CommitDiffPanel({
             <WhitespaceToggle />
           </div>
           {loading && (
-            <div style={{ padding: 12 }}>
+            <div style={{ padding: 12 }} aria-busy="true" aria-label="Loading files">
               <PGSkeleton count={6} rowStep />
             </div>
           )}
           {error && (
             <div style={{ padding: 12, color: "var(--git-removed)" }}>{error}</div>
           )}
-          {!loading && !error && diffs.length === 0 && (
+          {!loading && !error && shown.length === 0 && (
             <div style={{ padding: 12, color: "var(--fg-3)" }}>{emptyLabel}</div>
           )}
-          {diffs.map((d) => {
+          {shown.map((d) => {
             const glyph = fileIconSpec(d.path);
             const parts = d.path.split("/");
             const base = parts.pop();
@@ -436,6 +450,16 @@ export function CommitDiffPanel({
             remeasure();
           }}
         >
+          {loading && (
+            // Code lines, not list rows: --lh-code owns diff geometry, so this
+            // deliberately does NOT use rowStep — same shape as RepoBrowser's
+            // preview skeleton (#61 B6). Without it the view pane would sit
+            // empty next to the file list's shimmer, which read as "this commit
+            // changed nothing" for as long as the fetch took.
+            <div aria-busy="true" aria-label="Loading diff">
+              <PGSkeleton count={14} height={10} gap={5} />
+            </div>
+          )}
           {current?.binary && (
             <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-12)" }}>
               Binary file — no textual diff.
