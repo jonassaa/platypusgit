@@ -125,194 +125,1041 @@ export const roadmap = [
   'Signed & notarized macOS / Windows builds',
 ];
 
-export const changelog = [
+
+/**
+ * One release. `summary` is optional framing for the whole entry; everything
+ * else lives in a titled section so a reader can find the half they came for
+ * — a bold lead per bullet, the detail under it. Backticks in either become
+ * <code> at render time (see changelog.astro), so write them like markdown.
+ */
+export type ChangelogItem = { title: string; detail?: string };
+export type ChangelogSection = { title: string; items: ChangelogItem[] };
+export type ChangelogEntry = {
+  version: string;
+  date: string;
+  status: string;
+  summary?: string;
+  sections: ChangelogSection[];
+};
+
+export const changelog: ChangelogEntry[] = [
   {
     version: '0.0.15',
     date: '2026-08-19',
     status: 'feature & fixes',
-    notes: [
-      'Check out a branch from the commit it is sitting on. Right-clicking a commit in History offered to check out the commit — detaching HEAD — and to create a new branch from it, but when a branch was already on that commit there was no way to check *that* out; you had to leave for the branch chip, the Branches screen or the palette. One branch on the commit is now an inline entry, several collapse into a submenu, and both sit above the detached-HEAD entry, which stays: on a commit that has a branch, checking the branch out is the safer and far more common intent. The branch you are already on is listed and disabled rather than hidden, so the menu still tells you where you are. A ref that exists only on the remote offers to check it out as a new local branch and goes through the tracking-branch prompt — it never detaches, which is what the obvious shortcut would have done silently. History\'s own "local branches only" filter is deliberately not consulted: that filter thins out crowded ref pills on a row, and hiding a pill must not remove an action from a menu.',
-      '`pgit` arrives with the app on every channel that can install it. 0.0.12 shipped the command with the Linux `.deb` and the Windows `.msi` and named two things that were still missing; both are here now. The Homebrew cask links `pgit` as part of installing the app, so a `brew install` — or a `brew upgrade` onto this version — gets the command without anyone finding Settings first. That leaves exactly two channels that will never have an install hook, because neither runs any code at install time: the macOS `.dmg`, where dragging the app into place executes nothing, and the Linux AppImage, which is not installed at all. Those two now have a documented one-liner on the download page, `curl -fsSL https://www.platypusgit.com/install-pgit.sh | sh`, with an `irm … | iex` form for Windows PowerShell. Both scripts are served from the repository\'s own copies by a build step rather than from a second checked-in copy, so the bytes you pipe into a shell are the bytes that were reviewed, and a missing source fails the site build instead of publishing a 404 at a URL that tells you to pipe it into a shell. The page leads with which channels already have the command rather than with the command itself, and puts a "read it before you run it" route beside it: both scripts open as plain text in a browser, both can be downloaded and inspected first, and both take a dry-run flag.',
-      'The `+` button sits next to the last tab. It was pinned to the far right of the window, so with two repositories open it stood alone at the other end of a window-wide gap, reading as part of the window rather than as the end of the strip. It now renders inside the scrolling strip, immediately after the last tab, at every tab count — one layout rather than two picked by measuring the strip against itself, which on the Linux webview means measuring without a `ResizeObserver`, a trap this app has already paid for twice. The cost, accepted: with enough repositories open to overflow the strip the button scrolls off to the right along with the tabs it follows, and the same scroll brings it back, while ⌘O, the command palette and the Welcome screen all still reach the action. Two smaller things went with it — the button drew its own left border against the preceding tab\'s right border and rendered a double line, now a single divider; and scrolling the active tab into view used to stop at that tab\'s edge and leave the button half-clipped whenever the last tab was the active one, so the strip now aims at the button in exactly that case, which reveals both.',
-      'Fixes — a repository could open twice, and the diff pane died with it. Launching `pgit <path>` on a repository the session had already restored opened it a second time, because the two things that produce that path spelled it differently — libgit2 hands back a trailing slash and one of the two stripped it — so `/repo/` matched no tab in an open set holding `/repo`. Two backend handles then existed for one repository and the app went on referencing the one it had just discarded, so from that moment every commit you clicked answered "unknown repository" with no banner anywhere: the diff pane was silently dead for the rest of the session and only a restart brought it back. One spelling for one path fixes the double open, and a second guard fixes the race that made the discarded handle the live one. Checking whether an orphaned handle could be reached any other way turned up three more doors that were not in the report, and those are closed too — the visible one is "New repository…", which opened the repository once to create it and once again to show it, leaking a git handle and its open file descriptors on every single use for as long as the app stayed running.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Check out a branch from the commit it is sitting on',
+            detail:
+              'A commit\'s context menu in History offered to check out the commit — detaching HEAD — and to create a branch from it, but not to check out a branch already sitting there; you had to leave for the branch chip, the Branches screen or the palette. One branch is now an inline entry, several collapse into a submenu, and both sit above the detached-HEAD entry, which stays: on a commit that has a branch, checking the branch out is the safer and far more common intent.',
+          },
+          {
+            title: 'The menu tells you where you are',
+            detail:
+              'The branch you are already on is listed and disabled rather than hidden. A ref that exists only on the remote offers to check it out as a new local branch and goes through the tracking-branch prompt — it never detaches silently. History\'s "local branches only" filter is deliberately not consulted: that filter thins out crowded ref pills, and hiding a pill must not remove an action from a menu.',
+          },
+          {
+            title: 'pgit arrives with the app on every channel that can install it',
+            detail:
+              'The Homebrew cask now links `pgit` as part of installing the app, so a `brew install` — or a `brew upgrade` onto this version — gets the command without anyone finding Settings first. That closes both gaps 0.0.12 named.',
+          },
+          {
+            title: 'A one-liner for the two channels that run no install code',
+            detail:
+              'The macOS `.dmg` executes nothing when you drag the app into place, and the Linux AppImage is not installed at all. Both now have a documented `curl -fsSL https://www.platypusgit.com/install-pgit.sh | sh` on the download page, with an `irm … | iex` form for Windows PowerShell. The scripts are served from the repository\'s own copies by a build step rather than a second checked-in copy, so the bytes you pipe into a shell are the bytes that were reviewed — and a missing source fails the site build instead of publishing a 404 at a URL that tells you to pipe it into a shell.',
+          },
+          {
+            title: 'Read it before you run it',
+            detail:
+              'The download page leads with which channels already have the command rather than with the command itself. Both scripts open as plain text in a browser, both can be downloaded and inspected first, and both take a dry-run flag.',
+          },
+        ],
+      },
+      {
+        title: 'Improvements',
+        items: [
+          {
+            title: 'The + button sits next to the last tab',
+            detail:
+              'It was pinned to the far right of the window, so with two repositories open it stood alone at the other end of a window-wide gap, reading as part of the window rather than as the end of the strip. It now renders inside the scrolling strip, immediately after the last tab, at every tab count — one layout rather than two picked by measuring the strip against itself, which on the Linux webview means measuring without a `ResizeObserver`.',
+          },
+          {
+            title: 'The cost, stated: with enough tabs, the + scrolls off',
+            detail:
+              'Open enough repositories to overflow the strip and the button scrolls off to the right along with the tabs it follows — and the same scroll brings it back. `⌘O`, the command palette and the Welcome screen all still reach the action.',
+          },
+          {
+            title: 'Two smaller things went with it',
+            detail:
+              'The button drew its own left border against the preceding tab\'s right border and rendered a double line; that is a single divider now. And scrolling the active tab into view used to stop at that tab\'s edge and leave the button half-clipped whenever the last tab was the active one, so the strip now aims at the button in exactly that case.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'A repository could open twice, and the diff pane died with it',
+            detail:
+              'Launching `pgit <path>` on a repository the session had already restored opened it a second time, because the two things that produce that path spelled it differently — libgit2 hands back a trailing slash and one of the two stripped it — so `/repo/` matched no tab in an open set holding `/repo`. Two backend handles then existed for one repository and the app went on referencing the one it had just discarded, so from that moment every commit you clicked answered "unknown repository" with no banner anywhere. One spelling for one path fixes the double open, and a second guard fixes the race that made the discarded handle the live one.',
+          },
+          {
+            title: 'Three more leaked git handles, none of them in the report',
+            detail:
+              'The visible one is "New repository…", which opened the repository once to create it and once again to show it, leaking a git handle and its open file descriptors on every single use for as long as the app stayed running.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.14',
     date: '2026-08-18',
     status: 'performance & fixes',
-    notes: [
-      'The app is faster where you feel it, and different nowhere. This release adds no features and changes no behaviour — it is a performance pass, so what is worth listing is what you should notice. Scrolling a long diff no longer re-renders anything: every scroll pixel used to rebuild the whole screen the diff sits in, at the rate a trackpad generates events, and a scroll now costs nothing at all until the window of rendered rows genuinely has to move, with only the narrow minimap gutter following the viewport frame by frame. A file you have already opened highlights on the first paint instead of showing plain text and then correcting itself, because the token cache is read straight away rather than a render later. The first file you open in a given language is quicker too: the syntax grammars ship precompiled, so a language\'s patterns are native from the start instead of being translated on first use, and the highlighter warms itself up while the app sits idle after launch, so the first file pays for its own work and not for the machinery. Word-level highlighting inside a changed line is worked out once per diff rather than redone every time syntax arrives, a fold expands, or you change the row density. Two of the causes are worth naming, because they were felt as the app hitching rather than as the app being slow. Every git operation in the whole process queued behind a single lock, so a log walk in one tab genuinely blocked a status refresh in another, and the requests meant to go out together went out strictly one at a time; locking is per repository now, and two operations on the same repository still take their turn, as they must. And the cost of a commit\'s diff grew with the square of the number of files in it, because the patch for every file was regenerated once per file — it is a single pass now, which every surface showing a commit\'s diff inherits: the panel under History, the commit-diff screen, branch compare, and a stash\'s contents. Below those sits a long tail of the same kind: a diff of one file no longer walks the entire working tree to find it, History\'s rows stop re-rendering as a group whenever anything at all changes, the file tree stops re-walking the worktree on every render, the commit panel stops paying a cost that grows with the number of changed files on every keystroke in the message box, the command palette stops rebuilding and re-sorting its whole index while closed, and the titlebar stops re-rendering on every write to the store.',
-      'A long line no longer paints on top of the line beneath it, and the Wrap toggle does something at last. In the unified diff a line of code too wide for the pane wrapped, while the row holding it kept its fixed height — so the wrapped remainder drew straight over the rows below, and two or three source lines composited into a single row\'s worth of space. It was worst in the Repo Browser, where the diff is squeezed between the file tree and the file-info sidebar and ordinary source lines are wide enough to wrap at that width, and it became easy to reach precisely because the previous release let you drag panes narrow in many more places. Long lines now run off to the right and the pane scrolls, the way GitHub and every editor do it, and a row stretches to the full width of its content so that a changed line\'s colour, its gutter stripe and the focus ring cover the whole line instead of stopping where the pane does. The row heights have to stay knowable: the windowing, the jump to a given row, the `F7` anchors and the minimap all agree with the page without measuring it, and the minimap\'s scrub has an inverse, so a disagreement there would drift quietly rather than fail loudly. Which is what the Diff screen\'s Wrap toggle is for — and it was broken in both positions. Off, it wrapped anyway, because wrapping was never conditional on it. On, it wrapped and still overlapped, because the fixed row height was applied regardless. Wrapping is real now, a row grows to fit while it is on, and everything that reads row heights switches off together with it — `F7` included, which until now jumped to offsets the rendered rows no longer had. The side-by-side view always wrapped correctly and is untouched. The cost, stated plainly: with Wrap off, a long line is no longer visible all at once. And one thing is unverified — all of this was measured on the Linux webview, so how the horizontal scrolling and the row backgrounds look on macOS is worth a report.',
-      'Windows: the console flash is gone. Selecting a commit in History flashed up a console window that opened and closed again immediately. A release build is a windowed process owning no console, so each time the app ran real `git` Windows made a console for it and drew the window that hosts one — and of the twenty places this app starts a process, exactly one set the flag that prevents that. It was the PowerShell call that puts `pgit` on your PATH, carrying a comment that names this precise failure mode, so the problem had been understood once, in one place, and never generalised. It also only happens in an installed build: a build from source already owns a console and hands it down to its children, so anyone reproducing it from source concludes there is nothing wrong. Commit selection was the mildest case, too — staging or discarding a hunk or a line runs `git apply`, so that was a flash per action; the git-LFS check is a flash for a feature your repository may not even use; every read of bisect progress is another; and auto-fetch runs on a timer, so with it enabled a console flashed at you with no action on your part at all. All twenty now go through one sanctioned way of starting a process, with a test that fails the build if a twenty-first appears — a helper you call was considered and rejected, since a helper you have to remember is exactly what nineteen of twenty sites forgot. Two keep their consoles deliberately, through separately named constructors so the inconsistency reads as intended where it is written: `git mergetool`, and your `$VISUAL` or `$EDITOR`. A console editor needs the console it is being given, and silencing it would leave an invisible process holding your file open with nothing in the interface able to cancel it. A stray console window is cosmetic and an invisible editor is Task Manager, and only one of those two mistakes can be undone — so we make the other one. There is a saving here for everyone rather than only for Windows: checking a commit\'s signature now asks the git library whether there is a signature at all before running anything, and since most commits in most repositories are unsigned — and an unsigned commit displays no badge — the common case had been paying for a whole subprocess to render nothing. Said plainly, because a confident claim about a build nobody ran is how this shipped in the first place: none of the Windows behaviour above has been confirmed on Windows. It wants a release build on a real machine, and one question is genuinely open — whether `gpg` and `ssh-keygen`, which git starts by itself when it checks a signed commit, still flash once their parent has been silenced. The report this came from stays open until somebody looks.',
-      'Fixes — a file whose name contains a glob character was diffed as a glob. A diff of one path did not switch pattern matching off, so a file named literally `*.txt` matched every other `.txt` file beside it: what you were shown was not that one file\'s diff, and the per-hunk and per-line staging that indexes into that diff was indexing into something wider. Such a name is rare and entirely legal, and it is pinned by a test now. Two more turned up in the function the Windows fix above landed in: verifying a commit\'s signature reported every possible failure as a bad object id, so a broken `gpg` or `ssh-keygen` installation came back claiming the commit did not exist — it carries git\'s own message now, and an object that genuinely is unknown is settled before anything is run; and it was the one git call in that file setting neither the do-not-prompt environment nor a closed input, so a `git` that decided to ask a question could wait indefinitely with nothing in the app able to cancel it.',
+    summary:
+      'A performance pass: the app is faster where you feel it, and different nowhere. No new features, no behaviour changes — so what is listed is what you should notice.',
+    sections: [
+      {
+        title: 'Performance',
+        items: [
+          {
+            title: 'Scrolling a long diff no longer re-renders anything',
+            detail:
+              'Every scroll pixel used to rebuild the whole screen the diff sits in, at the rate a trackpad generates events. A scroll now costs nothing at all until the window of rendered rows genuinely has to move, with only the narrow minimap gutter following the viewport frame by frame.',
+          },
+          {
+            title: 'Highlighting on the first paint',
+            detail:
+              'A file you have already opened comes up highlighted instead of showing plain text and then correcting itself, because the token cache is read straight away rather than a render later.',
+          },
+          {
+            title: 'The first file in a language opens quicker',
+            detail:
+              'The syntax grammars ship precompiled, so a language\'s patterns are native from the start instead of being translated on first use, and the highlighter warms itself up while the app sits idle after launch — so the first file pays for its own work and not for the machinery.',
+          },
+          {
+            title: 'Word-level highlighting is computed once per diff',
+            detail:
+              'Rather than redone every time syntax arrives, a fold expands, or you change the row density.',
+          },
+          {
+            title: 'Locking is per repository, not per process',
+            detail:
+              'Every git operation in the whole process queued behind a single lock, so a log walk in one tab genuinely blocked a status refresh in another, and requests meant to go out together went out strictly one at a time. Two operations on the same repository still take their turn, as they must.',
+          },
+          {
+            title: 'A commit\'s diff is one pass, not one per file',
+            detail:
+              'Its cost grew with the square of the number of files in the commit, because the patch for every file was regenerated once per file. Every surface showing a commit\'s diff inherits the fix: the panel under History, the commit-diff screen, branch compare, and a stash\'s contents.',
+          },
+          {
+            title: 'A long tail of the same kind',
+            detail:
+              'A diff of one file no longer walks the entire working tree to find it; History\'s rows stop re-rendering as a group whenever anything at all changes; the file tree stops re-walking the worktree on every render; the commit panel stops paying a cost that grows with the number of changed files on every keystroke in the message box; the command palette stops rebuilding and re-sorting its whole index while closed; and the titlebar stops re-rendering on every write to the store.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'A long line no longer paints on top of the line beneath it',
+            detail:
+              'In the unified diff a line too wide for the pane wrapped while the row holding it kept its fixed height, so the wrapped remainder drew straight over the rows below and two or three source lines composited into a single row\'s worth of space. It was worst in the Repo Browser, where the diff is squeezed between the file tree and the file-info sidebar. Long lines now run off to the right and the pane scrolls, and a row stretches to the full width of its content so a changed line\'s colour, its gutter stripe and the focus ring cover the whole line.',
+          },
+          {
+            title: 'The Diff screen\'s Wrap toggle does something at last',
+            detail:
+              'It was broken in both positions: off, it wrapped anyway, because wrapping was never conditional on it; on, it wrapped and still overlapped, because the fixed row height was applied regardless. Row heights have to stay knowable — the windowing, the jump to a given row, the `F7` anchors and the minimap all agree with the page without measuring it — so wrapping is real now, a row grows to fit while it is on, and everything that reads row heights switches off together with it. `F7` included, which until now jumped to offsets the rendered rows no longer had. The side-by-side view always wrapped correctly and is untouched.',
+          },
+          {
+            title: 'Windows: the console flash is gone',
+            detail:
+              'A release build is a windowed process owning no console, so each time the app ran real `git`, Windows made a console for it and drew the window that hosts one — and of the twenty places this app starts a process, exactly one set the flag that prevents that. Selecting a commit was the mildest case: staging or discarding a hunk runs `git apply`, the git-LFS check fires for a feature your repository may not use, every read of bisect progress is another, and auto-fetch runs on a timer, so a console flashed with no action on your part at all. It only happens in an installed build, too: a build from source already owns a console and hands it down to its children, so anyone reproducing it from source concludes there is nothing wrong.',
+          },
+          {
+            title: 'One sanctioned way to start a process, with a test behind it',
+            detail:
+              'All twenty sites go through it, and the build fails if a twenty-first appears — a helper you have to remember is exactly what nineteen of twenty forgot. Two keep their consoles deliberately, through separately named constructors: `git mergetool`, and your `$VISUAL` or `$EDITOR`. A console editor needs the console it is being given, and silencing it would leave an invisible process holding your file open with nothing able to cancel it.',
+          },
+          {
+            title: 'Signature checks skip the subprocess when there is nothing to check',
+            detail:
+              'Verifying a commit now asks the git library whether there is a signature at all before running anything. Most commits in most repositories are unsigned — and an unsigned commit displays no badge — so the common case had been paying for a whole subprocess to render nothing. This one is a saving everywhere, not only on Windows.',
+          },
+          {
+            title: 'A file whose name contains a glob character was diffed as a glob',
+            detail:
+              'A diff of one path did not switch pattern matching off, so a file named literally `*.txt` matched every other `.txt` file beside it: what you were shown was not that file\'s diff, and the per-hunk and per-line staging that indexes into that diff was indexing into something wider. Rare, entirely legal, and pinned by a test now.',
+          },
+          {
+            title: 'Signature verification reported every failure as a bad object id',
+            detail:
+              'A broken `gpg` or `ssh-keygen` installation came back claiming the commit did not exist. It carries git\'s own message now, and an object that genuinely is unknown is settled before anything is run.',
+          },
+          {
+            title: 'One git call could wait forever for an answer',
+            detail:
+              'It was the single call in that file setting neither the do-not-prompt environment nor a closed input, so a `git` that decided to ask a question could hang with nothing in the app able to cancel it.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'With Wrap off, a long line is no longer visible all at once',
+            detail: 'The stated cost of scrolling horizontally instead of overlapping.',
+          },
+          {
+            title: 'The diff work was measured on the Linux webview only',
+            detail:
+              'How the horizontal scrolling and the row backgrounds look on macOS is worth a report.',
+          },
+          {
+            title: 'None of the Windows console behaviour has been confirmed on Windows',
+            detail:
+              'It wants a release build on a real machine, and one question is genuinely open: whether `gpg` and `ssh-keygen`, which git starts by itself when it checks a signed commit, still flash once their parent has been silenced. The report this came from stays open until somebody looks.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.13',
     date: '2026-08-18',
     status: 'feature',
-    notes: [
-      'The diff reads as a file now, not as a stack of labelled sections. The `@@ -12,7 +12,9 @@` banner is gone from every diff surface, and so are the `@@` lines that travelled inside each hunk and outlived the bar — a changed line carries a coloured background and nothing else, red for removed and green for added. Deleting the bar was the easy half; rehoming the four things it carried was the work. Stage and Discard are now a gutter cluster on the first changed row of each block, drawn at rest rather than only under the pointer, because a windowed diff cannot wrap a hunk in one element and a control you can find only by hovering the exact row it sits on is not a control. `F7` / `⇧F7` anchor on that same first changed row, which is where the change actually starts. Per-hunk collapse is retired: it hid a change while leaving its context on screen, and its chevron would have sat beside a fold separator\'s chevron meaning the opposite. And in chunked-context mode every gap between blocks is a fold separator that says how many lines it is hiding and which range they cover, and expands them in place. Two things broken for as long as per-hunk staging has existed are fixed on the way past: the old banner\'s Stage and Discard buttons were mouse-only — no key sequence could reach either — so staging and discarding the hunk you are on are real chords now, `⌘⇧H` and `⌘⇧⌫`, in both presets; and `F7` did nothing whatsoever in the commit panel or the repo browser, two of the four diff surfaces, where the hunk cursor had never been wired in. One place is unchanged: the side-by-side view still shows its own `@@` separator rows. It fills no gaps, so those rows have to stay, and turning them into folds needs counts that view does not compute — a follow-up.',
-      'A minimap down the side of the diff, and you can scrub it. Every diff surface wide enough for one gets a narrow canvas showing the whole file at a glance — where the changes are, how large they are, how they are spread through the file — with a band marking the slice currently on screen. Click it to jump, or drag to scrub: pressing inside the band keeps your grab offset, pressing outside centres the row you pointed at, and a drag past either end pins at the limit instead of sliding away with the cursor. It is painted from the diff the app already holds in memory rather than read off the page, because a long file is windowed and most of its rows are not there to measure, and it hides itself below a container width derived from the diff\'s own geometry rather than picked by eye — so the narrow commit panel earns one on a wide display, and a pane you drag narrow gives it up. It follows the active theme, light modes included, and repaints when you edit the theme you are on. One thing worth saying plainly: everything new in the diff area — the continuous view, the gutter cluster, the fold separators and the minimap — has so far only been rendered on the Linux webview, at a single device-pixel ratio. How it looks on a high-density display, and on macOS in particular, is unverified, so a report about it is more useful here than usual.',
-      'The diff of what you have selected in History, from the menu or `⌘D`. One commit selected shows that commit\'s diff; several show the combined diff across the range they span. Both paths now do it: a single commit\'s context menu gained a View diff entry — it used to offer Compare with HEAD and nothing else diff-shaped, so it answered a different question for one commit than it did for several — and `⌘D` reads the selection while the commit list has focus, without losing its meaning anywhere else, since it still opens the Diff viewer from every other pane, the activity bar and the palette. A range diff necessarily covers every commit between the outermost two, including ones you never clicked, so a selection with gaps in it now says so in the detail pane instead of leaving you to work it out from the result.',
-      'Panels grow to the window instead of to a number somebody typed. Every resizable pane had a hard-coded pixel ceiling — a 520px file list, a 640px composer, a 600px tree — so on a large display the side and bottom panels stayed far smaller than the space allowed. The constraint is expressed the other way round now, as how small the pane on the other side of the handle may get, and that removes the ceiling on its own: a panel can take everything the window has while its neighbour always keeps enough room to hold the handle and be dragged back. The size you drag is kept as your preference and clamped to whatever window it is being drawn in, so reopening a 720px panel on a laptop narrows it there without discarding what the external monitor earned, and moving to a smaller display re-fits the panels rather than leaving a handle off the edge. Double-click a handle to reset that pane to its default size — every handle in the app, twelve of them.',
-      '`pgit` hands the terminal back. `pgit .` held the prompt for as long as the app stayed open, and `Ctrl+C` killed the app; it returns immediately now, the way `code .` does. The detach lives in the binary rather than in the launcher shims, because a symlink cannot detach by construction — the Unix install and the Homebrew cask both symlink the executable — and four shim-side implementations would have drifted apart. Three cases deliberately stay in the foreground: `--help`, which prints and exits; a launch whose output is not a terminal, so `pgit . > file` still blocks; and the askpass helper git runs when it needs a credential, which answers on its own standard output while git waits for it — a version of that which detached would hand git an empty password and break every authenticated fetch, pull and push with nothing to trace the failure back to. Unix for now; Windows is unchanged.',
-      'Fixes — the merge resolver window leaked the browser\'s own context menu. Right-clicking anywhere in the resolver, over the editable result pane included, offered reload and inspect-element on top of merged work that exists nowhere else yet, and on Linux that menu is a real GTK popup with spell-check and IME submenus hanging off it. The suppression the rest of the app uses is document-scoped, and the resolver is a separate window with its own document, so it had never applied there. It is not a fix for the Linux freeze it was found while investigating: that one is still unreproduced and its evidence increasingly points at WSLg rather than at this app.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'The diff reads as a file, not a stack of labelled sections',
+            detail:
+              'The `@@ -12,7 +12,9 @@` banner is gone from every diff surface, and so are the `@@` lines that travelled inside each hunk and outlived the bar. A changed line carries a coloured background and nothing else — red for removed, green for added.',
+          },
+          {
+            title: 'Stage and Discard are a gutter cluster on the first changed row',
+            detail:
+              'Drawn at rest rather than only under the pointer, on the first changed row of each block: a windowed diff cannot wrap a hunk in one element, and a control you can find only by hovering the exact row it sits on is not a control. `F7` and `⇧F7` anchor on that same row, which is where the change actually starts.',
+          },
+          {
+            title: 'Fold separators instead of per-hunk collapse',
+            detail:
+              'In chunked-context mode every gap between blocks says how many lines it is hiding and which range they cover, and expands them in place. Per-hunk collapse is retired: it hid a change while leaving its context on screen, and its chevron would have sat beside a fold separator\'s chevron meaning the opposite.',
+          },
+          {
+            title: 'Hunk staging has real chords',
+            detail:
+              'The old banner\'s Stage and Discard buttons were mouse-only — no key sequence could reach either. Staging and discarding the hunk you are on are `⌘⇧H` and `⌘⇧⌫` now, in both presets. And `F7`, which did nothing whatsoever in the commit panel or the repo browser, is wired into all four diff surfaces.',
+          },
+          {
+            title: 'A minimap down the side of the diff, and you can scrub it',
+            detail:
+              'Every diff surface wide enough for one gets a narrow canvas showing the whole file at a glance — where the changes are, how large they are, how they are spread through the file — with a band marking the slice currently on screen. Click to jump, or drag to scrub: pressing inside the band keeps your grab offset, pressing outside centres the row you pointed at, and a drag past either end pins at the limit instead of sliding away with the cursor.',
+          },
+          {
+            title: 'The minimap is painted, not measured',
+            detail:
+              'It comes from the diff the app already holds in memory rather than off the page, because a long file is windowed and most of its rows are not there to measure. It hides itself below a container width derived from the diff\'s own geometry rather than picked by eye, so the narrow commit panel earns one on a wide display and a pane you drag narrow gives it up. It follows the active theme, light modes included, and repaints when you edit the theme you are on.',
+          },
+          {
+            title: 'Diff what you have selected in History, from the menu or ⌘D',
+            detail:
+              'One commit selected shows that commit\'s diff; several show the combined diff across the range they span. A single commit\'s context menu gained a View diff entry — it used to offer Compare with HEAD and nothing else diff-shaped — and `⌘D` reads the selection while the commit list has focus, without losing its meaning anywhere else. A selection with gaps in it now says so in the detail pane, since a range diff necessarily covers every commit between the outermost two.',
+          },
+          {
+            title: 'Panels grow to the window instead of to a number somebody typed',
+            detail:
+              'Every resizable pane had a hard-coded pixel ceiling — a 520px file list, a 640px composer, a 600px tree — so on a large display the panels stayed far smaller than the space allowed. The constraint is expressed the other way round now, as how small the pane on the other side of the handle may get, and that removes the ceiling on its own.',
+          },
+          {
+            title: 'Pane sizes follow you between displays',
+            detail:
+              'The size you drag is kept as your preference and clamped to whatever window it is being drawn in, so reopening a 720px panel on a laptop narrows it there without discarding what the external monitor earned. Double-click a handle to reset that pane to its default size — every handle in the app, twelve of them.',
+          },
+          {
+            title: 'pgit hands the terminal back',
+            detail:
+              '`pgit .` held the prompt for as long as the app stayed open, and `Ctrl+C` killed the app; it returns immediately now, the way `code .` does. The detach lives in the binary rather than in the launcher shims, because a symlink cannot detach by construction and four shim-side implementations would have drifted apart. Three cases deliberately stay in the foreground: `--help`, a launch whose output is not a terminal (so `pgit . > file` still blocks), and the askpass helper git runs when it needs a credential. Unix for now; Windows is unchanged.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'The merge resolver window leaked the browser\'s own context menu',
+            detail:
+              'Right-clicking anywhere in the resolver, over the editable result pane included, offered reload and inspect-element on top of merged work that exists nowhere else yet — and on Linux that menu is a real GTK popup with spell-check and IME submenus hanging off it. The suppression the rest of the app uses is document-scoped, and the resolver is a separate window with its own document, so it had never applied there.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'The side-by-side view still shows its own @@ separator rows',
+            detail:
+              'It fills no gaps, so those rows have to stay, and turning them into folds needs counts that view does not compute. A follow-up.',
+          },
+          {
+            title: 'The new diff area has only been rendered on the Linux webview',
+            detail:
+              'The continuous view, the gutter cluster, the fold separators and the minimap, all at a single device-pixel ratio. How they look on a high-density display, and on macOS in particular, is unverified — a report about it is more useful here than usual.',
+          },
+          {
+            title: 'The Linux resolver freeze is not fixed',
+            detail:
+              'The context-menu fix was found while investigating it. That one is still unreproduced and its evidence increasingly points at WSLg rather than at this app.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.12',
     date: '2026-08-17',
     status: 'feature',
-    notes: [
-      'Stash the files you picked, rename the entry, and read what is inside it. A stash used to be all-or-nothing: everything dirty went in, the message was fixed forever, and the one way to look inside compared the entry against whatever HEAD is now, and backwards — so it mixed the stashed work with everything that had landed since and drew it as deletions. Now "Stash this file…" sits on any row and "Stash 3 files…" on a selection, stashing just those paths from the same buckets Stage and Discard already read, and the prompt says up front what you cannot see coming: untracked files in the selection come along, and staged ones are unstaged by the move and come back unstaged when you pop. A selection with nothing modified in it now says so, instead of git exiting successfully having stashed nothing while the app said nothing either. Renaming is a menu item, and it moves the entry to the top of the list — git\'s stash reflog can only be prepended to, so the prompt states that rather than letting you discover it; the rename is also additive first, so a failure anywhere leaves you a duplicate you can drop rather than a gap. And an entry has two comparisons that are both the right way round: "Show what it changed", against its own first parent, which folds in the untracked files a `-u` stash keeps in a third parent that no tree diff can reach, and "Compare with working tree", which cannot reach them and therefore excludes untracked on both sides and says so in the header. Hunk-level stash is deliberately not here: the composition it needs rewrites and restores your index around a subprocess, and an interruption in that window would leave the selection as your index with no other copy of the staged work anywhere — so there is no half-built affordance for it either.',
-      '`pgit` arrives with the app. The command-line launcher only ever appeared if you found Settings → Command line and clicked Install — and on macOS that usually failed, because `/usr/local/bin` needs root, so you were handed a `sudo ln -sf` line to paste; on Windows the row read "Not yet supported". Now the Linux `.deb` ships `/usr/bin/pgit` and the Windows `.msi` installs a `pgit` command and puts its directory on your PATH, both as ordinary package contents, so removing the app removes them too. The in-app install got better anyway: on macOS it walks an ordered list of directories and takes the first one it can actually write, so root is an edge case rather than the normal path, and if that directory is not somewhere your shell looks it tells you, with the line that fixes it, rather than reporting a successful install of something you cannot run. On Windows it is real — a per-user directory plus a per-user PATH entry. A `pgit` your package manager installed is never overwritten and never offered for overwrite: Settings names where it came from and shows no button at all. A `pgit` that is not ours is named and left alone. Two channels have no hook by nature — a `.dmg` drag-install runs no code and an AppImage is never installed — so those still go through Settings, or `scripts/install-pgit.sh` from the repository. Two things are not here yet: the Homebrew cask does not carry the command, so a `brew` install still gets it from Settings, and the `.deb` and `.msi` hooks meet a real installer for the first time in this release — Settings → Command line remains the fallback if either does not land.',
-      'Fixes — every backend failure reached the log file as `[object Object]`. An error crossing from Rust is a plain kind-and-message object rather than a JavaScript `Error`, so stringifying it threw the reason away, and a Linux bug report arrived as a burst of identical opaque ERROR lines with nothing in them to diagnose. A log line now leads with the error kind, which is the half you grep for, while a banner still never shows an enum\'s spelling. Two failures nobody could see are visible now: a failed Apply in the merge resolver showed the user `[object Object]`, and the chooser\'s "Keep our version" / "Take theirs" — the resolver\'s fallback for a binary or deleted-side conflict — reported nothing at all, so a failure looked exactly like a button that does nothing. An unhandled render error existed only in a devtools console that a reporting user never opens; it reaches the log file now, with its component stack. Clicking a perfectly ordinary submodule row cost three errors per click, because a gitlink names a commit in the submodule\'s own object database and all three file readers looked for it in the wrong one — "there is no text at this path" is an answer now rather than a failure, for a submodule, for a directory, and for the side a diff legitimately does not have, since an added file has no old version and a deleted one has no new version. And an error the log formatter itself could not read used to replace the failure it was reporting, taking with it the one detail that raises a credential prompt: a fetch against a private remote then simply failed instead of asking for a password. The Linux freeze that report opened with is not fixed — it was never reproduced, the evidence points at a GTK popup on Wayland, and it stays open.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Stash the files you picked',
+            detail:
+              'A stash used to be all-or-nothing. "Stash this file…" now sits on any row and "Stash 3 files…" on a selection, stashing just those paths from the same buckets Stage and Discard already read. The prompt says up front what you cannot see coming: untracked files in the selection come along, and staged ones are unstaged by the move and come back unstaged when you pop. A selection with nothing modified in it says so, instead of git exiting successfully having stashed nothing while the app said nothing either.',
+          },
+          {
+            title: 'Rename a stash entry',
+            detail:
+              'It moves the entry to the top of the list — git\'s stash reflog can only be prepended to, so the prompt states that rather than letting you discover it. The rename is additive first, so a failure anywhere leaves you a duplicate you can drop rather than a gap.',
+          },
+          {
+            title: 'Two comparisons that are both the right way round',
+            detail:
+              '"Show what it changed" runs against the entry\'s own first parent and folds in the untracked files a `-u` stash keeps in a third parent that no tree diff can reach. "Compare with working tree" cannot reach them and therefore excludes untracked on both sides, and says so in the header. The one previous way to look inside compared the entry against whatever HEAD is now, and backwards — so it mixed the stashed work with everything that had landed since and drew it as deletions.',
+          },
+          {
+            title: 'pgit arrives with the app',
+            detail:
+              'The command-line launcher only ever appeared if you found Settings → Command line and clicked Install — and on macOS that usually failed, because `/usr/local/bin` needs root. The Linux `.deb` now ships `/usr/bin/pgit` and the Windows `.msi` installs a `pgit` command and puts its directory on your PATH, both as ordinary package contents, so removing the app removes them too.',
+          },
+          {
+            title: 'The in-app install got better anyway',
+            detail:
+              'On macOS it walks an ordered list of directories and takes the first one it can actually write, so root is an edge case rather than the normal path; if that directory is not somewhere your shell looks, it tells you, with the line that fixes it, rather than reporting a successful install of something you cannot run. On Windows it is real — a per-user directory plus a per-user PATH entry.',
+          },
+          {
+            title: 'A pgit that is not ours is named and left alone',
+            detail:
+              'One your package manager installed is never overwritten and never offered for overwrite: Settings names where it came from and shows no button at all.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Every backend failure reached the log file as [object Object]',
+            detail:
+              'An error crossing from Rust is a plain kind-and-message object rather than a JavaScript `Error`, so stringifying it threw the reason away, and a Linux bug report arrived as a burst of identical opaque ERROR lines with nothing in them to diagnose. A log line now leads with the error kind, which is the half you grep for, while a banner still never shows an enum\'s spelling.',
+          },
+          {
+            title: 'Two failures nobody could see',
+            detail:
+              'A failed Apply in the merge resolver showed the user `[object Object]`, and the chooser\'s "Keep our version" / "Take theirs" — the resolver\'s fallback for a binary or deleted-side conflict — reported nothing at all, so a failure looked exactly like a button that does nothing.',
+          },
+          {
+            title: 'Unhandled render errors reach the log file',
+            detail:
+              'With their component stack. They existed only in a devtools console that a reporting user never opens.',
+          },
+          {
+            title: 'Clicking an ordinary submodule row cost three errors',
+            detail:
+              'A gitlink names a commit in the submodule\'s own object database and all three file readers looked for it in the wrong one. "There is no text at this path" is an answer now rather than a failure — for a submodule, for a directory, and for the side a diff legitimately does not have, since an added file has no old version and a deleted one has no new version.',
+          },
+          {
+            title: 'A swallowed error took the credential prompt with it',
+            detail:
+              'An error the log formatter itself could not read used to replace the failure it was reporting, taking with it the one detail that raises a credential prompt: a fetch against a private remote then simply failed instead of asking for a password.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Hunk-level stash is deliberately not here',
+            detail:
+              'The composition it needs rewrites and restores your index around a subprocess, and an interruption in that window would leave the selection as your index with no other copy of the staged work anywhere. There is no half-built affordance for it either.',
+          },
+          {
+            title: 'Two channels still install pgit from Settings',
+            detail:
+              'The Homebrew cask does not carry the command yet, and a `.dmg` drag-install runs no code while an AppImage is never installed. Settings → Command line, or `scripts/install-pgit.sh` from the repository, remains the route for those.',
+          },
+          {
+            title: 'The Linux freeze that report opened with is not fixed',
+            detail:
+              'It was never reproduced, the evidence points at a GTK popup on Wayland, and it stays open.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.11',
     date: '2026-08-17',
     status: 'feature',
-    notes: [
-      'Branch compare — what is on that branch and not on this one. Right-click any branch, local or remote, and compare it with the current branch, with the working tree, or with another branch you marked earlier; the command palette has the same entries. You get the ahead/behind counts and the merge base, both commit lists — what is on each side and not on the other — and the combined file diff, rendered by the same pipeline every other diff surface uses, so word highlighting, syntax and `F7` come along. Either side can be changed or swapped without leaving the view, and the diff says out loud that it is a tree-against-tree comparison, so files that exist only on the base side reading as deletions is stated rather than discovered. The working tree is a right-hand side only: it is not a commit, so there is nothing to count or walk, and the summary and the two lists are absent rather than shown as zero. Untracked files count as additions there — hiding a file you just wrote is the one case the view exists for — and if there are too many of them the untracked side is dropped whole and says how many, instead of truncating quietly.',
-      'Signed tags, and a verdict worth trusting. Annotated tags can now be signed with GPG or SSH, through the same key resolution commit signing has used since 0.0.8: `tag.gpgsign` sets the default and any tag can override it. Creating a tag is one dialog now — name, annotation, sign — replacing three separate single-value prompts. The sign box has a third state meaning "follow the git config", because a plain unchecked box would claim a tag is unsigned in a repository that signs everything; and signing needs an annotation, since a lightweight tag is a reference with no object to sign. A signing failure creates no tag at all — the reference is written last, so you are never left believing you signed something you did not. Signed tags are marked in the Branches list, and the selected tag carries a graded badge: Signed, Bad signature, or "Signed, key unavailable" for a signature from a key outside your `allowedSignersFile`, which is not the same thing as verified.',
-      'Branch lists in an order worth reading. Every list of branches — the titlebar picker, the Branches screen, `⌘P` — showed git\'s own ref order, which is alphabetical: `chore/bump-deps` above `main`, and a branch you touched five minutes ago below one abandoned last year. The repository\'s default branch now pins to the top and everything else falls in recency order, newest commit first; remote branches get the same treatment within their own section. The default branch is git\'s own answer — `origin/HEAD` — falling back to whichever of `main`, `master` or `trunk` exists, and deliberately not the `init.defaultBranch` config, which describes branches that do not exist yet. Filtering still beats pinning, so a query that excludes the default branch does not resurrect it, and the picker\'s cursor now rests on the current branch: the one row where a stray Enter does nothing at all.',
-      'Fixes — creating a tag from a commit\'s context menu or the command palette could only ever produce a lightweight one, because both paths passed no annotation; annotated tags were unreachable from either. The remote-branch menu\'s "Compare with current" resolved both tips itself and did nothing at all when either was missing — it is the ref-named compare now, which cannot silently no-op. The branch picker\'s keyboard cursor survived a change of query instead of following the filtered list. And "Create tag here" is hidden in an empty repository rather than offered and then refused.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Branch compare — what is on that branch and not on this one',
+            detail:
+              'Right-click any branch, local or remote, and compare it with the current branch, with the working tree, or with another branch you marked earlier; the command palette has the same entries. You get the ahead/behind counts and the merge base, both commit lists, and the combined file diff rendered by the same pipeline every other diff surface uses — so word highlighting, syntax and `F7` come along. Either side can be changed or swapped without leaving the view.',
+          },
+          {
+            title: 'The working tree is a right-hand side only',
+            detail:
+              'It is not a commit, so there is nothing to count or walk, and the summary and the two commit lists are absent rather than shown as zero. Untracked files count as additions — hiding a file you just wrote is the one case the view exists for — and if there are too many of them the untracked side is dropped whole and says how many, instead of truncating quietly. The diff also says out loud that it is a tree-against-tree comparison, so files that exist only on the base side reading as deletions is stated rather than discovered.',
+          },
+          {
+            title: 'Signed tags',
+            detail:
+              'Annotated tags can be signed with GPG or SSH, through the same key resolution commit signing has used since 0.0.8: `tag.gpgsign` sets the default and any tag can override it. Creating a tag is one dialog now — name, annotation, sign — replacing three separate single-value prompts. The sign box has a third state meaning "follow the git config", because a plain unchecked box would claim a tag is unsigned in a repository that signs everything; and signing needs an annotation, since a lightweight tag is a reference with no object to sign. A signing failure creates no tag at all.',
+          },
+          {
+            title: 'A tag verdict worth trusting',
+            detail:
+              'Signed tags are marked in the Branches list, and the selected tag carries a graded badge: Signed, Bad signature, or "Signed, key unavailable" for a signature from a key outside your `allowedSignersFile` — which is not the same thing as verified.',
+          },
+          {
+            title: 'Branch lists in an order worth reading',
+            detail:
+              'Every list of branches — the titlebar picker, the Branches screen, `⌘P` — showed git\'s own ref order, which is alphabetical: `chore/bump-deps` above `main`, and a branch you touched five minutes ago below one abandoned last year. The default branch now pins to the top and everything else falls in recency order, newest commit first; remote branches get the same treatment within their own section. The default is git\'s own answer, `origin/HEAD`, falling back to whichever of `main`, `master` or `trunk` exists — deliberately not `init.defaultBranch`, which describes branches that do not exist yet.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Annotated tags were unreachable from the commit menu and the palette',
+            detail:
+              'Both paths passed no annotation, so creating a tag from either could only ever produce a lightweight one.',
+          },
+          {
+            title: '"Compare with current" could silently no-op',
+            detail:
+              'The remote-branch menu resolved both tips itself and did nothing at all when either was missing. It is the ref-named compare now, which cannot.',
+          },
+          {
+            title: 'The branch picker\'s keyboard cursor ignored the filter',
+            detail:
+              'It survived a change of query instead of following the filtered list. Filtering still beats pinning, so a query that excludes the default branch does not resurrect it, and the cursor now rests on the current branch — the one row where a stray Enter does nothing at all.',
+          },
+          {
+            title: '"Create tag here" is hidden in an empty repository',
+            detail: 'Rather than offered and then refused.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.10',
     date: '2026-08-16',
     status: 'feature',
-    notes: [
-      'Several repositories open at once. Repositories are tabs now, on their own strip below the titlebar: open as many as you like, each with its own screen, its own dirty and conflict badges, and a right-click menu to close one, the others, or all. Colliding names are disambiguated by their parent directory. `⌘E` opens a switcher, `⌥1`–`⌥9` jump straight to a tab, `Ctrl+Tab` cycles, `⌘W` closes. Your open set is restored on the next launch, and lazily — five persisted repositories cost one open, not five.',
-      'Pull requests and merge requests, GitHub and GitLab. A new Pulls screen lists the open requests for whichever forge your remote points at — number, title, author, source → target, draft and fork markers — with the CI/checks summary for the selected one. Open it in the browser, check it out locally (forks included, via the ref the forge publishes on the base repository), or create one from the current branch with a title, body, target and draft flag. Self-hosted GitHub Enterprise and GitLab work the same way. The API token is per host, entered in Settings → Integrations, and handed to your own git credential helper under a key that cannot collide with the credential you push with.',
-      'Submodules, git-LFS, linked worktrees and bisect. Submodules get a screen — init, update (recursively if you want), sync URLs, or open one as its own repository — and are told apart from merely embedded repositories in the file tree. Linked worktrees get a screen too: add on a new or existing branch, lock with a reason, remove, prune; removing one that holds uncommitted work asks a second time before it will force. git-LFS lives on the Remote screen (fetch objects, pull objects, checkout), and an LFS pointer now renders as the object it stands for rather than as a two-line text diff. Bisect runs from the operation bar with Good / Bad / Skip / Reset and git\'s own "N revisions left, ~M steps" estimate — including a bisect you started in a terminal, since git\'s files are the only record either of you reads.',
-      'Drag and drop where it earns its place. Drag files between Changes and Staged (both directions, tree or flat view); drag a ref or commit onto another in the graph to merge, rebase or cherry-pick, each behind a confirmation naming what it will do; drag rebase steps to reorder them. Illegal drops are refused with the reason on the cursor rather than silently ignored. Every gesture has a keyboard equivalent — reordering gained `Mod+Shift+↑/↓`, which it never had.',
-      'Whole-file diffs, by default, on every diff surface. A change is easier to judge with the rest of the file around it, so the whole file is what you see — while each change block keeps its own Stage and Discard, so nothing about staging gets coarser. Chunked context remains a setting. Inline vs. split is now a real persisted preference instead of resetting on every navigation, and the changed-word tint is stronger and calibrated per theme mode.',
-      'Highlighting moved off the main thread. Syntax tokenizing runs in a worker and returns packed token data, so clicking quickly between files no longer janks on the file you just left, and a commit warms its other files in the background. If the worker cannot start, it falls back to the old path rather than losing colour.',
-      'A HEAD indicator you can actually configure. The old four-value list had to name every combination; it is now six independent marks — edge bar, row tint, outline, HEAD badge, bold subject, graph ring — at subtle, strong or intense, with a live preview in Settings built from the real History row so it cannot drift from what you get. Existing settings are migrated to the nearest equivalent.',
-      '`Space` stages the focused diff line. The diff pane gained a line cursor beside the existing `F7` hunk cursor: arrow to a changed line, `Space` stages or unstages it — the same rule the checkbox follows, and switched off in exactly the cases the mouse is.',
-      'Fixes — tag pushes and remote-branch deletes ran without credentials, so against a private remote they simply failed with git\'s stderr and no way to answer; both now prompt and retry like every other network operation, and neither can any longer be talked into running a program named by a crafted branch or remote name. Every repository you opened stayed open behind your back for the life of the process, leaking its handles; closing a tab now closes it for real. On Linux the bottom of a long diff could render blank. Dragging a rebase step reordered plans that the buttons correctly said could not be reordered. The Files screen\'s Unstage drop target did nothing at all. Checking out a pull request misread every existing branch as absent, so a name collision surfaced as git\'s own failure instead of a question. History\'s "Mine" scope was a guess at your email that filtered nothing on your own repositories and someone else\'s commits on everyone else\'s — it is gone; the real author filter is in advanced search.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Several repositories open at once',
+            detail:
+              'Repositories are tabs now, on their own strip below the titlebar: open as many as you like, each with its own screen, its own dirty and conflict badges, and a right-click menu to close one, the others, or all. Colliding names are disambiguated by their parent directory. `⌘E` opens a switcher, `⌥1`–`⌥9` jump straight to a tab, `Ctrl+Tab` cycles, `⌘W` closes. Your open set is restored on the next launch, and lazily — five persisted repositories cost one open, not five.',
+          },
+          {
+            title: 'Pull requests and merge requests, GitHub and GitLab',
+            detail:
+              'A new Pulls screen lists the open requests for whichever forge your remote points at — number, title, author, source → target, draft and fork markers — with the CI/checks summary for the selected one. Open it in the browser, check it out locally (forks included, via the ref the forge publishes on the base repository), or create one from the current branch with a title, body, target and draft flag. Self-hosted GitHub Enterprise and GitLab work the same way. The API token is per host, entered in Settings → Integrations, and handed to your own git credential helper under a key that cannot collide with the credential you push with.',
+          },
+          {
+            title: 'Submodules get a screen',
+            detail:
+              'Init, update (recursively if you want), sync URLs, or open one as its own repository — and they are told apart from merely embedded repositories in the file tree.',
+          },
+          {
+            title: 'Linked worktrees get a screen',
+            detail:
+              'Add on a new or existing branch, lock with a reason, remove, prune. Removing one that holds uncommitted work asks a second time before it will force.',
+          },
+          {
+            title: 'git-LFS on the Remote screen',
+            detail:
+              'Fetch objects, pull objects, checkout — and an LFS pointer now renders as the object it stands for rather than as a two-line text diff.',
+          },
+          {
+            title: 'Bisect in the operation bar',
+            detail:
+              'Good / Bad / Skip / Reset and git\'s own "N revisions left, ~M steps" estimate — including a bisect you started in a terminal, since git\'s files are the only record either of you reads.',
+          },
+          {
+            title: 'Drag and drop where it earns its place',
+            detail:
+              'Drag files between Changes and Staged (both directions, tree or flat view); drag a ref or commit onto another in the graph to merge, rebase or cherry-pick, each behind a confirmation naming what it will do; drag rebase steps to reorder them. Illegal drops are refused with the reason on the cursor rather than silently ignored. Every gesture has a keyboard equivalent — reordering gained `Mod+Shift+↑/↓`, which it never had.',
+          },
+          {
+            title: 'Space stages the focused diff line',
+            detail:
+              'The diff pane gained a line cursor beside the existing `F7` hunk cursor: arrow to a changed line, `Space` stages or unstages it — the same rule the checkbox follows, and switched off in exactly the cases the mouse is.',
+          },
+          {
+            title: 'A HEAD indicator you can actually configure',
+            detail:
+              'The old four-value list had to name every combination; it is now six independent marks — edge bar, row tint, outline, HEAD badge, bold subject, graph ring — at subtle, strong or intense, with a live preview in Settings built from the real History row so it cannot drift from what you get. Existing settings are migrated to the nearest equivalent.',
+          },
+        ],
+      },
+      {
+        title: 'Improvements',
+        items: [
+          {
+            title: 'Whole-file diffs, by default, on every diff surface',
+            detail:
+              'A change is easier to judge with the rest of the file around it, so the whole file is what you see — while each change block keeps its own Stage and Discard, so nothing about staging gets coarser. Chunked context remains a setting.',
+          },
+          {
+            title: 'Inline vs. split is a real persisted preference',
+            detail:
+              'Instead of resetting on every navigation. The changed-word tint is stronger and calibrated per theme mode.',
+          },
+          {
+            title: 'Highlighting moved off the main thread',
+            detail:
+              'Syntax tokenizing runs in a worker and returns packed token data, so clicking quickly between files no longer janks on the file you just left, and a commit warms its other files in the background. If the worker cannot start, it falls back to the old path rather than losing colour.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Tag pushes and remote-branch deletes ran without credentials',
+            detail:
+              'Against a private remote they simply failed with git\'s stderr and no way to answer. Both now prompt and retry like every other network operation, and neither can any longer be talked into running a program named by a crafted branch or remote name.',
+          },
+          {
+            title: 'Every repository you opened stayed open behind your back',
+            detail:
+              'For the life of the process, leaking its handles. Closing a tab now closes it for real.',
+          },
+          {
+            title: 'On Linux the bottom of a long diff could render blank',
+          },
+          {
+            title: 'Dragging a rebase step reordered plans that could not be reordered',
+            detail: 'The buttons correctly said so; the drag did not listen.',
+          },
+          {
+            title: 'The Files screen\'s Unstage drop target did nothing at all',
+          },
+          {
+            title: 'Checking out a pull request misread every existing branch as absent',
+            detail:
+              'So a name collision surfaced as git\'s own failure instead of a question.',
+          },
+          {
+            title: 'History\'s "Mine" scope was a guess at your email',
+            detail:
+              'It filtered nothing on your own repositories and someone else\'s commits on everyone else\'s. It is gone; the real author filter is in advanced search.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.9',
     date: '2026-08-14',
     status: 'feature',
-    notes: [
-      'Syntax highlighting on every code surface — the unified diff, split view, the inline commit diff, blame, the file preview, the repo browser\'s diff pane and all three panes of the merge resolver. Word-level highlighting inside a changed line composes with it rather than fighting it, and each theme carries its own syntax palette, so light themes are calibrated for a light canvas and switching mode never re-tokenizes.',
-      'Large diffs stay responsive — diff rows are windowed, so opening a thousand-line file mounts a screenful instead of the whole thing. `F7` hunk navigation scrolls by computed offset, so it still reaches a hunk that isn\'t mounted yet.',
-      'Interactive rebase understands merge commits. A merge in range used to fail partway through and leave the branch half-rewritten; now the plan is validated before the repository is touched, and merge rows are badged with a warning strip saying what will happen. Flatten (the default, and git\'s own) drops the merge and replays its side branch linearly, or keeps it as one ordinary commit; Preserve recreates the merges, the equivalent of `git rebase --rebase-merges`, and states its limitations up front.',
-      'A rebase now survives quitting the app. The replay runs on a detached HEAD and the branch moves exactly once, on completion, with the operation mirrored to disk and `ORIG_HEAD` re-asserted at every step — so Continue and Abort still work after a restart, and `git reset --hard ORIG_HEAD` remains a real escape hatch.',
-      'Conflicts are a state the app announces, not a tab you visit. Whenever a merge, rebase or cherry-pick is in progress, a bar under the titlebar names the operation and branch, counts what\'s left, shows the rebase step, and offers one verb — Resolve conflicts, then Finalize or Continue — plus a confirmed Abort. The old Conflicts screen is gone; the resolver window gained a conflicted-file sidebar and now asks before you leave a file with unapplied work.',
-      'History scope that means something — All / Mine walk every branch, This branch walks HEAD, replacing a client-side approximation. Squash and fixup run from History in place, with a prefilled, editable message built from every commit being squashed; no detour through the plan screen. The rebase plan reorders by drag, and the app opens on History.',
-      'UI zoom on `⌘=` / `⌘-` / `⌘0`, persisted; a customizable "you are here" HEAD indicator (edge bar, row highlight, both, or graph marker only); and entering a screen focuses its main pane, so the first keystroke lands where you\'re looking.',
-      'Fixes — a `.deb` install would have been handed an AppImage as its update payload once Linux self-update opens up, and the update panel now explains itself to `.deb` users instead of dead-ending; continue and abort work for a rebase git owns on disk, which previously abandoned queued steps or left you detached mid-rebase; a branch tip was truncated to seven characters, so the HEAD marker never drew and the ancestry filter silently matched nothing; rebase operations read the displayed log rather than HEAD\'s ancestry, so squashing two commits could produce three; the split view\'s two columns drifted apart on any hunk mixing removals and additions; re-selecting the current screen stranded keyboard focus; and the shell no longer side-scrolls.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Syntax highlighting on every code surface',
+            detail:
+              'The unified diff, split view, the inline commit diff, blame, the file preview, the repo browser\'s diff pane and all three panes of the merge resolver. Word-level highlighting inside a changed line composes with it rather than fighting it, and each theme carries its own syntax palette, so light themes are calibrated for a light canvas and switching mode never re-tokenizes.',
+          },
+          {
+            title: 'Conflicts are a state the app announces, not a tab you visit',
+            detail:
+              'Whenever a merge, rebase or cherry-pick is in progress, a bar under the titlebar names the operation and branch, counts what is left, shows the rebase step, and offers one verb — Resolve conflicts, then Finalize or Continue — plus a confirmed Abort. The old Conflicts screen is gone; the resolver window gained a conflicted-file sidebar and now asks before you leave a file with unapplied work.',
+          },
+          {
+            title: 'Interactive rebase understands merge commits',
+            detail:
+              'A merge in range used to fail partway through and leave the branch half-rewritten. Now the plan is validated before the repository is touched, and merge rows are badged with a warning strip saying what will happen. Flatten (the default, and git\'s own) drops the merge and replays its side branch linearly, or keeps it as one ordinary commit; Preserve recreates the merges — the equivalent of `git rebase --rebase-merges` — and states its limitations up front.',
+          },
+          {
+            title: 'A rebase survives quitting the app',
+            detail:
+              'The replay runs on a detached HEAD and the branch moves exactly once, on completion, with the operation mirrored to disk and `ORIG_HEAD` re-asserted at every step — so Continue and Abort still work after a restart, and `git reset --hard ORIG_HEAD` remains a real escape hatch.',
+          },
+          {
+            title: 'Squash and fixup run from History, in place',
+            detail:
+              'With a prefilled, editable message built from every commit being squashed; no detour through the plan screen. The rebase plan reorders by drag.',
+          },
+          {
+            title: 'History scope that means something',
+            detail:
+              'All / Mine walk every branch, This branch walks HEAD, replacing a client-side approximation.',
+          },
+          {
+            title: 'UI zoom on ⌘= / ⌘- / ⌘0',
+            detail: 'Persisted across launches.',
+          },
+          {
+            title: 'A customizable "you are here" HEAD indicator',
+            detail: 'Edge bar, row highlight, both, or graph marker only.',
+          },
+        ],
+      },
+      {
+        title: 'Improvements',
+        items: [
+          {
+            title: 'Large diffs stay responsive',
+            detail:
+              'Diff rows are windowed, so opening a thousand-line file mounts a screenful instead of the whole thing. `F7` hunk navigation scrolls by computed offset, so it still reaches a hunk that is not mounted yet.',
+          },
+          {
+            title: 'Entering a screen focuses its main pane',
+            detail:
+              'So the first keystroke lands where you are looking. The app now opens on History.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'A .deb install would have been handed an AppImage as its update payload',
+            detail:
+              'Once Linux self-update opens up. The update panel now explains itself to `.deb` users instead of dead-ending.',
+          },
+          {
+            title: 'Continue and abort work for a rebase git owns on disk',
+            detail:
+              'Which previously abandoned queued steps or left you detached mid-rebase.',
+          },
+          {
+            title: 'A branch tip was truncated to seven characters',
+            detail:
+              'So the HEAD marker never drew and the ancestry filter silently matched nothing.',
+          },
+          {
+            title: 'Squashing two commits could produce three',
+            detail:
+              'Rebase operations read the displayed log rather than HEAD\'s ancestry.',
+          },
+          {
+            title: 'The split view\'s two columns drifted apart',
+            detail: 'On any hunk mixing removals and additions.',
+          },
+          {
+            title: 'Re-selecting the current screen stranded keyboard focus',
+          },
+          {
+            title: 'The shell no longer side-scrolls',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.8',
     date: '2026-08-14',
     status: 'feature',
-    notes: [
-      'In-app updates — Windows `.msi` and Linux `.AppImage` installs now download, verify and install updates in place, then relaunch. macOS and `.deb` are notify-only: they point at the release or `brew upgrade` rather than stepping on a package manager\'s bookkeeping.',
-      'Clone and create repositories — clone from a URL with live progress, or initialise a new repository, from the Welcome screen, the command palette, or `⌘⇧O` / `⌘⇧N`.',
-      'Authenticated remotes — fetch, pull, push and clone against private remotes. The first attempt stays prompt-less so an existing credential helper or SSH agent simply answers; only if that fails are you asked, and the operation is retried. "Remember" hands the credential to your own git credential helper, and only once it has actually worked.',
-      'Line-level staging — click or shift-click individual lines in a hunk and stage, unstage or discard just those. Plus word-level highlighting within a changed line, tri-state staging checkboxes on files and folders in the tree, and an ignore-whitespace toggle on every diff surface.',
-      'Commit signing — sign commits with GPG or SSH and see a verification badge on signed commits. The commit box is now a single field (subject and body, the shape git stores), Amend loads the previous message, and you can override the author or add `Co-Authored-By` trailers.',
-      'Rewritten commit graph — proper lane colouring, crossing edges, a HEAD marker and accessible labelling. History pages in as you scroll, and both the log and the file tree are virtualized, so large repositories stay responsive.',
-      'History upgrades — an inline commit diff that opens in place without switching screens, multi-select for a combined diff / squash / cherry-pick, and content search (`content:` / `contains:`) alongside author, path, date and SHA filters.',
-      'Editable branch tracking — set or change a branch\'s upstream from the Branches inspector or its context menu; a first push of an untracked branch establishes tracking instead of leaving it dangling.',
-      'Polish — light themes are properly calibrated (diff colours, graph lanes, pills and shadows no longer keep a dark calibration over a light canvas), per-file-type icons throughout, in-app dialogs with real danger styling and type-the-name confirmation for destructive actions, bundled Inter + JetBrains Mono, loading skeletons, and find-in-tree with `⌘⇧F`.',
-      'Repositories on a Windows drive under WSL (`/mnt/c/…`) open — they tripped git\'s dubious-ownership check and refused outright; you now get an explanation and a one-click way to trust the path.',
-      'Fixes, from a full review of everything since 0.0.7 — discarding a conflicted file deleted it instead of restoring the conflict; pull with auto-stash could leave your uncommitted work in a stash it never popped or mentioned; staging part of a file could then stage the wrong lines, because the diff pane kept showing the pre-stage version; whole branch lanes could vanish from the paginated log; staging a hunk or lines of a brand-new file failed outright; the commit summary counted unstaged edits toward the commit; discarding an untracked file silently did nothing; UI density skipped some row surfaces; a signed commit with an expired key read as unsigned. Embedded repositories are now detected as data rather than guessed from the path, and stay out of batch operations that would write an unresolvable gitlink.',
+    summary:
+      'A large release. The fixes below come from a full review of everything since 0.0.7.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'In-app updates',
+            detail:
+              'Windows `.msi` and Linux `.AppImage` installs now download, verify and install updates in place, then relaunch. macOS and `.deb` are notify-only: they point at the release or `brew upgrade` rather than stepping on a package manager\'s bookkeeping.',
+          },
+          {
+            title: 'Clone and create repositories',
+            detail:
+              'Clone from a URL with live progress, or initialise a new repository, from the Welcome screen, the command palette, or `⌘⇧O` / `⌘⇧N`.',
+          },
+          {
+            title: 'Authenticated remotes',
+            detail:
+              'Fetch, pull, push and clone against private remotes. The first attempt stays prompt-less so an existing credential helper or SSH agent simply answers; only if that fails are you asked, and the operation is retried. "Remember" hands the credential to your own git credential helper, and only once it has actually worked.',
+          },
+          {
+            title: 'Line-level staging',
+            detail:
+              'Click or shift-click individual lines in a hunk and stage, unstage or discard just those. Plus word-level highlighting within a changed line, tri-state staging checkboxes on files and folders in the tree, and an ignore-whitespace toggle on every diff surface.',
+          },
+          {
+            title: 'Commit signing',
+            detail:
+              'Sign commits with GPG or SSH and see a verification badge on signed commits. The commit box is now a single field (subject and body, the shape git stores), Amend loads the previous message, and you can override the author or add `Co-Authored-By` trailers.',
+          },
+          {
+            title: 'History upgrades',
+            detail:
+              'An inline commit diff that opens in place without switching screens, multi-select for a combined diff / squash / cherry-pick, and content search (`content:` / `contains:`) alongside author, path, date and SHA filters.',
+          },
+          {
+            title: 'Editable branch tracking',
+            detail:
+              'Set or change a branch\'s upstream from the Branches inspector or its context menu; a first push of an untracked branch establishes tracking instead of leaving it dangling.',
+          },
+        ],
+      },
+      {
+        title: 'Improvements',
+        items: [
+          {
+            title: 'Rewritten commit graph',
+            detail:
+              'Proper lane colouring, crossing edges, a HEAD marker and accessible labelling. History pages in as you scroll, and both the log and the file tree are virtualized, so large repositories stay responsive.',
+          },
+          {
+            title: 'Polish',
+            detail:
+              'Light themes are properly calibrated (diff colours, graph lanes, pills and shadows no longer keep a dark calibration over a light canvas), per-file-type icons throughout, in-app dialogs with real danger styling and type-the-name confirmation for destructive actions, bundled Inter + JetBrains Mono, loading skeletons, and find-in-tree with `⌘⇧F`.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Repositories on a Windows drive under WSL (/mnt/c/…) open',
+            detail:
+              'They tripped git\'s dubious-ownership check and refused outright; you now get an explanation and a one-click way to trust the path.',
+          },
+          {
+            title: 'Discarding a conflicted file deleted it instead of restoring the conflict',
+          },
+          {
+            title: 'Pull with auto-stash could strand your uncommitted work',
+            detail: 'In a stash it never popped or mentioned.',
+          },
+          {
+            title: 'Staging part of a file could then stage the wrong lines',
+            detail: 'Because the diff pane kept showing the pre-stage version.',
+          },
+          {
+            title: 'Whole branch lanes could vanish from the paginated log',
+          },
+          {
+            title: 'Staging a hunk or lines of a brand-new file failed outright',
+          },
+          {
+            title: 'The commit summary counted unstaged edits toward the commit',
+          },
+          {
+            title: 'Discarding an untracked file silently did nothing',
+          },
+          {
+            title: 'UI density skipped some row surfaces',
+          },
+          {
+            title: 'A signed commit with an expired key read as unsigned',
+          },
+          {
+            title: 'Embedded repositories are detected as data, not guessed from the path',
+            detail:
+              'And they stay out of batch operations that would write an unresolvable gitlink.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.7',
     date: '2026-07-08',
     status: 'feature',
-    notes: [
-      'Rider-style merge conflict resolver — a dedicated resolver window with a three-pane diff3 layout (ours · editable result · theirs). Accept ours / theirs / both per conflict from the gutter or the keyboard (`F7` / `⇧F7` to navigate, `⌘1/2/3` to pick, `⌘↵` to apply and auto-advance through conflicted files); manual edits and CRLF are preserved, with a chooser for binary / deleted-side conflicts. Open it from the Conflict screen.',
-      'App logo on the Welcome screen and titlebar, with themeable logo colors — every built-in theme carries its own logo palette, and the theme editor exposes the head/bill fills.',
-      'Branded macOS installer — the `.dmg` now opens to a classic drag-to-Applications layout with artwork styled to match the site.',
-      'Fixes — the branch/ref picker scrolls within the popover instead of overflowing the viewport.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Rider-style merge conflict resolver',
+            detail:
+              'A dedicated resolver window with a three-pane diff3 layout (ours · editable result · theirs). Accept ours / theirs / both per conflict from the gutter or the keyboard — `F7` / `⇧F7` to navigate, `⌘1/2/3` to pick, `⌘↵` to apply and auto-advance through conflicted files. Manual edits and CRLF are preserved, with a chooser for binary and deleted-side conflicts. Open it from the Conflict screen.',
+          },
+          {
+            title: 'App logo on the Welcome screen and titlebar',
+            detail:
+              'With themeable logo colors — every built-in theme carries its own logo palette, and the theme editor exposes the head and bill fills.',
+          },
+          {
+            title: 'Branded macOS installer',
+            detail:
+              'The `.dmg` now opens to a classic drag-to-Applications layout with artwork styled to match the site.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'The branch/ref picker scrolls within the popover',
+            detail: 'Instead of overflowing the viewport.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.6',
     date: '2026-07-07',
     status: 'feature',
-    notes: [
-      'Keyboard navigation — a full keymap system with a Rider-style default (Classic preset available), type-to-jump speed-search, commit chords, `F7` / `⇧F7` hunk navigation, spatial `Alt+Arrow` pane focus, and a `?` cheat sheet.',
-      '`pgit` command-line launcher — open a repo from the terminal with `pgit [subcommand] [path]`; forwards into a running instance; installable shim.',
-      'Ref-scoped history — browse the commit log of any branch, tag, or revspec and cherry-pick from unmerged refs via the History ref selector.',
-      'Command palette upgrades — an actions catalog, frecency ranking, drill-in steps, and type-filter chips (⌘P / Ctrl+P).',
-      'Multi-file selection — select several files in the commit panel or repo browser and stage / unstage / discard them from the context menu.',
-      'Settings — configurable diff context lines and UI density; non-functional toggles removed.',
-      'Fixes — interactive-rebase conflict resume now completes, and aborting no longer discards a resolved commit; the palette type chips run the highlighted row; palette Pull honours your pull-mode setting and tracking branch; the commit shortcut no longer double-commits on key-repeat; History selection resets when a filter shrinks the list.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Keyboard navigation',
+            detail:
+              'A full keymap system with a Rider-style default (Classic preset available), type-to-jump speed-search, commit chords, `F7` / `⇧F7` hunk navigation, spatial `Alt+Arrow` pane focus, and a `?` cheat sheet.',
+          },
+          {
+            title: 'pgit command-line launcher',
+            detail:
+              'Open a repo from the terminal with `pgit [subcommand] [path]`; it forwards into a running instance, and the shim is installable from Settings.',
+          },
+          {
+            title: 'Ref-scoped history',
+            detail:
+              'Browse the commit log of any branch, tag or revspec and cherry-pick from unmerged refs, via the History ref selector.',
+          },
+          {
+            title: 'Command palette upgrades',
+            detail:
+              'An actions catalog, frecency ranking, drill-in steps, and type-filter chips (`⌘P` / `Ctrl+P`).',
+          },
+          {
+            title: 'Multi-file selection',
+            detail:
+              'Select several files in the commit panel or repo browser and stage / unstage / discard them from the context menu.',
+          },
+          {
+            title: 'Settings',
+            detail:
+              'Configurable diff context lines and UI density; non-functional toggles removed.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Interactive-rebase conflict resume now completes',
+            detail: 'And aborting no longer discards a resolved commit.',
+          },
+          {
+            title: 'The palette\'s type chips run the highlighted row',
+          },
+          {
+            title: 'Palette Pull honours your pull-mode setting and tracking branch',
+          },
+          {
+            title: 'The commit shortcut no longer double-commits on key-repeat',
+          },
+          {
+            title: 'History selection resets when a filter shrinks the list',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.5',
     date: '2026-07-01',
     status: 'build',
-    notes: [
-      'Windows `.msi` now builds — added an `.ico` to the icon set so the Windows bundler stops failing.',
-      'Multi-platform release assets: macOS universal `.dmg`, Windows x64 `.msi`, Linux amd64 `.deb` + `.AppImage`.',
+    sections: [
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'Windows .msi now builds',
+            detail:
+              'Added an `.ico` to the icon set so the Windows bundler stops failing.',
+          },
+          {
+            title: 'Multi-platform release assets',
+            detail:
+              'macOS universal `.dmg`, Windows x64 `.msi`, Linux amd64 `.deb` and `.AppImage`.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.4',
     date: '2026-07-01',
     status: 'build',
-    notes: [
-      'First release built for all three platforms via CI — macOS `.dmg`, Windows `.msi`, Linux `.deb` + `.AppImage`.',
-      'Validates the Windows and Linux build jobs; assets attach automatically once the release workflow completes.',
+    sections: [
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'First release built for all three platforms via CI',
+            detail: 'macOS `.dmg`, Windows `.msi`, Linux `.deb` and `.AppImage`.',
+          },
+          {
+            title: 'Validates the Windows and Linux build jobs',
+            detail:
+              'Assets attach automatically once the release workflow completes.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.3',
     date: '2026-06-30',
     status: 'feature',
-    notes: [
-      'Recent commit messages — a "Recent" button in the commit panel refills the message from your recent commit subjects/bodies (newest-first, de-duplicated, skips merges).',
-      'Sign-off (-s) toggle — appends a Signed-off-by trailer from your committer identity with full `git commit -s` semantics (idempotent, correct blank-line separation, git-accurate trailer-key rule); applied on normal and amend commits. Preference persists and stays in sync with Settings.',
-      'Browse the repo tree at any revision — type a revspec (SHA, branch, tag, HEAD~2, …) or quick-pick a branch/tag to list the full file tree and view file contents as they were then, with syntax highlighting and binary-blob handling.',
-      'Commit / log search in History — filter by message, author, SHA prefix, date range, and path, with free-text qualifiers (author: / path: / sha: / since: / until: / message:). Backend-filtered over a revwalk; results render through the commit graph.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Recent commit messages',
+            detail:
+              'A "Recent" button in the commit panel refills the message from your recent commit subjects and bodies — newest-first, de-duplicated, skipping merges.',
+          },
+          {
+            title: 'Sign-off (-s) toggle',
+            detail:
+              'Appends a `Signed-off-by` trailer from your committer identity with full `git commit -s` semantics: idempotent, correct blank-line separation, git-accurate trailer-key rule. Applied on normal and amend commits; the preference persists and stays in sync with Settings.',
+          },
+          {
+            title: 'Browse the repo tree at any revision',
+            detail:
+              'Type a revspec (SHA, branch, tag, `HEAD~2`, …) or quick-pick a branch or tag to list the full file tree and view file contents as they were then, with syntax highlighting and binary-blob handling.',
+          },
+          {
+            title: 'Commit and log search in History',
+            detail:
+              'Filter by message, author, SHA prefix, date range and path, with free-text qualifiers (`author:` / `path:` / `sha:` / `since:` / `until:` / `message:`). Backend-filtered over a revwalk; results render through the commit graph.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.2',
     date: '2026-06-30',
     status: 'feature',
-    notes: [
-      'Command palette / fuzzy finder — open with ⌘P / Ctrl+P to jump to any branch, file, recent commit, or app command from one overlay.',
-      'Fuzzy matching ranks consecutive runs, word boundaries, and camelCase; keyboard-first navigation (↑/↓, Enter) with match highlighting and a trapped focus ring.',
-      'Selecting a result acts on it: branches check out, files open in the diff view, commits show their diff, commands switch screens.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Command palette / fuzzy finder',
+            detail:
+              'Open with `⌘P` / `Ctrl+P` to jump to any branch, file, recent commit, or app command from one overlay.',
+          },
+          {
+            title: 'Fuzzy matching that ranks the right things',
+            detail:
+              'Consecutive runs, word boundaries and camelCase, with keyboard-first navigation (↑/↓, Enter), match highlighting and a trapped focus ring.',
+          },
+          {
+            title: 'Selecting a result acts on it',
+            detail:
+              'Branches check out, files open in the diff view, commits show their diff, commands switch screens.',
+          },
+        ],
+      },
     ],
   },
   {
     version: '0.0.1',
     date: '2026-06-30',
     status: 'initial release',
-    notes: [
+    summary:
       'First public release of platypusgit — a dev-first git desktop app built with Tauri 2 + React.',
-      'Staging: stage / unstage / discard whole files and individual hunks; commit with amend and author override.',
-      'Diff & viewing: worktree / index / HEAD diffs, commit-to-commit diffs, line-by-line blame, repo file browser at HEAD.',
-      'Branches & tags: list / create / checkout / rename / delete branches; lightweight and annotated tags; push and delete tags.',
-      'History: commit graph layout, per-file history, reflog viewer, detached-HEAD checkout.',
-      'History manipulation: reset (soft / mixed / hard), cherry-pick, revert.',
-      'Stash: save / apply / pop / drop, and stash to a new branch.',
-      'Conflict resolution: 3-way sides, accept ours / theirs, external mergetool, continue / abort.',
-      'Interactive rebase: pick / reword / edit / squash / fixup / drop, continue / abort, rebase base picker.',
-      'Remotes & network: add / remove / rename / prune remotes, fetch / pull / push (with-lease and force), merge branches.',
-      'Centralized branch UI — titlebar branch chip + popover picker.',
-      'Native window titlebar with platform-aware window controls; light / dark theme.',
-      'Universal macOS .dmg build published via CI.',
+    sections: [
+      {
+        title: 'What shipped',
+        items: [
+          {
+            title: 'Staging',
+            detail:
+              'Stage / unstage / discard whole files and individual hunks; commit with amend and author override.',
+          },
+          {
+            title: 'Diff & viewing',
+            detail:
+              'Worktree / index / HEAD diffs, commit-to-commit diffs, line-by-line blame, and a repo file browser at HEAD.',
+          },
+          {
+            title: 'Branches & tags',
+            detail:
+              'List / create / checkout / rename / delete branches; lightweight and annotated tags; push and delete tags.',
+          },
+          {
+            title: 'History',
+            detail:
+              'Commit graph layout, per-file history, reflog viewer, detached-HEAD checkout.',
+          },
+          {
+            title: 'History manipulation',
+            detail: 'Reset (soft / mixed / hard), cherry-pick, revert.',
+          },
+          {
+            title: 'Stash',
+            detail: 'Save / apply / pop / drop, and stash to a new branch.',
+          },
+          {
+            title: 'Conflict resolution',
+            detail:
+              '3-way sides, accept ours / theirs, external mergetool, continue / abort.',
+          },
+          {
+            title: 'Interactive rebase',
+            detail:
+              'Pick / reword / edit / squash / fixup / drop, continue / abort, and a rebase base picker.',
+          },
+          {
+            title: 'Remotes & network',
+            detail:
+              'Add / remove / rename / prune remotes, fetch / pull / push (with-lease and force), merge branches.',
+          },
+          {
+            title: 'App shell',
+            detail:
+              'Centralized branch UI — titlebar branch chip and popover picker — a native window titlebar with platform-aware window controls, and light / dark themes.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          { title: 'Universal macOS .dmg build published via CI' },
+        ],
+      },
     ],
   },
 ];
