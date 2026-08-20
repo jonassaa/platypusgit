@@ -1,428 +1,309 @@
 # Backend deep dives
 
 Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
-`distribution`) — deep-dive notes split out of CLAUDE.md, which keeps only the
-operational rules and points here. A section referenced but not found in this
-file lives in a sibling. `test/docs.test.ts` reads this set together with
-CLAUDE.md, so the tree listings and command lists here are build-checked.
+`distribution`). `test/docs.test.ts` reads this set together with CLAUDE.md.
 
 ## Errors
-- **Rust:** every IPC-crossing fn returns `AppResult<T> = Result<T, AppError>`. No unwrap/panic in commands. Add `AppError` variants rather than stringifying.
-- **TS:** `AppError` union in `src/lib/errors.ts` stays 1:1 with Rust enum. New Rust variant → update TS same commit.
-- Wire format: `{ kind, message }` via `#[serde(tag = "kind", content = "message")]`. Consumers narrow on `kind`.
+
+- **Rust:** every IPC-crossing fn returns `AppResult<T> = Result<T, AppError>`;
+  no unwrap/panic in commands; add `AppError` variants rather than stringify.
+- **TS:** the `AppError` union (`src/lib/errors.ts`) stays 1:1 with the Rust
+  enum, updated in the same commit. Wire format `{ kind, message }`
+  (serde-tagged); consumers narrow on `kind`.
 - Some variants carry an IDENTIFIER, not prose — `Auth` (a struct), `ForgeAuth`
-  (a host), `BranchExists` (a branch name). `appErrorMessage` renders each into a
+  (a host), `BranchExists` (a name). `appErrorMessage` renders each into a
   sentence; a new variant of that shape needs a case there, or the banner reads
-  `github.com`.
-- `ForgeAuth` is deliberately separate from `Auth`: `Auth` means "git needs a
-  credential for this remote, prompt and retry", so reusing it for a bad API token
-  would pop the transport-credential dialog for a problem only Settings can fix.
-- **Two formatters, two voices, and the wrong one is a bug either way** (#146).
-  `describeError` is for the LOG FILE and leads with the `kind`; `appErrorMessage`
-  is for a BANNER and never shows the enum's spelling. `toAppError`
-  (`lib/errors.ts`, one definition for the five stores whose `error` field is an
-  `AppError`) wraps with `appErrorMessage` — a banner reading "TypeError: x is not
-  a function" is developer text. Stores whose `error` is a plain string call
-  `appErrorMessage` directly and need no wrapper.
-- **Neither formatter may throw, and neither may assume `message` is a string.**
-  `invoke` logs a failure BEFORE it rethrows it, so an exception raised inside the
-  logger *replaces* the original rejection — `isAuthError` then fails to narrow and
-  no credential prompt is raised. And `isAppError` accepts any object with a string
-  `kind`, while `Auth` proves the enum itself can carry a struct, so a payload of
-  the wrong shape must be coerced (`describeUnknown`), never interpolated. Both
-  are pinned in `errors.test.ts` + `tauri.errors.test.ts`.
-- **"No text at this path" is a STATE for all three file-content readers**
-  (`read_file_content`, `_at_rev`, `_at_index`), and each one needs an explicit
-  non-blob KIND test to honour it. A `160000` gitlink's oid names a commit in the
-  SUBMODULE's object database, so looking the entry's object up answers "object not
-  found" — which is what all three did for every click on a submodule row until
-  `tests/file_content_absence.rs`. Absence is answered `Ok(None)` because every
-  caller is a diff or preview surface reading one side of something it is already
-  rendering; a genuine failure (bad revspec, unknown repository, unreadable file)
-  still errors. On the frontend the sentinel is `null`, NOT `""` — whole-file mode
-  bails on `null` and would compose a file out of an empty string.
+  `github.com`. `ForgeAuth` is deliberately separate from `Auth`: a bad API
+  token must not pop the transport-credential dialog.
+- **Two formatters, two voices** (#146): `describeError` for the LOG FILE
+  (leads with the kind); `appErrorMessage` for a BANNER (never shows the enum
+  spelling). `toAppError` (one definition) wraps for the five stores whose
+  `error` field is an `AppError`; plain-string stores call `appErrorMessage`
+  directly.
+- **Neither formatter may throw or assume `message` is a string.** `invoke`
+  logs a failure BEFORE rethrowing, so a logger exception replaces the original
+  rejection — `isAuthError` fails to narrow and no credential prompt is raised.
+  Coerce odd payloads (`describeUnknown`), never interpolate. Pinned in
+  `errors.test.ts` + `tauri.errors.test.ts`.
+- **"No text at this path" is a STATE for all three file readers**
+  (`read_file_content`, `_at_rev`, `_at_index`), each needing an explicit
+  non-blob KIND test: a `160000` gitlink oid names a commit in the SUBMODULE's
+  ODB, so a lookup answers "object not found" — which all three did for every
+  submodule-row click until `tests/file_content_absence.rs`. Absence is
+  `Ok(None)`; genuine failures still error. The frontend sentinel is `null`,
+  NOT `""` — whole-file mode would compose a file out of an empty string.
 
 ## Forge tokens are NOT git credentials (#92)
-- `commands/net.rs::Credentials` answers git's askpass prompt for one
-  fetch/push. A forge API token authenticates an HTTP header for a host's API and
-  is kept until removed. **They share no struct, no storage key, and no code
-  path** — do not extend `Credentials` for a forge.
-- Storage is still delegated to the user's own git credential helper, but under
+
+- `commands/net.rs::Credentials` answers one askpass prompt; a forge API token
+  authenticates an HTTP header and persists. No shared struct, storage key, or
+  code path — do not extend `Credentials` for a forge.
+- Storage delegates to the user's git credential helper under
   `protocol=https`, `host=<forge-host>.platypusgit-forge.invalid`,
-  `username=platypusgit-forge`. The `.invalid` namespacing is load-bearing:
-  GitLab's API and its git transport share one host (`gitlab.com/api/v4`), as
-  does GitHub Enterprise, so keying on the bare host would **overwrite the
-  credential the user pushes with**. `.invalid` is RFC 6761-reserved, so no git
-  remote can ever ask for it. A custom `protocol=` was tried and rejected:
-  `git-credential-osxkeychain` silently `exit(0)`s on an unknown protocol.
+  `username=platypusgit-forge`. The `.invalid` namespace is load-bearing:
+  GitLab and GHE share one host between API and git transport, so a bare host
+  key would overwrite the push credential; RFC 6761 means no remote can ever
+  ask for it. (A custom `protocol=` was rejected — osxkeychain silently
+  `exit(0)`s on unknown protocols.)
 - `git credential` runs with cwd = the OS temp dir, so a repo-local
-  `credential.helper` cannot redirect where a token is read from or stored.
-- `store_token` **round-trips** (`approve` → `fill` → compare) and raises
-  `ForgeTokenStore` naming the remedy when the token did not stick. Unlike D5,
-  storage here cannot be best-effort: a silently lost token means the user typed a
-  secret into a box for nothing.
+  `credential.helper` cannot redirect token reads or writes.
+- `store_token` **round-trips** (approve → fill → compare) and raises
+  `ForgeTokenStore` naming the remedy when the token did not stick — a silently
+  lost token means a secret typed for nothing.
 - A token is a `forge::token::Secret`: no `Display`, no `Serialize`, `Debug`
-  prints `Secret(***)`. `expose()` has exactly two call sites (the auth header,
-  and the credential-protocol writer). Grep for it before adding a third.
-- No command returns a token. `forge_token_status` reports presence + login.
-- `LfsUnavailable` is a **state, not a failure** (#93): the UI disables the LFS
-  actions and explains, so git's `'lfs' is not a git command` can never reach an
-  error banner. `NoBisect` likewise means "refresh", not "alarm". `DirtyWorktree`
-  is reused for `git worktree remove`'s refusal, which is what turns into the
+  prints `Secret(***)`. `expose()` has exactly two call sites (auth header,
+  credential-protocol writer) — grep before adding a third. No command returns
+  a token; `forge_token_status` reports presence + login.
+- `LfsUnavailable` and `NoBisect` are STATES, not failures (disable + explain /
+  refresh). `DirtyWorktree` is reused for `git worktree remove`'s refusal → the
   second, type-the-name confirm.
 
-
 ## Interactive rebase engine
-- **The plan is validated before the repository is touched.**
-  `rebase_plan::validate` runs first in `rebase_start`; anything it rejects
-  raises `AppError::InvalidRebasePlan` with HEAD, the branch ref, and the
-  worktree untouched. Before this, an unexecutable step (a merge commit, which
-  libgit2 refuses to cherry-pick without a mainline) surfaced mid-replay with
-  earlier picks already committed and the branch tip already moved.
+
+- **The plan is validated before the repository is touched:**
+  `rebase_plan::validate` runs first in `rebase_start`; a rejection raises
+  `InvalidRebasePlan` with HEAD, the branch ref, and the worktree untouched.
 - **A plan may name a base the branch does not descend from — that is
-  `git rebase --onto`** (186). `rebase_plan::validate` accepts any existing
-  commit as an `onto`, with **no ancestry requirement**, so the diverged case
-  needed no engine change at all. Four things follow:
-  - **`onto` reaches the run through TWO sites, and either one alone places the
-    first step**: `rebase_start`'s initial `set_head_detached` (base =
-    `first_step.onto`, else that commit's first parent) and `advance_rebase`'s
-    per-step `move_to_base`. Verified by mutation — killing one leaves
-    `tests/rebase_onto_new_base.rs` green; only killing both replays the branch
-    on its own root. Anyone changing where a run starts has to find both.
-  - The base is attached at **submit**, by `withPlanBase`
-    (`features/commits/withPlanBase.ts`), never when the rows are built. Flatten
-    mode lets the user reorder, and the base belongs to whichever step ends up
-    first — baked into a row, a drag would carry it away. That is a bug which
-    PREDATES the diverged base: with every row's `onto` null, a reordered plan
-    detached at the new first step's own parent, i.e. the middle of its own
-    range. The Rebase screen therefore tracks a base for EVERY plan it can
-    submit, including one seeded by `Interactive rebase from here`; null (a root
-    commit, or an oldest step outside the loaded log) keeps the parent fallback.
-  - The frontend range is `commitsBetween(base, HEAD)` when the base is diverged
-    and `commitsSince` when it is an ancestor, chosen by `aheadBehind`'s
-    `behind === 0` (nothing reachable from the base is missing from HEAD — that
-    IS "ancestor"). **`commits_since` is not loosened** — its ancestor
-    requirement is the on-branch flow's invariant, and keeping the split leaves
-    it its only caller instead of making it dead code.
-  - `commits_between`'s handler defaults `limit` to **200** and breaks at the
-    cap, so the limit is derived from `aheadBehind`'s exact `ahead` and the
-    length is verified. A truncated plan leaves commits unreplayed and still
-    moves the branch ref, so a mismatch is refused rather than planned.
-- **The replay runs on a detached HEAD** and moves the branch ref exactly once,
-  when the plan completes (`finish_rebase`). So a failed or paused rebase never
-  leaves the branch mid-replay, and `rebase_abort` is "put HEAD back on the
-  branch" rather than a reset to a remembered oid.
-- **`RebaseState.rewritten` maps original oid → replayed oid** for every step
-  that ran, recorded *after* the action's post-commit rewrite (reword amends,
-  squash/fixup collapse), and a dropped step maps to the HEAD it left behind.
-- **Merge commits in a plan take one of three actions**: `Drop` (flatten — git's
-  own default: the merge disappears and its commits are replayed individually),
-  `MainlinePick` (keep the merge as one ordinary commit — `git cherry-pick -m 1`,
-  so `start_pick` passes mainline 1), or `Merge` (recreate it from its rewritten
-  parents — the `--rebase-merges` equivalent). `rebase_plan::merge_legal` is the
-  single source of truth; `MERGE_ACTIONS_FLATTEN` / `MERGE_ACTIONS_PRESERVE` in
-  `src/screens/Rebase.tsx` mirror it per mode, and they must stay in sync or the
-  UI offers an action the backend refuses.
-- **Plans carry topology structurally, not as git's todo language.** A
-  `RebaseStep` may name the original commit it is applied `onto` (resolved
-  through the engine's rewritten map, so every commit is implicitly its own
-  label), and a `Merge` step carries its original parents beyond the first. A
-  plan whose steps all leave `onto: null` is the linear default. There are no
-  `label` / `reset` / `exec` steps and no `rebase-cousins` mode — a generated
-  plan does not need the naming layer.
+  `git rebase --onto`** (186); `validate` puts no ancestry requirement on
+  `onto`. Consequences:
+  - `onto` reaches the run through TWO sites — `rebase_start`'s initial
+    `set_head_detached` and `advance_rebase`'s per-step `move_to_base` — and
+    either alone places the first step (verified by mutation; changing where a
+    run starts means finding both).
+  - The base attaches at SUBMIT via `withPlanBase`, never when rows are built —
+    baked into a row, a reorder would carry it away (a bug that predates the
+    diverged base). Null base (root commit / oldest step off the loaded log)
+    keeps the parent fallback.
+  - The frontend range is `commitsBetween(base, HEAD)` when diverged,
+    `commitsSince` when the base is an ancestor, chosen by
+    `aheadBehind.behind === 0`. `commits_since` keeps its ancestor requirement.
+  - `commits_between`'s handler defaults `limit` to 200 and breaks at the cap —
+    the limit is derived from `aheadBehind.ahead` and the length verified; a
+    truncated plan is refused rather than planned.
+- **The replay runs on a detached HEAD**; the branch ref moves exactly once
+  (`finish_rebase`). Abort is "put HEAD back on the branch", not a reset to a
+  remembered oid.
+- `RebaseState.rewritten` maps original oid → replayed oid, recorded after the
+  action's post-commit rewrite; a dropped step maps to the HEAD it left behind.
+- **Merge commits take one of three actions:** `Drop` (flatten — git's
+  default), `MainlinePick` (`cherry-pick -m 1`), or `Merge` (recreate from
+  rewritten parents — the `--rebase-merges` equivalent).
+  `rebase_plan::merge_legal` is the single source of truth;
+  `MERGE_ACTIONS_FLATTEN`/`MERGE_ACTIONS_PRESERVE` in `Rebase.tsx` mirror it
+  per mode and must stay in sync.
+- Plans carry topology structurally (`onto` per step, a `Merge` step's original
+  parents) — no `label`/`reset`/`exec` steps, no rebase-cousins mode.
 - **A recreated merge runs in the worktree** (`repo.merge`, not
-  `merge_commits`), so a conflict lands in the index with stages and
-  `conflict_sides`, the Conflict screen, and the merge resolver window all work
-  unchanged; `rebase_continue` then commits the resolution with both parents.
-  Conflict resolutions inside the ORIGINAL merge are not reused — neither does
-  git. Octopus merges cannot be recreated; they can be dropped or kept as one
-  commit.
+  `merge_commits`), so a conflict lands in the index with stages and the
+  resolver works unchanged; `rebase_continue` commits with both parents.
+  Original conflict resolutions are not reused (neither does git). Octopus
+  merges cannot be recreated — drop or keep as one commit.
 - **Preserve mode disables reordering** (git documents its own reorder bugs
-  under `--rebase-merges`), and it rebuilds a whole-range plan in place while
-  deliberately leaving a targeted plan (squash/fixup/reword) alone — rebuilding
-  one would discard the message the user typed.
-- **A `data-testid` on a plan row's CHILD must not start with `rebase-row`.**
-  WebdriverIO compiles `[data-testid="rebase-row"]*=text` to an xpath whose
-  attribute test is `contains(@data-testid, "rebase-row")` — a SUBSTRING match —
-  plus `not(.//*[<same conditions>])` to keep the innermost hit. A child testid
-  sharing that stem therefore satisfies the row's own condition and the row
-  matches nothing, with no error beyond the spec's own `timeoutMsg`. Hence
-  `rebase-action` and `rebase-badge`, not `rebase-row-action` / `rebase-row-badge`
-  — the badge form hid the trap for months by only rendering on a merge row.
-  Invisible to `pnpm test`: jsdom's `getByTestId` is an exact CSS match.
-- **`PGRebaseRow` speaks exact `RebaseAction` strings** (`"Pick"`, `"Drop"`,
-  `"MainlinePick"`), not lowercased ones — a two-word action cannot survive a
-  lowercase/re-capitalise round trip. The row's action control is a `PGSelect`
-  (an in-page listbox, not a `<select>`), so specs drive it with `jsPickOption`
-  and component tests with `pgPickOption`, passing the exact value.
-- **Every transition is mirrored to `.git/platypusgit-rebase.json`**, and
-  `rebase_status` / `repo_state` fall back to it when this process did not start
-  the rebase. `repo_state` gives the file precedence over libgit2's
-  `repo.state()`, which only sees the `CHERRY_PICK_HEAD` a paused step leaves
-  behind.
-- **A finished rebase leaves a summary the BACKEND retains until acknowledged**
-  (`RebaseStatus.last_completed`, `.git/platypusgit-rebase-last.json`). The
-  engine sweeps `RebaseState` the instant a plan completes, so the next
-  `rebase_status` poll reports `total: 0`; the frontend used to cache the final
-  status for its "N steps completed" line and therefore had to clear that cache
-  on every abort and start path (#47). Now `rebase_start` and `rebase_abort`
-  drop the summary in the engine and `rebase_acknowledge` spends it — the
-  Rebase screen renders straight from `rebaseStatus.lastCompleted` and
-  acknowledges on unmount, holding no copy of its own.
-- **`continue_operation` / `abort_operation` delegate** to `rebase_continue` /
-  `rebase_abort` whenever a rebase is in progress. The Conflict screen and the
-  Rebase banner must stay two entry points to one engine: committing the
-  resolved tree without advancing the plan strands the rest of the rebase.
+  under `--rebase-merges`) and rebuilds whole-range plans in place while
+  leaving targeted plans (squash/fixup/reword) alone — a rebuild would discard
+  the typed message.
+- **A `data-testid` on a plan row's child must not start with `rebase-row`:**
+  WebdriverIO's `*=` form compiles to a SUBSTRING attribute test plus an
+  innermost-match condition, so a child sharing the stem makes the row match
+  nothing, silently. Hence `rebase-action`/`rebase-badge`. Invisible to jsdom
+  (exact match).
+- `PGRebaseRow` speaks exact `RebaseAction` strings (`"Pick"`, `"Drop"`,
+  `"MainlinePick"`) — a two-word action cannot survive a lowercase round trip.
+  Its action control is a PGSelect: drive with `jsPickOption` (e2e) /
+  `pgPickOption` (component tests).
+- **Every transition mirrors to `.git/platypusgit-rebase.json`**;
+  `rebase_status`/`repo_state` fall back to it when this process did not start
+  the rebase, and it outranks `repo.state()` (which only sees a paused step's
+  `CHERRY_PICK_HEAD`).
+- **A finished rebase leaves a summary the backend retains until acknowledged**
+  (`RebaseStatus.last_completed`, a second file — everything that asks "rebase
+  in progress?" answers by the first file's existence). `rebase_start` and
+  `rebase_abort` drop it, `rebase_acknowledge` spends it; the Rebase screen
+  renders from it and holds no copy (#47).
+- `continue_operation`/`abort_operation` delegate to
+  `rebase_continue`/`rebase_abort` whenever a rebase is in progress — two entry
+  points, one engine; committing the resolved tree without advancing the plan
+  strands the rest of the rebase.
 
 ## Network ops and credentials (#61 D5)
 
-- **One runner, and every network op is on this list.** Every op that shells out
-  to real `git` over the network goes through
-  `commands::net::run_git_authenticated` (or, for clone, through its two
-  primitives `apply_auth_env` + `map_git_failure`, because clone needs a
-  streamed stderr pipe rather than `.output()`):
-  `fetch`, `fetch_all`, `pull`, `push`, `push_tag`, `push_delete_branch` in
-  `commands/branches.rs` (all six via its local `run_git_creds` wrapper),
-  `clone_repo` in `commands/create.rs`, `forge_checkout_pull_request`'s FETCH in
-  `commands/forge.rs` (#92 — its second git call, the `checkout` of `FETCH_HEAD`,
-  passes `None` on purpose: the tip is already local and touches no remote), and
-  — since #93 — `submodule_update` (`commands/submodule.rs`) plus `lfs_fetch` /
-  `lfs_pull` (`commands/lfs.rs`).
+- **One runner.** Every network shell-out goes through
+  `commands::net::run_git_authenticated` (clone uses its primitives
+  `apply_auth_env` + `map_git_failure` for a streamed stderr): fetch, fetch_all,
+  pull, push, push_tag, push_delete_branch, clone_repo,
+  forge_checkout_pull_request's fetch (its second git call passes `None` — the
+  tip is already local), submodule_update, lfs_fetch/lfs_pull.
   `grep -rn 'run_git_authenticated\|run_git_creds\|apply_auth_env' src-tauri/src/`
-  is the authoritative list — a bare count used to lead this bullet and two PRs
-  landing a day apart each updated the prose for their own additions only.
-  A new network op joins them; **do not open a second auth path** — on the
-  frontend that means `useRepoStore`'s exported
-  `withAuthRetry`, not a private copy, or the challenge is raised with nothing
-  mounted to answer it. The deliberately credential-less siblings are
-  `branches.rs`'s local `run_git` (merge/rebase/checkout) and `libgit2.rs`'s
-  `run_git_capture` (the #93 prompt-less shell-outs); `forge/token.rs`'s
-  `git credential` and `forge/checkout.rs`'s `git rev-parse` spawn git directly
-  because neither contacts a remote (and routing `git credential` through the
-  authenticated runner would set `GIT_ASKPASS` and change its semantics).
-- **Retry, never prompt mid-run.** The first attempt is always prompt-less, so the
-  common case (helper or ssh-agent already works) is byte-for-byte what it always
-  was. A failure is classified by `git/auth.rs::classify_auth_failure`; an auth
-  failure becomes `AppError::Auth(AuthChallenge)`, the frontend raises it through
-  `useAuthStore` and re-runs the SAME closure with credentials. Host-key
-  verification failure stays `Network` on purpose — no typeable credential fixes
-  it. New store actions use `withAuthRetry` and put `refreshAll()` INSIDE the
-  retried closure.
-- **`withAuthRetry` returns once the challenge is RAISED, not once the retry
-  finishes.** So an action whose caller then decides something (a confirm, a
-  toast) cannot report success/failure as a boolean — `false` would mean both "it
-  failed" and "a password prompt is on screen", and the caller would stack its own
-  dialog on top of the prompt. `useForgeStore.checkout` returns a
-  `CheckoutOutcome` (`ok` | `branch-exists` | `auth-pending` | `error`) for exactly
-  this reason.
-- **Scrub before surfacing, always.** `map_git_failure` runs `scrub_credentials`
-  first, on both branches, because git echoes remote URLs and a remote configured
-  as `https://user:token@host/…` would otherwise put the token in an error banner
-  and the log file. Userinfo ends at the LAST `@` of the authority — splitting on
-  the first leaks the tail of a password containing `@`.
-- **Secrets travel in the environment, never in argv.** Argv is world-readable via
-  `ps`. `GIT_ASKPASS` points at our own bare executable with the mode selected by
-  `PLATYPUSGIT_ASKPASS`, because `GIT_ASKPASS` is exec'd directly and cannot carry
-  arguments. The shim answers on stdout and prints nothing else, ever.
-- **End option parsing with `--` before any user-supplied value.** Remotes and ref
-  names reach these commands from prompts and lists, and a value beginning with
-  `-` is otherwise parsed as an option — `git push --receive-pack=<program>` names
-  a program git runs for the transport, so this is argument injection, not a
-  confusing error. `push_tag_args` / `push_delete_args` emit the separator and a
-  test asserts every user value lands after it. Same class as the D5 security
-  review's finding that `verify_commit` handed an oid straight to `git show`.
-  `push_args` (fetch/pull/push) does NOT yet have one — its force flag is
-  documented as coming last, which `--` would turn into a refspec, so fixing it is
-  its own change.
-- **`credential_approve` refuses values containing a newline** rather than
-  escaping them: git's credential protocol is line-based `key=value`, so a
-  newline injects further keys and could file a password against another host.
+  is the authoritative list. New network ops join it; on the frontend that
+  means `useRepoStore`'s exported `withAuthRetry`, never a private copy.
+  Deliberately credential-less: `branches.rs`'s local `run_git`
+  (merge/rebase/checkout), `run_git_capture`, and the direct `git credential` /
+  `git rev-parse` spawns (no remote contact; the runner would set `GIT_ASKPASS`
+  and change `git credential`'s semantics).
+- **Retry, never prompt mid-run:** the first attempt is always prompt-less. A
+  failure classified by `git/auth.rs::classify_auth_failure` becomes
+  `AppError::Auth(AuthChallenge)`, raised through `useAuthStore`, and the SAME
+  closure re-runs with credentials — put `refreshAll()` INSIDE the retried
+  closure. Host-key verification failure stays `Network` (no typeable
+  credential fixes it).
+- **`withAuthRetry` resolves once the challenge is RAISED, not when the retry
+  finishes** — a boolean cannot distinguish "failed" from "prompt is up", and a
+  caller would stack a dialog on the prompt. `useForgeStore.checkout` returns a
+  `CheckoutOutcome` (`ok`/`branch-exists`/`auth-pending`/`error`) for exactly
+  this; `useCreateStore` hand-rolls the shape for clone.
+- **Scrub before surfacing:** `map_git_failure` runs `scrub_credentials` first,
+  on both branches — git echoes remote URLs, and userinfo ends at the LAST `@`
+  (splitting on the first leaks a password containing `@`).
+- **Secrets travel in the environment, never argv** (argv is world-readable via
+  `ps`). `GIT_ASKPASS` points at our own bare executable with the mode in
+  `PLATYPUSGIT_ASKPASS` (askpass is exec'd directly, no args); the shim answers
+  on stdout and prints nothing else.
+- **End option parsing with `--` before any user-supplied value** — a value
+  starting with `-` is otherwise an option (`git push --receive-pack=<program>`
+  is argument injection). `push_tag_args`/`push_delete_args` emit it, tested.
+  `push_args` does NOT yet — its force flag is documented last, which `--`
+  would turn into a refspec; fixing it is its own change.
+- `credential_approve` refuses values containing a newline rather than escaping
+  them — the credential protocol is line-based, so a newline injects keys and
+  could file a password against another host.
 
 ## Signing: one chain for commits and tags (#61 D6, #132)
 
-- **One chain, two callers.** `libgit2.rs::sign_payload` is
+- **One chain, two callers:** `libgit2.rs::sign_payload` =
   `resolve_signing` → `signing::resolve_key_file` → `signing_args` →
-  `run_signer`, and `commit_signed` and `create_signed_tag` both call it. Do not
-  open a second one: the ssh key-PATH restriction (`user.signingkey` must be a
-  file, `key::…` and bare `ssh-…` literals are refused rather than written to a
-  temp file) lives in `resolve_key_file`, and a private copy is how it would come
-  to hold for commits and lapse for tags.
-- **A signing failure creates nothing, ever.** Both writers put the ref update
-  LAST — `repo.commit_signed` and `tag_annotation_create`/`odb.write` move no
-  reference, so we move it ourselves, after the signature exists. An unsigned
-  fallback would leave the user believing they had signed it.
-- **`git2` has no `tag_signed`.** `create_signed_tag` builds the canonical
-  UNSIGNED annotation with `tag_annotation_create`, reads its bytes back from the
-  ODB, signs those, appends the armored signature and writes a second object.
-  Deliberately not hand-written serialization: the payload is then byte-for-byte
-  what libgit2 would have stored, with no tagger formatting or timezone
-  arithmetic of ours. Cost: the unsigned annotation is left unreferenced and
-  collected by `git gc`. **Shelling out to plain `git tag -s` was considered and
-  rejected** — it does its own key resolution, so it would bypass `signing.rs`
-  entirely and silently accept the `key::` literals commits refuse. (A hybrid —
-  resolve here, then `git tag -s -u <key> -F -` — would keep the restriction; the
-  spec records why route (a) won anyway, so nobody re-derives a false dichotomy.)
-- **The ref write is not the only collision check.** `create_signed_tag`
-  early-returns on an existing `refs/tags/<name>` BEFORE signing: otherwise a
-  duplicate name pops pinentry, takes the passphrase, and only then fails. The
-  atomic `force = false` write stays as the real guarantee.
-- **Signing implies annotated.** A lightweight tag is a ref with no object to
-  sign, so `sign: Some(true)` with no annotation is `InvalidArgument`, not a
-  silent downgrade. A bare `tag.gpgsign`, though, does NOT promote a lightweight
-  tag — real `git tag v1` fails outright there (`fatal: no tag message?`), which
-  would make lightweight tags unreachable in a signing repository, and the
-  dialog's blank annotation field *means* lightweight.
-- **`commit.gpgsign` and `tag.gpgsign` are separate keys**, as in git. `sign:
-  None` follows the matching one; `Some` overrides it for that one object.
-- **`%G?` is a COMMIT format placeholder — never use it for a tag.** `git show
-  <tag> --format=%G?` reports the *commit's* signature, and
-  `for-each-ref`'s `%(signature:grade)` atom is empty for a tag object (checked
-  against git 2.50.1). `verify_tag` uses `git verify-tag --raw` and its own
-  parser, `tag::parse_verify_tag`, which returns the same `SignatureStatus`.
-  Neither the exit status nor the text alone is sufficient: a valid signature
-  from a key outside `allowedSignersFile` exits NON-ZERO while grading `G`/`U`.
-  The `[GNUPG:] ` prefix is REQUIRED when matching a gpg status token — git
-  relays gpg's status-fd output verbatim, on **stderr**, so read both streams.
-- **"No false Good" belongs to the parser.** An SSH `Good` line is refuted by a
-  non-zero exit plus `Could not verify signature`, so a signer that printed its
-  verdict before its checks cannot produce a green badge. And a key outside
-  `allowedSignersFile` (`Good "git" signature with …`, no principal) is
-  `UnknownKey` for a TAG, not `Good` — the COMMIT path still says `Good` via
-  `parse_verify_output`'s `U` mapping, which is a known gap with its own issue,
-  not something to copy. There is no SSH `Revoked` branch: git emits only
-  `Could not verify signature.` for a revoked key (measured, git 2.50.1 +
-  OpenSSH 10.2), so one would be dead code.
-- **Verdicts are lazy, presence is free.** `TagInfo.signed` is read off the tag
-  object during the existing walk (no subprocess), so tag ROWS can mark a signed
-  tag; the graded badge (`TagSignatureBadge`) verifies the SELECTED tag only.
-  Same rule `SignatureBadge` states for the log: a verdict per row is a signer
-  process per row.
+  `run_signer`; `commit_signed` and `create_signed_tag` both call it. The ssh
+  key-PATH restriction (`key::…` and bare `ssh-…` literals refused) lives in
+  `resolve_key_file` — a second chain is how it holds for commits and lapses
+  for tags.
+- **A signing failure creates nothing, ever:** both writers move the ref LAST,
+  after the signature exists. No unsigned fallback.
+- **`git2` has no `tag_signed`:** `create_signed_tag` builds the canonical
+  unsigned annotation (`tag_annotation_create`), reads its bytes from the ODB,
+  signs those, appends the armor and writes a second object — byte-for-byte
+  libgit2 serialization, no hand-rolled tagger formatting. (Cost: the unsigned
+  annotation is gc-collected.) Shelling out to `git tag -s` was rejected — it
+  does its own key resolution and would accept the `key::` literals commits
+  refuse.
+- `create_signed_tag` early-returns on an existing `refs/tags/<name>` BEFORE
+  signing (a duplicate would take a passphrase and then fail); the atomic
+  `force = false` ref write stays the real guarantee.
+- **Signing implies annotated:** `sign: Some(true)` with no annotation is
+  `InvalidArgument`, never a silent downgrade. A bare `tag.gpgsign` does NOT
+  promote a lightweight tag (real `git tag v1` fails there too; a blank
+  annotation field *means* lightweight).
+- `commit.gpgsign` and `tag.gpgsign` are separate keys, as in git; `sign: None`
+  follows the matching one.
+- **`%G?` is a COMMIT placeholder — never use it for a tag** (`git show <tag>
+  --format=%G?` grades the commit; `%(signature:grade)` is empty for tag
+  objects). `verify_tag` uses `git verify-tag --raw` + `tag::parse_verify_tag`.
+  Neither exit status nor text alone suffices: a valid signature from a key
+  outside `allowedSignersFile` exits non-zero while grading `G`/`U`. The
+  `[GNUPG:] ` prefix is required when matching gpg status tokens, and they
+  arrive on **stderr** — read both streams.
+- **"No false Good" belongs to the parser:** an SSH `Good` is refuted by a
+  non-zero exit + `Could not verify signature`; a key outside
+  `allowedSignersFile` is `UnknownKey` for a TAG (the commit path's `U` → Good
+  mapping is a known gap with its own issue — do not copy it). There is no SSH
+  `Revoked` branch: git emits only `Could not verify signature.` for a revoked
+  key (measured, git 2.50.1 + OpenSSH 10.2).
+- **Verdicts are lazy, presence is free:** `TagInfo.signed` is read during the
+  existing walk (no subprocess); the graded badge verifies the SELECTED object
+  only — a verdict per row is a signer process per row.
+
 ## Stash: two addresses, one destructive trap (#133)
 
-- **`StashInfo` carries `index` AND `oid`, and they are not interchangeable.**
-  `index` is a position in the `refs/stash` reflog, so ANY write to that ref
-  shifts it — a rename shifts it itself. So `stash_drop` and `stash_rename` take
-  BOTH, and the oid is REQUIRED, not a convenience: they re-read the entry and
-  compare before mutating, raising `StaleStash` on a mismatch. A COMPARISON
-  takes the oid alone, because a stale index would silently diff a different
-  entry. Every UI path already has the oid (`StashMenuTarget`, the palette's
-  `stashItems`) — thread it, never assert past it.
-- **Verify and mutate under ONE lock acquisition.** `with_repo_mut` holds the
-  backend's `repos` mutex only for its closure, so a check in one acquisition
-  and a drop in the next is a TOCTOU — and because that mutex serialises every
-  backend git op, a concurrent command parked on it is scheduled to run at
-  exactly that boundary. A write to `refs/stash` landing there shifts every
-  index and the drop deletes an unrelated entry, permanently. `stash_drop_at`
-  and `stash_finish_rename` exist for this; `stash_pairs` / `stash_entry_at`
-  take an already-borrowed `&mut Repository` because `Libgit2Backend::stashes`
-  takes the lock itself and std's `Mutex` is not reentrant. Nothing on the
-  frontend gates stash writes with a busy flag, and the reflog screen's
-  auto-stash is another live writer, so this is not theoretical.
+- **`StashInfo` carries `index` AND `oid`, not interchangeable:** `index` is a
+  reflog position and ANY write to `refs/stash` shifts it — a rename shifts it
+  itself. `stash_drop` and `stash_rename` take BOTH, re-read and compare before
+  mutating (`StaleStash` on mismatch); a COMPARISON takes the oid alone. Every
+  UI path already has the oid — thread it, never assert past it.
+- **Verify and mutate under ONE lock acquisition:** `with_repo_mut` holds the
+  repos mutex per closure, so check-then-mutate across two acquisitions is a
+  TOCTOU — and that mutex serialises every backend op, so a concurrent command
+  is parked to run exactly at the boundary. Hence `stash_drop_at` /
+  `stash_finish_rename`; `stash_pairs`/`stash_entry_at` take an
+  already-borrowed `&mut Repository` (std's Mutex is not reentrant). Live
+  concurrent writers exist (the reflog screen's auto-stash) — not theoretical.
 - **`git stash store <oid>` is a SILENT no-op when `refs/stash` already points
-  at `<oid>`.** git elides a value-identical ref update, writes no reflog entry,
-  and still exits 0 — and that is exactly `stash@{0}`, the entry a user is most
-  likely to rename. A store-then-drop rename that stores the EXISTING oid
-  therefore destroys the top stash while reporting success. `stash_rename`
-  stores a **fresh commit** instead (same tree, parents and both signatures;
-  only the message differs), which cannot collide with the ref's current value
-  and also keeps the stash commit's own message in step with its reflog message
-  — the way `git stash push` writes both. Pinned by two tests in
-  `tests/stash_rename.rs`, one of which asserts the git behaviour directly.
-- **Additive first, destructive last, and gated.** Store, then verify
-  (`stash::rename_store_landed`), then drop. Everything before the drop leaves
-  the original entry where it was, so a failure anywhere yields a DUPLICATE the
-  user can remove — never a gap. Do not "simplify" the verification away.
-- **A rename moves the entry to the top.** The reflog can only be prepended to;
-  restoring the previous order would mean dropping and re-storing every entry
-  above it. The UI says so in the prompt and **re-reads the list** rather than
-  patching its own copy.
-- **The third parent is where `git stash -u` lives**, and no tree-level diff of
-  the stash commit can reach it. `stash_diff` folds it in explicitly (its tree
-  against the EMPTY tree, so exactly the untracked files, all added);
-  `stash-vs-wt` cannot, so it excludes untracked on BOTH sides and says so. Any
-  new stash comparison must make that decision out loud, not by default.
-- **Pathspec ops set `GIT_LITERAL_PATHSPECS=1`** on top of the `--` rule, and
-  the `--` alone does NOT cover it: that ends option parsing, and everything
-  after it is still parsed as a pathspec. A path is data from `git status`, but
-  git reads a leading `:` as magic, so a file honestly named
-  `:(exclude)weird.txt` means "everything EXCEPT weird.txt" — a request to stash
-  one file stashes the **whole worktree**. Pinned by
-  `a_pathspec_magic_filename_is_a_literal_path_not_an_exclusion`, which was
-  confirmed to fail without the env var. This is the only shell-out in the app
-  that passes a pathspec — do not turn the flag on globally.
-- **`git stash push` exits 0 when it saves nothing** ("No local changes to
-  save"), so "was an entry created" is read off `refs/stash` before and after,
-  never off the exit status. `Ok(None)` is a state, not a failure.
-- **Hunk-level partial stash is deliberately absent, not merely unbuilt.** The
-  `git stash push --staged` composition needs the index rewritten and restored
-  around a subprocess, and an interruption in that window silently reduces the
-  user's index to the selection — and staged-but-uncommitted work has no other
-  copy anywhere. Crash-safety would need a journal, which is the `rebase_state`
-  instrument applied to a case git owns (the `bisect.rs` reasoning). Building it
-  needs its own spec; do not stub an affordance for it in the meantime.
+  at `<oid>`** — exactly `stash@{0}`, the likeliest rename target; a
+  store-then-drop rename would destroy the top stash while reporting success.
+  `stash_rename` stores a **fresh commit** (same tree/parents/signatures, new
+  message — which also keeps the commit message in step with the reflog
+  message). Pinned by `tests/stash_rename.rs`, including a test of the git
+  behaviour itself.
+- **Additive first, destructive last, gated:** store → verify
+  (`stash::rename_store_landed`) → drop. A failure anywhere yields a DUPLICATE
+  the user can remove, never a gap. Do not simplify the verification away. A
+  rename moves the entry to the top (the reflog is prepend-only); the UI says
+  so and re-reads the list.
+- **The third parent is where `git stash -u` lives**, unreachable by tree-level
+  diffs of the stash commit. `stash_diff` folds it in explicitly (its tree vs
+  the EMPTY tree); `stash-vs-wt` cannot, so it excludes untracked on BOTH sides
+  and says so. Any new stash comparison decides this out loud.
+- **Pathspec ops set `GIT_LITERAL_PATHSPECS=1`** on top of the `--` rule — `--`
+  only ends option parsing, and git still reads a leading `:` as pathspec
+  magic, so a file named `:(exclude)weird.txt` would stash the WHOLE worktree.
+  Pinned by a test confirmed to fail without the env var. The only shell-out in
+  the app passing a pathspec — do not enable the flag globally.
+- **`git stash push` exits 0 when it saves nothing** — entry creation is read
+  off `refs/stash` before/after, never the exit status. `Ok(None)` is a state.
+- **Hunk-level partial stash is deliberately absent:** the `--staged`
+  composition rewrites and restores the index around a subprocess, and an
+  interruption silently reduces the index to the selection — staged work has no
+  other copy anywhere. Crash-safety needs a journal and its own spec; do not
+  stub an affordance meanwhile.
 
 ## Spawning processes (issue 172)
 
-- **Never write `Command::new` outside `src-tauri/src/proc.rs`.**
-  `tests/spawn_no_window.rs` fails the build if you do, and the allow-list it
-  carries names the two files that may (the module itself, and `detach.rs`'s
-  `#[cfg(unix)]` re-exec) with the reason.
-- The reason is Windows. `main.rs` sets `windows_subsystem = "windows"`, so a
-  **release** build is a GUI-subsystem process with no console; every
-  console-subsystem child (`git.exe`, `gpg.exe`, `powershell.exe`) is therefore
-  given a *fresh* console with a visible `conhost.exe` window unless it is created
-  with `CREATE_NO_WINDOW`. It reproduces only in a release/bundled build — a debug
-  build already owns a console and children inherit it, so `pnpm tauri dev`
-  concludes there is no bug.
-- **Constructors, not a `no_window(&mut cmd)` helper.** A helper is something a new
-  spawn site can forget, and 19 of 20 did. `proc::git(workdir)` /
-  `proc::git_async(workdir)` hand back a `Command` that already carries the flag,
-  `GIT_TERMINAL_PROMPT=0` and a closed stdin; `proc::git_async_in(dir)` is the
-  clone shape (working directory instead of `-C`, because the repository does not
-  exist yet); `proc::program(prog)` / `proc::program_async(prog)` apply the flag and
-  nothing else, for children that are not git and own their stdio (the signing
-  program pipes all three streams). A caller that pipes stdin overrides the
-  constructor's `null` afterwards — later builder calls win.
-- **The two console-KEEPING exceptions are deliberate**:
-  `proc::git_async_keeping_console` (`git mergetool`) and
-  `proc::program_async_keeping_console` (`$VISUAL`/`$EDITOR`). A console mergetool
-  or `EDITOR=vim` *is* a terminal program: silencing it leaves an invisible process
-  holding the file with `status().await` never returning and no cancel button. The
-  asymmetry decides it — a stray console window is cosmetic, an invisible editor is
-  Task Manager. The guard test allow-lists both call sites by name, so a third one
-  is an argued decision rather than a copy-paste.
-- **Decide with libgit2 before you spawn.** `verify_commit` shelled out
-  unconditionally, so an unsigned commit — which renders NO badge — cost a console
-  flash per commit selected in History. It now reads the `gpgsig` header through
-  `extract_signature` first and answers `SigState::None` with no subprocess at all,
-  the same pre-check `verify_tag` has had since #132. That is a cost win on every
-  platform, not a Windows workaround, and the same question is worth asking of any
-  new shell-out.
+- **Never write `Command::new` outside `src-tauri/src/proc.rs`** —
+  `tests/spawn_no_window.rs` fails the build; its allow-list names the two
+  permitted files (the module itself, `detach.rs`'s `#[cfg(unix)]` re-exec)
+  with reasons.
+- The reason is Windows: release builds are GUI-subsystem
+  (`windows_subsystem = "windows"`), so every console child (`git.exe`,
+  `gpg.exe`, `powershell.exe`) gets a fresh visible conhost window unless
+  created with `CREATE_NO_WINDOW`. Reproduces only in release/bundled builds —
+  a debug build owns a console, so `pnpm tauri dev` concludes there is no bug.
+- **Constructors, not a helper** (a helper is forgettable, and 19 of 20 spawn
+  sites forgot): `proc::git`/`git_async` carry the flag,
+  `GIT_TERMINAL_PROMPT=0` and a closed stdin; `git_async_in` is the clone shape
+  (cwd instead of `-C`); `program`/`program_async` apply the flag only. Later
+  builder calls win, so a caller piping stdin just overrides the null.
+- **The two console-KEEPING exceptions are deliberate:**
+  `git_async_keeping_console` (`git mergetool`) and
+  `program_async_keeping_console` (`$VISUAL`/`$EDITOR`) — a console mergetool
+  or `EDITOR=vim` IS a terminal program; silencing it leaves an invisible
+  process holding the file forever. A stray console window is cosmetic; an
+  invisible editor is Task Manager. The guard test allow-lists both call sites
+  by name.
+- **Decide with libgit2 before you spawn:** `verify_commit` reads the `gpgsig`
+  header via `extract_signature` and answers `SigState::None` with no
+  subprocess (same pre-check `verify_tag` has) — a cost win on every platform,
+  and the question to ask of any new shell-out.
 
 ## Bisect: git's state is the only state of record (#93)
 
-- **There is no `.git/platypusgit-bisect.json`, and there must not be.** Every
+- **There is no `.git/platypusgit-bisect.json`, and there must not be:** every
   transition is a `git bisect` invocation, so git owns `BISECT_START`,
-  `BISECT_LOG`, `BISECT_TERMS` and `refs/bisect/*`, and a second record could only
-  ever *disagree* with it. This is the exact inverse of `rebase_state.rs` — that
-  file exists because the app DRIVES the replay and git cannot finish it — and the
-  reason is the same one CLAUDE.md gives there, read from the other direction.
-- Reading git's files is also what makes a bisect survive an app restart and pick
-  up one the user started in a terminal, for free. `tests/bisect.rs` pins that
-  with a FRESH `Libgit2Backend` continuing and resetting a bisect it never started.
-- **`RepoState::Bisect` needed no new variant** — libgit2 already reports it off
-  `BISECT_LOG`. What was missing was the detail (`bisect_status`) and the actions.
-- Progress comes from `git rev-list --bisect-vars` (`bisect_nr` / `bisect_steps`),
-  git's own arithmetic, so the numbers match what `git bisect good` prints and —
-  unlike scraping that output — are recomputable at any time.
-- **Read the terms from `BISECT_TERMS`**, never assume "bad"/"good":
-  `refs/bisect/<term>` is named after them, so a `--term-old`/`--term-new` bisect
-  would otherwise be invisible (no bad ref found → no progress, no culprit).
-- Convergence is `bisect_rev == refs/bisect/<bad>` — git's own test. Note HEAD
-  then sits on the last commit *tested*, not on the culprit, so the UI must NAME
-  the first bad commit rather than let the user read a sha off the titlebar.
+  `BISECT_LOG`, `BISECT_TERMS` and `refs/bisect/*` — a second record could only
+  disagree. The exact inverse of `rebase_state.rs`, which exists because the
+  app drives the replay and git cannot finish it. Reading git's files also
+  makes a bisect survive an app restart and adopt one started in a terminal
+  (`tests/bisect.rs` pins both with a fresh backend).
+- `RepoState::Bisect` came free from libgit2 (off `BISECT_LOG`); the work was
+  `bisect_status` and the actions.
+- Progress comes from `git rev-list --bisect-vars` (`bisect_nr`/`bisect_steps`) —
+  git's own arithmetic, recomputable at any time. **Read the terms from
+  `BISECT_TERMS`**, never assume "bad"/"good" (`refs/bisect/<term>` is named
+  after them). Convergence is `bisect_rev == refs/bisect/<bad>`; HEAD then sits
+  on the last commit *tested*, so the UI must NAME the culprit.
 
-## Async / threading (Rust)
-- `git2::Repository` is `Send` but not `Sync`. `Libgit2Backend` holds each opened repo as `Arc<Mutex<Repository>>` inside a `Mutex<HashMap<RepoId, ...>>` — `with_repo` clones the Arc and RELEASES the map lock before running the op, so different repositories run in parallel while same-repo ops still serialize on the inner mutex (which the stash TOCTOU note relies on). Several repositories are genuinely open at once (multi-repo tabs); `close` is the only thing that removes an entry.
-- Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block async runtime.
+## Async / threading
 
+- `git2::Repository` is `Send` but not `Sync`. Each opened repo is
+  `Arc<Mutex<Repository>>` inside a `Mutex<HashMap<RepoId, …>>`; `with_repo`
+  clones the Arc and RELEASES the map lock before the op — different repos run
+  in parallel, same-repo ops serialize on the inner mutex (the stash TOCTOU
+  note relies on this). `close` is the only removal.
+- Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block
+  the async runtime.
