@@ -18,6 +18,17 @@
 //! trace it back to. `Parsed::Help` must stay synchronous too, or `USAGE` is
 //! printed by a child whose stdout is `/dev/null`.
 //!
+//! A **dev build** must not detach either, whatever the arguments say (#197).
+//! `tauri dev` runs the app as its own child with the developer's terminal
+//! inherited, so the tty gate says yes — and the parent exiting 0 is exactly how
+//! the CLI learns the app has closed: it stops the vite dev server that a dev
+//! build's webview loads `devUrl` from, and returns the prompt. What is left is
+//! a setsid'd orphan whose frontend is a closed port — a window that never
+//! paints, with no Ctrl+C, no HMR and no rebuild on change. `tauri::is_dev()` is
+//! the exact test and not a proxy: the same flag chooses `devUrl` over the
+//! embedded assets, so it is true precisely when our frontend belongs to a
+//! server that is about to die with the CLI.
+//!
 //! ## Why this re-execs instead of calling `fork()`
 //!
 //! A bare `fork()` keeps the GUI in a child that never `exec`s, and macOS
@@ -65,6 +76,10 @@ pub struct LaunchEnv {
     pub askpass_mode: bool,
     /// Whether we are already the detached child.
     pub already_detached: bool,
+    /// Whether this is a dev build — one whose webview loads `devUrl` from the
+    /// dev server that `tauri dev` owns and kills on the way out. Compile-time,
+    /// so it cannot be forced from the environment (see the module docs).
+    pub dev_build: bool,
 }
 
 impl LaunchEnv {
@@ -75,6 +90,10 @@ impl LaunchEnv {
             stdout_is_terminal: std::io::stdout().is_terminal(),
             askpass_mode: std::env::var_os(crate::cli::ASKPASS_MODE_ENV).is_some(),
             already_detached: std::env::var_os(DETACHED_ENV).is_some(),
+            // `tauri::is_dev()` is `!cfg!(feature = "custom-protocol")` — the
+            // feature the Tauri CLI adds for a bundle build and leaves off for
+            // `tauri dev`, and the same one Tauri reads to pick `devUrl`.
+            dev_build: tauri::is_dev(),
         }
     }
 }
@@ -87,6 +106,7 @@ pub fn should_detach(parsed: &Parsed, env: LaunchEnv) -> bool {
         && env.stdout_is_terminal
         && !env.askpass_mode
         && !env.already_detached
+        && !env.dev_build
 }
 
 /// Whether the caller is now the process that should keep going.
@@ -186,6 +206,9 @@ mod tests {
             stdout_is_terminal,
             askpass_mode: false,
             already_detached: false,
+            // A shipped build: the frontend is embedded, so no dev server dies
+            // when the launching command returns.
+            dev_build: false,
         }
     }
 
@@ -243,5 +266,19 @@ mod tests {
             ..env(true)
         };
         assert!(!should_detach(&launch(), e));
+    }
+
+    #[test]
+    fn a_dev_build_never_detaches() {
+        // `tauri dev` inherits the developer's terminal to the app, so the tty
+        // gate says yes — and the parent exiting 0 is how the CLI learns the app
+        // closed, so it stops the dev server this build's webview loads from.
+        // The detached child is then an orphan showing an empty window.
+        let e = LaunchEnv {
+            dev_build: true,
+            ..env(true)
+        };
+        assert!(!should_detach(&launch(), e));
+        assert!(!should_detach(&Parsed::Launch(None), e));
     }
 }
