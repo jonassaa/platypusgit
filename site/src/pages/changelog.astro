@@ -4,6 +4,11 @@ import CTAButton from '../components/CTAButton.astro';
 import { site } from '../data/site.ts';
 import { changelog } from '../data/features.ts';
 import { descriptions } from '../data/seo.ts';
+
+// Release notes are written with markdown-style backticks around identifiers
+// and shortcuts. Split on them so the odd parts render as <code> — the values
+// still go through Astro's escaping, so this is not an HTML injection point.
+const codeParts = (text: string) => text.split(/`([^`]+)`/g);
 ---
 <Layout title={'Changelog — ' + site.name + ' releases'} description={descriptions.changelog}>
   <section class="container page-head">
@@ -18,13 +23,24 @@ import { descriptions } from '../data/seo.ts';
     {changelog.map((entry) => (
       <article class="entry">
         <div class="entry-meta">
-          <span class="ver mono">v{entry.version}</span>
+          <h2 class="ver mono">v{entry.version}</h2>
           <span class="date">{entry.date}</span>
           <span class="status">{entry.status}</span>
         </div>
-        <ul class="entry-notes">
-          {entry.notes.map((n) => <li>{n}</li>)}
-        </ul>
+        {entry.summary && <p class="summary">{codeParts(entry.summary).map((part, i) => (i % 2 ? <code>{part}</code> : part))}</p>}
+        {entry.sections.map((section) => (
+          <div class="group">
+            <h3 class="group-title">{section.title}</h3>
+            <ul class="items">
+              {section.items.map((item) => (
+                <li>
+                  <span class="item-title">{codeParts(item.title).map((part, i) => (i % 2 ? <code>{part}</code> : part))}</span>
+                  {item.detail && <span class="item-detail">{codeParts(item.detail).map((part, i) => (i % 2 ? <code>{part}</code> : part))}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </article>
     ))}
   </section>
@@ -35,32 +51,54 @@ import { descriptions } from '../data/seo.ts';
   .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
   .lead { color: var(--fg-2); font-size: 16px; max-width: 600px; margin: 0; }
   .head-ctas { margin-top: var(--s-7); }
-  .log { margin-top: var(--s-11); display: grid; gap: var(--s-9); max-width: 760px; }
+  .log { margin-top: var(--s-11); display: grid; gap: var(--s-11); max-width: 760px; }
   .entry { border-left: 2px solid var(--border-1); padding-left: var(--s-7); position: relative; }
-  .entry::before { content: ''; position: absolute; left: -6px; top: 4px; width: 10px; height: 10px;
+  .entry::before { content: ''; position: absolute; left: -6px; top: 6px; width: 10px; height: 10px;
     border-radius: 999px; background: var(--accent); }
-  .entry-meta { display: flex; align-items: center; gap: var(--s-5); margin-bottom: var(--s-5); flex-wrap: wrap; }
-  .ver { font-size: 18px; font-weight: 700; color: var(--fg-0); }
+  .entry-meta { display: flex; align-items: baseline; gap: var(--s-5); margin-bottom: var(--s-5); flex-wrap: wrap; }
+  .ver { font-size: 20px; font-weight: 700; color: var(--fg-0); margin: 0; }
   .date { color: var(--fg-3); font-size: 14px; }
   .status { font-size: 11px; color: var(--accent-2); border: 1px solid var(--border-1);
     padding: 2px 8px; border-radius: 999px; }
-  .entry-notes { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-4); }
-  .entry-notes li { color: var(--fg-1); font-size: 15px; padding-left: var(--s-5); position: relative; }
-  .entry-notes li::before { content: '–'; position: absolute; left: 0; color: var(--fg-3); }
+
+  .summary { color: var(--fg-1); font-size: 15px; margin: 0 0 var(--s-7); }
+
+  /* Sections carry the scannability: a quiet label, then the bullets under it.
+     The label is the thing a reader skims for ("did anything get fixed?"), so
+     it stays visually lighter than the version but heavier than a bullet. */
+  .group + .group { margin-top: var(--s-8); }
+  .group-title { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 var(--s-5); padding-bottom: var(--s-3);
+    border-bottom: 1px solid var(--border-0); }
+
+  .items { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-5); }
+  .items li { padding-left: var(--s-6); position: relative; }
+  .items li::before { content: ''; position: absolute; left: 0; top: 9px; width: 5px; height: 5px;
+    border-radius: 999px; background: var(--fg-4); }
+  .item-title { display: block; color: var(--fg-0); font-size: 15px; font-weight: 600; }
+  .item-detail { display: block; color: var(--fg-2); font-size: 14px; margin-top: var(--s-1); }
+
+  /* A long identifier — a URL in an install one-liner, say — must break rather
+     than push the page sideways on a phone. */
+  code { font-family: var(--font-mono); font-size: 0.88em; background: var(--bg-2);
+    border: 1px solid var(--border-0); border-radius: var(--r-2); padding: 0 4px; color: var(--fg-1);
+    overflow-wrap: anywhere; }
+  .item-title code { color: var(--fg-0); }
 
   @media (max-width: 720px) {
     .page-head { padding-top: var(--s-11); }
     .page-head h1 { font-size: 30px; }
-    .log { margin-top: var(--s-10); gap: var(--s-8); }
+    .log { margin-top: var(--s-10); gap: var(--s-10); }
   }
   @media (max-width: 480px) {
     .page-head h1 { font-size: 26px; }
     .lead { font-size: 15px; }
     .entry { padding-left: var(--s-6); }
     .entry-meta { gap: var(--s-3) var(--s-4); margin-bottom: var(--s-4); }
-    .ver { font-size: 16px; }
+    .ver { font-size: 18px; }
     .date { font-size: 13px; }
-    .entry-notes { gap: var(--s-3); }
-    .entry-notes li { font-size: 14px; }
+    .items { gap: var(--s-4); }
+    .item-title { font-size: 14px; }
+    .item-detail { font-size: 13px; }
   }
 </style>
