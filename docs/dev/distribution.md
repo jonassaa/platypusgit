@@ -69,7 +69,7 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   function's last command, and feed loops from here-docs when they assign outer
   variables.
 
-## The `pgit` launch detaches — one variant must not (#163)
+## The `pgit` launch detaches — except where it must not (#163, #197)
 
 - **`pgit .` hands the prompt straight back**, like `code .`. The detach is in
   the BINARY (`detach.rs`, one call site in `lib.rs::run`) — two shim shapes
@@ -90,6 +90,16 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   the e2e harness's pipes are untouched. `pgit . > file` blocks, by design.
   Windows deliberately unchanged: the GUI-subsystem binary already returns in
   cmd/PowerShell, and Git Bash's MSYS pipe fails `IsTerminal` anyway.
+- **A dev build never detaches, whatever the arguments say (#197).** `tauri dev`
+  inherits the developer's terminal to the app it spawns, so the tty gate says
+  yes — and the parent exiting 0 is how the CLI learns the app closed: it stops
+  the vite dev server that a dev build's webview loads `devUrl` from, leaving a
+  `setsid`'d orphan pointed at a closed port. It reads as `tauri dev` returning
+  instantly and the window never painting. The term is `tauri::is_dev()`
+  (`!cfg!(feature = "custom-protocol")`), which is the exact condition and not a
+  proxy: the same flag chooses `devUrl` over the embedded assets. `cargo run`
+  stays in the foreground for the same reason; the e2e build sets
+  `tauri/custom-protocol` and is unchanged (its stdio is a pipe anyway).
 - `tests/cli_detach.rs` drives the real binary through a **pty** for the
   must-stay-synchronous paths and `git credential fill` (offline) for the
   credentialed one — a pure-function test cannot show git still gets its
