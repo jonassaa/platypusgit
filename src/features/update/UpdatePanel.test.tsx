@@ -182,3 +182,61 @@ describe("UpdatePanel — status surfaces", () => {
     expect(screen.getByText(/Downloading/)).toHaveTextContent("42%");
   });
 });
+
+describe("UpdatePanel — the package-manager command is copyable", () => {
+  // `body` sets `user-select: none` (src/index.css), so before this the notify
+  // path's command could neither be selected nor copied: the panel's only
+  // actionable content had to be retyped by hand.
+  let writeText: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    platformMock.value = "macos";
+    seed({});
+    writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+  });
+
+  it("copies the brew command on macOS", async () => {
+    render(<UpdatePanel />);
+    await userEvent.click(screen.getByTitle(/copy command/i));
+    expect(writeText).toHaveBeenCalledWith("brew upgrade platypusgit");
+  });
+
+  it("copies the apt command on Linux", async () => {
+    platformMock.value = "linux";
+    seed({});
+    render(<UpdatePanel />);
+    await userEvent.click(screen.getByTitle(/copy command/i));
+    expect(writeText).toHaveBeenCalledWith(
+      "sudo apt install ./PlatypusGit_amd64.deb",
+    );
+  });
+
+  it("keeps the command selectable by hand as well", () => {
+    render(<UpdatePanel />);
+    // `pg-selectable` is the escape hatch from the app-wide `user-select: none`.
+    expect(screen.getByTestId("pg-update-pkg-hint")).toHaveClass(
+      "pg-selectable",
+    );
+  });
+
+  it("offers no copy button when there is no command to copy", () => {
+    seed({ capability: "self-update" });
+    render(<UpdatePanel />);
+    expect(screen.queryByTitle(/copy command/i)).toBeNull();
+  });
+
+  it("says so instead of failing silently when the clipboard write rejects", async () => {
+    writeText.mockRejectedValue(new Error("denied"));
+    render(<UpdatePanel />);
+    await userEvent.click(screen.getByTitle(/copy command/i));
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-pg-flash]")?.textContent).toMatch(
+        /could not copy/i,
+      ),
+    );
+  });
+});
