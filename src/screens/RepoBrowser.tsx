@@ -21,6 +21,7 @@ import {
   flattenFileTree,
   multiFileMenuItems,
   pgConfirm,
+  diffCopyMenuItems,
   useContextMenu,
   usePaneSize,
   PANE_HANDLE_PX,
@@ -587,6 +588,11 @@ export function RepoBrowserScreen() {
     searchText: (i) => rowOrder[i]?.replace(/^\//, "") ?? "",
   });
 
+  // Right-click in the preview pane to copy. Read-only, so no line selection to
+  // offer — the dragged text and the whole file, which is the part a windowed
+  // selection cannot reach.
+  const diffCopyMenu = useContextMenu<void>(() => diffCopyMenuItems({ diff }));
+
   const fileCtx = useContextMenu<{ key: string; node: PGFileTreeNode }>(
     ({ key, node }) => {
       if (sel.keys.length > 1 && sel.keys.includes(key)) {
@@ -1021,6 +1027,7 @@ export function RepoBrowserScreen() {
               window={treeWin}
             />
             {fileCtx.menu}
+            {diffCopyMenu.menu}
           </div>
           <StageDropBar onDrop={onStageBarDrop} />
         </PGPane>
@@ -1139,6 +1146,7 @@ export function RepoBrowserScreen() {
               onDiffScroll();
               remeasureDiff();
             }}
+            onContextMenu={(e) => diffCopyMenu.onContextMenu(e, undefined)}
           >
             {!selectedFile && (
               <PGEmpty

@@ -92,6 +92,7 @@ export type ActionId =
   | "diff.viewCombined"
   | "diff.stageHunk"
   | "diff.discardHunk"
+  | "diff.copy"
   | "commit.commit"
   | "commit.commitAndPush"
   | "commit.toggleAmend"
@@ -337,6 +338,21 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   // no default runner, like the commit.* family.
   "diff.stageHunk": { id: "diff.stageHunk", title: "Stage / unstage hunk", category: "Diff", scope: "pane" },
   "diff.discardHunk": { id: "diff.discardHunk", title: "Discard hunk", category: "Diff", scope: "pane" },
+  // Mod+C over a diff, and it must not stop meaning "copy".
+  //
+  // It exists because the diff surfaces are windowed: only the rendered rows are
+  // in the document, so a mouse selection cannot reach past them, and there was
+  // no way at all to copy a long range. This action copies the selected diff
+  // LINES straight from the row model instead, so the length of the range is
+  // irrelevant.
+  //
+  // Its handler DECLINES (returns false) whenever a text selection exists, and
+  // whenever no lines are selected — declining leaves the chord unhandled, the
+  // dispatcher skips preventDefault, and the webview's own copy runs on the
+  // selection exactly as it would in any other app. Pane-scoped, so it is only
+  // ever offered while a diff pane holds focus; `suppressInInput` keeps it away
+  // from the commit-message textarea, where Mod+C is the caret's.
+  "diff.copy": { id: "diff.copy", title: "Copy selected diff lines", category: "Diff", scope: "pane", suppressInInput: true },
 
   "repo.open": { id: "repo.open", title: "Open repository…", category: "Repository", scope: "global", run: openRepoOp },
   "repo.clone": { id: "repo.clone", title: "Clone repository…", category: "Repository", scope: "global", run: cloneRepoOp },

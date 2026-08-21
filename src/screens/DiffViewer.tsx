@@ -12,6 +12,8 @@ import {
   PGStatusMark,
   PGToggle,
   PGToolbar,
+  diffCopyMenuItems,
+  useContextMenu,
   usePaneSize,
   type SideLine,
 } from "@/design";
@@ -165,6 +167,14 @@ export function DiffViewerScreen() {
       .filter((h) => h.lines.length > 0);
     return { ...diff, hunks };
   }, [diff, findQuery]);
+
+  // Right-click to copy. A read-only surface, so there is no line selection to
+  // offer — just the dragged text and the whole file, which is the part a
+  // windowed selection cannot reach. Built off `findFiltered` so Find narrowing
+  // the diff narrows what "copy the file" means, matching what is on screen.
+  const diffCopyMenu = useContextMenu<void>(() =>
+    diffCopyMenuItems({ diff: findFiltered }),
+  );
 
   const split = React.useMemo(() => diffToSplit(findFiltered), [findFiltered]);
 
@@ -578,6 +588,7 @@ export function DiffViewerScreen() {
                   onDiffScroll();
                   remeasure();
                 }}
+                onContextMenu={(e) => diffCopyMenu.onContextMenu(e, undefined)}
               >
                 {findFiltered.hunks.length === 0 && findQuery.trim() && (
                   <PGEmpty icon="search" title="No matches" />
@@ -610,8 +621,10 @@ export function DiffViewerScreen() {
             <PGSideBySideDiff
               left={splitWithSyntax.left}
               right={splitWithSyntax.right}
+              onContextMenu={(e) => diffCopyMenu.onContextMenu(e, undefined)}
             />
           )}
+          {diffCopyMenu.menu}
         </PGPane>
       </div>
     </>

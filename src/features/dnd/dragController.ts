@@ -202,6 +202,7 @@ function teardown(g: Gesture) {
   mark(g, null);
   removeGhost();
   document.body.style.userSelect = "";
+  document.body.removeAttribute("data-pg-dragging");
   document.body.style.cursor = "";
   window.removeEventListener("pointermove", onMove);
   window.removeEventListener("pointerup", onUp);
@@ -224,6 +225,12 @@ function onMove(e: PointerEvent) {
       return;
     g.moved = true;
     document.body.style.userSelect = "none";
+    // …and the attribute, which is what reaches text that opted back IN to
+    // selection (`.pg-selectable`, the diff's code cells). The inline style above
+    // only sets what body's descendants INHERIT, and a class beats inheritance —
+    // so without this, dragging a row across the diff selects code. See the
+    // `body[data-pg-dragging]` rule in index.css.
+    document.body.setAttribute("data-pg-dragging", "");
     document.body.style.cursor = "grabbing";
     showGhost(g.payload.label, e.clientX, e.clientY);
     useDragStore.setState({ payload: g.payload });

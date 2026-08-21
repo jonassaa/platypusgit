@@ -630,7 +630,11 @@ export function PGDiffLine({
       >
         {marker[kind]}
       </span>
+      {/* The one selectable cell in the row: the code, without the gutters
+          above, so a copied block pastes as source. `.pg-selectable` (index.css)
+          opts back in from the app-wide `user-select: none`. */}
       <span
+        className="pg-selectable"
         style={{
           flex: 1,
           whiteSpace: "pre-wrap",
@@ -778,7 +782,17 @@ export const PGDiffRow = React.memo(function PGDiffRow({
           data-focused={focused || undefined}
           onClick={
             selectable
-              ? (e) => onLineClick!(ln.changedIndex!, e.shiftKey)
+              ? (e) => {
+                  // The click that ends a drag fires on the row the pointer came
+                  // up over, so copying a line by dragging across it would
+                  // otherwise stage that line too. A selection means the gesture
+                  // was a drag, not a click: mousedown collapses any earlier
+                  // selection before this runs, so a genuine click always sees a
+                  // collapsed one and never trips this.
+                  const sel = window.getSelection();
+                  if (sel && !sel.isCollapsed) return;
+                  onLineClick!(ln.changedIndex!, e.shiftKey);
+                }
               : undefined
           }
           style={{
@@ -861,7 +875,12 @@ export const PGDiffRow = React.memo(function PGDiffRow({
           >
             {marker[kind]}
           </span>
+          {/* Selectable, unlike the three gutter cells above: a drag over the
+              diff yields bare code, no line numbers and no +/- marker. Windowing
+              caps how far one selection can reach (only the rendered rows are in
+              the DOM) - `diff.copy` is the path for anything longer. */}
           <span
+            className="pg-selectable"
             style={{
               flex: 1,
               // `pre`, not `pre-wrap`: this row's height is the window's pitch,
@@ -1085,9 +1104,17 @@ export interface SideLine {
 export function PGSideBySideDiff({
   left = [],
   right = [],
+  onContextMenu,
 }: {
   left?: SideLine[];
   right?: SideLine[];
+  /**
+   * Right-click anywhere in either column — the diff copy menu. A prop rather
+   * than a wrapper element at the call sites: this component's root already holds
+   * the `flex: 1; min-height: 0` slot, and an extra div in that chain is a layout
+   * change for nothing.
+   */
+  onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
 }) {
   const col = (lines: SideLine[], side: "l" | "r") => (
     <div
@@ -1127,11 +1154,16 @@ export function PGSideBySideDiff({
                 color: "var(--fg-3)",
                 borderRight: "1px solid var(--border-0)",
                 flexShrink: 0,
+                // Out of every selection, like the unified view's gutters: a
+                // selection dragged down a split column is code, not code with a
+                // line number wedged into each row.
+                userSelect: "none",
               }}
             >
               {ln.ln ?? ""}
             </span>
             <span
+              className="pg-selectable"
               style={{
                 flex: 1,
                 padding: "0 8px",
@@ -1157,7 +1189,10 @@ export function PGSideBySideDiff({
     </div>
   );
   return (
-    <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+    <div
+      style={{ display: "flex", flex: 1, minHeight: 0 }}
+      onContextMenu={onContextMenu}
+    >
       {col(left, "l")}
       {col(right, "r")}
     </div>

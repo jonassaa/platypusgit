@@ -75,6 +75,14 @@ const COMMON = {
   // because both actions are pane-scoped — presets.test.ts only forbids two
   // GLOBAL actions on one chord, and the dispatcher tries each id in turn.
   "diff.toggleLine": [" "],
+  // The ordinary copy key, deliberately. `diff.copy`'s whole job is to extend
+  // Mod+C to a selection the DOM cannot hold — the diff's selected LINES, which
+  // outlive the rendered window — so putting it anywhere else would be a second
+  // key for something the reader already knows how to ask for. It declines
+  // whenever there IS a text selection (and whenever nothing is selected at all),
+  // which leaves the chord unhandled and the webview's native copy in charge, so
+  // this binding never takes Mod+C away from anything.
+  "diff.copy": ["Mod+C"],
   // The History selection's diff, on the same Mod+D as nav.diff (#158). Legal
   // because this one is pane-scoped: the dispatcher tries each id bound to a
   // chord in turn, and the pane handler declines unless the commit list has focus
