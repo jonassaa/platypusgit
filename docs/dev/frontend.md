@@ -54,6 +54,44 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   type back — silent truncation is worse than the overflow.
 - **Gate text rendering on `isTextualDiff(diff)`, not `!diff.binary`** (#93) —
   an LFS pointer is honestly text; the surfaces render `LfsDiffNotice` instead.
+- **Diff CODE is selectable; diff CHROME is not.** `body` is `user-select: none`
+  (native desktop feel), so each row's code cell opts back in with
+  `.pg-selectable` (`index.css`) while the line-number cells and the `+`/`−`
+  marker keep `user-select: none`. That split is the whole feature: a selection
+  that swept up the gutters would paste as text you have to clean by hand. Every
+  new diff row markup has to make the same split — `CommitDiffPanel`'s marker was
+  a loose text node and had to be wrapped in a span to get it.
+  - **A mouse selection cannot leave the rendered window.** The surfaces are
+    windowed, so rows outside the viewport are not in the document and a drag
+    stops at its edge (overscan 8). This is why `diff.copy` (`Mod+C`) and
+    `diffCopyMenuItems` (right-click, wired into all four surfaces) build their
+    text from the ROW MODEL instead — `lib/diffCopy.ts`, reusing `isFileContent`
+    so `changedIndex` cannot drift from what the renderer numbered. Copying a
+    long range has no other path; a surface that forgets the menu is a surface
+    where it silently cannot be done, which `test/diffCopyMenu.test.ts` fails the
+    build over.
+  - **`Mod+C` must keep meaning "copy".** `diff.copy` DECLINES (returns `false`)
+    whenever a text selection exists and whenever nothing is selected, so the
+    chord goes unhandled, the dispatcher skips `preventDefault`, and the
+    webview's native copy runs. It is pane-scoped and `suppressInInput`, so it
+    never reaches the commit-message textarea or another screen.
+  - **A drag-select ends in a `click`**, on the row the pointer came up over — so
+    `PGDiffRow`'s handler bails on a non-collapsed selection, or copying a line
+    would stage it. No false positives: `mousedown` collapses any earlier
+    selection before `click` runs, so a genuine click always sees a collapsed one.
+  - **Opting text back in defeats a body-level `user-select: none`**, because a
+    class beats an inherited value. `dragController` relied on exactly that body
+    style to stop a row drag from selecting as it moved (it cannot
+    `preventDefault` a pointerdown that may still end up a click), so it now also
+    sets `data-pg-dragging` on `body`, which `index.css` uses to suppress
+    `.pg-selectable` for the duration. `PGResizeHandle` needs none of this — it
+    `preventDefault`s its mousedown, so no selection ever starts. Any future
+    "nothing is selectable right now" state has to reach the opted-in cells the
+    same way.
+  - Pinned by `src/design/diffSelection.test.tsx` (+ `src/test/selectionText.ts`,
+    which walks the tree the way an engine serialises a copy) and, because the
+    granting rule lives in a stylesheet and gutter exclusion is an engine
+    behaviour, by `e2e/specs/diff-selection.e2e.ts` in the real webview.
 - **Tokenization runs in a module worker** (Shiki's `codeToTokens` is sync CPU);
   tokens return as transferable `Int32Array`s. `vite.config.ts` sets
   `worker: { format: "es" }` — the grammars are dynamic imports and the default

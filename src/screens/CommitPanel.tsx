@@ -22,6 +22,7 @@ import {
   pgFlash,
   pgPrompt,
   useContextMenu,
+  diffCopyMenuItems,
   usePaneSize,
   PANE_HANDLE_PX,
   type PGFileTreeNode,
@@ -73,6 +74,7 @@ import {
   scrollTopForAnchor,
   scrollTopForRow,
 } from "@/lib/diffRows";
+import { fileDiffToText, selectedLinesToText } from "@/lib/diffCopy";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
@@ -230,19 +232,7 @@ export function CommitPanelScreen() {
         label: "Copy diff as text",
         onClick: () => {
           if (!p?.diff) return;
-          const text = p.diff.hunks
-            .map(
-              (h) =>
-                `${h.header}\n${h.lines
-                  .map((ln) => {
-                    const k = ln.kind.kind;
-                    const prefix = k === "Addition" ? "+" : k === "Deletion" ? "-" : " ";
-                    return `${prefix}${ln.content}`;
-                  })
-                  .join("")}`,
-            )
-            .join("\n");
-          navigator.clipboard?.writeText(text);
+          navigator.clipboard?.writeText(fileDiffToText(p.diff));
           pgFlash("copied diff");
         },
       },
@@ -930,6 +920,39 @@ export function CommitPanelScreen() {
     { paneId: "commit.diff" },
   );
 
+  // Right-click anywhere in the diff: the discoverable half of `diff.copy`. This
+  // is the one surface with a line selection, so it is the one whose menu can
+  // offer it.
+  const diffCopyMenu = useContextMenu<void>(() =>
+    diffCopyMenuItems({ diff, lineSel }),
+  );
+
+  // Mod+C over the diff: copy the LINE selection, which a DOM selection cannot
+  // express — the diff is windowed, so the rows outside the viewport are not in
+  // the document and a mouse selection stops at the window's edge.
+  //
+  // Declines in both of the cases where the reader means the ordinary copy: when
+  // text is selected (the drag they just finished — the webview copies it, and
+  // gets the gutters' `user-select: none` treatment for free), and when nothing
+  // is selected at all. Declining is what keeps Mod+C from being swallowed here:
+  // the dispatcher only calls preventDefault on a handled chord.
+  useAction(
+    "diff.copy",
+    () => {
+      const textSel = window.getSelection();
+      if (textSel && !textSel.isCollapsed) return false;
+      if (!diff) return false;
+      const text = selectedLinesToText(diff, lineSel);
+      if (!text) return false;
+      navigator.clipboard?.writeText(text);
+      const n = text.split("\n").length;
+      pgFlash(`copied ${n} line${n === 1 ? "" : "s"}`);
+      return true;
+    },
+    [diff, lineSel],
+    { paneId: "commit.diff" },
+  );
+
   const headBranch = currentBranch(branches);
   const defaultRemote = remotes[0] ?? null;
 
@@ -1366,6 +1389,7 @@ export function CommitPanelScreen() {
             onDiffScroll();
             remeasureDiff();
           }}
+          onContextMenu={(e) => diffCopyMenu.onContextMenu(e, undefined)}
         >
           {diffLoading && (
             <div
@@ -1438,6 +1462,7 @@ export function CommitPanelScreen() {
         )}
         </div>
         {moreMenu.menu}
+        {diffCopyMenu.menu}
       </PGPane>
 
       <PGResizeHandle

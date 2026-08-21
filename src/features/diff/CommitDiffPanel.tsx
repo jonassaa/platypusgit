@@ -4,6 +4,8 @@ import {
   PGIcon,
   PGResizeHandle,
   PGSkeleton,
+  diffCopyMenuItems,
+  useContextMenu,
   usePaneSize,
   type DiffLineData,
 } from "@/design";
@@ -164,6 +166,13 @@ export function CommitDiffPanel({
   // Fall back to the first file so the diff pane is populated immediately when
   // a new diff arrives, before the selection-sync effect runs.
   const current = shown.find((d) => d.path === selected) ?? shown[0] ?? null;
+
+  // Right-click to copy. This panel is the read-only diff behind Compare,
+  // CommitDiff and History, so there is no line selection to offer — the dragged
+  // text and the whole file, which is the part a windowed selection cannot reach.
+  const diffCopyMenu = useContextMenu<void>(() =>
+    diffCopyMenuItems({ diff: current }),
+  );
 
   const syntax = useDiffSyntax({
     repoId: syntaxSides?.repoId ?? null,
@@ -452,6 +461,7 @@ export function CommitDiffPanel({
             onDiffScroll();
             remeasure();
           }}
+          onContextMenu={(e) => diffCopyMenu.onContextMenu(e, undefined)}
         >
           {loading && (
             // Code lines, not list rows: --lh-code owns diff geometry, so this
@@ -520,8 +530,16 @@ export function CommitDiffPanel({
                         : "var(--fg-0)",
                 }}
               >
-                {kind === "add" ? "+" : kind === "rem" ? "-" : " "}
-                <CommitDiffRowText line={row.line} />
+                {/* The marker is this panel's whole gutter (there are no line
+                    numbers here), and it is chrome: out of every selection, so a
+                    drag over the diff copies bare code. Was a loose text node,
+                    which a selection swept up. */}
+                <span style={{ userSelect: "none" }}>
+                  {kind === "add" ? "+" : kind === "rem" ? "-" : " "}
+                </span>
+                <span className="pg-selectable">
+                  <CommitDiffRowText line={row.line} />
+                </span>
               </div>
             );
             // The anchor row is where F7 addresses this hunk, since #157.
@@ -550,6 +568,7 @@ export function CommitDiffPanel({
           containerHeight={diffBox.height}
         />
         </div>
+        {diffCopyMenu.menu}
       </PGPane>
     </div>
   );

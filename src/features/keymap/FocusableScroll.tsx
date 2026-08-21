@@ -16,6 +16,7 @@ export function FocusableScroll({
   testId,
   innerRef,
   onScroll,
+  onContextMenu,
 }: {
   children: React.ReactNode;
   className?: string;
@@ -30,6 +31,12 @@ export function FocusableScroll({
    */
   innerRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: React.UIEventHandler<HTMLDivElement>;
+  /**
+   * Right-click anywhere in the region. The diff panes use it for their copy
+   * menu, which has to hang off the scroller rather than a row: a diff's rows
+   * are windowed and a reader may right-click the padding below the last one.
+   */
+  onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
 }) {
   const ownRef = React.useRef<HTMLDivElement>(null);
   const ref = innerRef ?? ownRef;
@@ -84,6 +91,7 @@ export function FocusableScroll({
       data-testid={testId}
       onKeyDown={onKeyDown}
       onScroll={onScroll}
+      onContextMenu={onContextMenu}
       style={{ outline: "none", overflow: "auto", ...style }}
     >
       {children}

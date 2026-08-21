@@ -11,7 +11,8 @@ import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { headAncestryOf } from "@/features/commits/headAncestry";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
-import type { BranchInfo, CommitInfo } from "@/lib/types";
+import type { BranchInfo, CommitInfo, FileDiff } from "@/lib/types";
+import { fileDiffToText, selectedLinesToText } from "@/lib/diffCopy";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import {
@@ -340,6 +341,76 @@ export function useContextMenu<T>(
 // ═════════════════════════════════════════════════════════
 // CONTEXT MENU CONFIGS
 // ═════════════════════════════════════════════════════════
+
+/** What a diff surface knows about the selections a reader could copy. */
+export interface DiffCopyTarget {
+  diff: FileDiff | null;
+  /**
+   * The surface's line selection, hunk index → selected `changedIndex` values.
+   * Omitted by the read-only surfaces, which have no line selection to offer.
+   */
+  lineSel?: Record<number, number[]>;
+}
+
+/**
+ * The copy entries for a diff's own context menu, shared by all four diff
+ * surfaces.
+ *
+ * Right-click is the discoverable half of `diff.copy` (Mod+C): the diff is
+ * windowed, so a mouse selection cannot reach past the rendered rows, and
+ * without these entries there is no way at all to copy a range longer than a
+ * screenful.
+ *
+ * Only the selections that EXIST are offered — an entry that copied an empty
+ * string would be worse than no entry. The text-selection check reads the live
+ * selection, which is correct here because a right-click does not clear one:
+ * this builder runs from the `contextmenu` handler, while the drag's selection
+ * is still on screen.
+ */
+export function diffCopyMenuItems(
+  target: DiffCopyTarget | null,
+): ContextMenuItem[] {
+  const diff = target?.diff;
+  if (!diff) return [];
+  const items: ContextMenuItem[] = [];
+
+  const textSel = window.getSelection();
+  const dragged = textSel && !textSel.isCollapsed ? textSel.toString() : "";
+  if (dragged) {
+    items.push({
+      icon: "copy",
+      label: "Copy",
+      onClick: () => {
+        navigator.clipboard?.writeText(dragged);
+        pgFlash("copied selection");
+      },
+    });
+  }
+
+  const lineSel = target?.lineSel ?? {};
+  const lineCount = Object.values(lineSel).reduce((n, l) => n + l.length, 0);
+  if (lineCount > 0) {
+    items.push({
+      icon: "copy",
+      label: `Copy ${lineCount} selected line${lineCount === 1 ? "" : "s"}`,
+      onClick: () => {
+        navigator.clipboard?.writeText(selectedLinesToText(diff, lineSel));
+        pgFlash(`copied ${lineCount} line${lineCount === 1 ? "" : "s"}`);
+      },
+    });
+  }
+
+  items.push({
+    icon: "copy",
+    label: "Copy file diff as text",
+    onClick: () => {
+      navigator.clipboard?.writeText(fileDiffToText(diff));
+      pgFlash("copied diff");
+    },
+  });
+
+  return items;
+}
 
 export function commitMenuItems(commit: { sha?: string; subject?: string } | null): ContextMenuItem[] {
   const sha = commit?.sha || "—";

@@ -233,6 +233,20 @@ textarea,
   -webkit-user-select: text;
 }
 
+/* While a pointer drag is live, nothing is selectable — not even the cells that
+   opted back in above.
+ *
+ * `dragController` has always set `user-select: none` on body for this, because
+ * `beginDrag` cannot preventDefault a pointerdown that is still allowed to end up
+ * a click. That inherited value stopped being enough once the diff's code cells
+ * took a class of their own (a class beats an inherited value), so dragging a file
+ * row across the diff smeared a selection over the code. This rule is the same
+ * intent, at a specificity that reaches the opted-in cells. */
+body[data-pg-dragging] .pg-selectable {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .mono { font-family: var(--font-mono); font-feature-settings: "calt", "liga"; }
 .display { font-family: var(--font-display); letter-spacing: -0.01em; }
 
