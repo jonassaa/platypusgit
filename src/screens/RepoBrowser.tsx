@@ -57,7 +57,7 @@ import { useDiffSyntax, useSyntax } from "@/lib/syntax";
 import {
   flattenDiffRows,
   hunkAnchorRows,
-  scrollTopForRow,
+  scrollTopForAnchor,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
@@ -698,9 +698,12 @@ export function RepoBrowserScreen() {
       const rowIndex = diffAnchorRows[hunkIndex];
       if (!el || rowIndex == null || rowIndex < 0) return false;
       // Through the window's own setter — see `useVariableWindow.scrollTo`.
-      const want = scrollTopForRow(diffHeights, rowIndex, {
+      // PARKED a fixed lead below the top, never merely revealed: see
+      // `scrollTopForAnchor`.
+      const want = scrollTopForAnchor(diffHeights, rowIndex, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
+        rowH: diffRowH,
       });
       scrollDiffTo(want);
       // Confirm the write: a container shorter than the offset CLAMPS it (a pane
@@ -708,7 +711,7 @@ export function RepoBrowserScreen() {
       // file having been opened — see `useHunkNav`'s `scrollToHunk`.
       return Math.abs(el.scrollTop - want) <= 1;
     },
-    [diffAnchorRows, diffHeights, scrollDiffTo],
+    [diffAnchorRows, diffHeights, diffRowH, scrollDiffTo],
   );
   const hunkCursor = useHunkNav({
     paneIds: ["repo.tree", "repo.preview"],

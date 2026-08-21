@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   flattenDiffRows,
+  HUNK_LEAD_ROWS,
   hunkAnchorRows,
   rowOffset,
+  scrollTopForAnchor,
   scrollTopForRow,
   windowVariable,
   type DiffRow,
@@ -678,5 +680,64 @@ describe("scrollTopForRow", () => {
     // Row 4 spans 88..106; a 40px viewport at 0 must scroll to 66.
     expect(scrollTopForRow(mixed, 4, { scrollTop: 0, viewportH: 40 })).toBe(66);
     expect(scrollTopForRow(mixed, 0, { scrollTop: 66, viewportH: 40 })).toBe(0);
+  });
+});
+
+describe("scrollTopForAnchor", () => {
+  // Twenty 20px rows (400px of content) in a 200px viewport, so the 4-row
+  // lead-in (80px) fits with room to spare either side.
+  const hs = Array.from({ length: 20 }, () => 20);
+  const park = (index: number, scrollTop = 0, viewportH = 200) =>
+    scrollTopForAnchor(hs, index, { scrollTop, viewportH, rowH: 20 });
+
+  it("parks the anchor a fixed lead below the top of the viewport", () => {
+    // Row 9 starts at 180; four 20px rows of lead-in put the viewport at 100.
+    expect(park(9)).toBe(180 - HUNK_LEAD_ROWS * 20);
+  });
+
+  it("repositions a row that is ALREADY visible", () => {
+    // The whole point, and where this parts company with scrollTopForRow: F7
+    // must put the change in the same physical spot every time, not leave it
+    // wherever the previous scroll happened to strand it.
+    expect(scrollTopForRow(hs, 7, { scrollTop: 100, viewportH: 200 })).toBe(100);
+    expect(park(7, 100)).toBe(60);
+  });
+
+  it("clamps at the top of the file rather than scrolling negative", () => {
+    expect(park(0)).toBe(0);
+    expect(park(2, 300)).toBe(0);
+  });
+
+  it("clamps at the end of the file, where the lead cannot be honoured", () => {
+    // Row 19 starts at 380; 400px of content in a 200px viewport tops out at
+    // 200, so the last hunk sits lower than the lead asks for. Overshooting
+    // here would be CLAMPED BY THE DOM, and scrollToHunk reads that mismatch as
+    // "the reveal did not land" — which quietly costs the file its auto-open.
+    expect(park(19)).toBe(200);
+  });
+
+  it("caps the lead so a short pane cannot hide the anchor", () => {
+    // A 60px viewport with the full 80px lead would put row 9 (offset 180) at
+    // scrollTop 100 — showing 100..160, with the anchor off the bottom. The cap
+    // keeps one row of the anchor on screen at every viewport size.
+    expect(park(9, 0, 60)).toBe(140);
+    // One row tall: no lead at all, anchor flush with the top.
+    expect(park(9, 0, 20)).toBe(180);
+  });
+
+  it("measures the lead in PIXELS, not in preceding rows", () => {
+    // A header (26) then two code rows (18), twice. Row 4 starts at 88; the four
+    // rows above it are 88px tall together, which would eat the entire lead and
+    // park the anchor at the top. 4 x rowH is 72, so 16 is the answer.
+    const mixed = [26, 18, 18, 26, 18, 18];
+    expect(scrollTopForAnchor(mixed, 4, { scrollTop: 0, viewportH: 100, rowH: 18 })).toBe(16);
+  });
+
+  it("holds still for an out-of-range index or an unmeasured viewport", () => {
+    // Same guards as scrollTopForRow: jsdom and the first paint both report a
+    // 0px viewport, and the auto-open leans on this to try again later.
+    expect(park(-1, 40)).toBe(40);
+    expect(park(20, 40)).toBe(40);
+    expect(scrollTopForAnchor(hs, 9, { scrollTop: 40, viewportH: 0, rowH: 20 })).toBe(40);
   });
 });

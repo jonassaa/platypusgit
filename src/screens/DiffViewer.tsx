@@ -32,7 +32,12 @@ import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
-import { flattenDiffRows, hunkAnchorRows, rowOffset } from "@/lib/diffRows";
+import {
+  flattenDiffRows,
+  HUNK_LEAD_ROWS,
+  hunkAnchorRows,
+  scrollTopForAnchor,
+} from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
@@ -259,11 +264,15 @@ export function DiffViewerScreen() {
       const el = scrollRef.current;
       const idx = anchorRows[hunkIndex];
       if (!el || idx == null || idx < 0) return false;
-      const want = rowOffset(heights, idx);
-      // Reveal-only: a first change already on screen must not jump.
-      if (want >= el.scrollTop && want <= el.scrollTop + el.clientHeight - rowH) {
-        return true;
-      }
+      // PARKED a fixed lead below the top — see `scrollTopForAnchor`. This screen
+      // used to skip the scroll entirely for a hunk already on screen, which is
+      // how one keypress came to mean two different things depending on where the
+      // previous one left the pane.
+      const want = scrollTopForAnchor(heights, idx, {
+        scrollTop: el.scrollTop,
+        viewportH: el.clientHeight,
+        rowH,
+      });
       // Through the window's own setter: a bare `el.scrollTop = …` leaves the
       // rendered range describing the old position until the engine gets round
       // to a scroll event, which on WebKitGTK can be seconds (issue 188).
@@ -275,16 +284,44 @@ export function DiffViewerScreen() {
     },
     [anchorRows, heights, rowH, scrollDiffTo],
   );
+
+  // Wrap mode, where `heights` no longer describes the rendered rows and the
+  // offset arithmetic above would land on the wrong line. Windowing is off here,
+  // so every anchor row is MOUNTED and the DOM can be measured directly — the one
+  // situation in which a querySelector cannot silently no-op (the #68 G10 trap).
+  // Measured through bounding rects rather than `offsetTop`, which is relative to
+  // whichever ancestor happens to be positioned.
+  //
+  // `useHunkNav`'s own fallback would do `scrollIntoView({block: "start"})` and
+  // park the change flush against the top edge; this keeps the lead-in every other
+  // mode gives.
+  const scrollToHunkInWrap = React.useCallback(
+    (hunkIndex: number): boolean => {
+      const el = scrollRef.current;
+      const row = el?.querySelector<HTMLElement>(`[data-hunk-index="${hunkIndex}"]`);
+      if (!el || !row) return false;
+      const lead = Math.min(
+        HUNK_LEAD_ROWS * rowH,
+        Math.max(0, el.clientHeight - rowH),
+      );
+      const top =
+        el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      const want = Math.max(
+        0,
+        Math.min(top - lead, el.scrollHeight - el.clientHeight),
+      );
+      scrollDiffTo(want);
+      return Math.abs(el.scrollTop - want) <= 1;
+    },
+    [rowH, scrollDiffTo],
+  );
   const hunkCursor = useHunkNav({
     paneIds: ["diff.files", "diff.view"],
     count: findFiltered?.hunks.length ?? 0,
     resetKey: selectedPath,
-    // Wrap mode: `heights` no longer describes the rendered rows, so an
-    // offset-based scroll lands on the wrong line — the same reason the window and
-    // the minimap are off. Omitting it takes useHunkNav's documented DOM fallback,
-    // which is exactly correct here: with windowing off, every anchor row is
-    // mounted, so `scrollIntoView` cannot silently no-op (the #68 G10 trap).
-    scrollToHunk: wrap ? undefined : scrollToHunk,
+    // Wrap mode measures the mounted row instead of trusting `heights` — same
+    // parking rule, different ruler.
+    scrollToHunk: wrap ? scrollToHunkInWrap : scrollToHunk,
     // Split mode has no unified scroll container, and `useViewportH` keeps the
     // last height it managed to read rather than resetting to 0 when the element
     // goes away — so the mode is part of the question, not just the measurement.

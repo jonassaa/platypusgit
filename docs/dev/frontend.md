@@ -81,6 +81,26 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   windowing and the DOM route silently does nothing (the #68 G10 trap). F7
   scrolls by offset too (`hunkAnchorRows`); the DOM fallback survives only for
   unwindowed callers.
+- **Three scroll semantics, and they are not interchangeable.**
+  `scrollTopForRow` REVEALS (smallest move that shows the row, no-op when it is
+  already visible) — the LINE cursor's, because a cursor stepping one row should
+  scroll one row. `scrubScrollTop` (`lib/diffMinimap.ts`) POSITIONS a viewport
+  around a row. `scrollTopForAnchor` PARKS: the row lands `HUNK_LEAD_ROWS × rowH`
+  px below the top of the viewport, ALWAYS — off screen, at an edge, or already
+  comfortably visible. That is F7/⇧F7's landing and the auto-open's, and the
+  unconditional move is the point: under reveal semantics F7 walking forward
+  pinned every change to the BOTTOM edge with no following context, and one
+  keypress meant two different things depending on where the last one left the
+  pane. Three details are load-bearing: the lead is PIXELS (the height of the
+  four preceding rows would let one tall fold separator eat it); the result is
+  clamped to `[0, sum(heights) − viewportH]`, because overshooting is clamped by
+  the DOM and every `scrollToHunk` reads `scrollTop !== want` as "the reveal did
+  not land", costing the file its auto-open; and the lead itself is capped at
+  `viewportH − rowH` so a short pane degrades to "flush with the top" rather than
+  parking the target off its own bottom edge. `DiffViewer`'s wrap mode measures
+  the mounted row's rect instead (heights describe nothing there) — same rule,
+  different ruler. The merge window's F7 walks conflict regions through
+  CodeMirror and shares none of this.
 - **A diff OPENS at its first change, and F7 carries into the next file**
   (issue 188). Both live in `useHunkNav`, not per screen. The parts:
   - The auto-open waits on `diffOpenReady` (`features/diff/useDiffGaps.ts`):

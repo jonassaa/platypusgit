@@ -483,6 +483,63 @@ export function scrollTopForRow(
   return scrollTop;
 }
 
+/** Rows of lead-in `scrollTopForAnchor` keeps above its target. */
+export const HUNK_LEAD_ROWS = 4;
+
+/**
+ * Scroll position that PARKS row `index` a fixed lead below the top of the
+ * viewport — F7/⇧F7's landing, and the file auto-open's.
+ *
+ * Three scroll semantics now live side by side, and they are not
+ * interchangeable:
+ *
+ * - `scrollTopForRow` REVEALS: the smallest move that brings a row into view,
+ *   unchanged when it already is. The line cursor wants exactly that — a cursor
+ *   stepping one row should scroll one row.
+ * - `scrubScrollTop` (`diffMinimap.ts`) POSITIONS a viewport around a row.
+ * - this one PARKS: the target always lands in the same physical spot, whether
+ *   it was off screen, at the bottom edge, or already comfortably visible. That
+ *   unconditional move is the point — under "reveal" semantics F7 walking
+ *   forward leaves each change pinned to the BOTTOM edge with no following
+ *   context, and the reader's eyes have to hunt for it after every press.
+ *
+ * The lead is `HUNK_LEAD_ROWS * rowH` PIXELS rather than the height of the four
+ * preceding rows: a tall fold separator directly above a hunk would otherwise
+ * eat the whole lead and park the change at the top after all.
+ *
+ * Two clamps make it total:
+ *
+ * - The result stays inside `[0, contentH - viewportH]`. Overshooting the end of
+ *   the document is not harmless: the DOM clamps the write, and every caller's
+ *   `scrollToHunk` reads `scrollTop !== want` as "the reveal did not land",
+ *   which costs the file its once-per-file auto-open. `contentH` is the sum of
+ *   `heights` — TRUE BY CONSTRUCTION, since `PGWindowedDiff` renders exactly
+ *   `topPad + rows + bottomPad` into the scroll container. Putting padding or a
+ *   sticky child in there would break this.
+ * - The lead itself is capped at `viewportH - rowH`, so a pane shorter than the
+ *   lead (a squeezed preview split) cannot park the target off its own bottom
+ *   edge. It degrades to "flush with the top", never to "not on screen".
+ *
+ * An out-of-range index or an unmeasured viewport (`viewportH <= 0`) leaves the
+ * scroll position alone, exactly as `scrollTopForRow` does — `diffOpenReady` and
+ * the auto-open both lean on that to try again on a later render.
+ */
+export function scrollTopForAnchor(
+  heights: number[],
+  index: number,
+  o: { scrollTop: number; viewportH: number; rowH: number },
+): number {
+  const { scrollTop, viewportH, rowH } = o;
+  if (index < 0 || index >= heights.length || viewportH <= 0) return scrollTop;
+  const lead = Math.min(
+    HUNK_LEAD_ROWS * Math.max(0, rowH),
+    Math.max(0, viewportH - rowH),
+  );
+  const contentH = heights.reduce((a, h) => a + h, 0);
+  const max = Math.max(0, contentH - viewportH);
+  return Math.min(Math.max(0, rowOffset(heights, index) - lead), max);
+}
+
 /**
  * Window a list of known-height rows. Returns the same shape useWindowedList
  * produces, so consumers and the `window?: WindowRange` prop are unchanged.

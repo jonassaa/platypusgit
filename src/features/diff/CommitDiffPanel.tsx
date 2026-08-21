@@ -18,7 +18,7 @@ import { useDiffSyntax, usePrefetchSyntax, type SideSource } from "@/lib/syntax"
 import {
   flattenDiffRows,
   hunkAnchorRows,
-  scrollTopForRow,
+  scrollTopForAnchor,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
@@ -240,9 +240,12 @@ export function CommitDiffPanel({
       const rowIndex = anchorRows[hunkIndex];
       if (!el || rowIndex == null || rowIndex < 0) return false;
       // Through the window's own setter — see `useVariableWindow.scrollTo`.
-      const want = scrollTopForRow(heights, rowIndex, {
+      // PARKED a fixed lead below the top, never merely revealed: see
+      // `scrollTopForAnchor`.
+      const want = scrollTopForAnchor(heights, rowIndex, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
+        rowH,
       });
       scrollDiffTo(want);
       // Confirm the write: a container shorter than the offset CLAMPS it (a pane
@@ -250,7 +253,7 @@ export function CommitDiffPanel({
       // file having been opened — see `useHunkNav`'s `scrollToHunk`.
       return Math.abs(el.scrollTop - want) <= 1;
     },
-    [anchorRows, heights, scrollDiffTo],
+    [anchorRows, heights, rowH, scrollDiffTo],
   );
   const hunkCursor = useHunkNav({
     paneIds: [filesPaneId, viewPaneId],
