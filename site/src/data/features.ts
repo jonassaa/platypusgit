@@ -144,6 +144,110 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.0.16',
+    date: '2026-08-21',
+    status: 'feature & fixes',
+    summary:
+      'Two detours removed: a diff opens where the change is and `F7` carries through the rest of the commit, and interactive rebase takes any commit as its base rather than only a branch. The app\'s last native dropdown went with them.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Interactive rebase onto any commit',
+            detail:
+              'The base picker took a branch. It now takes anything a rebase can start from — a diverged branch, a commit on another line of history, a bare hash — and the pick / squash / reword / drop plan is on screen before a single commit is replayed. `git rebase -i <newbase>`, with the plan first. A commit\'s own context menu in History offers "Rebase current branch onto this…", which is how a base you can already see is usually chosen.',
+          },
+          {
+            title: 'A long range is replayed whole, not truncated',
+            detail:
+              'The commit range behind the plan is fetched against the exact ahead/behind count and its length verified, because the underlying listing stops at 200: a longer range would have come back short, and a plan that leaves commits unreplayed still moves the branch ref. A base that cannot be resolved now says so on the screen itself — reached from a context menu there is no picker open to say it in.',
+          },
+          {
+            title: 'A diff opens at the first change',
+            detail:
+              'Whole file is the default view, so a diff opened on line 1 of unchanged context and reading one began by scrolling to hunt for the change. The first change is now revealed with the cursor already on it — once the geometry is genuinely final: the rows exist, the viewport has been measured, whole-file mode has its file text, and the row model belongs to the file now shown rather than the one being left.',
+          },
+          {
+            title: '`F7` carries into the next file',
+            detail:
+              'On the last hunk of a file `F7` was a silent no-op that still claimed the chord, so there was no way to keep going from the keyboard. It now flashes "No more changes — press F7 again for the next file", naming the chord from your live keymap; the next press inside the hint\'s lifetime opens the next file at its first change and moves the file-list selection with it. `⇧F7` mirrors it, landing on the previous file\'s last change. Each end of the list flashes and stays put — no wrap-around.',
+          },
+          {
+            title: 'The update panel\'s command can be copied',
+            detail:
+              'When an update belongs to a package manager the panel shows the line to run — `brew upgrade …`, `sudo apt install …` — and that line sat in a bare `<code>` element under the app-wide `user-select: none`, so the panel\'s only actionable content could neither be selected nor copied. You had to retype it character-exact from a popover that closes on the next click outside it. There is a copy button beside it now, and dragging across part of it selects it.',
+          },
+        ],
+      },
+      {
+        title: 'Improvements',
+        items: [
+          {
+            title: 'Every dropdown in the app is an in-page listbox',
+            detail:
+              'The last native `<select>` is gone, and everything it gave for free is re-provided deliberately: arrows, Home/End, PageUp/PageDown, Enter and Space to commit, Tab to commit and move on, `Alt`+arrow per the ARIA pattern, native-style typeahead (one character cycles, a longer buffer narrows by prefix), combobox / listbox / option roles, focus that never leaves the trigger, and an intrinsic width equal to the widest option. Escape closes the dropdown without closing the dialog around it, and the control can finally be themed to match every other picker in the app.',
+          },
+          {
+            title: 'A dropdown no longer drives the list behind it',
+            detail:
+              'The keymap\'s text-input policy is the only thing keeping bare-key chords out of list navigation, and it recognises inputs and text areas — not a native `<select>`. So `↓` inside the old picker also moved History\'s commit selection, and a letter also fed the focused pane\'s speed-search. The new control\'s focus host is a read-only `<input>`, which the policy does recognise: protection this control never had.',
+          },
+          {
+            title: '`F7` parks the change below the top of the pane',
+            detail:
+              'Hunk navigation scrolled by the smallest move that reveals a row, so walking forward pinned every change to the bottom edge with no following context, and the Diff screen skipped the scroll entirely when the hunk was already on screen — one keypress meant two different things depending on where the last one had left the pane. The hunk now lands four rows below the top every time, degrading to flush with the top in a pane too short to park it there.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'The changed-file list showed the previous commit\'s files while the next diff loaded',
+            detail:
+              'The loading skeleton appeared directly above the previous commit\'s file rows, with that commit\'s diff still filling the view pane beside it. Every caller keeps the old diffs while the next fetch is in flight — History debounces `↑`/`↓` through the log by 100ms — so loading was always true together with a stale, non-empty list. The list blanks now and the view pane gets the same code-line skeleton the repository browser uses, while a refetch of the SAME commit still lands back on the file you were reading.',
+          },
+          {
+            title: 'Three measurement bugs under the diff, each invisible on its own',
+            detail:
+              'The viewport height was measured once at mount, but every diff surface renders its scroll container only after the diff arrives — so the read found nothing, never ran again, and the height stayed 0 until you happened to scroll. It also kept a stale height when that container went away. And a programmatic `scrollTop` write is not a scroll event: measured on WebKitGTK, an assignment left the window of rendered rows describing the old position for seconds, so the row scrolled to stayed unmounted. Every programmatic diff scroll now assigns and publishes the new position in one call.',
+          },
+          {
+            title: 'Repeated hints replace each other instead of stacking',
+            detail:
+              'The flash helper appended a fresh node per call, so two hints raised in quick succession piled onto the same fixed position. It is single-instance now — which the "press it again" hint, the one guaranteed to be raised twice, made unavoidable.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'The Wayland dropdown freeze is mitigated, not verified fixed',
+            detail:
+              'Dropping the native `<select>` removes the surface the reported Linux freeze happens on: WebKitGTK maps one as a GDK popup, GDK\'s Wayland backend refuses to map a popup that would not be the topmost one, and History kept two mounted at all times while Rebase mounts one per plan row. The freeze itself was never reproduced here — the only Linux lane is xvfb on X11, which cannot emit a Wayland-only warning — so the issue stays open, and a report from a Wayland session is worth more than usual.',
+          },
+          {
+            title: 'The new scroll positions were measured on the Linux webview',
+            detail:
+              'Where a diff opens, where `F7` parks a hunk, and the hand-off into the next file were all verified there. How they land on macOS, and at a high device-pixel ratio, is unverified.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: '`pgit` no longer detaches the app in a dev build',
+            detail:
+              'Building from source, `tauri dev` runs the app as its own child with the developer\'s terminal inherited, which the launch\'s tty test read as "started from a shell" — so the app re-exec\'d itself detached, its parent exited 0, and the Tauri CLI concluded the app had closed and took the vite dev server down with it. It read as `tauri dev` returning instantly and a window that never painted. Shipped bundles are untouched: `pgit .` still hands the prompt straight back.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.15',
     date: '2026-08-19',
     status: 'feature & fixes',
