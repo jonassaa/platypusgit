@@ -70,6 +70,7 @@ import { useDiffSyntax } from "@/lib/syntax";
 import {
   flattenDiffRows,
   hunkAnchorRows,
+  scrollTopForAnchor,
   scrollTopForRow,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
@@ -733,6 +734,28 @@ export function CommitPanelScreen() {
   );
 
   /**
+   * The same write with PARKING semantics — F7's landing, not the line cursor's.
+   *
+   * The two must not share one helper: a line cursor stepping one row should
+   * scroll one row (reveal), while F7 puts every change in the same physical
+   * spot whether or not it was already visible (park). See `scrollTopForAnchor`.
+   */
+  const parkDiffRow = React.useCallback(
+    (rowIndex: number): boolean => {
+      const el = diffScrollRef.current;
+      if (!el) return false;
+      const want = scrollTopForAnchor(heights, rowIndex, {
+        scrollTop: el.scrollTop,
+        viewportH: el.clientHeight,
+        rowH,
+      });
+      scrollDiffTo(want);
+      return Math.abs(el.scrollTop - want) <= 1;
+    },
+    [heights, rowH, scrollDiffTo],
+  );
+
+  /**
    * Space on the focused line, staging on the unstaged side and unstaging on the
    * staged side — the same direction rule the hunk header's button uses.
    *
@@ -789,9 +812,9 @@ export function CommitPanelScreen() {
     (hunkIndex: number): boolean => {
       const rowIndex = anchorRows[hunkIndex];
       if (rowIndex == null || rowIndex < 0) return false;
-      return scrollDiffRowIntoView(rowIndex);
+      return parkDiffRow(rowIndex);
     },
-    [anchorRows, scrollDiffRowIntoView],
+    [anchorRows, parkDiffRow],
   );
   const hunkCursor = useHunkNav({
     paneIds: ["commit.diff"],
