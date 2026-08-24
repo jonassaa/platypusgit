@@ -156,7 +156,11 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
 - **Diff surfaces:** one row model (`flattenDiffRows`); gate text rendering on
   `isTextualDiff`, scroll by offset (never `scrollIntoView` under windowing),
   measure viewports with `lib/useViewportH`/`useElementSize` (read first,
-  observe second — WebKitGTK has no `ResizeObserver`). (`docs/dev/frontend.md`)
+  observe second — WebKitGTK has no `ResizeObserver`). New row markup keeps the
+  selection split: code cell `.pg-selectable`, line numbers and `+`/`−` marker
+  `user-select: none`. A selection cannot leave the rendered window, so copying a
+  long range goes through `lib/diffCopy.ts` (`diff.copy` / the right-click menu),
+  and `Mod+C` must keep declining to the native copy. (`docs/dev/frontend.md`)
 - **The log is paged** — `s.commits` is a prefix of history, never the answer
   to "does X exist / is X an ancestor"; ask the backend.
   (`docs/dev/frontend.md`)

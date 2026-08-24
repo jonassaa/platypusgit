@@ -112,7 +112,7 @@ export function withChangedIndices(lines: DiffLineData[]): DiffLineData[] {
  * side of a diff and to size a candidate pointer, so this is a frontend-side drop
  * and not a backend change.
  */
-function isFileContent(l: FileDiff["hunks"][number]["lines"][number]): boolean {
+export function isFileContent(l: FileDiff["hunks"][number]["lines"][number]): boolean {
   return l.kind.kind !== "HunkHeader";
 }
 
