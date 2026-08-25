@@ -125,3 +125,38 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
 - New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`,
   register `.plugin(tauri_plugin_X::init())` in `lib.rs`, add its permissions
   to the capability file.
+
+## App icons — one master, transparent, regenerated (#206)
+
+- **`src-tauri/icons/app-icon.svg` is the master.** Every raster in
+  `src-tauri/icons/` (`icon.icns`, `icon.ico`, `32x32.png`, `128x128.png`,
+  `128x128@2x.png` — the five `bundle.icon` entries — plus `icon.png`, `64x64`
+  and the Windows-Store `Square*Logo`/`StoreLogo` set) is generated from it. Do
+  not hand-edit a raster; re-render the master.
+- **It is a different file from `logo.svg` on purpose.** `logo.svg` is the
+  24×24 in-app brand mark, kept coordinate-identical to `src/design/logo.tsx`
+  (pinned by `logo.test.tsx`) and copied to `public/` and `site/public/`.
+  `app-icon.svg` is the same paths under a tighter `viewBox` (`3 3 18 18`, a
+  5.6% safe margin) because a platform icon has no surrounding chrome to sit
+  in. Changing the mark means editing both.
+- **No background plate.** The original set was a full-bleed `#1c2020` square
+  with the head at ~42% of the canvas, which read as a dark box in the Dock and
+  taskbar. Transparent + cropped puts the head at ~89% of the canvas and lets
+  it sit on whatever the OS paints behind it. Both fills stay legible on light
+  and dark; the eyes are inside the teal head, never on the backdrop.
+- **Regenerate:**
+
+  ```bash
+  inkscape --export-type=png --export-width=1024 --export-height=1024 \
+    --export-filename=/tmp/app-icon-1024.png src-tauri/icons/app-icon.svg
+  pnpm tauri icon /tmp/app-icon-1024.png
+  rm -rf src-tauri/icons/android src-tauri/icons/ios   # desktop-only app
+  ```
+
+  `tauri icon` also emits iOS/Android sets this project does not ship — drop
+  them, they were never tracked.
+- **Verify transparency, don't eyeball it.** A PNG can carry an alpha channel
+  and still be fully opaque (the old set did: `hasAlpha: yes`, every corner
+  `α=255`). Check a corner pixel's alpha, and check `.icns`/`.ico` members too
+  — `iconutil -c iconset` unpacks the former, the latter is a container of
+  PNGs.
