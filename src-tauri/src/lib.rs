@@ -58,8 +58,9 @@ pub fn run() {
     // reads the credential from its stdout, synchronously. A process that
     // spawned a child and exited would hand git an empty credential, and every
     // authenticated fetch, pull and push would fail with nothing to trace it
-    // back to. `Parsed::Help` must stay synchronous for the same reason at a
-    // lower stake: `USAGE` printed by a detached child goes to /dev/null.
+    // back to. `Parsed::Help` and `Parsed::Version` must stay synchronous for
+    // the same reason at a lower stake: their output printed by a detached
+    // child goes to /dev/null.
     //
     // ⚠️ And this is why `GIT_ASKPASS` points at the BARE EXECUTABLE rather than
     // at the installed `pgit` shim, which on every Unix channel is a symlink to
@@ -76,6 +77,10 @@ pub fn run() {
     let initial_intent = match parsed {
         cli::Parsed::Help => {
             print!("{}", cli::USAGE);
+            return;
+        }
+        cli::Parsed::Version => {
+            print!("{}", cli::version_line());
             return;
         }
         // Already handled above; unreachable in practice.
