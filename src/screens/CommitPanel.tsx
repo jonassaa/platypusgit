@@ -70,9 +70,10 @@ import { getDiff, getLogPage } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
 import {
   flattenDiffRows,
-  hunkAnchorRows,
-  scrollTopForAnchor,
+  hunkExtentRows,
+  scrollTopForHunk,
   scrollTopForRow,
+  type HunkExtent,
 } from "@/lib/diffRows";
 import { fileDiffToText, selectedLinesToText } from "@/lib/diffCopy";
 import { useVariableWindow } from "@/lib/useVariableWindow";
@@ -724,17 +725,17 @@ export function CommitPanelScreen() {
   );
 
   /**
-   * The same write with PARKING semantics — F7's landing, not the line cursor's.
+   * The same write with CENTRING semantics — F7's landing, not the line cursor's.
    *
    * The two must not share one helper: a line cursor stepping one row should
    * scroll one row (reveal), while F7 puts every change in the same physical
-   * spot whether or not it was already visible (park). See `scrollTopForAnchor`.
+   * spot whether or not it was already visible (centre). See `scrollTopForHunk`.
    */
-  const parkDiffRow = React.useCallback(
-    (rowIndex: number): boolean => {
+  const centreDiffExtent = React.useCallback(
+    (extent: HunkExtent): boolean => {
       const el = diffScrollRef.current;
       if (!el) return false;
-      const want = scrollTopForAnchor(heights, rowIndex, {
+      const want = scrollTopForHunk(heights, extent, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
         rowH,
@@ -797,14 +798,14 @@ export function CommitPanelScreen() {
   // ── Hunk cursor + hunk-level chords (#157) ───────────────────────────────
   // This pane had no F7 at all before, so the `@@` banner's Stage/Discard was
   // mouse-only. Both now hang off the hunk cursor.
-  const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
+  const extents = React.useMemo(() => hunkExtentRows(rows), [rows]);
   const scrollToHunk = React.useCallback(
     (hunkIndex: number): boolean => {
-      const rowIndex = anchorRows[hunkIndex];
-      if (rowIndex == null || rowIndex < 0) return false;
-      return parkDiffRow(rowIndex);
+      const extent = extents[hunkIndex];
+      if (extent == null || extent.first < 0) return false;
+      return centreDiffExtent(extent);
     },
-    [anchorRows, parkDiffRow],
+    [extents, centreDiffExtent],
   );
   const hunkCursor = useHunkNav({
     paneIds: ["commit.diff"],

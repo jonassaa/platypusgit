@@ -91,6 +91,21 @@ describe("PGWindowedDiff", () => {
     expect(anchor?.textContent).toContain("line 0");
   });
 
+  it("marks the extent's LAST changed row too, which is what wrap mode measures", () => {
+    // The far end of the span F7 centres. `heights` describes nothing in wrap
+    // mode, so the DOM is the only ruler there — and every row between the two
+    // markers is anonymous.
+    render(<PGWindowedDiff rows={rows} />);
+    const last = document.querySelectorAll('[data-hunk-last-index="0"]');
+    expect(last).toHaveLength(1);
+    // Row 48 is the fixture's final addition; row 49 is context and is outside
+    // the extent.
+    expect(last[0].textContent).toContain("line 48");
+    // It is NOT the anchor host: the cursor and the action cluster stay on the
+    // first changed row.
+    expect(last[0].getAttribute("data-hunk-index")).toBeNull();
+  });
+
   it("puts exactly one anchor host in the DOM per hunk", () => {
     render(<PGWindowedDiff rows={rows} />);
     expect(document.querySelectorAll("[data-hunk-index]")).toHaveLength(1);

@@ -19,8 +19,8 @@ import { SignatureBadge } from "@/features/signing/SignatureBadge";
 import { useDiffSyntax, usePrefetchSyntax, type SideSource } from "@/lib/syntax";
 import {
   flattenDiffRows,
-  hunkAnchorRows,
-  scrollTopForAnchor,
+  hunkExtentRows,
+  scrollTopForHunk,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
@@ -242,16 +242,15 @@ export function CommitDiffPanel({
 
   // F7/⇧F7. The cursor lands on each hunk's ANCHOR row — its first changed line —
   // and scrolling goes BY OFFSET, because that row is usually unmounted (#157).
-  const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
+  const extents = React.useMemo(() => hunkExtentRows(rows), [rows]);
   const scrollToHunk = React.useCallback(
     (hunkIndex: number): boolean => {
       const el = scrollRef.current;
-      const rowIndex = anchorRows[hunkIndex];
-      if (!el || rowIndex == null || rowIndex < 0) return false;
+      const extent = extents[hunkIndex];
+      if (!el || extent == null || extent.first < 0) return false;
       // Through the window's own setter — see `useVariableWindow.scrollTo`.
-      // PARKED a fixed lead below the top, never merely revealed: see
-      // `scrollTopForAnchor`.
-      const want = scrollTopForAnchor(heights, rowIndex, {
+      // CENTRED on the change, never merely revealed: see `scrollTopForHunk`.
+      const want = scrollTopForHunk(heights, extent, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
         rowH,
@@ -262,7 +261,7 @@ export function CommitDiffPanel({
       // file having been opened — see `useHunkNav`'s `scrollToHunk`.
       return Math.abs(el.scrollTop - want) <= 1;
     },
-    [anchorRows, heights, rowH, scrollDiffTo],
+    [extents, heights, rowH, scrollDiffTo],
   );
   const hunkCursor = useHunkNav({
     paneIds: [filesPaneId, viewPaneId],

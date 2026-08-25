@@ -10,7 +10,7 @@ import { resetInvokeMock } from "@/test/invokeMock";
 import { CommitDiffPanel } from "./CommitDiffPanel";
 import { useFocusStore } from "@/features/keymap/useFocusStore";
 import { useKeymapStore } from "@/features/keymap/useKeymapStore";
-import { HUNK_LEAD_ROWS } from "@/lib/diffRows";
+
 import { DIFF_ROW_H_FALLBACK } from "@/lib/useDiffRowHeight";
 import type { FileDiff } from "@/lib/types";
 
@@ -201,7 +201,7 @@ describe("CommitDiffPanel windowing", () => {
     expect(document.querySelector('[data-hunk-index="0"]')?.textContent).toContain("added");
   });
 
-  it("PARKS an F7 target a fixed lead below the top, not at the viewport edge", async () => {
+  it("CENTRES an F7 target in the viewport, not at either edge", async () => {
     render(
       <CommitDiffPanel
         diffs={deepChange}
@@ -233,10 +233,12 @@ describe("CommitDiffPanel windowing", () => {
       } as unknown as KeyboardEvent);
     });
 
-    // The anchor sits at row 40. Reveal semantics would have stopped at the
-    // smallest scroll that shows it — the row pinned to the BOTTOM edge, at
-    // 41 * rowH - viewportH. Parking puts it HUNK_LEAD_ROWS rows below the top,
-    // every time, whichever direction F7 arrived from.
-    expect(el.scrollTop).toBe((ANCHOR_ROW - HUNK_LEAD_ROWS) * rowH);
+    // The change is one row at index 40, in a ten-row viewport. Reveal semantics
+    // would have stopped at the smallest scroll that shows it — the row pinned to
+    // the BOTTOM edge, at 41 * rowH - viewportH. Centring puts it five rows down
+    // instead, every time and whichever direction F7 arrived from. (The exact
+    // centre is 35.5 rows; ties snap DOWN to a row boundary, so no line renders
+    // half-sliced.)
+    expect(el.scrollTop).toBe((ANCHOR_ROW - 5) * rowH);
   });
 });

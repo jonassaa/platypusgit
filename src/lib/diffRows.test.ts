@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   flattenDiffRows,
   HUNK_LEAD_ROWS,
-  hunkAnchorRows,
+  hunkExtentRows,
   rowOffset,
-  scrollTopForAnchor,
+  scrollTopForHunk,
   scrollTopForRow,
   windowVariable,
   type DiffRow,
@@ -182,17 +182,20 @@ describe("flattenDiffRows hunk-header lines", () => {
   /**
    * `rowIndex` DOES shift, and that is fine — it is derived. But every surface
    * derives its heights array from `rows` too (`rows.map((r) => r.h)`), and
-   * `scrollTopForRow` / `hunkAnchorRows` / F7 all address the flat array, so the
+   * `scrollTopForRow` / `hunkExtentRows` / F7 all address the flat array, so the
    * two must be built from the same filtered list. A stale heights array is what
    * renders a blank strip or scrolls to the wrong row.
    */
-  it("keeps the heights array and the anchor map in step with the filtered rows", () => {
+  it("keeps the heights array and the extent map in step with the filtered rows", () => {
     const rows = flattenDiffRows([headered(1), headered(2)], { foldH: 22, rowH: 19 });
     const heights = rows.map((r) => r.h);
     expect(heights).toEqual([19, 19, 19, 19, 19, 19]);
-    // Anchors at the two rem rows — not at rows 2 and 5, where they would sit if
-    // the header rows were still occupying an index each.
-    expect(hunkAnchorRows(rows)).toEqual([1, 4]);
+    // Extents start at the two rem rows — not at rows 2 and 5, where they would
+    // sit if the header rows were still occupying an index each.
+    expect(hunkExtentRows(rows)).toEqual([
+      { first: 1, last: 2 },
+      { first: 4, last: 5 },
+    ]);
     expect(rowOffset(heights, 4)).toBe(76);
     expect(scrollTopForRow(heights, 4, { scrollTop: 0, viewportH: 40 })).toBe(55);
   });
@@ -218,15 +221,15 @@ describe("flattenDiffRows hunk-header lines", () => {
     expect(withHeader.filter((r) => r.kind === "fill")).toHaveLength(5);
   });
 
-  it("leaves a header-only hunk with no rows and no anchor to address", () => {
+  it("leaves a header-only hunk with no rows and no extent to address", () => {
     // Not something git emits — but the guard matters, because `scrollToHunk`
-    // and the action cluster both look a hunk index up in the anchor map.
+    // and the action cluster both look a hunk index up in the extent map.
     const rows = flattenDiffRows([{ ...hunk(1), lines: [header(1)] }], {
       foldH: 22,
       rowH: 19,
     });
     expect(rows).toEqual([]);
-    expect(hunkAnchorRows(rows)).toEqual([]);
+    expect(hunkExtentRows(rows)).toEqual([]);
   });
 });
 
@@ -558,7 +561,7 @@ describe("flattenDiffRows fold separators", () => {
   });
 });
 
-describe("hunkAnchorRows", () => {
+describe("hunkExtentRows", () => {
   const hunkAt = (n: number): FileDiff["hunks"][number] => ({
     header: `@@ -${n},1 +${n},1 @@`,
     oldStart: n,
@@ -572,21 +575,89 @@ describe("hunkAnchorRows", () => {
     ],
   });
 
-  it("maps each hunk index to its anchor's FLAT row index", () => {
+  it("brackets each hunk's FIRST and LAST changed rows, in FLAT row indices", () => {
     // Gap rows shift the flat indices, which is exactly why F7 cannot compute
     // this itself from a hunk index.
     const rows = flattenDiffRows([hunkAt(4), hunkAt(9)], { foldH: 22, rowH: 19 });
-    const anchors = hunkAnchorRows(rows);
-    expect(anchors).toHaveLength(2);
-    for (const [hunkIndex, rowIndex] of anchors.entries()) {
-      const row = rows[rowIndex];
-      expect(row.kind === "line" && row.hunkIndex).toBe(hunkIndex);
-      expect(row.kind === "line" && row.hunkAnchor).toBe(true);
+    const extents = hunkExtentRows(rows);
+    expect(extents).toHaveLength(2);
+    for (const [hunkIndex, { first, last }] of extents.entries()) {
+      const a = rows[first];
+      const b = rows[last];
+      expect(a.kind === "line" && a.hunkIndex).toBe(hunkIndex);
+      expect(a.kind === "line" && a.hunkAnchor).toBe(true);
+      expect(b.kind === "line" && b.hunkIndex).toBe(hunkIndex);
+      expect(b.kind === "line" && b.hunkLast).toBe(true);
+      // The del and the add. The LEADING context row is outside the extent —
+      // centring the whole hunk instead would drag the midpoint off the change
+      // by however many lines `-U` happened to emit.
+      expect(last - first).toBe(1);
     }
   });
 
+  it("collapses to a single row when the hunk changes one line", () => {
+    const rows = flattenDiffRows(
+      [
+        {
+          header: "@@ -4,1 +4,1 @@",
+          oldStart: 4,
+          oldLines: 1,
+          newStart: 4,
+          newLines: 1,
+          lines: [
+            { kind: { kind: "Context" }, oldLineno: 3, newLineno: 3, content: "before" },
+            { kind: { kind: "Addition" }, oldLineno: null, newLineno: 4, content: "new" },
+            { kind: { kind: "Context" }, oldLineno: 4, newLineno: 5, content: "after" },
+          ],
+        },
+      ],
+      { foldH: 22, rowH: 19 },
+    );
+    const [extent] = hunkExtentRows(rows);
+    // One row wears both markers — which is why PGWindowedDiff stamps them from
+    // a single branch, and why wrap mode's `last` lookup may return the anchor.
+    expect(extent.first).toBe(extent.last);
+    const row = rows[extent.first];
+    expect(row.kind === "line" && row.hunkAnchor).toBe(true);
+    expect(row.kind === "line" && row.hunkLast).toBe(true);
+    // The TRAILING context row is outside it, for the same reason as the leading
+    // one — otherwise every extent would be three lines longer than its change.
+    expect(extent.last).toBe(rows.length - 2);
+  });
+
+  it("spans the CONTEXT sitting between two change runs in one hunk", () => {
+    // git merges runs less than 2 x -U apart into a single hunk, so an extent is
+    // NOT necessarily a solid block of +/-. F7 addresses the hunk and
+    // Stage/Discard act on all of it, so the unchanged rows in the middle are
+    // part of what gets centred.
+    const rows = flattenDiffRows(
+      [
+        {
+          header: "@@ -1,7 +1,7 @@",
+          oldStart: 1,
+          oldLines: 7,
+          newStart: 1,
+          newLines: 7,
+          lines: [
+            { kind: { kind: "Context" }, oldLineno: 1, newLineno: 1, content: "a" },
+            { kind: { kind: "Deletion" }, oldLineno: 2, newLineno: null, content: "b" },
+            { kind: { kind: "Context" }, oldLineno: 3, newLineno: 2, content: "c" },
+            { kind: { kind: "Context" }, oldLineno: 4, newLineno: 3, content: "d" },
+            { kind: { kind: "Context" }, oldLineno: 5, newLineno: 4, content: "e" },
+            { kind: { kind: "Addition" }, oldLineno: null, newLineno: 5, content: "f" },
+            { kind: { kind: "Context" }, oldLineno: 6, newLineno: 6, content: "g" },
+          ],
+        },
+      ],
+      { foldH: 22, rowH: 19 },
+    );
+    const [extent] = hunkExtentRows(rows);
+    // del, ctx, ctx, ctx, add — five rows, with a context row at the very middle.
+    expect(extent.last - extent.first).toBe(4);
+  });
+
   it("is empty for an empty diff", () => {
-    expect(hunkAnchorRows([])).toEqual([]);
+    expect(hunkExtentRows([])).toEqual([]);
   });
 });
 
@@ -683,61 +754,115 @@ describe("scrollTopForRow", () => {
   });
 });
 
-describe("scrollTopForAnchor", () => {
-  // Twenty 20px rows (400px of content) in a 200px viewport, so the 4-row
-  // lead-in (80px) fits with room to spare either side.
+describe("scrollTopForHunk", () => {
+  // Twenty 20px rows (400px of content) in a 200px, ten-row viewport.
   const hs = Array.from({ length: 20 }, () => 20);
-  const park = (index: number, scrollTop = 0, viewportH = 200) =>
-    scrollTopForAnchor(hs, index, { scrollTop, viewportH, rowH: 20 });
+  const centre = (first: number, last: number, scrollTop = 0, viewportH = 200) =>
+    scrollTopForHunk(hs, { first, last }, { scrollTop, viewportH, rowH: 20 });
 
-  it("parks the anchor a fixed lead below the top of the viewport", () => {
-    // Row 9 starts at 180; four 20px rows of lead-in put the viewport at 100.
-    expect(park(9)).toBe(180 - HUNK_LEAD_ROWS * 20);
+  it("puts the middle of the change on the middle of the viewport", () => {
+    // Rows 8-9 span 160..200, so their midpoint is 180. A 200px viewport starting
+    // at 80 is centred on 180 too.
+    expect(centre(8, 9)).toBe(80);
   });
 
-  it("repositions a row that is ALREADY visible", () => {
-    // The whole point, and where this parts company with scrollTopForRow: F7
-    // must put the change in the same physical spot every time, not leave it
-    // wherever the previous scroll happened to strand it.
-    expect(scrollTopForRow(hs, 7, { scrollTop: 100, viewportH: 200 })).toBe(100);
-    expect(park(7, 100)).toBe(60);
+  it("centres the WHOLE extent, not its first row", () => {
+    // Same starting row, different amounts of change below it: the answer moves,
+    // which is the whole difference between this and parking the anchor.
+    expect(centre(8, 9)).toBe(80);
+    expect(centre(8, 13)).toBe(120);
+  });
+
+  it("repositions a change that is ALREADY fully visible", () => {
+    // Where this parts company with scrollTopForRow: F7 puts the change in the
+    // same physical spot every time, rather than leaving it wherever the previous
+    // scroll happened to strand it — bottom edge, top edge, or anywhere else.
+    expect(scrollTopForRow(hs, 8, { scrollTop: 100, viewportH: 200 })).toBe(100);
+    expect(centre(8, 9, 100)).toBe(80);
   });
 
   it("clamps at the top of the file rather than scrolling negative", () => {
-    expect(park(0)).toBe(0);
-    expect(park(2, 300)).toBe(0);
+    expect(centre(0, 1)).toBe(0);
+    expect(centre(1, 2, 300)).toBe(0);
   });
 
-  it("clamps at the end of the file, where the lead cannot be honoured", () => {
-    // Row 19 starts at 380; 400px of content in a 200px viewport tops out at
-    // 200, so the last hunk sits lower than the lead asks for. Overshooting
-    // here would be CLAMPED BY THE DOM, and scrollToHunk reads that mismatch as
-    // "the reveal did not land" — which quietly costs the file its auto-open.
-    expect(park(19)).toBe(200);
+  it("clamps at the end of the file, where nothing could centre it", () => {
+    // Rows 18-19 want scrollTop 280; 400px of content in a 200px viewport tops
+    // out at 200, so the last hunks in a file land low rather than centred. There
+    // is no scroll position that would centre them, and buying one with
+    // scroll-past-end space would cost the `contentH === sum(heights)` invariant
+    // that windowing depends on. Overshooting is worse than useless: the DOM
+    // CLAMPS the write, and scrollToHunk reads the mismatch as "the reveal did
+    // not land", quietly costing the file its auto-open.
+    expect(centre(18, 19)).toBe(200);
   });
 
-  it("caps the lead so a short pane cannot hide the anchor", () => {
+  it("falls back to a lead-in above a change TALLER than the viewport", () => {
+    // Rows 8-19 are 240px of change in a 200px viewport: centring would hide the
+    // start of it, so the top parks HUNK_LEAD_ROWS rows down instead and the
+    // reader scrolls from the beginning.
+    expect(centre(8, 19)).toBe((8 - HUNK_LEAD_ROWS) * 20);
+  });
+
+  it("switches to that fallback ONLY when the change cannot fit", () => {
+    // Exactly ten rows fills the viewport exactly: still centred, flush at both
+    // edges.
+    expect(centre(5, 14)).toBe(100);
+    // Eleven rows cannot, so it top-parks: 100 - 4 x 20.
+    expect(centre(5, 15)).toBe(20);
+    // Eight rows fit with 40px to spare, and MUST still centre. The tempting
+    // branchless form `min(centre, top - lead)` fails exactly here — it would
+    // answer 20 and shove the bottom of a change that fits off the screen.
+    expect(centre(5, 12)).toBe(80);
+  });
+
+  it("caps the lead so a short pane cannot hide the change", () => {
     // A 60px viewport with the full 80px lead would put row 9 (offset 180) at
-    // scrollTop 100 — showing 100..160, with the anchor off the bottom. The cap
-    // keeps one row of the anchor on screen at every viewport size.
-    expect(park(9, 0, 60)).toBe(140);
-    // One row tall: no lead at all, anchor flush with the top.
-    expect(park(9, 0, 20)).toBe(180);
+    // scrollTop 100 — showing 100..160, with the change off the bottom.
+    expect(centre(9, 15, 0, 60)).toBe(140);
+    // One row tall: no lead at all, change flush with the top.
+    expect(centre(9, 15, 0, 20)).toBe(180);
   });
 
   it("measures the lead in PIXELS, not in preceding rows", () => {
-    // A header (26) then two code rows (18), twice. Row 4 starts at 88; the four
-    // rows above it are 88px tall together, which would eat the entire lead and
-    // park the anchor at the top. 4 x rowH is 72, so 16 is the answer.
-    const mixed = [26, 18, 18, 26, 18, 18];
-    expect(scrollTopForAnchor(mixed, 4, { scrollTop: 0, viewportH: 100, rowH: 18 })).toBe(16);
+    // A header (26) then two code rows (18), then another header, then ten code
+    // rows. The extent is rows 4-13 — 180px of change in a 100px viewport, so the
+    // lead-in branch applies. Row 4 starts at 88, and the four rows above it are
+    // 88px tall together: a rows-based lead would eat the whole thing and answer
+    // 0, flush with the top. 4 x rowH is 72px, which asks for 16 and snaps to the
+    // row boundary at 26.
+    const mixed = [26, 18, 18, 26, ...Array.from({ length: 10 }, () => 18)];
+    expect(scrollTopForHunk(mixed, { first: 4, last: 13 }, {
+      scrollTop: 0,
+      viewportH: 100,
+      rowH: 18,
+    })).toBe(26);
   });
 
-  it("holds still for an out-of-range index or an unmeasured viewport", () => {
+  it("snaps to a row boundary so neither edge shows a sliced line", () => {
+    // Row 3 of [26,18,18,18,18,18] starts at 62; centring one 18px row in a 60px
+    // viewport asks for 41, which is 15px into row 1. The nearest boundary is 44.
+    const mixed = [26, 18, 18, 18, 18, 18];
+    expect(scrollTopForHunk(mixed, { first: 3, last: 3 }, {
+      scrollTop: 0,
+      viewportH: 60,
+      rowH: 18,
+    })).toBe(44);
+    // Uniform rows: a one-row change in a ten-row viewport centres half a row off
+    // a boundary, and ties resolve DOWN so the answer is stable.
+    expect(centre(8, 8)).toBe(60);
+  });
+
+  it("holds still for an out-of-range extent or an unmeasured viewport", () => {
     // Same guards as scrollTopForRow: jsdom and the first paint both report a
     // 0px viewport, and the auto-open leans on this to try again later.
-    expect(park(-1, 40)).toBe(40);
-    expect(park(20, 40)).toBe(40);
-    expect(scrollTopForAnchor(hs, 9, { scrollTop: 40, viewportH: 0, rowH: 20 })).toBe(40);
+    expect(centre(-1, -1, 40)).toBe(40);
+    expect(centre(20, 20, 40)).toBe(40);
+    expect(centre(9, 8, 40)).toBe(40);
+    expect(scrollTopForHunk(hs, { first: 9, last: 9 }, {
+      scrollTop: 40,
+      viewportH: 0,
+      rowH: 20,
+    })).toBe(40);
   });
 });

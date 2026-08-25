@@ -37,8 +37,8 @@ import { useDiffSyntax } from "@/lib/syntax";
 import {
   flattenDiffRows,
   HUNK_LEAD_ROWS,
-  hunkAnchorRows,
-  scrollTopForAnchor,
+  hunkExtentRows,
+  scrollTopForHunk,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
@@ -268,17 +268,17 @@ export function DiffViewerScreen() {
   // F7/⇧F7 walk the viewed file's hunks from either pane. Scroll to the hunk's
   // ANCHOR row BY OFFSET (#157): a querySelector would find nothing whenever that
   // row is outside the window, which for a line row is most of the time.
-  const anchorRows = React.useMemo(() => hunkAnchorRows(rows), [rows]);
+  const extents = React.useMemo(() => hunkExtentRows(rows), [rows]);
   const scrollToHunk = React.useCallback(
     (hunkIndex: number): boolean => {
       const el = scrollRef.current;
-      const idx = anchorRows[hunkIndex];
-      if (!el || idx == null || idx < 0) return false;
-      // PARKED a fixed lead below the top — see `scrollTopForAnchor`. This screen
-      // used to skip the scroll entirely for a hunk already on screen, which is
-      // how one keypress came to mean two different things depending on where the
+      const extent = extents[hunkIndex];
+      if (!el || extent == null || extent.first < 0) return false;
+      // CENTRED on the change — see `scrollTopForHunk`. This screen used to skip
+      // the scroll entirely for a hunk already on screen, which is how one
+      // keypress came to mean two different things depending on where the
       // previous one left the pane.
-      const want = scrollTopForAnchor(heights, idx, {
+      const want = scrollTopForHunk(heights, extent, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
         rowH,
@@ -292,36 +292,49 @@ export function DiffViewerScreen() {
       // file having been opened — see `useHunkNav`'s `scrollToHunk`.
       return Math.abs(el.scrollTop - want) <= 1;
     },
-    [anchorRows, heights, rowH, scrollDiffTo],
+    [extents, heights, rowH, scrollDiffTo],
   );
 
   // Wrap mode, where `heights` no longer describes the rendered rows and the
   // offset arithmetic above would land on the wrong line. Windowing is off here,
-  // so every anchor row is MOUNTED and the DOM can be measured directly — the one
-  // situation in which a querySelector cannot silently no-op (the #68 G10 trap).
-  // Measured through bounding rects rather than `offsetTop`, which is relative to
-  // whichever ancestor happens to be positioned.
+  // so every row of the extent is MOUNTED and the DOM can be measured directly —
+  // the one situation in which a querySelector cannot silently no-op (the #68 G10
+  // trap). Measured through bounding rects rather than `offsetTop`, which is
+  // relative to whichever ancestor happens to be positioned.
   //
-  // `useHunkNav`'s own fallback would do `scrollIntoView({block: "start"})` and
-  // park the change flush against the top edge; this keeps the lead-in every other
-  // mode gives.
+  // Same rule as `scrollTopForHunk`, different ruler: centre the extent, degrade
+  // to a lead-in above its top when it is taller than the pane. `useHunkNav`'s own
+  // fallback would do `scrollIntoView({block: "start"})` and pin the change flush
+  // against the top edge instead.
   const scrollToHunkInWrap = React.useCallback(
     (hunkIndex: number): boolean => {
       const el = scrollRef.current;
-      const row = el?.querySelector<HTMLElement>(`[data-hunk-index="${hunkIndex}"]`);
-      if (!el || !row) return false;
-      const lead = Math.min(
-        HUNK_LEAD_ROWS * rowH,
-        Math.max(0, el.clientHeight - rowH),
-      );
-      const top =
-        el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top;
-      const want = Math.max(
+      const first = el?.querySelector<HTMLElement>(`[data-hunk-index="${hunkIndex}"]`);
+      // `data-hunk-last-index` rides the same wrapper when the hunk changes one
+      // line, and its own when it changes more. Falling back to the anchor keeps
+      // this a scroll rather than a no-op if the markers ever come apart.
+      const last =
+        el?.querySelector<HTMLElement>(`[data-hunk-last-index="${hunkIndex}"]`) ??
+        first;
+      if (!el || !first || !last) return false;
+      // Content coordinates: the container's own top, corrected for how far it is
+      // already scrolled.
+      const base = el.getBoundingClientRect().top - el.scrollTop;
+      const top = first.getBoundingClientRect().top - base;
+      const extentH = last.getBoundingClientRect().bottom - base - top;
+      const viewportH = el.clientHeight;
+      const lead = Math.min(HUNK_LEAD_ROWS * rowH, Math.max(0, viewportH - rowH));
+      const want =
+        extentH > viewportH ? top - lead : top + extentH / 2 - viewportH / 2;
+      // No row-boundary snap here, unlike `scrollTopForHunk`: wrapped rows have no
+      // uniform pitch, and `heights` — the only list of boundaries there is —
+      // describes nothing in this mode.
+      const clamped = Math.max(
         0,
-        Math.min(top - lead, el.scrollHeight - el.clientHeight),
+        Math.min(Math.round(want), el.scrollHeight - viewportH),
       );
-      scrollDiffTo(want);
-      return Math.abs(el.scrollTop - want) <= 1;
+      scrollDiffTo(clamped);
+      return Math.abs(el.scrollTop - clamped) <= 1;
     },
     [rowH, scrollDiffTo],
   );
@@ -329,8 +342,8 @@ export function DiffViewerScreen() {
     paneIds: ["diff.files", "diff.view"],
     count: findFiltered?.hunks.length ?? 0,
     resetKey: selectedPath,
-    // Wrap mode measures the mounted row instead of trusting `heights` — same
-    // parking rule, different ruler.
+    // Wrap mode measures the mounted rows instead of trusting `heights` — same
+    // centring rule, different ruler.
     scrollToHunk: wrap ? scrollToHunkInWrap : scrollToHunk,
     // Split mode has no unified scroll container, and `useViewportH` keeps the
     // last height it managed to read rather than resetting to 0 when the element
