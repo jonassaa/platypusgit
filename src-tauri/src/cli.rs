@@ -14,6 +14,7 @@ pub struct LaunchIntent {
 #[derive(Debug, PartialEq)]
 pub enum Parsed {
     Help,
+    Version,
     /// Invoked as GIT_ASKPASS / SSH_ASKPASS with git's prompt string (#61 D5).
     /// Internal contract between the app and its own subprocesses — deliberately
     /// absent from USAGE.
@@ -88,10 +89,23 @@ Subcommands:
   log | history      open the History screen
   branches           open the Branches screen
 
+Options:
+  -h, --help         print this help and exit
+  -V, --version      print the version and exit
+
 With a path and no subcommand, opens the repo containing that path.
 With a subcommand and no path, uses the current directory.
 With no arguments, performs a plain app launch.
 ";
+
+/// `pgit --version` output. Reads `CARGO_PKG_VERSION` at compile time — the
+/// release workflow rewrites `src-tauri/Cargo.toml`'s `version` field to the
+/// release tag before building (`.github/workflows/release.yml`), the same
+/// way it rewrites `tauri.conf.json`, so a released binary reports the real
+/// version rather than the repo's `0.0.0` placeholder.
+pub fn version_line() -> String {
+    format!("PlatypusGit {}\n", env!("CARGO_PKG_VERSION"))
+}
 
 fn screen_for(token: &str) -> Option<&'static str> {
     match token {
@@ -122,6 +136,9 @@ pub fn parse_args(args: &[String], cwd: &Path) -> Parsed {
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         return Parsed::Help;
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        return Parsed::Version;
     }
     let mut screen: Option<String> = None;
     let mut path: Option<PathBuf> = None;
@@ -729,6 +746,19 @@ mod tests {
     }
 
     #[test]
+    fn version_flag_wins() {
+        assert_eq!(
+            parse_args(&s(&["--version"]), Path::new("/w")),
+            Parsed::Version
+        );
+        assert_eq!(parse_args(&s(&["-V"]), Path::new("/w")), Parsed::Version);
+        assert_eq!(
+            parse_args(&s(&["commit", "--version"]), Path::new("/w")),
+            Parsed::Version
+        );
+    }
+
+    #[test]
     fn path_only_opens_repo_without_screen() {
         assert_eq!(
             parse_args(&s(&["/abs/repo"]), Path::new("/w")),
@@ -965,6 +995,20 @@ mod tests {
             Parsed::Askpass("Password -h for 'x': ".to_string())
         );
     }
+
+    #[test]
+    fn a_prompt_containing_the_version_flag_is_not_read_as_that_flag() {
+        // Same hazard as above, for -V/--version.
+        let cwd = Path::new("/tmp");
+        assert_eq!(
+            parse_args(
+                &["--askpass".to_string(), "Password -V for 'x': ".to_string()],
+                cwd
+            ),
+            Parsed::Askpass("Password -V for 'x': ".to_string())
+        );
+    }
+
     // ─── the ownership contract (#144) ───────────────────────────────────────
     //
     // Every table below is exercised for all three OSes from whatever host runs

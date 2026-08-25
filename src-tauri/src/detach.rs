@@ -15,8 +15,9 @@
 //! as `GIT_ASKPASS` and reads the credential from **its stdout, synchronously**,
 //! so a process that spawned a child and exited would hand git an empty
 //! credential and every authenticated fetch/pull/push would fail with nothing to
-//! trace it back to. `Parsed::Help` must stay synchronous too, or `USAGE` is
-//! printed by a child whose stdout is `/dev/null`.
+//! trace it back to. `Parsed::Help` and `Parsed::Version` must stay
+//! synchronous too, or their output is printed by a child whose stdout is
+//! `/dev/null`.
 //!
 //! A **dev build** must not detach either, whatever the arguments say (#197).
 //! `tauri dev` runs the app as its own child with the developer's terminal
@@ -257,6 +258,13 @@ mod tests {
         // USAGE must reach the terminal that asked for it.
         assert!(!should_detach(&Parsed::Help, env(true)));
         assert!(!should_detach(&Parsed::Help, env(false)));
+    }
+
+    #[test]
+    fn version_never_detaches() {
+        // The version line must reach the terminal that asked for it.
+        assert!(!should_detach(&Parsed::Version, env(true)));
+        assert!(!should_detach(&Parsed::Version, env(false)));
     }
 
     #[test]

@@ -43,6 +43,7 @@ pgit ~/dev/foo          # open repo containing that path
 pgit commit             # open cwd repo, land on Commit panel
 pgit log src/           # open repo containing src/, land on History
 pgit --help             # print usage, no window
+pgit --version          # print version, no window
 ```
 
 | subcommand | screen |
