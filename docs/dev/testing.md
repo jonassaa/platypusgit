@@ -149,9 +149,11 @@ Rules that keep the gates honest:
     timed-out-but-completed scripts double-run side-effectful helpers — was
     closed by `executeOnce`, which makes a retry a no-op returning the first
     run's value, and is self-tested in `harness.e2e.ts`. 8 s is measured, not
-    guessed: with the mid-swap executes gone the suite's scripts run p50 6 ms /
-    p99 12 ms / max 12 ms under xvfb (`E2E_SCRIPT_TIMING=1` prints the spread
-    per spec). Resolve it through `resolveScriptTimeoutMs` — compose forwards an
+    guessed: with the mid-swap executes gone, the slowest single in-page script
+    anywhere in the suite is 12 ms in local Docker and 190 ms on a real CI
+    runner (`E2E_SCRIPT_TIMING=1` prints the spread per spec, and the timing
+    line prints the max unconditionally). Resolve it through
+    `resolveScriptTimeoutMs` — compose forwards an
     unset `E2E_SCRIPT_TIMEOUT_MS` as `""`, and `Number("")` is a ZERO timeout
     that fails every `element`/`elements`/click instantly.
   - **Stalls are counted and printed per spec file** (`e2e/support/scriptTiming.ts`),

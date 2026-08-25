@@ -66,9 +66,9 @@ describe("resolveScriptTimeoutMs", () => {
   });
 
   it("keeps the Linux cap well clear of the measured worst legitimate script", () => {
-    // Slowest in-page script across the suite under xvfb is ~12ms, and no
-    // legitimate script may sit anywhere near STALL_MS or the counter would
-    // report work as a stall.
+    // Slowest in-page script anywhere in the suite is 12ms in local Docker and
+    // 190ms on a real CI runner, so no legitimate script may sit anywhere near
+    // STALL_MS — the counter would otherwise report work as a stall.
     expect(DEFAULT_SCRIPT_TIMEOUT_MS.other).toBeGreaterThan(STALL_MS);
     expect(DEFAULT_SCRIPT_TIMEOUT_MS.other).toBeLessThan(30_000);
   });

@@ -128,10 +128,12 @@ export const config: WebdriverIO.Config = {
     // The values differ because the platforms do. macOS keeps 2.5s: WKWebView
     // in-page scripts finish in single-digit milliseconds there. Linux/xvfb is
     // slower and shares a CI runner, so it gets a wider cap — measured, not
-    // guessed. With the mid-swap executes gone, the whole suite's script
-    // distribution under xvfb is p50 6ms / p99 12ms / max 12ms
-    // (E2E_SCRIPT_TIMING=1 prints it per spec), so 8s is ~600x the worst real
-    // script and still ~4x cheaper than the default when something does hang.
+    // guessed. With the mid-swap executes gone, no legitimate script comes
+    // close: max 12ms across the suite in local Docker, max 190ms on a real CI
+    // runner (run 32877754926, all 28 specs, slowest single script anywhere).
+    // E2E_SCRIPT_TIMING=1 prints the spread per spec. So 8s leaves ~40x
+    // headroom over the worst observed CI script and is still ~4x cheaper than
+    // the default when something does hang.
     // E2E_SCRIPT_TIMEOUT_MS=30000 restores the driver default to measure
     // against; the value is resolved by resolveScriptTimeoutMs (see there —
     // the empty-string case is not academic).
