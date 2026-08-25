@@ -17,7 +17,7 @@ use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus,
         BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
-        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, LfsStatus, LogFilter, LogPage,
+        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage,
         RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag,
         SubmoduleInfo, TagInfo, TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo, REFSPEC_ALL,
@@ -4984,6 +4984,25 @@ impl GitBackend for Libgit2Backend {
                 RS::ApplyMailbox => RepoState::ApplyMailbox,
                 RS::ApplyMailboxOrRebase => RepoState::ApplyMailboxOrRebase,
             })
+        })
+    }
+
+    fn head_info(&self, repo_id: &RepoId) -> AppResult<HeadInfo> {
+        self.with_repo(repo_id, |repo| {
+            // Same split `WorktreeInfo`'s listing already uses: `head()` errors
+            // on an unborn branch (leaving both fields `None`), and a detached
+            // HEAD resolves to a reference literally named "HEAD" whose
+            // `shorthand()` is "HEAD" itself, not a branch — `is_branch()` is
+            // what actually distinguishes the two, not presence of a name.
+            let head = repo.head().ok();
+            let branch = head
+                .as_ref()
+                .filter(|h| h.is_branch())
+                .and_then(|h| h.shorthand().map(str::to_string));
+            let head_oid = head
+                .and_then(|h| h.peel_to_commit().ok())
+                .map(|c| c.id().to_string());
+            Ok(HeadInfo { branch, head_oid })
         })
     }
 

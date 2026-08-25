@@ -306,6 +306,17 @@ export type RepoState =
   | "ApplyMailbox"
   | "ApplyMailboxOrRebase";
 
+/**
+ * Current HEAD identity, refreshed on every `refreshAll` (#217) — unlike
+ * `RepoHandle.head`, which `open_repo` sets once and goes stale after a
+ * checkout. `branch` is `null` on a detached HEAD; `headOid` is `null` only
+ * on an unborn branch (a fresh `git init` with no commits).
+ */
+export interface HeadInfo {
+  branch: string | null;
+  headOid: string | null;
+}
+
 export interface ConflictSides {
   path: string;
   base: string | null;

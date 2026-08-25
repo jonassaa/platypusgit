@@ -23,6 +23,7 @@ import type {
   ForgeKind,
   ForgeRepo,
   ForgeTokenStatus,
+  HeadInfo,
   LaunchIntent,
   LfsStatus,
   LogFilter,
@@ -98,6 +99,15 @@ export async function trustRepoPath(path: string): Promise<void> {
 
 export async function getStatus(repoId: string): Promise<FileStatus[]> {
   return invoke<FileStatus[]>("get_status", { repoId });
+}
+
+/**
+ * HEAD's current branch/oid. Unlike `RepoHandle.head` (set once by
+ * `openRepo`), this is meant to be re-polled on every refresh so it follows
+ * checkouts within the session (#217).
+ */
+export async function headInfo(repoId: string): Promise<HeadInfo> {
+  return invoke<HeadInfo>("head_info", { repoId });
 }
 
 export async function listAllFiles(repoId: string): Promise<FileStatus[]> {

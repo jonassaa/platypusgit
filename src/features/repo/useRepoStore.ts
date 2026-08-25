@@ -46,6 +46,7 @@ import {
   getLogFilteredPage,
   getLogPage,
   getStatus,
+  headInfo as headInfoFn,
   listAllFiles,
   listFilesAtRev as listFilesAtRevFn,
   readFileContentAtRev as readFileContentAtRevFn,
@@ -613,6 +614,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         repoState,
         rebaseStatus,
         bisectStatus,
+        headInfo,
       ] = await Promise.all([
           getStatus(repo.id),
           listBranches(repo.id),
@@ -635,6 +637,9 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           // the same reasoning as the browsed-ref fallback above. The cost of the
           // fallback is a bar without step counts, not a broken screen.
           bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
+          // Same degrade-don't-fail policy: the window title (#217) falls back
+          // to just the repo name rather than losing the whole refresh.
+          headInfoFn(repo.id).catch(() => null),
         ]);
       setFor(repo.id, {
         status,
@@ -648,6 +653,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         repoState,
         rebaseStatus,
         bisectStatus,
+        headInfo,
         loading: false,
       });
       // Keep an active search in sync with the refreshed history.

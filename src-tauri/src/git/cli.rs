@@ -6,7 +6,7 @@ use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
         DiffKind, FileContent,
-        FileDiff, FileStatus, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+        FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
         SubmoduleInfo, TagInfo,
         TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo,
@@ -359,6 +359,9 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn repo_state(&self, _repo_id: &RepoId) -> AppResult<RepoState> {
+        Err(AppError::NotImplemented)
+    }
+    fn head_info(&self, _repo_id: &RepoId) -> AppResult<HeadInfo> {
         Err(AppError::NotImplemented)
     }
     fn conflict_sides(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<ConflictSides> {

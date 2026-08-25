@@ -169,6 +169,7 @@ pub fn run() {
             commands::repo::close_repo,
             commands::repo::trust_repo_path,
             commands::repo::get_status,
+            commands::repo::head_info,
             commands::repo::list_all_files,
             commands::repo::read_file_content,
             commands::repo::list_files_at_rev,

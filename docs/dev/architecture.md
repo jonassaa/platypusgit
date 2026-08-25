@@ -99,9 +99,11 @@ git/
                  (user.name/email lookup, NoSignature when unset) and
                  apply_signoff (Signed-off-by trailer, idempotent)
 commands/        Thin Tauri handlers, one file per area:
-├── repo.rs      open_repo, close_repo, trust_repo_path, get_status,
-│                list_all_files, append_gitignore, open_in_editor, and THREE
-│                distinct file readers: read_file_content (working tree),
+├── repo.rs      open_repo, close_repo, trust_repo_path, get_status, head_info
+│                (HEAD's branch/oid, re-polled every refresh — unlike
+│                RepoHandle.head, which open_repo sets once), list_all_files,
+│                append_gitignore, open_in_editor, and THREE distinct file
+│                readers: read_file_content (working tree),
 │                read_file_content_at_rev + list_files_at_rev (a commit's tree),
 │                read_file_content_at_index (the STAGED blob)
 ├── cli.rs       take_launch_intent, cli_shim_status, install_cli_shim

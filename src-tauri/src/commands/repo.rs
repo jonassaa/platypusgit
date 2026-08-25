@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{FileContent, FileStatus, RepoHandle, RepoId},
+    git::types::{FileContent, FileStatus, HeadInfo, RepoHandle, RepoId},
     state::AppState,
 };
 
@@ -41,6 +41,18 @@ pub async fn trust_repo_path(state: State<'_, AppState>, path: String) -> AppRes
     let backend = state.backend.clone();
     let path_buf = PathBuf::from(path);
     tokio::task::spawn_blocking(move || backend.trust_path(&path_buf))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// HEAD's current branch/oid, meant to be re-polled on every refresh — unlike
+/// `RepoHandle.head`, which `open_repo` sets once and the frontend must not
+/// treat as live after a checkout (#217).
+#[tauri::command]
+pub async fn head_info(state: State<'_, AppState>, repo_id: String) -> AppResult<HeadInfo> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.head_info(&repo_id))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

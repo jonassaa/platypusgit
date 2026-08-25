@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import React from "react";
 import {
   PGActivityBar,
@@ -35,6 +36,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { RepoTabs } from "@/features/repo/RepoTabs";
 import { headUpstream, openRepoDialog } from "@/features/repo/ops";
+import { windowTitleFor } from "@/features/repo/windowTitle";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useCliLaunch } from "@/features/cli/useCliLaunch";
 import {
@@ -292,6 +294,20 @@ export function AppShell() {
     setScreen((remembered as ScreenId | null) ?? "history");
     setEntryTick((t) => t + 1);
   }, [activePath]);
+
+  // Name the active repository and its checked-out branch in the OS window
+  // title (#217) — otherwise every window/tab reads as the identical
+  // "PlatypusGit" in the window switcher, dock, and Mission Control. `tabs`
+  // (for the disambiguated label) and `headInfo` (which follows checkouts,
+  // unlike `repo.head`) are both already live state; this effect only
+  // reacts to them, the same shape `MergeWindow.tsx` uses for its own title.
+  const tabs = useTabsStore((s) => s.tabs);
+  const headInfo = useRepoStore((s) => s.headInfo);
+  React.useEffect(() => {
+    const index = tabs.findIndex((t) => t.path === activePath);
+    const repoLabel = index >= 0 ? useTabsStore.getState().labels()[index] : null;
+    void getCurrentWindow().setTitle(windowTitleFor(repoLabel, headInfo));
+  }, [tabs, activePath, headInfo]);
 
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
