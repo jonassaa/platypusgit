@@ -33,7 +33,7 @@ const buildSteps = `# Prerequisites: Node 22+, pnpm, Rust stable
 git clone ${site.repo}.git
 cd platypusgit
 pnpm install
-pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
+pnpm tauri build --no-sign   # produces .dmg / .msi / .deb / .AppImage`;
 ---
 <Layout
   title={'Download ' + site.name + ' for Mac, Windows & Linux'}
