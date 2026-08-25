@@ -84,9 +84,17 @@ PlatypusGit
 Usage: pgit [subcommand] [path]
 
 Subcommands:
-  commit | status    open the Commit panel
-  log | history      open the History screen
-  branches           open the Branches screen
+  commit | status           open the Commit panel
+  log | history             open the History screen
+  branches | branch         open the Branches screen
+  files | browse | tree     open the Files screen
+  rebase                    open the Rebase screen
+  remote | remotes          open the Remotes screen
+  pr | prs | pulls          open the Pull requests screen
+  reflog                    open the Reflog screen
+  submodules                open the Submodules screen
+  worktrees                 open the Worktrees screen
+  settings | config         open Settings
 
 With a path and no subcommand, opens the repo containing that path.
 With a subcommand and no path, uses the current directory.
@@ -97,7 +105,15 @@ fn screen_for(token: &str) -> Option<&'static str> {
     match token {
         "commit" | "status" => Some("commit"),
         "log" | "history" => Some("history"),
-        "branches" => Some("branches"),
+        "branches" | "branch" => Some("branches"),
+        "files" | "browse" | "tree" => Some("repo"),
+        "rebase" => Some("rebase"),
+        "remote" | "remotes" => Some("remote"),
+        "pr" | "prs" | "pulls" => Some("pulls"),
+        "reflog" => Some("reflog"),
+        "submodules" => Some("submodules"),
+        "worktrees" => Some("worktrees"),
+        "settings" | "config" => Some("settings"),
         _ => None,
     }
 }
@@ -758,6 +774,21 @@ mod tests {
             ("log", "history"),
             ("history", "history"),
             ("branches", "branches"),
+            ("branch", "branches"),
+            ("files", "repo"),
+            ("browse", "repo"),
+            ("tree", "repo"),
+            ("rebase", "rebase"),
+            ("remote", "remote"),
+            ("remotes", "remote"),
+            ("pr", "pulls"),
+            ("prs", "pulls"),
+            ("pulls", "pulls"),
+            ("reflog", "reflog"),
+            ("submodules", "submodules"),
+            ("worktrees", "worktrees"),
+            ("settings", "settings"),
+            ("config", "settings"),
         ] {
             assert_eq!(
                 parse_args(&s(&[cmd]), Path::new("/w")),
