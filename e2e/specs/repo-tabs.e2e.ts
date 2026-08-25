@@ -7,12 +7,12 @@
 // screen rather than from the tab's own highlight.
 import {
   activeRepoTabPath,
-  armDriverBridge,
   jsChord,
   jsKey,
   openPalette,
   paletteDialog,
   paletteInput,
+  refreshAndSettle,
   repoTab,
   repoTabClose,
   repoTabCount,
@@ -205,10 +205,9 @@ describe("multi-repo tabs", () => {
     await waitShowing(beta, "before the reload");
 
     // No localStorage.clear(): the point is that pg-open-repos survives.
-    await browser.refresh();
-    await armDriverBridge();
-    await waitRepoLoaded();
-    await armDriverBridge();
+    // waitRepoLoaded starts with a find, so it is itself a valid settle gate
+    // (refreshAndSettle) — and it arms once the chip has matched.
+    await refreshAndSettle(() => waitRepoLoaded());
 
     await browser.waitUntil(async () => (await repoTabCount()) === 2, {
       timeout: 20_000,

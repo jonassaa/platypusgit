@@ -129,15 +129,39 @@ Rules that keep the gates honest:
   hook), which is what makes any grouping safe — `pg-open-repos` otherwise
   survives into the next spec's launch and breaks the Welcome-screen wait. It
   clears at the END with no refresh on purpose: clearing in `before` needs a
-  `browser.refresh()`, which MEASURED at 528 s → 1064 s for the suite — every
-  refresh re-rolls a reload race whose loss costs a full 30 s script timeout on
-  Linux (uncapped there; macOS caps at 2.5 s).
-- **Those ~30 s stalls are the suite's real cost:** an `execute()` landing
-  mid-document-swap loses its completion handler and waits the full timeout
-  (`wdio.conf.ts` guard 2). Capping the Linux timeout is the biggest remaining
-  lever but re-opens a documented flake class (truncated-but-completed scripts
-  re-run; `executeOnce` neutralises it) — needs its own verification runs, not
-  a drive-by.
+  `browser.refresh()`, which MEASURED at 528 s → 1064 s for the suite, back when
+  every refresh re-rolled the reload race below.
+- **The ~30 s stalls WERE the suite's real cost, and are fixed (#194).** An
+  `execute()` landing mid-document-swap loses its completion handler and waits
+  out the whole W3C script timeout, so the cost per loss is the TIMEOUT, not the
+  work: 13–23 stalls per `main` run, ~30 s each, 70–80 % of e2e wall time, with
+  which specs paid moving run to run. Every refresh site fired
+  `armDriverBridge()` — an `execute()` — as its first post-refresh command, so
+  the roll happened once per refresh, and `openRepo` refreshes once per `it()`.
+  Three changes, in order of what does the work:
+  - **`refreshAndSettle` (`e2e/support/app.ts`) owns every refresh.** Refresh →
+    a matched WebDriver find → *then* arm. A find issued mid-swap either matches
+    (the driver's own proof navigation settled) or misses and is re-polled for
+    pennies; the pre-find arm it replaces could only ever land on the dying
+    document, which is why each call site already armed again afterwards.
+  - **The script timeout is now capped on Linux too** (8 s; macOS keeps 2.5 s;
+    `E2E_SCRIPT_TIMEOUT_MS` overrides). The old refusal — retried
+    timed-out-but-completed scripts double-run side-effectful helpers — was
+    closed by `executeOnce`, which makes a retry a no-op returning the first
+    run's value, and is self-tested in `harness.e2e.ts`. 8 s is measured, not
+    guessed: with the mid-swap executes gone, the slowest single in-page script
+    anywhere in the suite is 12 ms in local Docker and 190 ms on a real CI
+    runner (`E2E_SCRIPT_TIMING=1` prints the spread per spec, and the timing
+    line prints the max unconditionally). Resolve it through
+    `resolveScriptTimeoutMs` — compose forwards an
+    unset `E2E_SCRIPT_TIMEOUT_MS` as `""`, and `Number("")` is a ZERO timeout
+    that fails every `element`/`elements`/click instantly.
+  - **Stalls are counted and printed per spec file** (`e2e/support/scriptTiming.ts`),
+    so a regression is attributable instead of "e2e is slow again".
+  Measured in Docker (the stack CI runs), whole suite, same machine:
+  **6 m 18 s with 9 stalls → 1 m 55 s with 0**. 9 × 30 s is 71 % of the
+  baseline, so the arithmetic closes: what is left is the work.
+  `test/e2eRefreshGate.test.ts` is what keeps it fixed — see below.
 - Reproduce a shard locally: `E2E_SHARD=2 E2E_SHARDS=4 pnpm test:e2e:docker
   run`. With neither set, `specs` keeps its plain glob — byte-for-byte the old
   behaviour.
@@ -157,6 +181,14 @@ Rules that keep the gates honest:
   never runs and the gate goes green. It reads the real `e2e/specs/` and the
   real `shard: [...]` matrix out of `e2e.yml` (keep the matrix array on one
   line) and asserts a stable partition with unmeasured specs still placed.
+- **`test/e2eRefreshGate.test.ts`** pins the fix for #194 as a static fact, at
+  `pnpm test` speed rather than after a 10-minute CI run: `browser.refresh()`
+  may be called from exactly ONE place (`refreshAndSettle`), and every gate
+  handed to it must START with a WebDriver query, never an in-page script
+  (`browser.execute`, `executeOnce`, `waitForSelector`). Both halves matter — a
+  rule kept by comments is what decayed the first time, with every refresh site
+  independently arming before its find. A gate that polls in page obeys the
+  first rule and reinstates the stall anyway, hence the second.
 - **`test/nativeSelect.test.ts`** is a SOURCE invariant: no `<select>`/`<option>`
   in shipped `src/` (issue 146) — the failure is invisible on macOS/Windows.
   Comments stripped first; test files out of scope.

@@ -7,7 +7,7 @@
 // is already there by the time History first renders — which is exactly why
 // this went unnoticed.
 import { branchyRepo, TempRepo } from "../support/tempRepo";
-import { armDriverBridge, resetApp, waitRepoLoaded } from "../support/app";
+import { refreshAndSettle, resetApp, waitRepoLoaded } from "../support/app";
 
 describe("opening a repo onto the History landing screen", () => {
   let repo: TempRepo;
@@ -30,16 +30,14 @@ describe("opening a repo onto the History landing screen", () => {
       );
     }, repo.path);
 
-    await browser.refresh();
-    await armDriverBridge();
-
-    const row = $(`[data-testid="recent-repo"][data-path="${repo.path}"]`);
-    await row.waitForDisplayed({
-      timeout: 20_000,
-      timeoutMsg: "recent-repo row never appeared",
-    });
-    await armDriverBridge();
-    await row.click();
+    const rowSel = `[data-testid="recent-repo"][data-path="${repo.path}"]`;
+    await refreshAndSettle(() =>
+      $(rowSel).waitForDisplayed({
+        timeout: 20_000,
+        timeoutMsg: "recent-repo row never appeared",
+      }),
+    );
+    await $(rowSel).click();
 
     // The shell surviving IS the assertion: a hook-order violation unmounts
     // the React root, so the branch chip never appears and #root goes empty.

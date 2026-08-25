@@ -115,19 +115,56 @@ export async function ensureMacAppFocus(): Promise<void> {
   );
 }
 
+/** Reload the page, wait for `gate` to match, then re-arm the bridge.
+ *
+ *  **The only place in `e2e/` allowed to call `browser.refresh()`** — pinned by
+ *  `test/e2eRefreshGate.test.ts`, because the ORDER of the three lines below is
+ *  the whole of issue #194, and every hand-rolled refresh site in the tree got
+ *  it wrong in the same way.
+ *
+ *  What #194 measured: 70–80% of e2e wall time was the driver waiting out a 30s
+ *  script timeout — 13 to 23 stalls per `main` run — with every spec over 30s
+ *  coming out as `n × 30` plus small change. The cause is not the specs. An
+ *  `execute()` that lands while a `refresh()` navigation is mid-document-swap
+ *  has its completion handler silently dropped, so the driver waits the FULL
+ *  W3C script timeout before erroring and the caller retries. Every refresh
+ *  site used to fire `armDriverBridge()` — an `execute()` — as its very first
+ *  post-refresh command: one roll of that die per refresh, and `openRepo`
+ *  refreshes once per `it()` (`keymap`: 28×). That is why stall count tracked
+ *  REFRESH count rather than spec complexity, and why adding one refresh per
+ *  spec file took the suite from 528s to 1064s (run 32246987758).
+ *
+ *  So the rule is: **after a refresh, the next command must be a WebDriver
+ *  find, never a script.** A find cannot lose the same way — issued mid-swap it
+ *  either matches (which is the driver's own proof that navigation settled, see
+ *  `armDriverBridge`) or misses and is re-polled for pennies. Only once it HAS
+ *  matched do we run a script, and by then the swap is over. The arm that used
+ *  to run before that find was not merely early, it was worthless: it can land
+ *  on the dying document (`armDriverBridge` doc), which is exactly why every
+ *  call site already armed a second time afterwards. Deleting it costs nothing
+ *  and removes the roll.
+ *
+ *  `gate`'s FIRST command must therefore be a real WebDriver query —
+ *  `waitForDisplayed`, `waitForExist`, `waitUntil` over `isExisting()`, or a
+ *  helper that begins with one (`waitRepoLoaded`). It must NOT be
+ *  `browser.execute` in any form, `waitForSelector` included: that one polls in
+ *  page, and would reinstate the very stall this exists to remove. */
+export async function refreshAndSettle(
+  gate: () => Promise<unknown>,
+): Promise<void> {
+  await browser.refresh();
+  await gate();
+  await armDriverBridge();
+}
+
 export async function resetApp(): Promise<void> {
   await browser.execute(() => localStorage.clear());
-  await browser.refresh();
-  await armDriverBridge();
-  await $("div*=Welcome to PlatypusGit").waitForDisplayed({
-    timeout: 20_000,
-    timeoutMsg: "Welcome screen did not reappear after reset",
-  });
-  // Re-arm: this find only succeeds once the document has settled on the
-  // real post-refresh page, which is the earliest point we can trust that
-  // an arm attempt actually lands (and stays) there. See armDriverBridge
-  // doc for why the pre-Welcome arm above can't be trusted on its own.
-  await armDriverBridge();
+  await refreshAndSettle(() =>
+    $("div*=Welcome to PlatypusGit").waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "Welcome screen did not reappear after reset",
+    }),
+  );
 }
 
 export async function waitRepoLoaded(): Promise<void> {
@@ -157,17 +194,17 @@ export async function openRepo(repoPath: string): Promise<void> {
       JSON.stringify([{ path: p, openedAt: 1 }]),
     );
   }, repoPath);
-  await browser.refresh();
-  await armDriverBridge();
-  const row = $(`[data-testid="recent-repo"][data-path="${repoPath}"]`);
-  await row.waitForDisplayed({
-    timeout: 20_000,
-    timeoutMsg: "recent-repo row for temp repo never appeared",
-  });
-  // Re-arm: same reasoning as resetApp — this find is the first proof the
-  // post-refresh document is the one that's actually current.
-  await armDriverBridge();
-  await row.click();
+  const rowSel = `[data-testid="recent-repo"][data-path="${repoPath}"]`;
+  // The row find IS the settle gate — see refreshAndSettle. Resolved inside the
+  // gate and again for the click, so the handle can only come from the settled
+  // document.
+  await refreshAndSettle(() =>
+    $(rowSel).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "recent-repo row for temp repo never appeared",
+    }),
+  );
+  await $(rowSel).click();
   await waitRepoLoaded();
 }
 
@@ -177,31 +214,31 @@ export async function openRepo(repoPath: string): Promise<void> {
  *  any "survives reload" assertion. Follows the re-arm rule: matched find →
  *  re-arm (see armDriverBridge doc). */
 export async function reopenRepo(repoPath: string): Promise<void> {
-  await browser.refresh();
-  await armDriverBridge();
-  const row = $(`[data-testid="recent-repo"][data-path="${repoPath}"]`);
-  const chip = $('[data-testid="branch-chip"]');
+  const rowSel = `[data-testid="recent-repo"][data-path="${repoPath}"]`;
+  const chipSel = '[data-testid="branch-chip"]';
   // Since #90 the OPEN SET persists too (`pg-open-repos`), and this helper
   // deliberately keeps localStorage — so the reload may reopen the repository by
   // itself and never render a Welcome row at all. Waiting for the row
-  // unconditionally would hang every persistence spec.
-  await browser.waitUntil(
-    async () => (await chip.isExisting()) || (await row.isExisting()),
-    {
-      timeout: 20_000,
-      timeoutMsg:
-        "after reload neither the restored repo (branch chip) nor its " +
-        "recent-repo row appeared — recents/open-set not persisted?",
-    },
+  // unconditionally would hang every persistence spec. Either branch is a
+  // matched find, so the disjunction is a valid settle gate.
+  await refreshAndSettle(() =>
+    browser.waitUntil(
+      async () =>
+        (await $(chipSel).isExisting()) || (await $(rowSel).isExisting()),
+      {
+        timeout: 20_000,
+        timeoutMsg:
+          "after reload neither the restored repo (branch chip) nor its " +
+          "recent-repo row appeared — recents/open-set not persisted?",
+      },
+    ),
   );
-  await armDriverBridge();
-  if (!(await chip.isExisting())) {
-    await row.waitForDisplayed({
+  if (!(await $(chipSel).isExisting())) {
+    await $(rowSel).waitForDisplayed({
       timeout: 20_000,
       timeoutMsg: "recent-repo row missing after reload — recents not persisted?",
     });
-    await armDriverBridge();
-    await row.click();
+    await $(rowSel).click();
   }
   await waitRepoLoaded();
 }
@@ -252,8 +289,23 @@ export async function seedOpenRepos(
         "the seed never landed on this document",
     );
   }
-  await browser.refresh();
-  await armDriverBridge();
+  // Settle on a find BEFORE reading the key back — this read used to be the
+  // first post-refresh command, i.e. the mid-swap `execute()` that stalls for a
+  // whole script timeout (refreshAndSettle). Gating on "chip OR Welcome" keeps
+  // the diagnostic below reachable in both outcomes: waiting for the repo to
+  // load instead would turn a clobbered seed into a timeout that says nothing
+  // about which of the two failures happened.
+  await refreshAndSettle(() =>
+    browser.waitUntil(
+      async () =>
+        (await $('[data-testid="branch-chip"]').isExisting()) ||
+        (await $("div*=Welcome to PlatypusGit").isExisting()),
+      {
+        timeout: 20_000,
+        timeoutMsg: "after seeding the open set the app rendered neither a repo nor Welcome",
+      },
+    ),
+  );
   const afterBoot = await browser.execute(() =>
     localStorage.getItem("pg-open-repos"),
   );
