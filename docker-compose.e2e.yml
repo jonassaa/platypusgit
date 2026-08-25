@@ -29,6 +29,13 @@ services:
       # which is the unsharded whole-suite run (issue 189).
       E2E_SHARD: "${E2E_SHARD:-}"
       E2E_SHARDS: "${E2E_SHARDS:-}"
+      # Script-stall knobs (issue #194). `E2E_SCRIPT_TIMING=1` prints the
+      # per-spec percentile spread of in-page script durations — how the Linux
+      # cap was sized, and how to re-size it. `E2E_SCRIPT_TIMEOUT_MS` overrides
+      # the cap itself (30000 restores the driver default, i.e. the old
+      # uncapped-on-Linux behaviour) for measuring against it.
+      E2E_SCRIPT_TIMING: "${E2E_SCRIPT_TIMING:-}"
+      E2E_SCRIPT_TIMEOUT_MS: "${E2E_SCRIPT_TIMEOUT_MS:-}"
     volumes:
       # Source is bind-mounted so host edits are picked up without a rebuild.
       - .:/app

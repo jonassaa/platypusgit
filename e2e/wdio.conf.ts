@@ -2,6 +2,11 @@ import path from "node:path";
 import type { TauriCapabilities } from "@wdio/tauri-service";
 import { $, browser } from "@wdio/globals";
 import { armDriverBridge, ensureMacAppFocus } from "./support/app";
+import {
+  formatScriptTiming,
+  recordScriptDuration,
+  resolveScriptTimeoutMs,
+} from "./support/scriptTiming";
 import { listSpecFiles, shardFromEnv, shardSpecs } from "./shardSpecs";
 
 // The app registers tauri-plugin-single-instance; a test binary starting
@@ -55,6 +60,22 @@ if (shard) {
   }
 }
 
+// The script-timeout cap and the knob for re-measuring it (see the setTimeout
+// call in `before`), read once here so the values a run used sit in one place.
+// The resolver lives in support/ and is unit-tested: an empty-string override —
+// what compose forwards for an unset host var — resolves to a ZERO timeout
+// under the obvious spelling, and that fails every driver command instantly.
+const scriptTimeoutMs = resolveScriptTimeoutMs(process.env, process.platform);
+const scriptTimingVerbose = process.env.E2E_SCRIPT_TIMING === "1";
+
+// Stall accounting (issue #194). `executeScript` is the command that can be
+// dropped mid-document-swap and then costs the whole cap, so it is the one
+// worth timing; the pair of hooks below is the only place the runner can see
+// a command's real wall time. maxInstances is 1 and commands are awaited, so a
+// single start timestamp is unambiguous.
+const SCRIPT_COMMANDS = new Set(["executeScript", "executeAsyncScript"]);
+let scriptStartedAt = 0;
+
 export const config: WebdriverIO.Config = {
   runner: "local",
   specs,
@@ -83,19 +104,38 @@ export const config: WebdriverIO.Config = {
     // app is single-window ("main" — Tauri's default label), so focus
     // management has nothing to manage anyway.
     await browser.tauri.switchWindow("main");
-    // macOS only: cap the driver's W3C script timeout (default 30s). An
-    // execute() fired while a refresh() navigation is mid-document-swap gets
-    // its evaluateJavaScript completion handler silently dropped by
-    // WKWebView; the driver then waits the FULL script timeout before
-    // erroring and the caller retries. Locally every in-page script finishes
-    // in milliseconds, so 2.5s only bounds that pathological hang: random
-    // ~30s-per-spec stalls become a rare, invisible ~2.5s retry. Do NOT
-    // apply on Linux CI: under xvfb, legitimate executes can exceed 2.5s,
-    // and a timed-out-but-completed script gets retried — double-running
-    // side-effectful helpers (observed: merge-conflict flow desync).
-    if (process.platform === "darwin") {
-      await browser.setTimeout({ script: 2500 });
-    }
+    // Cap the driver's W3C script timeout (default 30s) — on EVERY platform
+    // since issue #194. An execute() fired while a refresh() navigation is
+    // mid-document-swap gets its completion handler silently dropped; the
+    // driver then waits the FULL script timeout before erroring and the caller
+    // retries. The cap is what that pathological hang costs.
+    //
+    // `refreshAndSettle` (e2e/support/app.ts) is the actual fix — it removes
+    // the mid-swap execute, and with it the roll of the die. This is the belt:
+    // any refresh site that ever slips past the rule pays the cap, not 30s.
+    //
+    // Why Linux gets a cap now, when the comment here used to refuse one. The
+    // refusal was correct at the time: a script that times out but still RAN
+    // gets retried, which double-runs side-effectful helpers (that is the
+    // merge-conflict desync, issue #35). `executeOnce` closed that hole
+    // afterwards — it mints a token per logical call and the page skips
+    // already-run tokens, so a retry is a no-op that returns the first run's
+    // value. Every side-effectful script in e2e/ goes through it (the
+    // remaining bare-execute writes — localStorage seeds, scrollTop, a
+    // Selection, window.close — are idempotent by construction), and
+    // harness.e2e.ts replays a script with its own token to prove the guard.
+    //
+    // The values differ because the platforms do. macOS keeps 2.5s: WKWebView
+    // in-page scripts finish in single-digit milliseconds there. Linux/xvfb is
+    // slower and shares a CI runner, so it gets a wider cap — measured, not
+    // guessed. With the mid-swap executes gone, the whole suite's script
+    // distribution under xvfb is p50 6ms / p99 12ms / max 12ms
+    // (E2E_SCRIPT_TIMING=1 prints it per spec), so 8s is ~600x the worst real
+    // script and still ~4x cheaper than the default when something does hang.
+    // E2E_SCRIPT_TIMEOUT_MS=30000 restores the driver default to measure
+    // against; the value is resolved by resolveScriptTimeoutMs (see there —
+    // the empty-string case is not academic).
+    await browser.setTimeout({ script: scriptTimeoutMs });
     // macOS only (no-op elsewhere): the unbundled debug binary doesn't
     // reliably win foreground focus at launch, and an unfocused/occluded
     // WKWebView reports the page hidden — isDisplayed() then returns false
@@ -128,16 +168,28 @@ export const config: WebdriverIO.Config = {
   // Deliberately at the END, and deliberately with NO refresh. Doing it in
   // `before` instead cost ~30s per spec file and nearly DOUBLED the suite
   // (measured: 528s -> 1064s over run 32246987758): the extra `browser.refresh()`
-  // re-rolled the reload race the conf documents above, and on Linux the W3C
-  // script timeout is uncapped, so each loss is a full 30s stall. Clearing
-  // after the last test needs no navigation, so it adds no refresh and no roll.
-  after: async () => {
+  // re-rolled the reload race, and each loss was a full 30s script timeout.
+  // #194 has since removed the roll (`refreshAndSettle`) and capped the loss,
+  // so the multiplier is gone — but clearing here still needs no navigation at
+  // all, which beats a cheap refresh. Reads as a rule worth keeping either way.
+  after: async (_result, _caps, specFiles) => {
     try {
       await browser.execute(() => localStorage.clear());
     } catch {
       // Session already gone (crashed spec). The next launch inherits whatever
       // is on disk — exactly the pre-existing behaviour, so nothing to do.
     }
+    // Name what this spec file paid in dropped scripts. Before #194 that was
+    // most of the suite's wall time and nothing printed it: a stalled spec and
+    // a genuinely slow one looked identical in the log, so "e2e is slow again"
+    // was as precise as anyone could be. One line per spec file makes a
+    // regression attributable — and `test/e2eRefreshGate.test.ts` is what
+    // actually stops it landing.
+    const line = formatScriptTiming(
+      path.basename(specFiles[0] ?? "spec"),
+      scriptTimingVerbose,
+    );
+    if (line) console.log(line);
   },
   // Heal mid-suite focus steals (another app grabbing foreground between
   // tests): one cheap execute per test when already focused, setFocus retry
@@ -145,6 +197,14 @@ export const config: WebdriverIO.Config = {
   // Linux CI.
   beforeTest: async () => {
     await ensureMacAppFocus();
+  },
+  beforeCommand: (commandName) => {
+    if (SCRIPT_COMMANDS.has(commandName)) scriptStartedAt = Date.now();
+  },
+  afterCommand: (commandName) => {
+    if (SCRIPT_COMMANDS.has(commandName)) {
+      recordScriptDuration(Date.now() - scriptStartedAt);
+    }
   },
   framework: "mocha",
   mochaOpts: { ui: "bdd", timeout: 120_000 },
