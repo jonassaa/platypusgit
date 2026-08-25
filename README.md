@@ -49,7 +49,15 @@ pgit --help             # print usage, no window
 |---|---|
 | `commit`, `status` | Commit panel |
 | `log`, `history` | History |
-| `branches` | Branches |
+| `branches`, `branch` | Branches |
+| `files`, `browse`, `tree` | Files |
+| `rebase` | Rebase |
+| `remote`, `remotes` | Remotes |
+| `pr`, `prs`, `pulls` | Pull requests |
+| `reflog` | Reflog |
+| `submodules` | Submodules |
+| `worktrees` | Worktrees |
+| `settings`, `config` | Settings |
 
 A bare path (no recognized subcommand) just opens that repo, keeping the
 current screen. If the app is already running, a second `pgit …` invocation
