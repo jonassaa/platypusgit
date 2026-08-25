@@ -132,7 +132,12 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `src-tauri/icons/` (`icon.icns`, `icon.ico`, `32x32.png`, `128x128.png`,
   `128x128@2x.png` — the five `bundle.icon` entries — plus `icon.png`, `64x64`
   and the Windows-Store `Square*Logo`/`StoreLogo` set) is generated from it. Do
-  not hand-edit a raster; re-render the master.
+  not hand-edit a raster; re-render the master. **`src-tauri/icons/` holds
+  exactly two hand-authored files — `logo.svg` and `app-icon.svg`; everything
+  else there is output.** Keep it that way: the directory used to also carry
+  `logo-bg.png`, `logo-256.png` and `logo-32.png`, unreferenced renders left
+  from the initial release, and the stale framing they froze was a trap for
+  anyone who grabbed one for a README.
 - **It is a different file from `logo.svg` on purpose.** `logo.svg` is the
   24×24 in-app brand mark, kept coordinate-identical to `src/design/logo.tsx`
   (pinned by `logo.test.tsx`) and copied to `public/` and `site/public/`.
