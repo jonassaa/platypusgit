@@ -3,6 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import Screenshot from '../components/Screenshot.astro';
 import { site } from '../data/site.ts';
 import { featureGroups, roadmap } from '../data/features.ts';
+import { checkedOn, comparisonRows, comparisonSources, runtimeNote } from '../data/comparison.ts';
 import { descriptions } from '../data/seo.ts';
 
 // Keyed by group TITLE, not index: the group order in features.ts changes as
@@ -31,6 +32,77 @@ const shotAfterGroup: Record<string, { name: string; alt: string; caption: strin
       alt="The platypusgit window with no repository open. A centred card reads “Welcome to PlatypusGit — open, clone, or create a repository to get started”, above an Open repository button and, below it, Clone repository and New repository buttons. A line under them reads “Pick any directory containing a .git folder.” The status bar reads “No repository open” on the left and “⌘O to open…” on the right."
       caption="Where every session starts: point it at a directory that already has a .git folder, clone a remote, or create a repository from nothing."
     />
+  </section>
+
+  <section class="container compare">
+    <h2 class="compare-title">How it compares</h2>
+    <p class="lead">
+      Checked against each vendor's own pages on {checkedOn}. Prices and privacy
+      policies change, so every claim links to the page it came from — any cell
+      here can be re-checked in a minute.
+    </p>
+
+    <div class="compare-scroll">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th scope="col"><span class="sr-only">Client</span></th>
+            <th scope="col">Price</th>
+            <th scope="col">Account</th>
+            <th scope="col">Telemetry</th>
+            <th scope="col">Platforms</th>
+            <th scope="col">Licence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {comparisonRows.map((r) => (
+            <tr class={r.us ? 'us' : undefined}>
+              <th scope="row">
+                {r.href
+                  ? <a href={r.href} target="_blank" rel="noopener">{r.name}</a>
+                  : r.name}
+              </th>
+              <td>{r.price}</td>
+              <td>{r.account}</td>
+              <td>{r.telemetry}</td>
+              <td>{r.platforms}</td>
+              <td>{r.licence}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="compare-note">{runtimeNote}</p>
+
+    <div class="sources">
+      <h3>Sources, claim by claim</h3>
+      <ul>
+        {comparisonSources.map((s) => (
+          <li>
+            <span class="vendor">{s.vendor}</span>
+            <span class="links">
+              {s.links.map((l, i) => (
+                <>
+                  {i > 0 && <span class="sep" aria-hidden="true">·</span>}
+                  <a href={l.url} target="_blank" rel="noopener">{l.label}</a>
+                </>
+              ))}
+            </span>
+          </li>
+        ))}
+        <li>
+          <span class="vendor">{site.name}</span>
+          <span class="links">
+            <a href={site.repo + '/blob/main/LICENSE'} target="_blank" rel="noopener">GPL-3.0</a>
+            <span class="sep" aria-hidden="true">·</span>
+            <span class="own">no analytics dependency and no SDK in the tree, nothing to sign in to,
+            and the only outbound traffic is your git remotes, the update check and forge APIs you
+            configured — <a href={site.repo + '/issues/226'} target="_blank" rel="noopener">kept honest by a guard test</a></span>
+          </span>
+        </li>
+      </ul>
+    </div>
   </section>
 
   <section class="container groups">
@@ -78,6 +150,36 @@ const shotAfterGroup: Record<string, { name: string; alt: string; caption: strin
   .group-list { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-4); }
   .group-list li { display: flex; gap: var(--s-4); align-items: baseline; color: var(--fg-1); font-size: 15px; }
   .tick { color: var(--git-added); font-weight: 700; }
+  .compare { margin-top: var(--s-11); }
+  .compare-title { font-size: 24px; margin: 0 0 var(--s-3); }
+  /* A six-column table does not fit a phone; it scrolls inside its own box
+     rather than making the page scroll sideways. */
+  .compare-scroll { margin-top: var(--s-7); overflow-x: auto;
+    border: 1px solid var(--border-0); border-radius: var(--r-5); }
+  .compare-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; }
+  .compare-table th, .compare-table td { text-align: left; vertical-align: top;
+    padding: var(--s-5) var(--s-6); border-bottom: 1px solid var(--border-0); }
+  .compare-table thead th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--fg-3); font-weight: 600; background: var(--bg-1); white-space: nowrap; }
+  .compare-table tbody th { font-weight: 600; color: var(--fg-0); white-space: nowrap; }
+  .compare-table tbody td { color: var(--fg-2); }
+  .compare-table tbody tr:last-child th, .compare-table tbody tr:last-child td { border-bottom: 0; }
+  .compare-table tbody tr.us { background: var(--bg-1); }
+  .compare-table tbody tr.us th { color: var(--accent); }
+  .compare-table tbody tr.us td { color: var(--fg-1); }
+  .compare-note { margin: var(--s-6) 0 0; color: var(--fg-2); font-size: 14px; max-width: 720px; }
+  .sources { margin-top: var(--s-8); }
+  .sources h3 { font-size: 14px; margin: 0 0 var(--s-5); color: var(--fg-1); }
+  .sources ul { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-4); }
+  .sources li { font-size: 13px; color: var(--fg-3); display: flex; gap: var(--s-5);
+    align-items: baseline; flex-wrap: wrap; }
+  .sources .vendor { color: var(--fg-1); min-width: 148px; flex-shrink: 0; }
+  .sources .links { color: var(--fg-3); }
+  .sources .own { color: var(--fg-3); }
+  .sources .sep { padding: 0 var(--s-3); color: var(--fg-4); }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
   .roadmap { margin-top: var(--s-11); }
   .roadmap-title { font-size: 24px; margin: 0 0 var(--s-3); }
   .roadmap-list { list-style: none; padding: 0; margin: var(--s-7) 0 0; display: grid; gap: var(--s-5); max-width: 720px; }
@@ -88,13 +190,15 @@ const shotAfterGroup: Record<string, { name: string; alt: string; caption: strin
     .group { grid-template-columns: 1fr; gap: var(--s-5); }
     .page-head { padding-top: var(--s-11); }
     .page-head h1 { font-size: 30px; }
-    .groups, .roadmap { margin-top: var(--s-10); }
+    .groups, .roadmap, .compare { margin-top: var(--s-10); }
     .opening { margin-top: var(--s-8); }
   }
   @media (max-width: 480px) {
     .page-head h1 { font-size: 26px; }
     .lead { font-size: 15px; }
-    .roadmap-title { font-size: 21px; }
+    .roadmap-title, .compare-title { font-size: 21px; }
+    .sources .vendor { min-width: 0; }
+    .sources li { gap: var(--s-3); }
     .group { padding-bottom: var(--s-8); }
     .group-head h2 { font-size: 18px; }
     .group-list { gap: var(--s-3); }

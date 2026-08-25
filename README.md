@@ -59,6 +59,43 @@ Every route, per platform, with the Gatekeeper and update notes spelled out:
 - **Native, not a bundled browser.** A small Tauri binary with real OS windows on all three platforms.
 - **Keyboard-first and dense.** A Rider-style default keymap, a command palette, type-to-jump lists, hunk navigation and staging without touching the mouse — a dev-first TortoiseGit alternative that assumes you know git.
 
+## How it compares
+
+| | Price | Account | Telemetry | Platforms | Licence |
+|---|---|---|---|---|---|
+| **platypusgit** | Free | None | None | macOS · Windows · Linux | GPL-3.0 |
+| [GitKraken Desktop](https://www.gitkraken.com/pricing) | Free for local and public repos — **a paid seat for private ones** | GitKraken account | Usage analytics **plus the folder and file names where you keep your code** | macOS · Windows · Linux | Proprietary |
+| [Fork](https://fork.dev/) | **$59.99** once, up to 3 machines | None | None — crash reports only | macOS · Windows | Proprietary |
+| [Sourcetree](https://www.sourcetreeapp.com/) | Free | **Atlassian account required** | Anonymous usage data, opt-out | macOS · Windows | Proprietary |
+| [TortoiseGit](https://tortoisegit.org/) | Free | None | Crash dumps, unless disabled at install | **Windows only** | GPL-2.0 |
+
+**Under the hood:** GitKraken ships as an Electron app. Fork, Sourcetree and
+TortoiseGit are native. platypusgit is a Tauri binary that uses the OS webview
+rather than bundling a browser of its own.
+
+**Checked against each vendor's own pages on 25 August 2026.** Prices and
+privacy policies change, so every claim above links to the source it came from —
+re-check any cell in a minute. A cell that has gone stale is a bug worth
+[reporting](https://github.com/jonassaa/platypusgit/issues/new).
+
+<details>
+<summary><b>Sources, claim by claim</b></summary>
+
+- **GitKraken Desktop** — [pricing](https://www.gitkraken.com/pricing); ["always free to use with local and public cloud-hosted repos"](https://www.gitkraken.com/git-client), while on the free plan ["private repos will be inaccessible"](https://help.gitkraken.com/gitkraken-desktop/gitkraken-account-site-faq/). One free [GitKraken account](https://help.gitkraken.com/gk-dev/gk-dev-account/) spans Desktop, GitLens and the CLI, created at gitkraken.dev or from inside the app, and private-repo access hangs off a paid subscription on it. Telemetry, from [their privacy policy](https://www.gitkraken.com/privacy) verbatim: "when you use any of our applications, we store some usage analytics, the directory, folder and file names on your device where you store your code, and any crash reports sent from your client." Electron: ["delivered across platforms as an Electron application"](https://www.gitkraken.com/blog/nodegit-libgit2).
+- **Fork** — [$59.99 with a free evaluation](https://fork.dev/); the [licence](https://fork.dev/license): "License key may be used by one user on up to 3 machines at a time on both Mac and Windows operating systems." On telemetry, Fork's developer on their public tracker in June 2023: ["Fork doesn't send any telemetry or analytics"](https://github.com/fork-dev/Tracker/issues/1910) — the crash handler is wired for crashes only, with the analytics module explicitly disabled — and again in January 2024: ["Fork doesn't call home and has no telemetry. So we don't have a privacy policy as we have nothing to declare."](https://github.com/fork-dev/Tracker/issues/2046) No Linux build; [that request is still open](https://github.com/fork-dev/Tracker/issues/153).
+- **Sourcetree** — [free, "for Windows and Mac"](https://www.sourcetreeapp.com/). The account, from Atlassian's install guide: ["You need an Atlassian account to use Sourcetree."](https://confluence.atlassian.com/get-started-with-sourcetree/install-sourcetree-847359094.html) Usage data is collected under [Atlassian's privacy policy](https://www.atlassian.com/legal/privacy-policy) and switched off in the app's options; setup once *required* it, per [Atlassian's own bug report](https://jira.atlassian.com/browse/SRCTREEWIN-10821).
+- **TortoiseGit** — ["developed under the GPL"](https://tortoisegit.org/about/), specifically [GPLv2 in the source tree](https://github.com/TortoiseGit/TortoiseGit/blob/master/LICENSE). Windows only, needs a command-line git, and ["Windows 10 version 1607 or newer is required"](https://tortoisegit.org/support/faq/). It ["includes a crash reporter (if not disabled on installation), which automatically uploads crash dumps to drdump.com"](https://tortoisegit.org/support/).
+- **platypusgit** — [GPL-3.0](./LICENSE). No analytics dependency in `package.json` or `src-tauri/Cargo.toml`, and no analytics SDK in `src/` or `src-tauri/`. Nothing to sign in to: the only credential prompts are git's own, and the optional pull-request integration uses a token you paste yourself, kept by your git credential helper (`src-tauri/src/forge/`). The only outbound traffic is your git remotes, the update check, and forge APIs you configured. [#226](https://github.com/jonassaa/platypusgit/issues/226) adds a guard test so this cannot regress quietly.
+
+</details>
+
+**Where we are behind.** We are 0.0.x and the youngest tool on this list:
+installers that warn on first launch, manual updates on Windows and Linux, and
+changed images shown as "binary" rather than a preview — the full list is under
+[Status](#status). Two of the gaps are deliberate rather than unfinished: no
+Mercurial, and no Finder/Explorer shell integration, which is the thing
+TortoiseGit exists for.
+
 ## Features
 
 - **Start anywhere** — open a repository, clone one (submodules included, with progress), or init a new one, and keep the ones you use in the recent list.
@@ -132,7 +169,8 @@ is implemented, not a roadmap). Known gaps, stated plainly:
 
 - macOS builds are ad-hoc signed and not notarized; the Windows `.msi` is not code-signed.
 - No `winget`/`scoop`/apt repository yet, so on Windows and Linux install and update are a manual download ([#187](https://github.com/jonassaa/platypusgit/issues/187)).
-- Standalone GUI only. Shell integration — Finder/Explorer icon overlays and context menus — is out of scope.
+- Changed images are reported as binary rather than previewed side by side ([#224](https://github.com/jonassaa/platypusgit/issues/224)).
+- Standalone GUI only. Shell integration — Finder/Explorer icon overlays and context menus — is out of scope. So is Mercurial.
 
 Found a bug or want a feature? [Open an issue](https://github.com/jonassaa/platypusgit/issues).
 
