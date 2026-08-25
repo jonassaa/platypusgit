@@ -1,47 +1,92 @@
+<div align="center">
+
+<img src="src-tauri/icons/icon.png" alt="platypusgit logo" width="96" height="96">
+
 # platypusgit
 
-A cross-platform, developer-focused git desktop app. Tauri 2 + React + TypeScript.
-A dev-first alternative to TortoiseGit with "extreme usability" as the north star.
+**A fast, keyboard-driven git desktop app for developers.**<br>
+Free and open source. No account, no telemetry. macOS, Windows, Linux.
 
+[![Release](https://img.shields.io/github/v/release/jonassaa/platypusgit?label=release&color=3E9B91)](https://github.com/jonassaa/platypusgit/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-3E9B91)](#install)
+[![tests](https://github.com/jonassaa/platypusgit/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/jonassaa/platypusgit/actions/workflows/tests.yml)
 
-> **Status: active development.** Most core git operations are implemented
-> end-to-end (staging, hunks, commit, diff, blame, branches, tags, history,
-> stash, conflict resolution, interactive rebase, remotes, fetch/pull/push,
-> reflog). Standalone GUI only — shell integration (Finder/Explorer overlays)
-> is out of scope.
+[**Download**](https://www.platypusgit.com/download/) ·
+[Website](https://www.platypusgit.com) ·
+[Features](https://www.platypusgit.com/features/) ·
+[Changelog](https://www.platypusgit.com/changelog/)
+
+</div>
+
+![The platypusgit history view: a commit graph beside a table of commits with their refs, and below it the selected commit's message, the file it changed, and that file's diff with syntax highlighting and a minimap.](site/screenshots/history-dark.png)
+
+## Install
+
+**macOS** — Homebrew is the smoothest route; it installs the [`pgit`](#the-pgit-command) command with the app and owns updates.
+
+```bash
+brew install --cask jonassaa/platypusgit/platypusgit   # install
+brew update && brew upgrade --cask platypusgit         # update
+```
+
+The app is ad-hoc signed but not notarized. The cask clears the macOS Gatekeeper
+quarantine flag on install, so it launches with no "unidentified developer"
+prompt. No Homebrew? Take the `.dmg` below — a drag-install needs the quarantine
+flag cleared by hand.
+
+**Windows** — [`PlatypusGit_x64.msi`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_x64.msi). Installs `pgit` and puts it on your PATH. Not code-signed, so SmartScreen will warn on first run.
+
+**Linux** — needs `webkit2gtk 4.1`. The package ships `/usr/bin/pgit`; the AppImage installs nothing.
+
+```bash
+sudo apt install ./PlatypusGit_amd64.deb
+```
+
+[`.deb`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_amd64.deb) ·
+[`.AppImage`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_amd64.AppImage) ·
+[`.dmg`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_universal.dmg) ·
+[`.msi`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_x64.msi) ·
+[all releases](https://github.com/jonassaa/platypusgit/releases)
+
+Every route, per platform, with the Gatekeeper and update notes spelled out:
+[platypusgit.com/download](https://www.platypusgit.com/download/).
+
+## Why another git GUI
+
+- **Free, all of it.** GPL-3.0, no license fee, no per-seat pricing, no "pro" tier gating rebase or conflict resolution.
+- **No account, no telemetry.** Nothing to sign in to and no analytics SDK anywhere in the tree. Your repositories and history never leave your machine. Forge tokens for the optional pull-request integration are yours, supplied by you and stored by your own git credential helper.
+- **Native, not a bundled browser.** A small Tauri binary with real OS windows on all three platforms.
+- **Keyboard-first and dense.** A Rider-style default keymap, a command palette, type-to-jump lists, hunk navigation and staging without touching the mouse — a dev-first TortoiseGit alternative that assumes you know git.
 
 ## Features
 
-- **Staging & commit** — stage/unstage/discard files and individual hunks, commit with amend + author override
-- **Diff & viewing** — worktree/index/HEAD diffs, commit-to-commit diffs, blame, repo browser
-- **Branches & tags** — list/create/checkout/rename/delete branches, lightweight + annotated tags
-- **History** — commit graph, file history, reflog viewer, detached-HEAD checkout
-- **History manipulation** — reset (soft/mixed/hard), cherry-pick, revert
-- **Stash** — save/apply/pop/drop, stash-to-branch
-- **Conflict resolution** — 3-way sides, accept ours/theirs, external mergetool, continue/abort
-- **Interactive rebase** — pick/reword/edit/squash/fixup/drop, continue/abort, base picker
-- **Remotes & network** — add/remove/rename/prune remotes, fetch/pull/push (with-lease/force), merge
-- **CLI launch** — `pgit` shim opens the app on a repo/screen from the terminal, single-instance forwarding to a running window
+- **Start anywhere** — open a repository, clone one (submodules included, with progress), or init a new one, and keep the ones you use in the recent list.
+- **Staging that goes down to the line** — stage, unstage or discard whole files, individual hunks, or single lines; drag files between Changes and Staged; commit with amend and author override.
+- **Diffs built for reading** — whole-file diffs with no `@@` banners and a scrubable minimap, unified or side-by-side, syntax highlighting and word-level intra-line marks, configurable context, commit-to-commit and range diffs, branch compare, blame, and a file browser at any revision.
+- **Branches, tags and history** — full ref management, merge or rebase from the branch picker, lightweight/annotated/signed tags, a commit graph with ref-scoped log, search by message, author, SHA, date or path, per-file history and a reflog viewer.
+- **Rewriting, safely** — interactive rebase (pick/reword/edit/squash/fixup/drop, drag to reorder, resumable after quitting the app), reset, cherry-pick, revert, and bisect with git's own progress estimate.
+- **Conflicts in one place** — 3-way sides, a dedicated ours · result · theirs resolver window, accept ours/theirs, external mergetool, and an operation bar that says what is in progress.
+- **Stash, including partial** — save/apply/pop/drop, stash only the paths you selected, rename, compare, stash to a new branch.
+- **Remotes with working auth** — add/remove/rename/prune, fetch/fetch-all/pull, push with-lease or force; every network op prompts for credentials and retries, tag pushes and branch deletes included.
+- **Pull requests without the browser** — GitHub and GitLab, self-hosted included: list open requests, read the CI summary, check one out (forks too), or open one from the current branch.
+- **The repositories inside your repository** — submodule and linked-worktree screens, and a git-LFS panel with pointer-aware diffs.
+- **Several repos, one window** — multi-repo tabs, each with its own screen and badges, plus resizable panes and a `?` cheat sheet.
 
-## CLI
+The exhaustive list — every keybinding and option — lives at
+[platypusgit.com/features](https://www.platypusgit.com/features/).
 
-Install the `pgit` shim once (Settings → Command line → Install), or link it
-manually:
+## The `pgit` command
 
-```bash
-sudo ln -sf <app-binary> /usr/local/bin/pgit   # macOS
-ln -sf <app-binary> ~/.local/bin/pgit          # Linux
-```
-
-(Windows: shim install isn't supported yet.)
+`pgit` opens the app on a repository from the terminal and hands the prompt
+straight back.
 
 ```bash
 pgit                    # plain launch — last persisted repo/screen
-pgit .                  # open repo containing cwd
-pgit ~/dev/foo          # open repo containing that path
-pgit commit             # open cwd repo, land on Commit panel
-pgit log src/           # open repo containing src/, land on History
+pgit .                  # open the repo containing cwd
+pgit ~/dev/foo          # open the repo containing that path
+pgit commit             # open the cwd repo, land on the Commit panel
+pgit log src/           # open the repo containing src/, land on History
 pgit --help             # print usage, no window
 ```
 
@@ -51,90 +96,69 @@ pgit --help             # print usage, no window
 | `log`, `history` | History |
 | `branches` | Branches |
 
-A bare path (no recognized subcommand) just opens that repo, keeping the
-current screen. If the app is already running, a second `pgit …` invocation
-doesn't spawn another instance — it forwards the request to the running
-window, focuses it, and navigates there.
+A bare path with no recognized subcommand opens that repository and keeps the
+current screen. If the app is already running, a second `pgit …` doesn't spawn
+another instance — it forwards the request to the running window, focuses it,
+and navigates there.
 
-## Install
-
-### macOS (Homebrew)
+**Most installs already have it.** The Homebrew cask, the `.deb` and the `.msi`
+install `pgit` alongside the app and remove it on uninstall. Only the macOS
+`.dmg` and the Linux AppImage run no install code, so those two need
+**Settings → Command line → Install** in the app, or:
 
 ```bash
-brew install --cask jonassaa/platypusgit/platypusgit
+curl -fsSL https://www.platypusgit.com/install-pgit.sh | sh    # macOS .dmg / Linux AppImage
+irm https://www.platypusgit.com/install-pgit.ps1 | iex         # Windows, outside the .msi
 ```
 
-The app is ad-hoc signed but not notarized. The cask clears the macOS
-Gatekeeper quarantine flag on install, so it launches with no "unidentified
-developer" prompt. Update with `brew upgrade --cask --greedy platypusgit`.
+Both scripts are meant to be read before they are run — they are a build-time
+copy of [`scripts/install-pgit.sh`](./scripts/install-pgit.sh) and
+[`.ps1`](./scripts/install-pgit.ps1), and both take `--dry-run`.
 
-### Other platforms
+## Status
 
-Grab the latest `.msi` (Windows), `.deb` / `.AppImage` (Linux) from
-[Releases](https://github.com/jonassaa/platypusgit/releases), or build from
-source (see below).
+**Active development, versioned 0.0.x** — expect frequent releases and rough
+edges. Most core git operations work end to end (the feature list above is what
+is implemented, not a roadmap). Known gaps, stated plainly:
+
+- macOS builds are ad-hoc signed and not notarized; the Windows `.msi` is not code-signed.
+- No `winget`/`scoop`/apt repository yet, so on Windows and Linux install and update are a manual download ([#187](https://github.com/jonassaa/platypusgit/issues/187)).
+- Standalone GUI only. Shell integration — Finder/Explorer icon overlays and context menus — is out of scope.
+
+Found a bug or want a feature? [Open an issue](https://github.com/jonassaa/platypusgit/issues).
 
 ## Development
 
-### Prerequisites
-
-- **Node 22+**
-- **pnpm** — install via `curl -fsSL https://get.pnpm.io/install.sh | sh -`
-- **Rust stable** — install via [rustup](https://rustup.rs/)
-- Platform build tools:
-  - **macOS:** Xcode Command Line Tools (`xcode-select --install`)
-  - **Linux:** `libwebkit2gtk-4.1-dev`, `build-essential`, `libssl-dev` (see [Tauri prerequisites](https://tauri.app/start/prerequisites/))
-  - **Windows:** WebView2 (shipped with Windows 11), MSVC Build Tools
-
-### First-time setup
-
 ```bash
 pnpm install
+pnpm tauri dev     # first run compiles the whole Rust tree: 2-5 min. Reruns ~10s.
 ```
 
-### Run the app
+Needs Node 22+, pnpm and Rust stable, plus the platform build tools listed in
+[`CONTRIBUTING.md`](./CONTRIBUTING.md#prerequisites).
 
 ```bash
-pnpm tauri dev
+pnpm tauri build --no-sign     # .dmg / .msi / .deb / .AppImage in src-tauri/target/release/bundle/
 ```
 
-First launch compiles the full Rust dependency tree — expect 2–5 minutes. Subsequent runs start in ~10 seconds.
+`--no-sign` is not optional locally: the Tauri config carries an updater public
+key, and a build that produces updater artifacts without the matching private
+key (`TAURI_SIGNING_PRIVATE_KEY`) fails hard.
 
-### Check everything compiles without launching
-
-```bash
-pnpm tsc --noEmit                                         # TypeScript
-cargo check --manifest-path src-tauri/Cargo.toml          # Rust
-pnpm vite build                                           # Frontend bundle
-```
-
-### Run tests
-
-```bash
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-### Production bundles
-
-```bash
-pnpm tauri build
-```
-
-Produces platform-native installers in `src-tauri/target/release/bundle/`:
-- macOS: `.dmg`
-- Windows: `.msi`
-- Linux: `.deb` and `.AppImage`
-
-## Project layout
-
-See [`CLAUDE.md`](./CLAUDE.md) for architecture, conventions, and the recipe for adding a new git operation. Design and implementation docs live under `docs/superpowers/`.
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) owns the full setup, the test commands and
+the PR workflow. The architecture tour for humans is in
+[`docs/dev/`](./docs/dev/) — [`architecture.md`](./docs/dev/architecture.md)
+(annotated source trees), plus `frontend.md`, `backend.md`, `testing.md` and
+`distribution.md`. Design specs and implementation plans live under
+[`docs/superpowers/`](./docs/superpowers/).
 
 ## Contributing
 
-Contributions welcome! See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup, the
-test layers, commit conventions, and the PR workflow. Please also read the
-[Code of Conduct](./CODE_OF_CONDUCT.md).
+Contributions welcome — including documentation and triage. Start with
+[`CONTRIBUTING.md`](./CONTRIBUTING.md), pick up a
+[good first issue](https://github.com/jonassaa/platypusgit/labels/good%20first%20issue),
+and please read the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## License
 
-Licensed under the [GNU General Public License v3.0](./LICENSE).
+[GNU General Public License v3.0](./LICENSE).
