@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import React from "react";
 import {
   PGActivityBar,
@@ -74,6 +75,7 @@ import {
   isStaged,
   isUnstaged,
   totalAheadBehind,
+  windowTitle,
 } from "@/lib/derive";
 
 export type ScreenId =
@@ -162,8 +164,19 @@ export function AppShell() {
   usePreventBrowserContextMenu();
   useCliLaunch();
   const repo = useRepoStore((s) => s.current);
+  const branches = useRepoStore((s) => s.branches);
   const error = useRepoStore((s) => s.error);
   const clearError = useRepoStore((s) => s.clearError);
+
+  // Keep the OS window title naming the active repository and branch (#217):
+  // window switchers, the dock/taskbar and Mission Control otherwise show
+  // identical "PlatypusGit" entries for every open repo. `windowTitle` already
+  // covers detached HEAD (short OID) and unborn (repo name only); this effect
+  // just follows whatever it derives across tab switches, checkouts and close.
+  const title = windowTitle(repo?.path ?? null, branches, repo?.head ?? null);
+  React.useEffect(() => {
+    void getCurrentWindow().setTitle(title);
+  }, [title]);
 
   // Launch always lands on History — it is the screen that answers "what is
   // going on in this repo", so it is worth more than restoring wherever the

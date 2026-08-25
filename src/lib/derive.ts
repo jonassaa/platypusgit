@@ -110,6 +110,30 @@ export function currentBranch(branches: BranchInfo[]): BranchInfo | null {
   return branches.find((b) => b.isHead) ?? null;
 }
 
+/**
+ * The main window's title for the active repository: `name — branch —
+ * PlatypusGit`, so window switchers (which truncate from the right) show the
+ * part that distinguishes windows first. `null` `repoPath` (no repo open, or
+ * the Welcome screen) is just `PlatypusGit`.
+ *
+ * Detached HEAD has no entry in `branches` (nothing there has `isHead`), so
+ * the branch segment falls back to `headOid` — the short OID `RepoHandle.head`
+ * already carries in that case (see `BranchChip`, which reads the same field
+ * the same way). Unborn (a fresh `git init`, no commits) has neither a branch
+ * nor a `headOid`, so the branch segment is omitted rather than shown empty.
+ */
+export function windowTitle(
+  repoPath: string | null,
+  branches: BranchInfo[],
+  headOid: string | null,
+): string {
+  if (!repoPath) return "PlatypusGit";
+  const repoName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
+  const head = currentBranch(branches);
+  const branch = head ? head.name : headOid ? shortSha(headOid) : null;
+  return branch ? `${repoName} — ${branch} — PlatypusGit` : `${repoName} — PlatypusGit`;
+}
+
 export function localBranches(branches: BranchInfo[]): BranchInfo[] {
   return branches.filter((b) => !b.isRemote);
 }
