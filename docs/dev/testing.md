@@ -160,6 +160,17 @@ Rules that keep the gates honest:
 - **`test/nativeSelect.test.ts`** is a SOURCE invariant: no `<select>`/`<option>`
   in shipped `src/` (issue 146) — the failure is invisible on macOS/Windows.
   Comments stripped first; test files out of scope.
+- **`test/comparison.test.ts`** keeps the competitor comparison (#210) from
+  existing twice. `site/src/data/comparison.json` is the source of truth; the
+  site renders it through `comparison.ts`, and the test parses the README's
+  "How it compares" table and compares it cell by cell, plus the checked-on
+  date, the runtime note, and every vendor source URL. It strips markdown
+  emphasis and links and collapses whitespace, so the README stays free to bold
+  a cell and wrap its prose. It reads the JSON with `node:fs` rather than
+  importing `comparison.ts` — that module sits under `site/`, whose tsconfig
+  extends Astro's, and the root package has no astro to resolve it with. What it
+  cannot check is whether the claims are still TRUE: that is what the date is
+  for, so re-read the vendors' pages before moving `checkedOn`.
 - **`test/e2eSelectors.test.ts`** guards the `[data-testid="X"]*=text` trap:
   WebdriverIO compiles it to a SUBSTRING attribute test plus an innermost-match
   condition, so any other testid containing `X` makes the outer element match

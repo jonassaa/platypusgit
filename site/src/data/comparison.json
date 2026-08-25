@@ -1,0 +1,104 @@
+{
+  "checkedOn": "25 August 2026",
+  "runtimeNote": "GitKraken ships as an Electron app. Fork, Sourcetree and TortoiseGit are native. platypusgit is a Tauri binary that uses the OS webview rather than bundling a browser of its own.",
+  "rows": [
+    {
+      "name": "platypusgit",
+      "us": true,
+      "price": "Free",
+      "account": "None",
+      "telemetry": "None",
+      "platforms": "macOS · Windows · Linux",
+      "licence": "GPL-3.0"
+    },
+    {
+      "name": "GitKraken Desktop",
+      "href": "https://www.gitkraken.com/pricing",
+      "price": "Free for local and public repos — a paid seat for private ones",
+      "account": "GitKraken account",
+      "telemetry": "Usage analytics plus the folder and file names where you keep your code",
+      "platforms": "macOS · Windows · Linux",
+      "licence": "Proprietary"
+    },
+    {
+      "name": "Fork",
+      "href": "https://fork.dev/",
+      "price": "$59.99 once, up to 3 machines",
+      "account": "None",
+      "telemetry": "None — crash reports only",
+      "platforms": "macOS · Windows",
+      "licence": "Proprietary"
+    },
+    {
+      "name": "Sourcetree",
+      "href": "https://www.sourcetreeapp.com/",
+      "price": "Free",
+      "account": "Atlassian account required",
+      "telemetry": "Anonymous usage data, opt-out",
+      "platforms": "macOS · Windows",
+      "licence": "Proprietary"
+    },
+    {
+      "name": "TortoiseGit",
+      "href": "https://tortoisegit.org/",
+      "price": "Free",
+      "account": "None",
+      "telemetry": "Crash dumps, unless disabled at install",
+      "platforms": "Windows only",
+      "licence": "GPL-2.0"
+    }
+  ],
+  "sources": [
+    {
+      "vendor": "GitKraken Desktop",
+      "links": [
+        { "label": "pricing", "url": "https://www.gitkraken.com/pricing" },
+        { "label": "free with local and public repos", "url": "https://www.gitkraken.com/git-client" },
+        {
+          "label": "private repos inaccessible on the free plan",
+          "url": "https://help.gitkraken.com/gitkraken-desktop/gitkraken-account-site-faq/"
+        },
+        { "label": "the GitKraken account", "url": "https://help.gitkraken.com/gk-dev/gk-dev-account/" },
+        { "label": "privacy policy", "url": "https://www.gitkraken.com/privacy" },
+        { "label": "built on Electron", "url": "https://www.gitkraken.com/blog/nodegit-libgit2" }
+      ]
+    },
+    {
+      "vendor": "Fork",
+      "links": [
+        { "label": "price", "url": "https://fork.dev/" },
+        { "label": "licence — three machines", "url": "https://fork.dev/license" },
+        { "label": "no telemetry (2023)", "url": "https://github.com/fork-dev/Tracker/issues/1910" },
+        {
+          "label": "no telemetry, so no privacy policy (2024)",
+          "url": "https://github.com/fork-dev/Tracker/issues/2046"
+        },
+        { "label": "Linux still unsupported", "url": "https://github.com/fork-dev/Tracker/issues/153" }
+      ]
+    },
+    {
+      "vendor": "Sourcetree",
+      "links": [
+        { "label": "free, Windows and Mac", "url": "https://www.sourcetreeapp.com/" },
+        {
+          "label": "\"You need an Atlassian account to use Sourcetree\"",
+          "url": "https://confluence.atlassian.com/get-started-with-sourcetree/install-sourcetree-847359094.html"
+        },
+        { "label": "Atlassian's privacy policy", "url": "https://www.atlassian.com/legal/privacy-policy" },
+        { "label": "usage statistics in setup", "url": "https://jira.atlassian.com/browse/SRCTREEWIN-10821" }
+      ]
+    },
+    {
+      "vendor": "TortoiseGit",
+      "links": [
+        { "label": "developed under the GPL", "url": "https://tortoisegit.org/about/" },
+        {
+          "label": "GPLv2 in the source tree",
+          "url": "https://github.com/TortoiseGit/TortoiseGit/blob/master/LICENSE"
+        },
+        { "label": "Windows 10 1607+, needs command-line git", "url": "https://tortoisegit.org/support/faq/" },
+        { "label": "crash dumps to drdump.com", "url": "https://tortoisegit.org/support/" }
+      ]
+    }
+  ]
+}
