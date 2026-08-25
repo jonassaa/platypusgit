@@ -144,6 +144,75 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.0.17',
+    date: '2026-08-25',
+    status: 'feature & fixes',
+    summary:
+      'A diff you can select and copy — as source, not as a column of line numbers — with `Mod+C` and a right-click menu that reach past the rows the window happens to be rendering. `F7` now centres the change it lands on whatever its size, and the app icon lost the dark box it was sitting in.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Diff text can be selected and copied',
+            detail:
+              '`body` is `user-select: none` for a native desktop feel and no diff surface had opted back in, so the code you were reading could not be selected at all. Every row\'s code cell is selectable now, on all four diff surfaces, while the line-number cells and the `+`/`−` marker stay unselectable: a copied block pastes as source rather than as text you have to clean up by hand.',
+          },
+          {
+            title: 'Copy the whole diff, not only the rows on screen',
+            detail:
+              'The diff surfaces are windowed, so rows outside the viewport are not in the document and a mouse drag stops at the edge of what is rendered. Two paths build their text from the row model instead, which has no such ceiling: `Mod+C` copies the line selection, and a right-click menu offers Copy, Copy N selected lines and Copy file diff as text on every surface. `Mod+C` still means "copy" — it declines whenever a text selection exists and whenever nothing is selected, which leaves the chord unhandled so the webview\'s own copy runs.',
+          },
+          {
+            title: 'A transparent, full-bleed app icon',
+            detail:
+              'The shipped icons were a dark `#1c2020` square with the platypus head at about 42% of the canvas, so in the Dock and the taskbar the mark read as a small face inside a box. The plate is gone and the head is cropped to a 5.6% safe margin — about 89% of the canvas, sitting on whatever the OS paints behind it, legible on light and dark alike since the eyes live inside the teal head rather than on the backdrop. The whole bundled set (`icns`, `ico`, `png`, and the Windows Store squares) is regenerated from one transparent master.',
+          },
+        ],
+      },
+      {
+        title: 'Improvements',
+        items: [
+          {
+            title: '`F7` centres the change instead of parking it near the top',
+            detail:
+              'The four-row lead-in shipped in 0.0.16 answered "one keypress must mean one thing" with a constant: a two-line change and a forty-line one both landed with their first row four rows down, so the big one ran off the bottom with nothing following it on screen. `F7`, `⇧F7` and the auto-open now put the middle of a hunk\'s changed extent — first changed row through last, any context between two runs of changes included — on the middle of the viewport, so context stays on both sides of the change at every size. A change TALLER than the viewport cannot be centred without hiding its own start, so it degrades to the old lead-in above its top row. The target snaps to a row boundary either way, so neither edge of the viewport shows a half-sliced line.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: '"Copy file diff as text" printed the `@@` range twice on a commit diff',
+            detail:
+              'It mapped over every line including libgit2\'s own hunk header, which came out space-prefixed directly under the real one. The shared builder drops it through the same content test the row model uses, so the line numbering cannot drift from what is on screen either.',
+          },
+          {
+            title: 'Dragging a file row across the diff does not smear a selection over the code',
+            detail:
+              'Opting text back in defeats a body-level `user-select: none`, because a class beats an inherited value — and that inherited value was exactly what kept a row drag from selecting everything it passed over. The drag controller marks the body for the drag\'s duration now, which suppresses the opted-in cells while it lasts.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'A mouse selection still stops at the edge of the rendered rows',
+            detail:
+              'Windowing is what keeps a 10,000-line diff scrolling at all, and a selection cannot extend into rows the document does not hold. Dragging to the bottom of the pane selects what is rendered, not the rest of the file — `Mod+C` on a line selection, or "Copy file diff as text" from the right-click menu, is the path that reaches the whole thing.',
+          },
+          {
+            title: 'A change near either end of a file cannot land centred',
+            detail:
+              'A hunk within half a viewport of the top or the bottom of the file clamps against that end, which is the price of a scroll range that stays honest. `F7` also still scrolls when the next hunk was already on screen: every change landing in the same place is the point of it.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.16',
     date: '2026-08-21',
     status: 'feature & fixes',
