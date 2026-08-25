@@ -27,6 +27,7 @@ import type {
   BranchInfo,
   CommitInfo,
   FileStatus,
+  HeadInfo,
   LogFilter,
   RebaseStatus,
   RemoteInfo,
@@ -64,6 +65,12 @@ export const DEFAULT_BISECT_STATUS: BisectStatus = {
 /** Every field of `useRepoStore` that belongs to one repository. */
 export interface RepoSlice {
   current: RepoHandle | null;
+  /**
+   * HEAD's current branch/oid, re-fetched on every `refreshAll` (#217) —
+   * unlike `current.head`, which `open` sets once and does not follow a
+   * checkout within the session.
+   */
+  headInfo: HeadInfo | null;
   status: FileStatus[];
   /** Every (non-ignored) file in the worktree, populated lazily by listAllFiles. */
   allFiles: FileStatus[];
@@ -134,6 +141,7 @@ export interface RepoSlice {
 export function emptySlice(): RepoSlice {
   return {
     current: null,
+    headInfo: null,
     status: [],
     allFiles: [],
     branches: [],

@@ -21,7 +21,7 @@ use types::{
     AheadBehind,
     BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
     DiffKind, FileContent,
-    FileDiff, FileStatus, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+    FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
     RemoteInfo,
     RepoHandle,
     RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, SubmoduleInfo, TagInfo, TagTarget,
@@ -511,6 +511,9 @@ pub trait GitBackend: Send + Sync {
     // === conflict resolution ===
     /// Return the current operation state of the repo (Merge, CherryPick, etc.).
     fn repo_state(&self, repo_id: &RepoId) -> AppResult<RepoState>;
+    /// Return HEAD's current branch/oid, refreshed on demand rather than only
+    /// at `open` (#217).
+    fn head_info(&self, repo_id: &RepoId) -> AppResult<HeadInfo>;
     /// Read the three index stages for a conflicted file (base/ours/theirs).
     fn conflict_sides(&self, repo_id: &RepoId, path: &Path) -> AppResult<ConflictSides>;
     /// Write stage 2 (ours) to the worktree file and stage it.

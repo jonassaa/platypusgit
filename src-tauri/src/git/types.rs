@@ -417,6 +417,18 @@ pub enum RepoState {
     ApplyMailboxOrRebase,
 }
 
+/// Current HEAD identity, refreshed on every `refreshAll` (#217) so the
+/// window title can follow checkouts rather than the one-shot value `open`
+/// returns on `RepoHandle`. Same branch/oid split `WorktreeInfo` already
+/// uses: `branch` is `None` on a detached HEAD, `head_oid` is `None` only on
+/// an unborn branch (a fresh `git init` with no commits).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeadInfo {
+    pub branch: Option<String>,
+    pub head_oid: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlameLine {
