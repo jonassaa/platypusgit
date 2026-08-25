@@ -37,6 +37,7 @@ import { useTabsStore } from "@/features/repo/useTabsStore";
 import { RepoTabs } from "@/features/repo/RepoTabs";
 import { headUpstream, openRepoDialog } from "@/features/repo/ops";
 import { windowTitleFor } from "@/features/repo/windowTitle";
+import { indexOfTab, labelTabs } from "@/features/repo/tabs";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useCliLaunch } from "@/features/cli/useCliLaunch";
 import {
@@ -297,17 +298,25 @@ export function AppShell() {
 
   // Name the active repository and its checked-out branch in the OS window
   // title (#217) — otherwise every window/tab reads as the identical
-  // "PlatypusGit" in the window switcher, dock, and Mission Control. `tabs`
-  // (for the disambiguated label) and `headInfo` (which follows checkouts,
-  // unlike `repo.head`) are both already live state; this effect only
-  // reacts to them, the same shape `MergeWindow.tsx` uses for its own title.
-  const tabs = useTabsStore((s) => s.tabs);
+  // "PlatypusGit" in the window switcher, dock, and Mission Control.
+  // `headInfo` follows checkouts, unlike `repo.head`; the same shape
+  // `MergeWindow.tsx` uses for its own title.
+  //
+  // The label is derived INSIDE the selector so what this component
+  // subscribes to is a string, which zustand compares by value. Selecting
+  // `s.tabs` instead would re-render the whole shell (titlebar, RepoTabs,
+  // the dialogs, AppBody, CommandPalette) on every write to any tab —
+  // `refreshBadges()` patches one tab per inactive repo on each window
+  // focus, so alt-tabbing back would cost a full-tree render per open tab.
+  // Same lesson as the `useRepoStore()` note further down this file.
+  const repoLabel = useTabsStore((s) => {
+    const i = indexOfTab(s.tabs, s.activePath);
+    return i < 0 ? null : labelTabs(s.tabs)[i] ?? null;
+  });
   const headInfo = useRepoStore((s) => s.headInfo);
   React.useEffect(() => {
-    const index = tabs.findIndex((t) => t.path === activePath);
-    const repoLabel = index >= 0 ? useTabsStore.getState().labels()[index] : null;
     void getCurrentWindow().setTitle(windowTitleFor(repoLabel, headInfo));
-  }, [tabs, activePath, headInfo]);
+  }, [repoLabel, headInfo]);
 
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
