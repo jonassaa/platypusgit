@@ -68,8 +68,8 @@ export function useHunkNav(opts: {
   /** Cursor resets when this changes (the viewed file). */
   resetKey: unknown;
   /**
-   * Scroll a hunk into view BY OFFSET — build it from `hunkAnchorRows` +
-   * `scrollTopForRow`. Windowed panes MUST supply this.
+   * Scroll a hunk into view BY OFFSET — build it from `hunkExtentRows` +
+   * `scrollTopForHunk`. Windowed panes MUST supply this.
    *
    * Return `false` when the hunk could not be addressed — no scroll container, no
    * anchor row, or a write the container was too short to accept. The auto-open

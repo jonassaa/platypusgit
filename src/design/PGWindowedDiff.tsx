@@ -134,20 +134,27 @@ export function PGWindowedDiff({
             }
           />
         );
-        if (!row.hunkAnchor) return line;
+        if (!row.hunkAnchor && !row.hunkLast) return line;
         // The anchor row is the hunk's addressable host: F7's cursor lands here
-        // and the action cluster hangs off it. `position: relative` only — the
-        // wrapper must not add height, or the window's arithmetic goes out of
-        // step with what is rendered.
+        // and the action cluster hangs off it. The LAST changed row is the far
+        // end of the extent F7 centres, and gets a marker of its own so wrap
+        // mode — which has no usable `heights` — can measure that extent from
+        // the DOM. One row carries both markers when the hunk changes a single
+        // line, which is why this is one branch and not two. `position:
+        // relative` only — the wrapper must not add height, or the window's
+        // arithmetic goes out of step with what is rendered.
         return (
           <div
             key={`a${start + i}`}
-            data-hunk-index={row.hunkIndex}
-            data-hunk-active={activeHunk === row.hunkIndex ? "" : undefined}
+            data-hunk-index={row.hunkAnchor ? row.hunkIndex : undefined}
+            data-hunk-active={
+              row.hunkAnchor && activeHunk === row.hunkIndex ? "" : undefined
+            }
+            data-hunk-last-index={row.hunkLast ? row.hunkIndex : undefined}
             style={{ position: "relative" }}
           >
             {line}
-            {actions && (actions.onStage || actions.onDiscard) && (
+            {row.hunkAnchor && actions && (actions.onStage || actions.onDiscard) && (
               <PGHunkActions
                 {...actions}
                 selCount={sel.length}

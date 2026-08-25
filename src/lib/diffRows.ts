@@ -35,6 +35,16 @@ export type DiffRow =
        * other, and this flag reaches no backend op.
        */
       hunkAnchor?: true;
+      /**
+       * This row is its hunk's LAST changed (`+`/`-`) row — the other end of the
+       * extent F7 centres. Exactly one row per hunk carries it, and it is the
+       * ANCHOR ITSELF for a hunk that changes a single line.
+       *
+       * Hosts `data-hunk-last-index`, which is the only way `DiffViewer`'s wrap
+       * mode can measure the extent: `heights` describes nothing there, and every
+       * other row in the hunk is anonymous in the DOM.
+       */
+      hunkLast?: true;
     }
   /**
    * An unchanged line from OUTSIDE every hunk, synthesized in whole-file mode
@@ -273,12 +283,12 @@ export interface FlattenDiffOptions {
  */
 const baseLinesCache = new WeakMap<
   FileDiff["hunks"],
-  { lines: DiffLineData[]; anchor: number }[]
+  { lines: DiffLineData[]; anchor: number; last: number }[]
 >();
 
 function baseHunkLines(
   hunks: FileDiff["hunks"],
-): { lines: DiffLineData[]; anchor: number }[] {
+): { lines: DiffLineData[]; anchor: number; last: number }[] {
   const hit = baseLinesCache.get(hunks);
   if (hit) return hit;
   const computed = hunks.map((h) => {
@@ -292,12 +302,29 @@ function baseHunkLines(
     );
     // The hunk's anchor is its first CHANGED row — F7 means "go to the next
     // change", and the Stage/Discard cluster belongs at the change block's top.
+    // `last` is its final changed row; the two bracket the extent F7 centres.
+    //
+    // The span between them can hold CONTEXT: git merges change runs less than
+    // 2 x -U apart into one hunk, so a hunk is not necessarily one solid block of
+    // `+`/`-`. Centring the whole bracket is deliberate — F7 addresses a hunk and
+    // Stage/Discard act on all of it — but it does mean the row at the exact
+    // middle is sometimes an unchanged one.
+    //
     // A hunk with no changed row is not something git emits, but a caller can
-    // construct one, so fall back to the first row: exactly one anchor per hunk,
-    // unconditionally, or F7 and the actions lose a reachable host.
-    let anchor = lines.findIndex((l) => l.kind === "add" || l.kind === "rem");
-    if (anchor < 0 && lines.length > 0) anchor = 0;
-    return { lines, anchor };
+    // construct one, so fall back to the first row: exactly one anchor and one
+    // extent end per hunk, unconditionally, or F7 and the actions lose a
+    // reachable host.
+    const isChanged = (l: DiffLineData) => l.kind === "add" || l.kind === "rem";
+    let anchor = lines.findIndex(isChanged);
+    let last = anchor;
+    for (let i = lines.length - 1; i > anchor; i--) {
+      if (isChanged(lines[i])) {
+        last = i;
+        break;
+      }
+    }
+    if (anchor < 0 && lines.length > 0) anchor = last = 0;
+    return { lines, anchor, last };
   });
   baseLinesCache.set(hunks, computed);
   return computed;
@@ -311,7 +338,7 @@ export function flattenDiffRows(
 
   const base = baseHunkLines(hunks);
   const hunkRows = (_h: FileDiff["hunks"][number], hunkIndex: number): DiffRow[] => {
-    const { lines: baseLines, anchor } = base[hunkIndex];
+    const { lines: baseLines, anchor, last } = base[hunkIndex];
     // Syntax is the one per-flatten input, applied over the cached base. Safe to
     // attach AFTER the word spans: withSyntax spreads each line it touches, so
     // spans and changedIndex ride along untouched.
@@ -322,6 +349,7 @@ export function flattenDiffRows(
       line,
       h: rowH,
       ...(i === anchor ? { hunkAnchor: true as const } : {}),
+      ...(i === last ? { hunkLast: true as const } : {}),
     }));
   };
 
@@ -433,19 +461,34 @@ export function flattenDiffRows(
 }
 
 /**
- * Flat row index of each hunk's anchor row, indexed by hunk index; `-1` for a
+ * The two flat row indices bracketing a hunk's CHANGED rows.
+ *
+ * `first` is the ANCHOR row — the one that hosts `data-hunk-index` and the
+ * Stage/Discard cluster — so this subsumes the old anchor-only lookup rather
+ * than sitting beside it.
+ */
+export interface HunkExtent {
+  /** Flat index of the hunk's first changed row; `-1` when it has no rows. */
+  first: number;
+  /** Flat index of its last changed row; equals `first` for a one-line change. */
+  last: number;
+}
+
+/**
+ * Each hunk's extent, indexed by hunk index; `{ first: -1, last: -1 }` for a
  * hunk with no rows at all.
  *
- * The one mapping F7 needs: `useHunkNav` moves a HUNK cursor, and scrolling it
- * into view must go through `scrollTopForRow`, which addresses the flat array.
- * Shared so every diff surface resolves it the same way.
+ * The one mapping F7 needs: `useHunkNav` moves a HUNK cursor, and putting that
+ * hunk on screen goes through `scrollTopForHunk`, which addresses the flat
+ * array. Shared so every diff surface resolves it the same way.
  */
-export function hunkAnchorRows(rows: DiffRow[]): number[] {
-  const out: number[] = [];
+export function hunkExtentRows(rows: DiffRow[]): HunkExtent[] {
+  const out: HunkExtent[] = [];
   rows.forEach((row, i) => {
-    if (row.kind !== "line" || !row.hunkAnchor) return;
-    while (out.length <= row.hunkIndex) out.push(-1);
-    out[row.hunkIndex] = i;
+    if (row.kind !== "line") return;
+    while (out.length <= row.hunkIndex) out.push({ first: -1, last: -1 });
+    if (row.hunkAnchor) out[row.hunkIndex].first = i;
+    if (row.hunkLast) out[row.hunkIndex].last = i;
   });
   return out;
 }
@@ -483,61 +526,112 @@ export function scrollTopForRow(
   return scrollTop;
 }
 
-/** Rows of lead-in `scrollTopForAnchor` keeps above its target. */
+/** Rows of lead-in kept above a change too tall to centre. */
 export const HUNK_LEAD_ROWS = 4;
 
 /**
- * Scroll position that PARKS row `index` a fixed lead below the top of the
- * viewport — F7/⇧F7's landing, and the file auto-open's.
+ * Largest row boundary at or below `y`, or the next one up when that is nearer.
+ *
+ * Every scroll target in a diff has always been an exact `rowOffset`, so rows
+ * render crisp; a true centre lands mid-row and slices the viewport's top and
+ * bottom lines in half. Snapping keeps the pixels clean. Ties go DOWN, so the
+ * answer is stable for a given `y`.
+ */
+function nearestRowBoundary(heights: number[], y: number): number {
+  if (y <= 0) return 0;
+  let acc = 0;
+  for (let i = 0; i < heights.length; i++) {
+    const next = acc + heights[i];
+    if (next > y) return y - acc <= next - y ? acc : next;
+    acc = next;
+  }
+  return acc;
+}
+
+/**
+ * Scroll position that CENTRES a hunk's changed extent in the viewport — F7/⇧F7's
+ * landing, and the file auto-open's.
  *
  * Three scroll semantics now live side by side, and they are not
  * interchangeable:
  *
  * - `scrollTopForRow` REVEALS: the smallest move that brings a row into view,
- *   unchanged when it already is. The line cursor wants exactly that — a cursor
+ *   unchanged when it already is. The LINE cursor wants exactly that — a cursor
  *   stepping one row should scroll one row.
  * - `scrubScrollTop` (`diffMinimap.ts`) POSITIONS a viewport around a row.
- * - this one PARKS: the target always lands in the same physical spot, whether
- *   it was off screen, at the bottom edge, or already comfortably visible. That
- *   unconditional move is the point — under "reveal" semantics F7 walking
- *   forward leaves each change pinned to the BOTTOM edge with no following
- *   context, and the reader's eyes have to hunt for it after every press.
+ * - this one CENTRES: the extent's midpoint lands on the viewport's midpoint,
+ *   whether the change was off screen, at an edge, or already comfortably
+ *   visible. That unconditional move is the point — under reveal semantics F7
+ *   walking forward left each change pinned to the BOTTOM edge with no following
+ *   context, and one keypress meant two different things depending on where the
+ *   previous one had left the pane.
  *
- * The lead is `HUNK_LEAD_ROWS * rowH` PIXELS rather than the height of the four
- * preceding rows: a tall fold separator directly above a hunk would otherwise
- * eat the whole lead and park the change at the top after all.
+ * The extent is the hunk's FIRST changed row through its LAST, any context
+ * between two change runs included (see `baseHunkLines`). NOT the whole hunk:
+ * git's leading and trailing context would drag the midpoint off the change by
+ * however many lines `-U` happened to emit.
  *
- * Two clamps make it total:
+ * A change TALLER than the viewport cannot be centred without hiding its own
+ * start, so it degrades to parking its top `HUNK_LEAD_ROWS` rows below the top
+ * edge — the reader lands at the beginning of the change, with a hint of file
+ * above it, and scrolls down. That branch is the only surviving use of the
+ * constant, and it is deliberately a hard `extentH > viewportH` test. Making the
+ * transition continuous (`min(centre, top - lead)`) is the obvious refactor and
+ * is wrong: the arithmetic makes it start top-parking at
+ * `extentH > viewportH - 2 x lead`, pushing the bottom of an extent off screen
+ * while that extent still fits.
  *
- * - The result stays inside `[0, contentH - viewportH]`. Overshooting the end of
+ * Three details are load-bearing:
+ *
+ * - The lead is `HUNK_LEAD_ROWS * rowH` PIXELS rather than the height of the
+ *   four preceding rows: a tall fold separator directly above a hunk would
+ *   otherwise eat the whole lead and park the change at the top after all. It is
+ *   capped at `viewportH - rowH`, so a pane shorter than the lead degrades to
+ *   "flush with the top", never to "not on screen".
+ * - The result snaps to a row boundary, so neither edge of the viewport shows a
+ *   half-sliced line.
+ * - It is then clamped into `[0, contentH - viewportH]`. Overshooting the end of
  *   the document is not harmless: the DOM clamps the write, and every caller's
  *   `scrollToHunk` reads `scrollTop !== want` as "the reveal did not land",
  *   which costs the file its once-per-file auto-open. `contentH` is the sum of
  *   `heights` — TRUE BY CONSTRUCTION, since `PGWindowedDiff` renders exactly
  *   `topPad + rows + bottomPad` into the scroll container. Putting padding or a
- *   sticky child in there would break this.
- * - The lead itself is capped at `viewportH - rowH`, so a pane shorter than the
- *   lead (a squeezed preview split) cannot park the target off its own bottom
- *   edge. It degrades to "flush with the top", never to "not on screen".
+ *   sticky child in there would break this. The clamp is also why a hunk within
+ *   half a viewport of either END of the file does not land centred: no scroll
+ *   position would put it there, and inventing scroll-past-end space to buy one
+ *   would cost the invariant above. F7 still moves the cursor; the pane simply
+ *   has nowhere left to go, and everything is on screen anyway.
  *
- * An out-of-range index or an unmeasured viewport (`viewportH <= 0`) leaves the
- * scroll position alone, exactly as `scrollTopForRow` does — `diffOpenReady` and
- * the auto-open both lean on that to try again on a later render.
+ * An out-of-range extent or an unmeasured viewport (`viewportH <= 0`, which is
+ * what jsdom and the first paint report) leaves the scroll position alone,
+ * exactly as `scrollTopForRow` does — `diffOpenReady` and the auto-open both
+ * lean on that to try again on a later render.
  */
-export function scrollTopForAnchor(
+export function scrollTopForHunk(
   heights: number[],
-  index: number,
+  extent: HunkExtent,
   o: { scrollTop: number; viewportH: number; rowH: number },
 ): number {
   const { scrollTop, viewportH, rowH } = o;
-  if (index < 0 || index >= heights.length || viewportH <= 0) return scrollTop;
+  const { first, last } = extent;
+  if (first < 0 || last < first || last >= heights.length || viewportH <= 0) {
+    return scrollTop;
+  }
+  const top = rowOffset(heights, first);
+  let extentH = 0;
+  for (let i = first; i <= last; i++) extentH += heights[i];
+
   const lead = Math.min(
     HUNK_LEAD_ROWS * Math.max(0, rowH),
     Math.max(0, viewportH - rowH),
   );
+  const want = extentH > viewportH ? top - lead : top + extentH / 2 - viewportH / 2;
+
   const contentH = heights.reduce((a, h) => a + h, 0);
-  const max = Math.max(0, contentH - viewportH);
-  return Math.min(Math.max(0, rowOffset(heights, index) - lead), max);
+  return Math.min(
+    Math.max(0, nearestRowBoundary(heights, want)),
+    Math.max(0, contentH - viewportH),
+  );
 }
 
 /**

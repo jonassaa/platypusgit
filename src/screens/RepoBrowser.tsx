@@ -57,8 +57,8 @@ import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { useDiffSyntax, useSyntax } from "@/lib/syntax";
 import {
   flattenDiffRows,
-  hunkAnchorRows,
-  scrollTopForAnchor,
+  hunkExtentRows,
+  scrollTopForHunk,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
@@ -697,16 +697,15 @@ export function RepoBrowserScreen() {
   // ── Hunk cursor + hunk-level chords (#157) ───────────────────────────────
   // This pane had no F7 either; the `@@` banner's Stage/Discard was mouse-only.
   // Scroll BY OFFSET — the anchor row is usually unmounted under windowing.
-  const diffAnchorRows = React.useMemo(() => hunkAnchorRows(diffRows), [diffRows]);
+  const diffExtents = React.useMemo(() => hunkExtentRows(diffRows), [diffRows]);
   const scrollToHunk = React.useCallback(
     (hunkIndex: number): boolean => {
       const el = diffScrollRef.current;
-      const rowIndex = diffAnchorRows[hunkIndex];
-      if (!el || rowIndex == null || rowIndex < 0) return false;
+      const extent = diffExtents[hunkIndex];
+      if (!el || extent == null || extent.first < 0) return false;
       // Through the window's own setter — see `useVariableWindow.scrollTo`.
-      // PARKED a fixed lead below the top, never merely revealed: see
-      // `scrollTopForAnchor`.
-      const want = scrollTopForAnchor(diffHeights, rowIndex, {
+      // CENTRED on the change, never merely revealed: see `scrollTopForHunk`.
+      const want = scrollTopForHunk(diffHeights, extent, {
         scrollTop: el.scrollTop,
         viewportH: el.clientHeight,
         rowH: diffRowH,
@@ -717,7 +716,7 @@ export function RepoBrowserScreen() {
       // file having been opened — see `useHunkNav`'s `scrollToHunk`.
       return Math.abs(el.scrollTop - want) <= 1;
     },
-    [diffAnchorRows, diffHeights, diffRowH, scrollDiffTo],
+    [diffExtents, diffHeights, diffRowH, scrollDiffTo],
   );
   const hunkCursor = useHunkNav({
     paneIds: ["repo.tree", "repo.preview"],

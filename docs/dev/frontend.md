@@ -123,22 +123,48 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `scrollTopForRow` REVEALS (smallest move that shows the row, no-op when it is
   already visible) — the LINE cursor's, because a cursor stepping one row should
   scroll one row. `scrubScrollTop` (`lib/diffMinimap.ts`) POSITIONS a viewport
-  around a row. `scrollTopForAnchor` PARKS: the row lands `HUNK_LEAD_ROWS × rowH`
-  px below the top of the viewport, ALWAYS — off screen, at an edge, or already
-  comfortably visible. That is F7/⇧F7's landing and the auto-open's, and the
-  unconditional move is the point: under reveal semantics F7 walking forward
-  pinned every change to the BOTTOM edge with no following context, and one
-  keypress meant two different things depending on where the last one left the
-  pane. Three details are load-bearing: the lead is PIXELS (the height of the
-  four preceding rows would let one tall fold separator eat it); the result is
-  clamped to `[0, sum(heights) − viewportH]`, because overshooting is clamped by
-  the DOM and every `scrollToHunk` reads `scrollTop !== want` as "the reveal did
-  not land", costing the file its auto-open; and the lead itself is capped at
-  `viewportH − rowH` so a short pane degrades to "flush with the top" rather than
-  parking the target off its own bottom edge. `DiffViewer`'s wrap mode measures
-  the mounted row's rect instead (heights describe nothing there) — same rule,
-  different ruler. The merge window's F7 walks conflict regions through
-  CodeMirror and shares none of this.
+  around a row. `scrollTopForHunk` CENTRES: the midpoint of the hunk's changed
+  extent lands on the midpoint of the viewport, ALWAYS — off screen, at an edge,
+  or already comfortably visible. That is F7/⇧F7's landing and the auto-open's,
+  and the unconditional move is the point: under reveal semantics F7 walking
+  forward pinned every change to the BOTTOM edge with no following context, and
+  one keypress meant two different things depending on where the last one left
+  the pane. The visible consequence is that F7 scrolls even when the next hunk
+  was already on screen — accepted, in exchange for every change landing in the
+  same place.
+- **The extent is `hunkExtentRows`: a hunk's FIRST changed row through its
+  LAST**, context between two change runs included (git merges runs less than
+  2 × `-U` apart into one hunk, so an extent is not necessarily solid `+`/`-`).
+  Not the whole hunk — its leading and trailing context would drag the midpoint
+  off the change. `first` is the anchor row, so this subsumed the old
+  `hunkAnchorRows`. Both ends are stamped into the DOM (`data-hunk-index`,
+  `data-hunk-last-index`); one row wears both markers for a one-line change.
+  Five details in `scrollTopForHunk` are load-bearing:
+  - A change TALLER than the viewport cannot be centred without hiding its own
+    start, so it degrades to parking its top `HUNK_LEAD_ROWS × rowH` px down.
+    That is the only surviving use of the constant, and the `extentH >
+    viewportH` test is deliberately a hard branch: the tempting branchless form
+    `min(centre, top − lead)` starts top-parking at `extentH > viewportH − 2 ×
+    lead` and shoves the bottom of a change that still fits off the screen.
+  - That lead is PIXELS — the height of the four preceding rows would let one
+    tall fold separator eat it — and is capped at `viewportH − rowH`, so a short
+    pane degrades to "flush with the top", never to "not on screen".
+  - The result snaps to a row boundary (ties DOWN), so neither edge of the
+    viewport shows a half-sliced line, as every `rowOffset`-based target always
+    did.
+  - It is then clamped to `[0, sum(heights) − viewportH]`: overshooting is
+    clamped by the DOM, and every `scrollToHunk` reads `scrollTop !== want` as
+    "the reveal did not land", costing the file its auto-open.
+  - That clamp is also why a hunk within half a viewport of either END of the
+    file does not land centred. Nothing is wrong; no scroll position would put
+    it there. Buying one with scroll-past-end padding would break
+    `contentH === sum(heights)`, which is true by construction only because
+    `PGWindowedDiff` renders exactly `topPad + rows + bottomPad`.
+
+  `DiffViewer`'s wrap mode measures the two marked rows' rects instead (heights
+  describe nothing there) — same rule, different ruler, minus the row-boundary
+  snap, since wrapped rows have no uniform pitch to snap to. The merge window's
+  F7 walks conflict regions through CodeMirror and shares none of this.
 - **A diff OPENS at its first change, and F7 carries into the next file**
   (issue 188). Both live in `useHunkNav`, not per screen. The parts:
   - The auto-open waits on `diffOpenReady` (`features/diff/useDiffGaps.ts`):
