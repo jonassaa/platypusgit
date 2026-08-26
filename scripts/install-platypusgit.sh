@@ -143,6 +143,8 @@ detect_arch() {
 }
 
 ARCH="$(detect_arch)"
+# Widening this is #266 (build + publish an arm64 .deb). Until then, a sentence
+# beats apt reporting "Unable to locate package" after a successful update.
 if [ "$ARCH" != "$WANT_ARCH" ]; then
     warn "install-platypusgit: platypusgit is not built for '$ARCH' yet — only $WANT_ARCH."
     warn "install-platypusgit: adding the repository would leave apt with nothing to install."

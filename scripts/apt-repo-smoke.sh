@@ -50,7 +50,7 @@ SERVE_IMAGE=python:3-slim
 # what happens by default on an Apple Silicon Mac, where debian:bookworm runs
 # arm64. Pinned rather than inferred: on an amd64 CI runner this is a no-op, and
 # on a developer's Mac it is the difference between a real test and a confusing
-# one. Change it when an arm64 .deb actually exists.
+# one. Change it when an arm64 .deb actually exists (#266).
 PLATFORM=linux/amd64
 
 REPO_DIR=

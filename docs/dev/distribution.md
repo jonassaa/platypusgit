@@ -165,3 +165,124 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `α=255`). Check a corner pixel's alpha, and check `.icns`/`.ico` members too
   — `iconutil -c iconset` unpacks the former, the latter is a container of
   PNGs.
+
+## The APT repository — one-line Linux install (#187)
+
+Spec: `docs/superpowers/specs/2026-08-26-apt-repository-spec.md`. Read that for
+the *why*; this is the operational summary.
+
+- **Where it lives.** `jonassaa/apt-platypusgit` + GitHub Pages, served at
+  `apt.platypusgit.com`. It holds **no workflows and no code** — Pages serves it
+  off the branch. It **cannot** live in the marketing site: `site.yml` uploads
+  `site/dist` as the whole Pages artifact, so every site deploy would delete a
+  pool the release job had pushed. And the pool cannot point at GitHub release
+  assets either — apt resolves `Filename:` relative to the repository root.
+- **Three scripts, all in `scripts/`.** `apt-repo-publish.sh` (pool add + prune
+  + index + sign), `apt-repo-smoke.sh` (serve + install in a container +
+  assert), `install-platypusgit.sh` (the user-facing one-liner). `release.yml`'s
+  `apt-publish` job calls the first two; `apt-verify-live` calls the second
+  against the live host. Keeping the logic in reviewable scripts rather than in
+  YAML is what makes it testable on a laptop.
+- **Stateless index.** No `aptly`, no `reprepro`: the pool directory IS the state
+  and git IS the history, so the index is a pure function of the pool and a
+  re-run reproduces it. `workflow_dispatch` against an existing tag is therefore
+  a genuine no-op.
+
+### Four traps, all of them measured
+
+1. **`Release` must be generated OUTSIDE `dists/<suite>/`.** Deleting the old one
+   is not enough — the shell redirect recreates the file inside the directory
+   `apt-ftparchive` walks, and it streams its output, so it hashes the header it
+   already flushed and `Release` lands in its own checksum list. Write to
+   `mktemp`, then move. The script refuses to publish a self-referential
+   `Release`.
+2. **`gzip -n`.** Without it the gzip header carries a timestamp, `Packages.gz`
+   differs every run, and the no-op short-circuit is dead code.
+3. **Idempotency is decided on `Packages`, never on the tree.** `apt-ftparchive
+   release` stamps a `Date:`, so `Release` always differs. The job compares the
+   freshly generated `Packages` and, if identical, leaves the whole tree alone.
+4. **The smoke client must be `--platform linux/amd64`.** We ship amd64 only, so
+   an arm64 client (the default on an Apple Silicon Mac) verifies the signature,
+   fetches `Packages`, and then says "Unable to locate package" — which reads as
+   a broken repository rather than a wrong architecture.
+
+### Deliberate non-expiry
+
+**No key expiry and no `Valid-Until`.** Both are the same trap: an expired
+signing key or `Release` file is a *silent, global `apt update` failure* for
+every existing install, and extending a key's expiry changes it so every client
+needs the new copy. Revocation is the tool for a compromise — hence the
+revocation certificate the wizard generates. The cost, accepted knowingly: no
+freeze/replay protection beyond HTTPS.
+
+Nothing needs periodic re-signing, precisely *because* there is no
+`Valid-Until`.
+
+### The contract nobody can see from one side
+
+`/etc/apt/sources.list.d/platypusgit.sources` is written by
+`install-platypusgit.sh` and read by `update::capability`
+(`update.rs::APT_SOURCES_PATH`) to tell an apt-managed `.deb` from a sideloaded
+one. Two files, two languages, one string. A Rust test pins the constant and the
+smoke gate asserts the path exists after a real install, so a drift fails CI
+rather than silently telling every apt user to go download a file by hand.
+
+### Package naming
+
+The Debian package is **`platypus-git`** — Tauri kebab-cases `productName` and
+`DebConfig` has no override. `provides: ["platypusgit"]` makes the obvious guess
+resolve too, but `platypus-git` is canonical everywhere we print it, because that
+is what `apt search`, `apt remove` and `dpkg -l` use.
+
+`depends` in `tauri.conf.json` **appends to** the bundler's auto-detected libs —
+the merge is in `tauri-cli` (`interface/rust.rs`, `depends_deb` is seeded from
+config then pushed onto), not in `tauri-bundler`'s `debian.rs`, which reads the
+already-merged list and looks like it replaces. Getting that backwards ships an
+uninstallable package.
+
+### Running it locally
+
+macOS has neither `apt-ftparchive` nor `gpg`, so the publish script re-execs
+itself in a container with `--docker`. A full loop:
+
+```bash
+# a throwaway key (gpg lives in the container, not on the host)
+docker run --rm -v "$PWD/fixtures:/out" debian:bookworm sh -c '...gen-key...'
+
+export APT_GPG_PRIVATE_KEY="$(cat fixtures/test-private.asc)"
+export APT_GPG_PASSPHRASE=testpass
+scripts/apt-repo-publish.sh --repo /tmp/aptrepo --deb PlatypusGit_amd64.deb \
+    --version 0.0.17 --docker
+
+scripts/apt-repo-smoke.sh --repo /tmp/aptrepo --version 0.0.17 \
+    --installer scripts/install-platypusgit.sh
+```
+
+Drop `--installer` for the isolation mode (a hand-written sources file), which
+answers "is the index broken, or is the installer broken?". Add `--expect-git`
+when the `.deb` was built after the `Depends: git` change. To prove the gate can
+fail, corrupt a byte of `InRelease` and re-run — expect `BADSIG` and exit 100.
+
+### Release-time notes
+
+- `apt-publish` reuses `vars.TAP_APP_ID` / `secrets.TAP_APP_PRIVATE_KEY`. Those
+  names now cover **two** repos; the App must be installed on
+  `apt-platypusgit` with Contents: write.
+- Its `if:` gate is **copied** from `bump-cask`, not retyped. A typo there
+  pushes a prerelease into a signed index that every client discovers on its
+  next `apt update`.
+- **A prerelease never reaches apt.** Same gate as `bump-cask` and
+  `updater-manifest`: the `.deb` is attached to the GitHub release and stays
+  invisible to `apt upgrade`. That is correct, and it is not a bug report.
+- The pool keeps the **newest 10** releases and logs what it pruned. Older
+  `.deb`s remain on GitHub Releases.
+- A `workflow_dispatch` against a tag built **before** the `Depends: git` change
+  fails the pre-push gate, by design.
+
+### The manual setup
+
+`scripts/apt-repo-wizard.sh` walks the eight steps that live outside this repo
+(repo, key, seed, DNS, Pages, secrets, App install, fingerprint). Interactive —
+never piped into a shell. `--dry-run` prints the walk and changes nothing. It is
+run **by the user**: it creates a public repository, edits DNS, and installs a
+GitHub App.

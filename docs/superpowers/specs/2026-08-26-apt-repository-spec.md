@@ -144,10 +144,24 @@ indefinitely. Over HTTPS, for a repository with one package, that is the cheaper
 of the two risks.
 
 The private key is armored and lives in `secrets.APT_GPG_PRIVATE_KEY` alongside
-`TAURI_SIGNING_PRIVATE_KEY`; the passphrase in `secrets.APT_GPG_PASSPHRASE`; the
-key id in `vars.APT_GPG_KEY_ID`. The passphrase reaches `gpg` on **stdin**, never
-argv (`printf '%s' "$PASS" | gpg --batch --pinentry-mode loopback
---passphrase-fd 0 …`), per the repo's secrets-travel-in-env rule.
+`TAURI_SIGNING_PRIVATE_KEY`; the passphrase in `secrets.APT_GPG_PASSPHRASE`. The
+passphrase reaches `gpg` on **stdin**, never argv (`printf '%s' "$PASS" | gpg
+--batch --pinentry-mode loopback --passphrase-fd 0 …`), per the repo's
+secrets-travel-in-env rule.
+
+**No third variable for the key id.** It is derived from the imported key
+(`gpg --list-secret-keys --with-colons`), because a key id configured separately
+from the key it names is a pair that can drift, and the drift shows up as an
+unsigned publish rather than as a missing variable. `APT_GPG_KEY_ID` remains an
+optional override. The publish script also **imports the key itself** into a
+throwaway `GNUPGHOME` for the run, so CI (secret → env) and a developer (fixture
+key → env) take one code path and neither leaves a keyring behind.
+
+`apt-repo-publish.sh` **exports `key.gpg` and `key.asc` on every run**. Output is
+byte-stable for an unchanged key, so this is idempotent — and it means the
+published repository always carries the public half of whatever actually signed
+it, rather than a seeded file that could silently go stale and break every
+client's `apt update`.
 
 Both `Release.gpg` (detached) and `InRelease` (clearsigned) are published. Modern
 apt prefers `InRelease`; the detached form costs one command and keeps older
@@ -177,11 +191,26 @@ Renaming `productName` to close the gap is rejected: it would change the `.app`
 bundle name, the binary, the desktop file, and the Homebrew cask for a cosmetic
 win.
 
-`depends` is *additive* — the bundler auto-generates `libwebkit2gtk-4.1-0,
-libgtk-3-0` (proved by the shipped control file, which carries them while the
-config says `"depends": []`). That the config entry appends rather than replaces
-is **unverified locally** and is proved by the publish gate (§H), which reads
-`dpkg -s platypus-git` in a container.
+**`depends` is additive — and this was checked, because getting it wrong ships an
+uninstallable package.** `tauri-bundler`'s `debian.rs` writes `Depends:` from
+`settings.deb().depends` alone, which reads as though a configured list
+*replaces* the auto-detected libs. It does not. The merge happens one layer up,
+in `tauri-cli` at the version this repo pins (2.10.1),
+`crates/tauri-cli/src/interface/rust.rs:1368`:
+
+```rust
+let mut depends_deb = config.linux.deb.depends.unwrap_or_default();
+...
+depends_deb.push("libwebkit2gtk-4.1-0".to_string());
+depends_deb.push("libgtk-3-0".to_string());
+```
+
+The config list is the **seed**; the detected libs are appended. So `["git"]`
+yields `Depends: git, libwebkit2gtk-4.1-0, libgtk-3-0` — consistent with the
+shipped v0.0.17 control file, which carries both libs while its config said
+`[]`. That the fields reach the *built* control file is additionally asserted by
+the publish gate (§H) via `dpkg -s platypus-git`, on a runner that can actually
+produce a `.deb`.
 
 ### E. The publish job
 
@@ -222,10 +251,20 @@ from the pool.
 
 **Three traps in that sequence, all load-bearing:**
 
-1. **Delete `Release`, `Release.gpg` and `InRelease` before regenerating.**
-   `apt-ftparchive release dists/stable` hashes every file under that directory —
-   including a leftover `Release` from the previous run, which would then appear
-   in its own checksum list.
+1. **Generate `Release` to a temp file OUTSIDE the tree, and delete the previous
+   `Release`/`Release.gpg`/`InRelease` first.** `apt-ftparchive release
+   dists/stable` hashes every file under that directory, so a leftover
+   `InRelease` or `Release.gpg` would be listed inside the checksum section of
+   the `Release` they sign — which the delete handles.
+
+   Deleting is **not sufficient for `Release` itself**, which is the part this
+   spec originally got wrong. `> "$DIST_DIR/Release"` recreates the file inside
+   the directory before `apt-ftparchive` walks it, and `apt-ftparchive` streams
+   its output, so it hashes the header it has already flushed and `Release` lands
+   in its own checksum list. Measured, not theorised — the first run of the
+   implementation produced exactly that (`186 Release`). The script now writes to
+   `mktemp`, moves the file in, and **refuses to publish a `Release` that lists
+   itself**.
 2. **`gzip -n`.** Without it the gzip header carries a timestamp, so
    `Packages.gz` differs on every run even when the content is identical, and the
    no-op short-circuit below never fires.
@@ -346,20 +385,41 @@ constant.
 The publish job is **hard-gated on a real install**, before the push:
 
 1. Generate and sign the index in the job.
-2. Serve the checkout with `python3 -m http.server`.
-3. `docker run --network host debian:bookworm` and run the **real**
-   `install-platypusgit.sh` with `PLATYPUSGIT_APT_URL=http://127.0.0.1:8000`.
-4. Assert `dpkg -s platypus-git` (which proves §D's `Depends: git` resolved,
-   `Provides:` and `Section:` landed) and `pgit --help`.
+2. Serve the checkout from a **container** (`python:3-slim`) on a user-defined
+   Docker network. Not a host process: only on a user-defined network does
+   Docker's embedded DNS resolve the server by container name, which is what
+   makes this identical on Docker Desktop (where a container cannot reach the
+   host at `127.0.0.1`) and on a Linux runner. One code path, no host `python3`.
+3. `docker run --platform linux/amd64 debian:bookworm` — **the platform pin is
+   load-bearing.** The repository ships amd64 only, so an arm64 client (the
+   default on an Apple Silicon dev machine) fetches the index, verifies the
+   signature, and then reports "Unable to locate package", which reads as a
+   broken repository rather than a wrong architecture. Inside it, run the **real**
+   `install-platypusgit.sh` with `PLATYPUSGIT_APT_URL` pointed at the server.
+4. Assert: the client image has no `gnupg` before *or after* (proving the
+   dearmored-key claim); `/etc/apt/sources.list.d/platypusgit.sources` exists
+   (the §I contract); a scoped `apt-get update` against only our sources file
+   accepts the signature; `dpkg -s platypus-git` reports the expected version,
+   with `Depends: git` resolved and `Provides:`/`Section:` present; and
+   **`pgit --help` exits 0 and prints usage.**
 5. Only then push.
 
-A GUI launch is not asserted — there is no display, and that is not what this
-gate is for.
+Running the binary is the assertion `test -x` cannot make: it proves the ELF
+loads and every shared library the `.deb` declared resolved. It is `--help` and
+not `--version` because `--version` only exists since #218 — an older `.deb` in
+the pool does not recognise it, falls through to a launch, and panics in GTK init
+with no display, failing the gate for a reason unrelated to the repository.
+(Measured on the v0.0.17 fixture.) A GUI launch is not asserted at all; there is
+no display, and that is not what this gate is for.
 
-A second, lighter smoke job runs **after** the push against the live
-`https://apt.platypusgit.com`, with a retry loop, because Pages publishes
-asynchronously after a push. It catches what step 3 structurally cannot see: DNS,
-the Pages deploy, HTTPS, and propagation.
+A second job runs **after** the push against the live
+`https://apt.platypusgit.com`, catching what step 3 structurally cannot see: DNS,
+the Pages deploy, HTTPS, propagation. It is the **same script and the same
+assertions** — `apt-repo-smoke.sh` takes `--url` to install from an
+already-published repository instead of serving a directory, and `--wait` turns
+its readiness loop into the retry Pages' asynchronous publish needs. One script,
+so "it installs from a directory" and "it installs from the live host" cannot
+drift apart.
 
 The issue's own argument is that this install path is the first impression for the
 audience most likely to adopt the app. An untested publish path is the wrong place
@@ -429,18 +489,28 @@ meantime.
 ### K. The download page
 
 Mirror the macOS structure exactly, because it is the proven shape and the ask is
-literally "give Linux what macOS has":
+literally "give Linux what macOS has".
 
-1. `method-primary` **One-line install**, with the **Recommended** badge —
-   `curl -fsSL https://www.platypusgit.com/install-platypusgit.sh | sh`
-2. `method-primary` **Updating with apt** — `sudo apt update && sudo apt upgrade
-   platypus-git`, the macOS section's "Homebrew owns updates" paragraph in apt
-   form.
-3. `method` **The three commands** — the expanded form from §G, for people who
-   will not pipe a URL into a shell, plus the key fingerprint.
-4. `method` **Debian package (.deb)**, demoted — the direct download, for
-   air-gapped or one-off installs, noting that updates are then manual.
-5. `method` **AppImage**, reframed.
+**Note the page was rebuilt by #261 while this spec was being written**, so the
+mechanics are cards rather than the `method` / `method-primary` blocks this
+section originally named. The macOS Homebrew card is still the shape to copy; it
+is now `card card-wide card-primary` + a `Recommended` pill + `card-lead` +
+`CodeBlock` + `card-note`, with secondary material folded into `<details>`
+disclosures. The Linux panel becomes:
+
+1. **One-line install** — primary card, `Recommended` pill, the `curl … | sh`.
+   Its `<details>`: *Updating and removing* (`sudo apt update && sudo apt upgrade
+   platypus-git`, the macOS card's "Homebrew owns updates" paragraph in apt
+   form), *The same thing, spelled out* (the expanded commands from §G plus the
+   key fingerprint), and *Read the installer first, or dry-run it* — retitled so
+   it does not collide with the identically-named disclosure the CLI section
+   already has further down the page.
+2. **AppImage** — reframed (below).
+3. **Debian package, by hand** — demoted, the direct download, honest that
+   updates are then manual.
+
+The `platforms` blurb and specs, and the `pgitMatrix` table, gain the apt route
+so the panel's summary agrees with its cards.
 
 **The AppImage gets a real reframing, not a demotion.** Two things are true and
 neither is currently on the page: it is the only route for non-Debian distros
@@ -461,19 +531,28 @@ Half of this work lands where no code review can see it. This table is the
 handover, and the plan drives it as a wizard because these are exactly the steps
 that get half-done and then debugged as a mystery.
 
+`scripts/apt-repo-wizard.sh` walks these in this order, does what is scriptable,
+and verifies each before advancing. `--dry-run` prints the whole walk without
+touching anything.
+
 | # | Step | Where | Detail |
 | --- | --- | --- | --- |
-| 1 | Create repo | GitHub | `jonassaa/apt-platypusgit`, public |
-| 2 | Seed it | that repo | `CNAME`, `.nojekyll`, `index.html`, `key.gpg`, `key.asc` on `main` |
-| 3 | DNS record | datacenter.no | `CNAME apt → jonassaa.github.io` |
-| 4 | Enable Pages | that repo's settings | deploy from branch `main` / root; custom domain `apt.platypusgit.com`; Enforce HTTPS |
-| 5 | Generate key | offline | RSA 4096, no expiry, uid `PlatypusGit APT repository <jonas.aasberg@clave.no>` |
-| 6 | Revocation cert | offline | generated with the key, stored outside CI |
-| 7 | Secrets | `jonassaa/platypusgit` | `APT_GPG_PRIVATE_KEY`, `APT_GPG_PASSPHRASE`, `vars.APT_GPG_KEY_ID` |
-| 8 | App install | GitHub App settings | add `apt-platypusgit` to the existing App's repositories, `contents: write` |
+| 1 | Create repo | GitHub | `jonassaa/apt-platypusgit`, public — `gh repo create` |
+| 2 | Generate key + revocation cert | offline | RSA 4096, no expiry, uid `PlatypusGit APT repository <jonas.aasberg@clave.no>`. Via Docker when the host has no `gpg`, which macOS does not |
+| 3 | Seed the repo | that repo | `CNAME`, `.nojekyll`, `index.html` (fingerprint substituted), plus `key.gpg`/`key.asc` so it is verifiable from the moment it exists |
+| 4 | DNS record | datacenter.no | `CNAME apt → jonassaa.github.io`. Not scriptable; the wizard polls `dig` until it resolves |
+| 5 | Enable Pages | that repo | branch `main` / root, custom domain, Enforce HTTPS — `gh api`, retrying HTTPS while the certificate is issued |
+| 6 | Secrets | `jonassaa/platypusgit` | `APT_GPG_PRIVATE_KEY`, `APT_GPG_PASSPHRASE` — `gh secret set`. No key-id variable: it is derived from the key (§C) |
+| 7 | App install | GitHub App settings | add `apt-platypusgit` to the existing App's repositories, Contents: read and write. Not scriptable — a UI action |
+| 8 | Fingerprint on the site | `site/src/data/site.ts` | paste into `apt.keyFingerprint`; the page renders that block only when it is non-empty |
 
-Step 4 cannot precede step 3 (Pages rejects a custom domain whose DNS does not
-resolve to it), and step 8 cannot precede step 1.
+Order is load-bearing in two places: step 5 cannot precede step 4 (Pages rejects
+a custom domain whose DNS does not resolve to it), and step 7 cannot precede
+step 1. Step 3 needs step 2's fingerprint, and the seed step **refuses to push**
+an `index.html` with an unsubstituted placeholder.
+
+Afterwards the private key and revocation certificate should be moved offline;
+nothing in CI needs them again.
 
 ## Rejected alternatives
 
@@ -512,25 +591,32 @@ resolve to it), and step 8 cannot precede step 1.
 This is macOS, and the publish path runs on a runner against a repository that
 does not exist yet. The honest split:
 
-| Piece | Verifiable on this machine | Only verifiable at release time |
+This table is written **after** implementation, so the left column is what was
+actually run, not what was hoped.
+
+| Piece | Proven on this machine | Only verifiable at release time |
 | --- | --- | --- |
-| `install-platypusgit.sh` | `dash -n` + `bash -n`; real runs against a locally served fixture index via `PLATYPUSGIT_APT_URL`; the no-`apt-get` and wrong-arch refusals; `--dry-run`; `--help` | nothing — this one is fully exercisable |
-| Index generation + signing | the whole script, against a fixture pool, with a throwaway key: `apt-ftparchive`, `gpg --clearsign`, and a real `apt-get install` in a `debian:bookworm` container | the production key |
-| `.deb` control fields (`Depends: git`, `Provides:`, `Section:`) | that the config parses and `DebConfig` accepts the keys | that the bundler *appends* rather than replaces the auto-detected deps — proved by §H's `dpkg -s` in the container |
-| `capability` / `packageHint` / `UpdatePanel` | end to end — `cargo test`, `pnpm test`, component tests for both notify arms | — |
-| Download page | `pnpm build` in `site/`, and the copied installer served locally | — |
-| `apt-publish` job | shell steps run locally against a fixture checkout | the App token mint, the cross-repo push, Pages deploy, DNS, HTTPS |
+| `install-platypusgit.sh` | `dash -n`, `bash -n`, `shellcheck`; a real install in a clean amd64 `debian:bookworm` against a served fixture index; both refusals (no `apt-get`, wrong arch) via the seams; `--dry-run` (verified to mutate nothing); `--help` | — fully exercisable |
+| Index generation + signing | the whole script against a fixture pool built from the real published v0.0.17 `.deb`, with a throwaway RSA-4096 key: `apt-ftparchive`, clearsign + detached sign, a real `apt-get install`, and a **tampered `InRelease` that fails with `BADSIG` and exit 100** — so a pass means something | the production key |
+| Idempotency | a second run of the same version leaves all 8 files **byte-identical** (`shasum` diff) and prints "already up to date" | — |
+| `.deb` control fields | `cargo check` (i.e. `tauri-build` accepts the keys); that `depends` *appends* rather than replaces, read from `tauri-cli` at the pinned 2.10.1 and cross-checked against the shipped v0.0.17 control file | that the fields reach the built control file — asserted by §H's `dpkg -s` on a runner that can produce a `.deb` |
+| `capability` / `packageHint` / `UpdatePanel` | `cargo test` (15 update tests incl. the contract-path pin), `pnpm tsc --noEmit`, `pnpm test` (1929 passing), component tests for both notify arms | — |
+| Download page | `pnpm build` in `site/`; the served installer is byte-identical to `scripts/`; the rendered `apt upgrade` string matches the panel's | — |
+| `apt-publish` / `apt-verify-live` | `actionlint` clean; the gate expression **byte-identical to `bump-cask`'s** (`diff`); `--url` mode fails cleanly against the not-yet-live host | the App token mint, the cross-repo push, Pages deploy, DNS, HTTPS |
+| `apt-repo-wizard.sh` | `dash -n`, `bash -n`, `shellcheck`; a full `--dry-run` walk of all eight steps, exit 0, creating nothing | every step's real effect — it creates a repo, edits DNS, installs an App |
 | Pages ceilings | the arithmetic | whether GitHub ever complains |
 
 Anything in the right column is reported as unproven, never as working.
 
-Note that `apt-ftparchive`, `dpkg`, `gpg` and `debian:bookworm` are all
-reachable on macOS through Docker, so the middle rows are genuinely testable
-here — unlike #144, where three of five channels were unreachable. The one thing
-this machine cannot do is build a Linux `.deb`: `Dockerfile.e2e` builds with
-`--no-bundle`, so the e2e image produces a binary and no package. Proving the
-control fields therefore needs either a one-off `tauri build --bundles deb` in
-that image or the §H gate at release time.
+`apt-ftparchive`, `dpkg`, `gpg` and `debian:bookworm` are all reachable on macOS
+through Docker, so far more is testable here than in #144, where three of five
+channels were unreachable. Two things this machine genuinely cannot do:
+
+- **Build a Linux `.deb`.** `Dockerfile.e2e` builds with `--no-bundle`, so the
+  e2e image produces a binary and no package. Hence the source-level proof for
+  §D plus the §H gate.
+- **Run any of it on the production key or the real host**, neither of which
+  exists until §L is walked.
 
 ## Follow-ups
 
