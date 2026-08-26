@@ -57,6 +57,15 @@ REPO_DIR=
 VERSION=
 INSTALLER=
 EXPECT_GIT=no
+# --url installs from an already-published repository instead of serving --repo
+# locally. That is how the post-publish job checks the LIVE host: same client,
+# same assertions, so "it installed from a directory" and "it installs from
+# apt.platypusgit.com" are answered by one script rather than two that drift.
+EXTERNAL_URL=
+# Seconds to wait for the repository to answer. 60 is ample for a local serve
+# container; GitHub Pages publishes asynchronously after a push, so the live
+# check passes a much larger value and this loop doubles as its retry.
+WAIT_SECS=60
 
 usage() {
     cat <<'USAGE'
@@ -65,10 +74,15 @@ Usage: apt-repo-smoke.sh --repo DIR --version X.Y.Z [options]
 Serves an APT repository tree and installs from it in a clean Debian container.
 
 Required:
-  --repo DIR         the repository tree to serve
   --version X.Y.Z    the version the install is expected to land
+  and one of:
+  --repo DIR         serve this repository tree and install from it
+  --url URL          install from an already-published repository (the live
+                     host), serving nothing
 
 Options:
+  --wait SECS        how long to wait for the repository to answer (default 60;
+                     use minutes for a live check, Pages publishes async)
   --installer PATH   install by running this script (the real one-liner) instead
                      of a hand-written sources file
   --expect-git       also assert Depends: git resolved, and that Section: vcs and
@@ -90,6 +104,8 @@ die() { warn "apt-repo-smoke: $*"; exit 1; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo) [ $# -ge 2 ] || die "--repo needs a value"; REPO_DIR="$2"; shift 2 ;;
+        --url) [ $# -ge 2 ] || die "--url needs a value"; EXTERNAL_URL="${2%/}"; shift 2 ;;
+        --wait) [ $# -ge 2 ] || die "--wait needs a value"; WAIT_SECS="$2"; shift 2 ;;
         --version) [ $# -ge 2 ] || die "--version needs a value"; VERSION="$2"; shift 2 ;;
         --installer) [ $# -ge 2 ] || die "--installer needs a value"; INSTALLER="$2"; shift 2 ;;
         --expect-git) EXPECT_GIT=yes; shift ;;
@@ -102,18 +118,30 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$REPO_DIR" ] || die "--repo is required"
 [ -n "$VERSION" ] || die "--version is required"
-[ -d "$REPO_DIR" ] || die "not a directory: $REPO_DIR"
-[ -f "$REPO_DIR/dists/$SUITE/InRelease" ] \
-    || die "$REPO_DIR has no dists/$SUITE/InRelease — run apt-repo-publish.sh first"
-[ -f "$REPO_DIR/key.gpg" ] || die "$REPO_DIR has no key.gpg"
+case "$WAIT_SECS" in
+    ''|*[!0-9]*) die "--wait must be a positive integer, got '$WAIT_SECS'" ;;
+esac
+
+if [ -n "$EXTERNAL_URL" ] && [ -n "$REPO_DIR" ]; then
+    die "--repo and --url are alternatives, not both"
+fi
+if [ -z "$EXTERNAL_URL" ]; then
+    [ -n "$REPO_DIR" ] || die "one of --repo or --url is required"
+    [ -d "$REPO_DIR" ] || die "not a directory: $REPO_DIR"
+    [ -f "$REPO_DIR/dists/$SUITE/InRelease" ] \
+        || die "$REPO_DIR has no dists/$SUITE/InRelease — run apt-repo-publish.sh first"
+    [ -f "$REPO_DIR/key.gpg" ] || die "$REPO_DIR has no key.gpg"
+fi
 if [ -n "$INSTALLER" ]; then
     [ -f "$INSTALLER" ] || die "not a file: $INSTALLER"
 fi
 command -v docker > /dev/null 2>&1 || die "docker is required"
 
-REPO_ABS="$(cd "$REPO_DIR" && pwd)"
+REPO_ABS=
+if [ -n "$REPO_DIR" ]; then
+    REPO_ABS="$(cd "$REPO_DIR" && pwd)"
+fi
 INSTALLER_ABS=
 if [ -n "$INSTALLER" ]; then
     INSTALLER_ABS="$(cd "$(dirname "$INSTALLER")" && pwd)/$(basename "$INSTALLER")"
@@ -140,6 +168,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 BASE_URL="http://$SERVE:$PORT"
+if [ -n "$EXTERNAL_URL" ]; then
+    BASE_URL="$EXTERNAL_URL"
+fi
 
 # ---------------------------------------------------------------------------
 # The client program. Written out and mounted rather than passed as `sh -c`
@@ -171,10 +202,11 @@ ok "curl + ca-certificates installed (nothing else)"
 i=0
 until curl -fsS "$PG_BASE_URL/dists/stable/InRelease" > /dev/null 2>&1; do
     i=$((i + 1))
-    [ "$i" -lt 60 ] || fail "server never served InRelease at $PG_BASE_URL"
+    [ "$i" -lt "$PG_WAIT_SECS" ] \
+        || fail "no InRelease at $PG_BASE_URL after ${PG_WAIT_SECS}s"
     sleep 1
 done
-ok "server reachable at $PG_BASE_URL"
+ok "repository reachable at $PG_BASE_URL (after ${i}s)"
 
 # --- install ---------------------------------------------------------------
 
@@ -277,19 +309,31 @@ fi
 printf '\nSMOKE PASS\n'
 CLIENT
 
-say "apt-repo-smoke: network $NET"
-docker network create "$NET" > /dev/null
+# --url mode serves nothing and uses the default bridge network, so the client
+# can reach the public internet. The local mode needs a user-defined network,
+# because only there does Docker's embedded DNS resolve the server by container
+# name — and that is what keeps this script identical on Docker Desktop (no host
+# networking) and on a Linux runner.
+NETWORK_ARG=bridge
+if [ -z "$EXTERNAL_URL" ]; then
+    say "apt-repo-smoke: network $NET"
+    docker network create "$NET" > /dev/null
+    NETWORK_ARG="$NET"
 
-say "apt-repo-smoke: serving $REPO_ABS from $SERVE_IMAGE"
-docker run -d --name "$SERVE" --network "$NET" \
-    -v "$REPO_ABS:/srv:ro" \
-    "$SERVE_IMAGE" \
-    python3 -m http.server "$PORT" --directory /srv > /dev/null
+    say "apt-repo-smoke: serving $REPO_ABS from $SERVE_IMAGE"
+    docker run -d --name "$SERVE" --network "$NET" \
+        -v "$REPO_ABS:/srv:ro" \
+        "$SERVE_IMAGE" \
+        python3 -m http.server "$PORT" --directory /srv > /dev/null
+else
+    say "apt-repo-smoke: installing from the live $EXTERNAL_URL (waiting up to ${WAIT_SECS}s)"
+fi
 
 say "apt-repo-smoke: installing in $CLIENT_IMAGE on $PLATFORM (mode: $MODE)"
 set -- \
-    --rm --network "$NET" --platform "$PLATFORM" \
+    --rm --network "$NETWORK_ARG" --platform "$PLATFORM" \
     -v "$WORK/client.sh:/client.sh:ro" \
+    -e "PG_WAIT_SECS=$WAIT_SECS" \
     -e "PG_BASE_URL=$BASE_URL" \
     -e "PG_EXPECT_VERSION=$VERSION" \
     -e "PG_EXPECT_GIT=$EXPECT_GIT" \
@@ -306,7 +350,9 @@ if docker run "$@" "$CLIENT_IMAGE" sh /client.sh; then
 else
     status=$?
     warn "apt-repo-smoke: FAIL (client exited $status)"
-    warn "apt-repo-smoke: server log follows"
-    docker logs "$SERVE" 2>&1 | while IFS= read -r line; do warn "  $line"; done
+    if [ -z "$EXTERNAL_URL" ]; then
+        warn "apt-repo-smoke: server log follows"
+        docker logs "$SERVE" 2>&1 | while IFS= read -r line; do warn "  $line"; done
+    fi
     exit "$status"
 fi

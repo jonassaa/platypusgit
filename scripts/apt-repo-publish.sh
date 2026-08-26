@@ -206,6 +206,9 @@ say "apt-repo-publish: pooled $(basename "$target")"
 # are plain X.Y.Z (release.yml strips a leading v), where they agree.
 # `head -n -N` is GNU coreutils, which is what Debian and the runners have.
 pruned=0
+# shellcheck disable=SC2012 # `ls` is safe here: every filename in this
+# directory was written by this script as <pkg>_<version>_<arch>.deb, so none
+# contains whitespace — and `find` gives no ordering, which is the whole point.
 for old in $(ls "$POOL_DIR"/*.deb 2>/dev/null | sort -V | head -n -"$KEEP"); do
     rm -f "$old"
     say "apt-repo-publish: pruned $(basename "$old") (keeping newest $KEEP)"
