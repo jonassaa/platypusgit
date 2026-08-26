@@ -94,7 +94,9 @@ git/
 │                argv, parse_verify_output. Payload-agnostic: commits and tags
 │                reuse one chain
 ├── tag.rs       Tag signing's pure half (#132): armor detection,
-│                append_signature, validate_tag_name, parse_verify_tag
+│                append_signature, validate_tag_name, parse_verify_tag. Also
+│                the shared ref-name validator (#214): validate_ref_component,
+│                validate_branch_name
 └── signature.rs IDENTITY, not cryptography: default_signature
                  (user.name/email lookup, NoSignature when unset) and
                  apply_signoff (Signed-off-by trailer, idempotent)

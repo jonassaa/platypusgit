@@ -52,6 +52,53 @@ fn create_branch_from_explicit_ref() {
 }
 
 #[test]
+fn create_branch_rejects_an_invalid_name_before_touching_the_repo() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    let err = backend
+        .create_branch(&handle.id, "foo bar", None)
+        .unwrap_err();
+    assert!(
+        matches!(err, platypusgit_lib::error::AppError::InvalidRef(_)),
+        "got {err:?}"
+    );
+
+    // Rejected before any ref was written.
+    let names: Vec<_> = backend
+        .branches(&handle.id)
+        .unwrap()
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    assert!(!names.iter().any(|n| n.contains("foo")));
+}
+
+#[test]
+fn rename_branch_rejects_an_invalid_target_name() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    backend.create_branch(&handle.id, "old", None).unwrap();
+
+    let err = backend
+        .rename_branch(&handle.id, "old", "-bad")
+        .unwrap_err();
+    assert!(
+        matches!(err, platypusgit_lib::error::AppError::InvalidRef(_)),
+        "got {err:?}"
+    );
+
+    // The original branch is untouched.
+    let names: Vec<_> = backend
+        .branches(&handle.id)
+        .unwrap()
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    assert!(names.iter().any(|n| n == "old"));
+}
+
+#[test]
 fn delete_branch_removes_ref() {
     let tr = TempRepo::with_initial_commit("hello\n");
     let (backend, handle) = tr.open_with_backend();
