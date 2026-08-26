@@ -24,9 +24,11 @@ reveal.rs        "Reveal in Finder/Explorer" + "Open in terminal" (#215).
                  HostPlatform decouples argv building from the actual host, so
                  reveal_plan/terminal_plan are PURE and unit-tested for all
                  three platforms from any host. Spawns via proc.rs only.
-                 explorer.exe's exit-1-on-success is handled here, not treated
-                 as failure; a missing Linux terminal falls through an ordered
-                 candidate list rather than failing silently
+                 explorer.exe's exit-1-on-success is carried as a FLAG on the
+                 plan (not a program-name compare — the program is an absolute
+                 pinned path); Windows launchers are pinned to System32 /
+                 WindowsApps against binary planting; a missing Linux terminal
+                 falls through an ordered candidate list rather than silently
 forge/           GitHub/GitLab PR/MR integration (#92). Trait = URL builders +
                  response parsers, pure and testable against recorded JSON:
 ├── mod.rs       Types + Forge trait, forge_for(kind), injection guards

@@ -276,6 +276,15 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   process holding the file forever. A stray console window is cosmetic; an
   invisible editor is Task Manager. The guard test allow-lists both call sites
   by name.
+- **Pin Windows system executables to an absolute path.** `CreateProcess`
+  searches the **current directory before the system directory**, and this
+  app's cwd *is* a repository whenever the `pgit` shim launched it from inside
+  one — so a bare `rundll32.exe` / `explorer.exe` / `cmd.exe` lets a cloned
+  repo ship its own copy and have it run. `opener.rs::opener_program` pins via
+  `%SystemRoot%\System32`; `reveal.rs::system32_exe` does the same, and
+  `wt.exe` (an App Execution Alias, not a System32 binary) is pinned under
+  `%LOCALAPPDATA%\Microsoft\WindowsApps` or skipped. Unresolvable beats
+  relative: a missing pin falls back to the next candidate.
 - **Decide with libgit2 before you spawn:** `verify_commit` reads the `gpgsig`
   header via `extract_signature` and answers `SigState::None` with no
   subprocess (same pre-check `verify_tag` has) — a cost win on every platform,
