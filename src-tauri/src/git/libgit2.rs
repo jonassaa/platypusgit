@@ -5305,6 +5305,7 @@ impl GitBackend for Libgit2Backend {
     }
     fn stash_branch(&self, repo_id: &RepoId, index: usize, branch: &str) -> AppResult<()> {
         self.with_repo_mut(repo_id, |repo| {
+            crate::git::tag::validate_branch_name(branch)?;
             let stash_oid = {
                 let mut found = None;
                 repo.stash_foreach(|i, _msg, oid| {
@@ -6591,6 +6592,9 @@ impl GitBackend for Libgit2Backend {
         branch: WorktreeBranch,
     ) -> AppResult<WorktreeInfo> {
         let name = crate::git::worktree::name_for_path(path)?;
+        if let WorktreeBranch::New(b) = &branch {
+            crate::git::tag::validate_branch_name(b)?;
+        }
         if path.exists() {
             return Err(AppError::InvalidArgument(format!(
                 "{} already exists",

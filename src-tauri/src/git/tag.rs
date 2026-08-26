@@ -76,7 +76,9 @@ pub(crate) fn validate_ref_component(name: &str, noun: &str) -> AppResult<()> {
     let bad = |why: &str| Err(AppError::InvalidRef(format!("{name}: {why}")));
 
     if name.is_empty() {
-        return bad(&format!("a {noun} needs a name"));
+        // Not `bad`: that prefixes the name, and the name is the empty string,
+        // so the banner would read ": a branch needs a name".
+        return Err(AppError::InvalidRef(format!("a {noun} needs a name")));
     }
     // An option, not a ref, to every git command that would receive it.
     if name.starts_with('-') {
@@ -85,13 +87,15 @@ pub(crate) fn validate_ref_component(name: &str, noun: &str) -> AppResult<()> {
     if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
         return bad(&format!("a {noun} name cannot have an empty path component"));
     }
-    // A leading '.' is refused for the same reason "/." is: `check_refname_component`
-    // rejects a component beginning with a dot, and the leading one is not covered
-    // by the "/." test. `git check-ref-format refs/tags/.hidden` refuses it too.
-    if name.starts_with('.')
-        || name.ends_with('.')
-        || name.ends_with(".lock")
-        || name.contains("/.")
+    // Per COMPONENT, not per whole name: `check_refname_component` refuses any
+    // slash-separated component that begins with a dot or ends with ".lock", so
+    // `.hidden`, `a/.b` and `foo.lock/bar` are all out — the last one slips past
+    // a whole-name `ends_with(".lock")` test, and `git branch foo.lock/bar`
+    // refuses it. The trailing-dot rule is the whole name's ("foo." is refused).
+    if name.ends_with('.')
+        || name
+            .split('/')
+            .any(|c| c.starts_with('.') || c.ends_with(".lock"))
     {
         return bad(&format!("invalid {noun} name"));
     }
@@ -416,6 +420,34 @@ mod tests {
                 "{bad:?} should have been refused"
             );
         }
+    }
+
+    #[test]
+    fn refuses_a_lock_component_anywhere_in_the_name() {
+        // `git branch foo.lock/bar` and `git check-ref-format refs/heads/foo.lock/bar`
+        // both refuse it: the rule is per component, not per whole name.
+        for bad in ["foo.lock/bar", "a/b.lock/c", "a/.b/c"] {
+            assert!(
+                validate_branch_name(bad).is_err(),
+                "{bad:?} should have been refused"
+            );
+            assert!(
+                validate_tag_name(bad).is_err(),
+                "{bad:?} should have been refused for a tag too"
+            );
+        }
+    }
+
+    #[test]
+    fn the_empty_name_message_does_not_start_with_a_bare_colon() {
+        // `bad` prefixes the name, and here the name is "" — the banner would
+        // read ": a branch needs a name".
+        let AppError::InvalidRef(msg) = validate_branch_name("").expect_err("empty is invalid")
+        else {
+            panic!("expected InvalidRef");
+        };
+        assert!(!msg.starts_with(':'), "message reads {msg:?}");
+        assert!(msg.contains("branch needs a name"), "message reads {msg:?}");
     }
 
     #[test]
