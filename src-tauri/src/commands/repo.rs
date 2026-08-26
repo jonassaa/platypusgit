@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::State;
 
@@ -198,4 +198,55 @@ pub async fn open_in_editor(
     // No shell interpreter, and the exit status is checked — see opener.rs for
     // the `cmd /C start` injection this replaces.
     crate::opener::open_with_default_app(abs.as_os_str()).await
+}
+
+/// The repo's working directory, resolved via `backend.repo_path` the same
+/// way `open_in_editor` does above.
+async fn repo_workdir(state: &State<'_, AppState>, repo_id: String) -> AppResult<PathBuf> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.repo_path(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Reveal `relative_path` (relative to the repo's worktree) in the OS file
+/// manager, with the entry selected where the platform allows it. `None` (or
+/// an empty string — the repo tab's menu has no relative path to give)
+/// reveals the repo's ROOT directory instead, which is a directory target
+/// rather than a file one (see `reveal::reveal_plan`'s `is_dir`).
+#[tauri::command]
+pub async fn reveal_in_file_manager(
+    state: State<'_, AppState>,
+    repo_id: String,
+    relative_path: Option<String>,
+) -> AppResult<()> {
+    let workdir = repo_workdir(&state, repo_id).await?;
+    match relative_path {
+        Some(rel) if !rel.is_empty() => {
+            let abs = crate::opener::safe_workdir_path(&workdir, &rel)?;
+            crate::reveal::reveal(&abs, false).await
+        }
+        _ => crate::reveal::reveal(&workdir, true).await,
+    }
+}
+
+/// Open a terminal at `relative_path`'s CONTAINING directory (a file reveals
+/// where it lives, not itself), or at the repo's root when `relative_path` is
+/// `None`/empty — the repo tab's case.
+#[tauri::command]
+pub async fn open_in_terminal(
+    state: State<'_, AppState>,
+    repo_id: String,
+    relative_path: Option<String>,
+) -> AppResult<()> {
+    let workdir = repo_workdir(&state, repo_id).await?;
+    let dir = match relative_path {
+        Some(rel) if !rel.is_empty() => {
+            let abs = crate::opener::safe_workdir_path(&workdir, &rel)?;
+            abs.parent().map(Path::to_path_buf).unwrap_or(workdir)
+        }
+        _ => workdir,
+    };
+    crate::reveal::open_terminal(&dir).await
 }

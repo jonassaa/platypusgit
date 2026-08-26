@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-import { getPlatform, usePlatform, __resetPlatformCacheForTests } from "./platform";
+import {
+  getPlatform,
+  usePlatform,
+  fileManagerLabel,
+  __resetPlatformCacheForTests,
+} from "./platform";
 
 const platformMock = vi.hoisted(() => vi.fn());
 
@@ -39,5 +44,26 @@ describe("usePlatform", () => {
     const { result } = renderHook(() => usePlatform());
     expect(result.current).toBeUndefined();
     await waitFor(() => expect(result.current).toBe("macos"));
+  });
+});
+
+// #215 — the "reveal in file manager" label names the actual app on the two
+// platforms that have one; Linux (and the brief window before resolving) get
+// the generic wording, since there is no one app to name.
+describe("fileManagerLabel", () => {
+  it("names Finder on macOS", () => {
+    expect(fileManagerLabel("macos")).toBe("Reveal in Finder");
+  });
+
+  it("names Explorer on Windows", () => {
+    expect(fileManagerLabel("windows")).toBe("Show in Explorer");
+  });
+
+  it("falls back to a generic label on Linux", () => {
+    expect(fileManagerLabel("linux")).toBe("Show in file manager");
+  });
+
+  it("falls back to the same generic label before the platform resolves", () => {
+    expect(fileManagerLabel(undefined)).toBe("Show in file manager");
   });
 });

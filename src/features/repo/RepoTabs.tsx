@@ -16,6 +16,8 @@ import {
 import { openRepoDialog } from "./ops";
 import { labelTabs } from "./tabs";
 import { useTabsStore } from "./useTabsStore";
+import { fileManagerLabel, usePlatform, type Platform } from "@/lib/platform";
+import { openInTerminal, revealInFileManager } from "@/lib/tauri";
 
 export function RepoTabs() {
   const tabs = useTabsStore((s) => s.tabs);
@@ -47,7 +49,10 @@ export function RepoTabs() {
     failed: t.status === "failed",
   }));
 
-  const menu = useContextMenu<string>((path) => tabMenuItems(path, tabs.length));
+  const platform = usePlatform();
+  const menu = useContextMenu<string>((path) =>
+    tabMenuItems(path, tabs.length, platform),
+  );
 
   if (tabs.length === 0) return null;
 
@@ -70,8 +75,16 @@ export function RepoTabs() {
  * lost by it, so a prompt there would misrepresent the stakes. The bulk verbs
  * are confirmed, because "close six of these" is not undoable.
  */
-export function tabMenuItems(path: string, total: number): ContextMenuItem[] {
+export function tabMenuItems(
+  path: string,
+  total: number,
+  platform?: Platform,
+): ContextMenuItem[] {
   const tabs = () => useTabsStore.getState();
+  // Only an OPENED tab has a repoId — a still-loading or failed tab has
+  // nothing on the backend to resolve a directory from, so reveal/terminal
+  // stay disabled rather than firing at a repo that isn't there.
+  const repoId = tabs().tabs.find((t) => t.path === path)?.repoId;
   return [
     { __menuTitle: "Repository" },
     {
@@ -121,6 +134,28 @@ export function tabMenuItems(path: string, total: number): ContextMenuItem[] {
           ?.writeText(path)
           .then(() => pgFlash("Path copied"))
           .catch(() => pgFlash("Could not copy path"));
+      },
+    },
+    {
+      label: fileManagerLabel(platform),
+      icon: "folder",
+      disabled: !repoId,
+      onClick: () => {
+        if (!repoId) return;
+        void revealInFileManager(repoId).catch(() =>
+          pgFlash("Could not reveal in file manager"),
+        );
+      },
+    },
+    {
+      label: "Open in terminal",
+      icon: "terminal",
+      disabled: !repoId,
+      onClick: () => {
+        if (!repoId) return;
+        void openInTerminal(repoId).catch(() =>
+          pgFlash("Could not open terminal"),
+        );
       },
     },
   ];

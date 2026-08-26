@@ -6,6 +6,7 @@ pub mod forge;
 pub mod git;
 pub mod opener;
 pub mod proc;
+pub mod reveal;
 pub mod state;
 pub mod update;
 
@@ -182,6 +183,8 @@ pub fn run() {
             commands::repo::read_file_content_at_index,
             commands::repo::append_gitignore,
             commands::repo::open_in_editor,
+            commands::repo::reveal_in_file_manager,
+            commands::repo::open_in_terminal,
             commands::commits::get_log,
             commands::commits::get_log_filtered,
             commands::commits::get_log_page,
