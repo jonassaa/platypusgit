@@ -16,6 +16,7 @@ export function CloneDialog() {
   const error = useCreateStore((s) => s.error);
   const close = useCreateStore((s) => s.close);
   const runClone = useCreateStore((s) => s.runClone);
+  const cancelClone = useCreateStore((s) => s.cancelClone);
   const setProgress = useCreateStore((s) => s.setProgress);
 
   const [url, setUrl] = React.useState("");
@@ -185,8 +186,22 @@ export function CloneDialog() {
           marginTop: 16,
         }}
       >
-        <PGButton onClick={close} disabled={busy}>
-          Cancel
+        {/*
+          One button, two jobs — and never disabled, which is the point (#234).
+          While a clone runs it stops the clone; otherwise it closes the dialog.
+          Before this it was greyed out for exactly the minutes a user most
+          needs it, and a clone against a stalled host could only be escaped by
+          force-quitting the app.
+
+          Deliberately NOT a second button next to it: a disabled "Cancel" beside
+          a live "Stop" is the arrangement that teaches people the dialog is
+          stuck. The label carries the difference instead.
+        */}
+        <PGButton
+          data-testid="clone-cancel"
+          onClick={() => (busy ? void cancelClone() : close())}
+        >
+          {busy ? "Cancel clone" : "Cancel"}
         </PGButton>
         <PGButton
           variant="primary"

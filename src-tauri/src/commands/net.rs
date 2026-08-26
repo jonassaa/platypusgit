@@ -88,6 +88,13 @@ pub fn map_git_failure(stderr: &str) -> AppError {
 }
 
 /// Run `git -C cwd <args>`, mapping a non-zero exit through `map_git_failure`.
+///
+/// Cancellable (#234): the op registers under `cancel::Scope::Repo(cwd)` for as
+/// long as it runs, so `cancel_network_op` can stop a fetch, pull or push that
+/// has stalled. Registering HERE and not per command is the same choice the
+/// credential policy makes — a network op that grew its own spawn would be one
+/// nobody can cancel. `cwd` comes from `GitBackend::repo_path`, which is where
+/// `cancel_network_op` resolves its scope from too.
 pub async fn run_git_authenticated(
     cwd: &Path,
     args: &[&str],
@@ -99,15 +106,67 @@ pub async fn run_git_authenticated(
     // pull and push flashed a console, including the ones auto-fetch runs on a
     // timer with no user action at all (issue 172).
     let mut cmd = crate::proc::git_async(cwd);
-    cmd.args(args);
+    cmd.args(args)
+        // `Command::output()` sets these itself; spawning by hand below to keep
+        // the `Child` reachable means setting them here instead.
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // The kill on cancel: the branch below drops the `wait_with_output`
+        // future, which owns the `Child`, and a dropped `Child` with this set is
+        // a killed process. Also covers the window closing mid-fetch.
+        .kill_on_drop(true);
     apply_auth_env(&mut cmd, creds);
 
-    let output = cmd.output().await.map_err(|e| AppError::Io(e.to_string()))?;
+    let (_registration, mut cancel) = crate::cancel::register(crate::cancel::Scope::repo(cwd));
+
+    let child = cmd.spawn().map_err(|e| AppError::Io(e.to_string()))?;
+    // `wait_with_output` and not two manual pipe reads: it drains stdout and
+    // stderr concurrently, and a fetch whose stderr filled the pipe buffer while
+    // we waited on the exit status would deadlock.
+    let output = tokio::select! {
+        // `biased` so a pending cancel is never lost to a coin toss against a
+        // child that happens to be ready in the same poll.
+        biased;
+        _ = cancel.cancelled() => return Err(AppError::Cancelled),
+        finished = child.wait_with_output() => finished.map_err(|e| AppError::Io(e.to_string()))?,
+    };
 
     if !output.status.success() {
+        // A cancel that lands while git is already dying loses the `select!`
+        // race, and git's last words ("the remote end hung up unexpectedly")
+        // would then be reported as a network failure to a user who pressed
+        // Cancel. The request is what decides, not who got there first.
+        if cancel.is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
         return Err(map_git_failure(&String::from_utf8_lossy(&output.stderr)));
     }
     Ok(())
+}
+
+/// Cancel the network ops running in one scope (#234).
+///
+/// `repo_id` absent means the clone the Clone dialog is running — a clone has no
+/// repository to name yet. Answers how many ops were signalled; zero is a normal
+/// answer, not an error, because the op can finish between the user reading the
+/// status line and clicking Cancel.
+#[tauri::command]
+pub async fn cancel_network_op(
+    state: tauri::State<'_, crate::state::AppState>,
+    repo_id: Option<String>,
+) -> AppResult<usize> {
+    let scope = match repo_id {
+        None => crate::cancel::Scope::Clone,
+        Some(id) => {
+            let backend = state.backend.clone();
+            let id = crate::git::types::RepoId(id);
+            let path = tokio::task::spawn_blocking(move || backend.repo_path(&id))
+                .await
+                .map_err(|e| AppError::Internal(e.to_string()))??;
+            crate::cancel::Scope::Repo(path)
+        }
+    };
+    Ok(crate::cancel::cancel(&scope))
 }
 
 /// Store a credential with the user's own git credential helper (#61 D5).

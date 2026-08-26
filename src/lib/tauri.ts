@@ -818,6 +818,22 @@ export async function rememberCredential(
   return invoke<void>("remember_credential", { repoId, host, credentials });
 }
 
+/**
+ * Stop the network ops running in one scope (#234) — a clone, or every fetch,
+ * pull and push on one repository.
+ *
+ * `repoId` omitted means the clone the Clone dialog is running: a clone has no
+ * repository to name yet. Scoped rather than per-op on purpose — the auto-fetch
+ * timer can stack fetches behind a stalled one, and Cancel has to reach the
+ * whole pile, not just the op the user can see.
+ *
+ * Answers how many ops were signalled. Zero is a normal answer, not a failure:
+ * the op can finish between the user reading the status line and clicking.
+ */
+export async function cancelNetworkOp(repoId?: string): Promise<number> {
+  return invoke<number>("cancel_network_op", { repoId: repoId ?? null });
+}
+
 export async function fetch(
   repoId: string,
   remote: string,

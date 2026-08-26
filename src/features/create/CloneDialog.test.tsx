@@ -81,6 +81,40 @@ describe("CloneDialog", () => {
     expect(button).not.toBeDisabled();
   });
 
+  // #234 — the Cancel button used to be disabled for exactly as long as the
+  // clone ran, which is the only time a user needs it. A clone against a stalled
+  // host was then escapable only by force-quitting the app.
+  it("offers a live Cancel while the clone runs, and cancels the clone with it", async () => {
+    let cancelled = 0;
+    mockInvoke("cancel_network_op", () => {
+      cancelled += 1;
+      return 1;
+    });
+    useCreateStore.setState({ open: "clone", busy: true, progress: null });
+    render(<CloneDialog />);
+
+    const cancel = screen.getByTestId("clone-cancel");
+    expect(cancel).not.toBeDisabled();
+    // The label carries the difference between the two jobs this button does.
+    expect(cancel).toHaveTextContent("Cancel clone");
+
+    fireEvent.click(cancel);
+
+    await waitFor(() => expect(cancelled).toBe(1));
+    // And it does NOT close the dialog out from under the clone being reaped.
+    expect(useCreateStore.getState().open).toBe("clone");
+  });
+
+  it("closes the dialog with the same button when no clone is running", () => {
+    render(<CloneDialog />);
+
+    const cancel = screen.getByTestId("clone-cancel");
+    expect(cancel).toHaveTextContent("Cancel");
+    fireEvent.click(cancel);
+
+    expect(useCreateStore.getState().open).toBe("none");
+  });
+
   it("renders progress delivered by the clone://progress subscription", async () => {
     useCreateStore.setState({
       open: "clone",

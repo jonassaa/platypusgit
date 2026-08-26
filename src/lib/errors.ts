@@ -50,6 +50,14 @@ export type AppError =
   /** An op needed a bisect in progress and found none (#93). */
   | { kind: "NoBisect"; message?: string }
   /**
+   * The user cancelled a running network op (#234). The outcome they asked for,
+   * not a failure — every catch arm suppresses the banner for it and just clears
+   * the spinner. Distinct from `Network` because a SIGKILLed git's last words
+   * ("the remote end hung up unexpectedly") would otherwise be reported to
+   * someone who pressed Cancel as a broken connection.
+   */
+  | { kind: "Cancelled"; message?: string }
+  /**
    * A git hook ran and refused (#232). The payload is a STRUCT, and its
    * `output` is deliberately NOT rendered into the banner sentence: forty lines
    * of eslint belong in the dedicated output block, which scrolls. See
@@ -276,6 +284,18 @@ export function isEmbeddedRepoError(e: unknown): boolean {
  */
 export function isDubiousOwnershipError(e: unknown): boolean {
   return isAppError(e) && e.kind === "DubiousOwnership";
+}
+
+/**
+ * The user cancelled this op (#234) — so it is not something to report.
+ *
+ * Every network catch arm asks this before writing an error: a banner reading
+ * "early EOF" after pressing Cancel says the app broke, when what happened is
+ * exactly what was asked for. The op still refreshes on its way out; only the
+ * banner is suppressed.
+ */
+export function isCancelledError(e: unknown): boolean {
+  return isAppError(e) && e.kind === "Cancelled";
 }
 
 /** Narrow to an auth failure, so a caller can prompt and retry (#61 D5). */
