@@ -9,7 +9,11 @@ const { code, lang = 'bash' } = Astro.props;
 <style>
   .codeblock { position: relative; background: var(--bg-2); border: 1px solid var(--border-0);
     border-radius: var(--r-5); overflow: hidden; }
-  .codeblock pre { margin: 0; padding: var(--s-6); overflow-x: auto; }
+  /* The copy button is absolutely positioned over the top-right corner, so the
+     first line needs room to clear it — a long one-liner in a narrow column
+     (the two pgit cards on /download/) otherwise runs straight underneath it. */
+  .codeblock pre { margin: 0; padding: var(--s-6); padding-right: calc(var(--s-6) + 46px);
+    overflow-x: auto; }
   .codeblock code { font-family: var(--font-mono); font-size: 13px; color: var(--fg-1); line-height: 1.6; }
   .copy-btn { position: absolute; top: var(--s-4); right: var(--s-4); background: var(--bg-3);
     border: 1px solid var(--border-1); color: var(--fg-2); font-size: 11px; padding: 3px 8px;
