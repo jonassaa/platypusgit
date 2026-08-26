@@ -20,13 +20,23 @@ pub async fn check_for_update() -> AppResult<UpdateInfo> {
 }
 
 /// Whether this install can self-update or should notify + defer to a package
-/// manager. Computed from the build's OS + the `APPIMAGE` env var.
+/// manager. Computed from the build's OS, the `APPIMAGE` env var, and — on Linux
+/// — whether the apt repository from #187 is configured.
+///
+/// The apt probe is one `Path::exists`, deliberately: no process spawn, so there
+/// is nothing to route through `proc.rs`, nothing to mock, and no reason for
+/// this command to stop being synchronous. It is skipped entirely off Linux
+/// rather than relying on the path simply not existing there.
 #[tauri::command]
 pub fn get_update_capability() -> AppResult<UpdateCapability> {
+    let os = std::env::consts::OS;
+    let apt_managed =
+        os == "linux" && std::path::Path::new(update::APT_SOURCES_PATH).exists();
     Ok(update::capability(
-        std::env::consts::OS,
+        os,
         // `APPIMAGE=` (set but empty) is not an AppImage install.
         std::env::var("APPIMAGE").is_ok_and(|v| !v.is_empty()),
+        apt_managed,
     ))
 }
 

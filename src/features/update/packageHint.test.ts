@@ -3,15 +3,41 @@ import { describe, expect, it } from "vitest";
 import { packageHint } from "./packageHint";
 
 describe("packageHint", () => {
-  it("gives .deb users an apt command instead of a silent dead end", () => {
+  it("tells an apt-managed install to run apt upgrade", () => {
+    const hint = packageHint("notify-apt", "linux");
+    expect(hint?.command).toBe("sudo apt update && sudo apt upgrade platypus-git");
+    expect(hint?.note).toMatch(/apt/i);
+  });
+
+  it("names the canonical package, not the guessable one", () => {
+    // `platypus-git` is the real Package field (Tauri kebab-cases productName).
+    // `platypusgit` only works because the .deb declares Provides:, and telling
+    // people the virtual name would make `apt remove` and `dpkg -l` disagree
+    // with what they were shown.
+    expect(packageHint("notify-apt", "linux")?.command).toContain(
+      "platypus-git",
+    );
+  });
+
+  it("points a sideloaded .deb at the one-liner rather than another download", () => {
+    // `apt upgrade` here would report "already the newest version" while the
+    // panel says an update exists — the dead end this module exists to remove.
+    // The one-liner both upgrades now and moves the install onto the apt path.
     const hint = packageHint("notify", "linux");
-    expect(hint?.command).toBe("sudo apt install ./PlatypusGit_amd64.deb");
-    expect(hint?.note).toMatch(/package-manager/i);
+    expect(hint?.command).toBe(
+      "curl -fsSL https://www.platypusgit.com/install-platypusgit.sh | sh",
+    );
+    expect(hint?.note).toMatch(/apt repository/i);
   });
 
   it("keeps the Homebrew command for macOS", () => {
     expect(packageHint("notify", "macos")?.command).toBe(
       "brew upgrade platypusgit",
+    );
+    // macOS never gets the apt variant, but if the backend ever sent it the
+    // command must not become a macOS user's problem.
+    expect(packageHint("notify-apt", "macos")?.command).toBe(
+      "sudo apt update && sudo apt upgrade platypus-git",
     );
   });
 
