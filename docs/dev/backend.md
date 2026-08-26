@@ -205,6 +205,33 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   group — a platform-specific kill path through the one sanctioned spawner —
   and is deliberately not done. The user-visible hang is gone either way.
 
+## "No telemetry, no account" is a build gate (#226)
+
+- The README advertises three promises as the reason to choose this app: no
+  telemetry, no account, and no outbound traffic beyond your git remotes, the
+  update check, and forge APIs you configured. `tests/no_telemetry.rs` is what
+  keeps them true — a source-text guard in the shape of `spawn_no_window.rs`.
+- **The app has exactly TWO outbound HTTP call sites**, and `ureq::` may not
+  appear outside them: `update.rs` (the update check) and `forge/http.rs` (the
+  only impure file in `forge/`, talking to the host the user configured). A
+  third one means the README's disclosure is incomplete — the test says so, and
+  names the file. `ureq` is also pinned as the only *direct* HTTP client;
+  `reqwest` and `hyper` sit in `Cargo.lock` via Tauri itself, which is why the
+  check reads `Cargo.toml`, not the lock.
+- **Every hostname in `src/` is on an allow-list with a written reason.** Adding
+  one is the review checkpoint: you are recording, in public, another host the
+  binary knows about. Only `api.github.com` is a real destination; the rest are
+  a spec URI, credential-prompt fixtures and RFC 2606 names. Self-hosted forge
+  hosts arrive at RUNTIME off the user's remote (`forge/remote.rs`) — do not let
+  the list tempt you into baking one in.
+- The updater endpoint list, the `Cargo.lock` analytics denylist, and the
+  webview capabilities (no `http:` permission — a webview-side client would
+  route around every guard here) are pinned in the same file.
+- **The frontend half is `test/privacy.test.ts`, and the split is load-bearing**
+  — `tests.yml`'s `js` filter does not match `src-tauri/` and its `rust` filter
+  does not match `README.md`, so one test over both trees would be skipped by
+  exactly the change it polices. See `docs/dev/testing.md`.
+
 ## Signing: one chain for commits and tags (#61 D6, #132)
 
 - **One chain, two callers:** `libgit2.rs::sign_payload` =

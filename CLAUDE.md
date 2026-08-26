@@ -137,6 +137,12 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   (`docs/dev/backend.md`)
 - **Forge tokens are NOT git credentials** — separate storage, separate types
   (`Secret`), no command returns a token. (`docs/dev/backend.md`)
+- **"No telemetry, no account" is a build gate, not prose.** No analytics
+  package in either dependency tree, no network call from `src/`, `ureq` only in
+  the two disclosed call sites, and every hard-coded hostname on an allow-list
+  with a written reason — `test/privacy.test.ts` +
+  `src-tauri/tests/no_telemetry.rs`. Tripping one means changing what the README
+  promises; do that deliberately, in the same commit. (`docs/dev/backend.md`)
 - **One signing chain** (`libgit2.rs::sign_payload`) for commits AND tags; a
   signing failure creates nothing. (`docs/dev/backend.md`)
 - **Never `window.confirm`/`window.prompt`** — `pgConfirm`/`pgPrompt` from
