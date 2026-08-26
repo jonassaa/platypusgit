@@ -195,6 +195,21 @@ Rules that keep the gates honest:
 - **`test/nativeSelect.test.ts`** is a SOURCE invariant: no `<select>`/`<option>`
   in shipped `src/` (issue 146) — the failure is invisible on macOS/Windows.
   Comments stripped first; test files out of scope.
+- **`test/privacy.test.ts`** pins the promise the README advertises (#226): no
+  analytics package in `package.json` or anywhere in `pnpm-lock.yaml`
+  (transitive is the arrival nobody reviews), no network call or analytics
+  global in shipped `src/`, and no hostname baked in that is not on a short
+  allow-list with a written reason. Its comment strip differs from
+  `nativeSelect.test.ts`'s on purpose: the naive one eats the rest of any line
+  containing a URL — `//` — which would hide every literal a hostname guard
+  exists to find. Bare `fetch(` is deliberately NOT forbidden: `store.fetch(remote)`
+  is git fetch, spelled identically, and a guard that cries wolf gets its
+  exceptions added without thought. The backend half is
+  `src-tauri/tests/no_telemetry.rs` (outbound call sites, updater endpoint,
+  `Cargo.lock`, capabilities); the split follows the two CI filters, because
+  `js` does not match `src-tauri/` and `rust` does not match `README.md`.
+  Both files self-test their matchers — a guard that cannot fail reads like
+  coverage.
 - **`test/comparison.test.ts`** keeps the competitor comparison (#210) from
   existing twice. `site/src/data/comparison.json` is the source of truth; the
   site renders it through `comparison.ts`, and the test parses the README's
