@@ -6,6 +6,7 @@ import { useTabsStore } from "@/features/repo/useTabsStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useAuthStore } from "@/features/auth/useAuthStore";
 import {
+  cancelNetworkOp,
   cloneRepo,
   closeRepo as closeRepoIpc,
   initRepo,
@@ -18,6 +19,7 @@ import {
   appErrorMessage,
   dubiousOwnershipPath,
   isAuthError,
+  isCancelledError,
   isDubiousOwnershipError,
 } from "@/lib/errors";
 
@@ -32,6 +34,14 @@ interface CreateState {
   openInit: () => void;
   close: () => void;
   setProgress: (p: CloneProgress) => void;
+  /**
+   * Stop the clone in flight (#234). Cheap and idempotent: the running
+   * `runClone` owns the unwind, so this only signals.
+   *
+   * A no-op when nothing is running, so the Cancel button can call it
+   * unconditionally without first re-reading `busy` in the click handler.
+   */
+  cancelClone: () => Promise<void>;
   runClone: (args: {
     url: string;
     parentDir: string;
@@ -51,11 +61,12 @@ export const useCreateStore = create<CreateState>((set, get) => ({
   progress: null,
   error: null,
 
-  // Guarded against `busy`: a clone/init in flight has no cancel, so a chord
-  // or palette command that swaps `open` to the other dialog mid-run would
-  // unmount the running dialog's view behind a disabled, undismissable one —
-  // and once the run finishes, its result (including a failure) would render
-  // into the wrong dialog's error slot.
+  // Guarded against `busy`: a chord or palette command that swaps `open` to the
+  // other dialog mid-run would unmount the running dialog's view behind a
+  // disabled, undismissable one — and once the run finishes, its result
+  // (including a failure) would render into the wrong dialog's error slot. Still
+  // true now that a clone can be cancelled (#234): the cancel affordance is IN
+  // the running dialog, so swapping it away is precisely what hides it.
   openClone: () => {
     if (get().busy) return;
     set({ open: "clone", error: null, progress: null });
@@ -64,13 +75,29 @@ export const useCreateStore = create<CreateState>((set, get) => ({
     if (get().busy) return;
     set({ open: "init", error: null, progress: null });
   },
-  // Never closes mid-run: a clone in flight has no cancel, so dropping the
-  // dialog would leave a git process with no UI attached to it.
+  // Still never closes mid-run, even now that a clone CAN be cancelled (#234):
+  // dropping the dialog while git is being killed and its partial destination
+  // removed would leave that work with no UI attached to it. The dialog closes
+  // itself once `runClone` has unwound — which is a moment later, not never.
   close: () => {
     if (get().busy) return;
     set({ open: "none", error: null, progress: null });
   },
   setProgress: (p) => set({ progress: p }),
+
+  async cancelClone() {
+    if (!get().busy) return;
+    // Nothing is set here: `runClone`'s catch owns the transition back to idle.
+    // Clearing `busy` from here would unlock the dialog while git was still
+    // being reaped, and a second Clone could start into the directory the first
+    // one is in the middle of deleting.
+    await cancelNetworkOp().catch((e) => {
+      // A cancel that could not even be signalled leaves the user stuck with no
+      // way out, which is the whole bug — so it gets said out loud, in the
+      // dialog, where they are looking.
+      set({ error: appErrorMessage(e) });
+    });
+  },
 
   async runClone({ url, parentDir, name, recurseSubmodules }) {
     set({ busy: true, error: null, progress: null });
@@ -92,6 +119,15 @@ export const useCreateStore = create<CreateState>((set, get) => ({
       // clone_repo already takes credentials; without raising the challenge the
       // Clone dialog just printed "Authentication required" with no way to
       // answer it.
+      // A cancel is the outcome the user asked for, so it returns the dialog to
+      // idle with the form intact and NO error — a red banner reading "early
+      // EOF" would answer their own Cancel click with a failure. Everything the
+      // backend does about it (killing git, removing the partial destination)
+      // has already happened by the time this rejects (#234).
+      if (isCancelledError(e)) {
+        set({ busy: false, progress: null, error: null });
+        return;
+      }
       if (!isAuthError(e)) {
         // Error stays in the dialog: the user needs the form still populated to
         // fix a bad URL and retry.
@@ -126,7 +162,11 @@ export const useCreateStore = create<CreateState>((set, get) => ({
             set({
               busy: false,
               progress: null,
-              error: appErrorMessage(retryError),
+              // Same rule as the first attempt: a cancelled retry is not a
+              // failure to report back into the dialog.
+              error: isCancelledError(retryError)
+                ? null
+                : appErrorMessage(retryError),
             });
           }
         },

@@ -1,3 +1,4 @@
+pub mod cancel;
 pub mod cli;
 pub mod commands;
 pub mod detach;
@@ -238,6 +239,7 @@ pub fn run() {
             commands::branches::rename_branch,
             commands::branches::set_upstream,
             commands::net::remember_credential,
+            commands::net::cancel_network_op,
             commands::branches::fetch,
             commands::branches::fetch_all,
             commands::branches::pull,

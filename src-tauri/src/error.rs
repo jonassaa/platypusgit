@@ -125,6 +125,18 @@ pub enum AppError {
     #[error("no bisect in progress")]
     NoBisect,
 
+    /// The user cancelled a running network op — clone, fetch, pull or push
+    /// (#234). Not a failure: it is the outcome they asked for, so the UI
+    /// clears the spinner and raises no banner.
+    ///
+    /// Distinct from `Network` precisely because of that. A cancelled clone's
+    /// git process is SIGKILLed mid-sentence and its dying stderr says things
+    /// like "early EOF" or "the remote end hung up unexpectedly" — routed
+    /// through `Network` a user who clicked Cancel would be told their
+    /// connection broke.
+    #[error("cancelled")]
+    Cancelled,
+
     /// A git hook ran and refused (#232).
     ///
     /// Carries the hook's NAME and its OUTPUT as separate fields rather than one

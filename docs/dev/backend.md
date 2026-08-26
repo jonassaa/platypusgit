@@ -167,6 +167,44 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   them — the credential protocol is line-based, so a newline injects keys and
   could file a password against another host.
 
+### Cancelling a stalled network op (#234)
+
+- **One cancel path, at the same two choke points as the credential policy.**
+  `cancel.rs` is a process-wide registry; `run_git_authenticated` and
+  `run_clone` each register for as long as they run, so a network op that uses
+  the one runner inherits cancellation with nothing to remember. A second spawn
+  site would be an op nobody can stop, the same way it would be an op nobody can
+  authenticate.
+- **Registered by SCOPE, not by op id** — `Scope::Clone`, or
+  `Scope::Repo(workdir)`. The UI has one of these in flight per scope by
+  construction (`busy`, `activity`), and the auto-fetch timer's stacked fetches
+  are ops the user never started and cannot point at; cancelling a scope reaches
+  the whole pile. `Scope::Repo`'s path comes from `GitBackend::repo_path`, which
+  is where the ops themselves get their `cwd` and where `cancel_network_op`
+  resolves a `repo_id` — **the three must keep agreeing** or Cancel silently
+  matches nothing.
+- **`AppError::Cancelled`, never `Network`.** A SIGKILLed git's dying stderr
+  says "early EOF" / "the remote end hung up unexpectedly"; routed through
+  `Network`, a user who pressed Cancel is told their connection broke. The
+  frontend drops it in `useRepoStore`'s `setErrorFor` (one place, so a network op
+  added later cannot forget) and in `useCreateStore`'s clone catch.
+- **Check `is_cancelled()` after the child exits, not just in the `select!`.**
+  A cancel landing as git dies of its own accord loses the race, and the request
+  is what decides the outcome, not who got there first.
+- **A cancelled clone removes its partial destination**, and puts back an empty
+  directory the user had picked. A SIGKILLed `git clone` cannot run its own
+  cleanup, and the leftovers fail the NEXT attempt's `validate_clone_target`
+  with "already exists and is not empty" — a cancel button whose real effect is
+  to poison the destination. Safe to delete only because `validate_clone_target`
+  already refused anything but "absent" or "empty": kill and **reap** first
+  (`kill_and_reap`), so git is provably not still writing into it.
+- **What it does not kill:** git's own transport helper (`git-remote-https`,
+  `ssh`). It is git's child, not ours, and a SIGKILLed parent cannot take it
+  along; it exits when its pipes close, which for a helper blocked on a network
+  read means when that read times out. Closing that gap means killing the process
+  group — a platform-specific kill path through the one sanctioned spawner —
+  and is deliberately not done. The user-visible hang is gone either way.
+
 ## Signing: one chain for commits and tags (#61 D6, #132)
 
 - **One chain, two callers:** `libgit2.rs::sign_payload` =

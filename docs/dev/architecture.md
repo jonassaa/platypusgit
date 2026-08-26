@@ -16,6 +16,13 @@ opener.rs        URLs/paths → OS default handler. SECURITY-critical: safe_url
 update.rs        Update discovery: semver compare, dev-build (0.0.0) short-circuit
                  before any network call, GitHub release parsing, ureq w/ timeout +
                  https_only. Logic only — handlers live in commands/update.rs
+cancel.rs        Cancelling an in-flight network git subprocess (#234). A
+                 process-wide registry keyed by SCOPE (the clone / one
+                 repository), not by op id — the auto-fetch pile has no id a
+                 user could point at. Registered at the two choke points every
+                 network op already goes through (create::run_clone,
+                 net::run_git_authenticated), so a new network op inherits
+                 cancellation with nothing to remember. See backend.md
 proc.rs          THE only sanctioned child-process spawner (issue 172):
                  git / git_async / git_async_in (CREATE_NO_WINDOW,
                  GIT_TERMINAL_PROMPT=0, stdin closed), program / program_async,
@@ -146,9 +153,10 @@ commands/        Thin Tauri handlers, one file per area:
 │                create/delete/push_tag, verify_tag, merge_branch, rebase_onto,
 │                checkout_ref, push_delete_branch
 ├── net.rs       Shared network plumbing (Credentials, run_git_authenticated,
-│                apply_auth_env, map_git_failure, credential_approve) + ONE
-│                command, remember_credential — stored only after the credential
-│                worked. See backend.md
+│                apply_auth_env, map_git_failure, credential_approve) + TWO
+│                commands: remember_credential — stored only after the
+│                credential worked — and cancel_network_op, which stops a
+│                stalled clone/fetch/pull/push (#234). See backend.md
 ├── update.rs    check_for_update, get_update_capability, open_url — thin
 │                handlers for src-tauri/src/update.rs (same basename, two files)
 ├── history.rs   reset, cherry_pick, revert

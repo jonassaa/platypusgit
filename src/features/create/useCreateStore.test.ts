@@ -1,9 +1,10 @@
-// Store-logic tests for the busy guard on openClone/openInit: a clone or init
-// in flight has no cancel and its dialog is deliberately non-dismissable, so
-// switching `open` to the other dialog mid-run would unmount the running
-// dialog's view behind a disabled one with a dead backdrop/Escape, and the
-// run's eventual result (including a failure) would land in the wrong
-// dialog's error slot.
+// Store-logic tests for the busy guard on openClone/openInit: a running dialog
+// is deliberately non-dismissable, so switching `open` to the other dialog
+// mid-run would unmount the running dialog's view behind a disabled one with a
+// dead backdrop/Escape, and the run's eventual result (including a failure)
+// would land in the wrong dialog's error slot. A clone can be cancelled now
+// (#234) and the guard matters MORE for it, not less: the cancel button lives
+// in the running dialog, so swapping that dialog away hides the only way out.
 import { describe, it, expect, beforeEach } from "vitest";
 
 import { useCreateStore } from "./useCreateStore";

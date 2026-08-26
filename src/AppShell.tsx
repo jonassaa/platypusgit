@@ -212,6 +212,12 @@ export function AppShell() {
     if (!repo || !autoFetchEnabled) return;
     const id = window.setInterval(
       () => {
+        // Skip the tick while a fetch is still running (#234). A remote that
+        // stalls outlives the interval, and every tick used to start ANOTHER
+        // `git fetch` against it — a pile of stuck processes the user never
+        // asked for, growing until the app is quit. Nothing is lost by skipping:
+        // the next tick fetches, and a fetch is idempotent.
+        if (useRepoStore.getState().activity.fetch) return;
         useRepoStore.getState().fetchAll();
       },
       Math.max(1, autoFetchMinutes) * 60_000,
@@ -868,7 +874,25 @@ function AppStatusBar() {
           )}
           {loading && !activityLabel && <PGStatusItem icon="sync" label="syncing…" />}
           {activityLabel && (
-            <PGStatusItem icon="sync" label={activityLabel} tone="accent" />
+            <>
+              <PGStatusItem icon="sync" label={activityLabel} tone="accent" />
+              {/*
+                The way out of a stalled fetch, pull or push (#234), and the only
+                one the toolbar's spinning buttons do not offer. It sits beside
+                the label that says what is stuck, because that label is what a
+                user stares at while deciding the app has hung.
+
+                Its own item rather than an onClick on the label: a status line
+                that silently kills the operation when clicked is a trap, and
+                there is nowhere on a bare label to say "Cancel".
+              */}
+              <PGStatusItem
+                icon="x"
+                label="Cancel"
+                tone="danger"
+                onClick={() => void useRepoStore.getState().cancelNetworkOps()}
+              />
+            </>
           )}
         </>
       }

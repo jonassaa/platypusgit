@@ -241,6 +241,11 @@ pub async fn run_clone(
     }
 
     let target = validate_clone_target(parent, name)?;
+    // Whether the destination was the user's own (empty) directory or something
+    // only git is about to create. `validate_clone_target` has just guaranteed
+    // it is one of those two, which is what makes the cancel cleanup below safe
+    // to do at all — see `cancelled_clone`.
+    let target_preexisted = target.is_dir();
     let args = clone_args(url, name, recurse_submodules);
 
     // `git_async_in` and not `git_async`: a clone's working directory is the
@@ -249,24 +254,31 @@ pub async fn run_clone(
     let mut cmd = crate::proc::git_async_in(parent);
     cmd.args(&args)
         // Never let the child read from our stdin. Nothing in this codebase
-        // feeds it anything, so an unexpected read would just block forever
-        // — and a clone has no cancel button, so a hang here is force-quit
-        // territory rather than something the user can dismiss.
+        // feeds it anything, so an unexpected read would just block forever.
+        // There is a cancel button now (#234), so such a hang is escapable —
+        // but a clone that silently waits on input nobody will ever type is
+        // still not a state worth being able to reach.
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        // If reading stderr below bails out via `?`, or this future is
-        // dropped (e.g. the window closes mid-clone — there is no cancel
-        // button), `child` is dropped without ever being `.wait()`ed. Without
-        // this, git keeps running to completion in the background and
-        // finishes populating the destination the frontend was told never
-        // got created.
+        // If reading stderr below bails out via `?`, or this future is dropped
+        // (the window closing mid-clone), `child` is dropped without ever being
+        // `.wait()`ed. Without this, git keeps running to completion in the
+        // background and finishes populating the destination the frontend was
+        // told never got created. A user-driven cancel does NOT rely on this —
+        // it kills and reaps explicitly, so the process is provably gone before
+        // the partial directory is removed.
         .kill_on_drop(true);
     // Shared with fetch/pull/push so the env policy cannot drift (#61 D5).
     // With credentials this points askpass at our own executable; without them
     // it is the historical prompt-less policy. Applied after the builder chain
     // so it cannot be silently overridden by one of the calls above.
     crate::commands::net::apply_auth_env(&mut cmd, creds);
+
+    // Registered before the spawn so a cancel arriving in the same tick as the
+    // click cannot slip through the gap and be ignored (#234). The guard
+    // deregisters on every exit path, including the `?`s below.
+    let (_registration, mut cancel) = crate::cancel::register(crate::cancel::Scope::Clone);
 
     let mut child = cmd
         .spawn()
@@ -293,10 +305,25 @@ pub async fn run_clone(
     const MAX_PENDING: usize = 4096;
 
     loop {
-        let read = stderr
-            .read(&mut chunk)
-            .await
-            .map_err(|e| AppError::Io(format!("reading git clone output: {e}")))?;
+        // Where a stalled clone actually sits: git has the connection open and
+        // is saying nothing, so this read never completes. Selecting on the
+        // cancel token here is what turns "force-quit the app" into a button
+        // (#234). `stderr` was `take()`n off the child, so borrowing `child`
+        // mutably in the cancel arm is not a conflict.
+        let read = tokio::select! {
+            // `biased` so a pending cancel always beats a ready read. Without
+            // it `select!` picks at random, and a fast-streaming clone would
+            // keep winning the coin toss for an unbounded number of iterations
+            // after the user had already pressed Cancel.
+            biased;
+            _ = cancel.cancelled() => {
+                kill_and_reap(&mut child).await;
+                return Err(cancelled_clone(&target, target_preexisted).await);
+            }
+            r = stderr.read(&mut chunk) => {
+                r.map_err(|e| AppError::Io(format!("reading git clone output: {e}")))?
+            }
+        };
         if read == 0 {
             break;
         }
@@ -316,10 +343,26 @@ pub async fn run_clone(
         handle_clone_line(&pending, &mut on_progress, &mut tail);
     }
 
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| AppError::Io(format!("waiting for git clone: {e}")))?;
+    // Stderr at EOF means git has closed it, which it only does on the way out —
+    // so this rarely waits. Selected on anyway: "rarely" is not "never", and a
+    // clone that hung between its last progress line and exiting would otherwise
+    // be exactly the unkillable one this issue is about.
+    let status = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            kill_and_reap(&mut child).await;
+            return Err(cancelled_clone(&target, target_preexisted).await);
+        }
+        s = child.wait() => s.map_err(|e| AppError::Io(format!("waiting for git clone: {e}")))?,
+    };
+    // The cancel landed while git was already exiting and lost the `select!`
+    // race. It still cancelled: a clone the user asked us to stop is not one to
+    // hand back and open a tab for, and git's exit status — a success, or the
+    // torn-connection failure our own SIGKILL produced — is not what they should
+    // be told about. `child` is already reaped here, so only the directory goes.
+    if cancel.is_cancelled() {
+        return Err(cancelled_clone(&target, target_preexisted).await);
+    }
     if !status.success() {
         // Routed through the shared classifier so a private repo yields Auth
         // (promptable + retryable) rather than a dead-end Network error, and so
@@ -330,6 +373,51 @@ pub async fn run_clone(
         )));
     }
     Ok(target)
+}
+
+/// Kill a cancelled `git clone` and wait for it to actually be gone (#234).
+///
+/// `kill_on_drop` would eventually do the killing, but "eventually" is the wrong
+/// guarantee here: [`cancelled_clone`] deletes the destination next, and a git
+/// process still writing objects into a directory being deleted is a race with
+/// nothing good on either side of it. Reaping first makes the order provable.
+///
+/// Errors are swallowed on purpose — every one of them means "the process is
+/// already gone", which is the outcome being asked for.
+async fn kill_and_reap(child: &mut tokio::process::Child) {
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+}
+
+/// Remove what a cancelled clone left behind and report the cancellation.
+///
+/// A SIGKILLed `git clone` cannot run its own cleanup, so it leaves a partial
+/// working tree. Left there, the very next attempt fails
+/// `validate_clone_target` with "already exists and is not empty" — a cancel
+/// button whose real effect is to poison the destination.
+///
+/// Safe to delete precisely because `validate_clone_target` ran first and
+/// accepts only two states: nothing there at all, or the user's own EMPTY
+/// directory. Nothing of the user's can be inside it. The empty directory they
+/// picked is put back, because they picked it — only the clone is undone.
+async fn cancelled_clone(target: &Path, target_preexisted: bool) -> AppError {
+    let target = target.to_path_buf();
+    // `spawn_blocking` and not a bare `std::fs` call: a half-finished clone of a
+    // large repository is thousands of unlink syscalls, and doing them on the
+    // async worker would stall every other command in the app behind the cleanup
+    // of the one that was cancelled to unstick it.
+    //
+    // Best-effort throughout: a leftover directory is a worse outcome than a
+    // cancel, but a failure to remove one is not something to report over the
+    // cancel itself — and the retry it breaks says so clearly enough on its own.
+    let _ = tokio::task::spawn_blocking(move || {
+        let _ = std::fs::remove_dir_all(&target);
+        if target_preexisted {
+            let _ = std::fs::create_dir_all(&target);
+        }
+    })
+    .await;
+    AppError::Cancelled
 }
 
 /// Build the `AppError::Network` message for a failed `git clone`. Falls back

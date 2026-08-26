@@ -15,6 +15,7 @@ import {
   dubiousOwnershipPath,
   isAppError,
   isAuthError,
+  isCancelledError,
   isDubiousOwnershipError,
   toAppError,
 } from "@/lib/errors";
@@ -82,6 +83,7 @@ import {
   repoState as repoStateFn,
   runMergetool as runMergetoolFn,
   restartConflict as restartConflictFn,
+  cancelNetworkOp,
   rememberCredential,
   setRemoteUrl,
   setUpstream as setUpstreamFn,
@@ -306,6 +308,16 @@ interface RepoStoreState extends RepoSlice {
     /** Skip `pre-push` for this push only (#232). */
     noVerify?: boolean,
   ) => Promise<void>;
+  /**
+   * Stop every network op running on this repository (#234) — the way out of a
+   * fetch, pull or push that has stalled, which used to be force-quit.
+   *
+   * Repository-wide and not per op: the auto-fetch timer stacks fetches behind a
+   * stalled one, and those are ops the user never started and cannot point at.
+   * The ops themselves clean up — each returns `Cancelled`, which
+   * `setErrorFor` drops and each `finally` clears the spinner for.
+   */
+  cancelNetworkOps: () => Promise<void>;
   // remote management
   addRemote: (name: string, url: string) => Promise<void>;
   removeRemote: (name: string) => Promise<void>;
@@ -417,9 +429,16 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   };
   /** `setFor` for the error banner: a failure in a repository you have left
    *  must not raise a banner over the one you are in. Keeps the
-   *  refresh-first-error-last ordering — it is still just a guarded set. */
+   *  refresh-first-error-last ordering — it is still just a guarded set.
+   *
+   *  Also the one place a cancellation is dropped (#234). Every network op ends
+   *  in one of these, and a cancel is the outcome the user ASKED for — routing
+   *  it to the banner would answer their Cancel click with a red error. Filtered
+   *  here rather than in each catch arm so a network op added later cannot
+   *  forget: there are seven call sites and they would not stay in step. */
   const setErrorFor = (repoId: string, e: unknown) => {
     if (get().current?.id !== repoId) return;
+    if (isCancelledError(e)) return;
     set({ error: toAppError(e) });
   };
   const setActivity = (key: keyof RepoActivity, label: string | null) => {
@@ -1354,6 +1373,21 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     } finally {
       setActivity("push", null);
     }
+  },
+
+  async cancelNetworkOps() {
+    const repo = get().current;
+    if (!repo) return;
+    // Nothing is set here. The running op owns its own unwind: it returns
+    // `Cancelled`, its `finally` clears the activity label, and `setErrorFor`
+    // drops the error. Clearing `activity` from here would race that and blank
+    // the status line while git was still being reaped.
+    await cancelNetworkOp(repo.id).catch((e) => {
+      // The op finishing first is the common way this "fails", and it is the
+      // outcome the click wanted anyway. A real failure to signal is worth a
+      // banner: the user is still stuck, and silence would read as "cancelled".
+      setErrorFor(repo.id, e);
+    });
   },
 
   async addRemote(name, url) {
