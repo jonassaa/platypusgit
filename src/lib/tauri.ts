@@ -1011,6 +1011,29 @@ export async function openInEditor(
   return invoke<void>("open_in_editor", { repoId, relativePath });
 }
 
+/**
+ * Reveal `relativePath` in the OS file manager, with it selected where the
+ * platform allows (#215). Omitted/`null` reveals the repo's root directory
+ * instead — the repo tab menu's case, which has no file to select.
+ */
+export async function revealInFileManager(
+  repoId: string,
+  relativePath?: string | null,
+): Promise<void> {
+  return invoke<void>("reveal_in_file_manager", { repoId, relativePath });
+}
+
+/**
+ * Open a terminal at `relativePath`'s containing directory, or the repo's
+ * root when `relativePath` is omitted/`null` (#215).
+ */
+export async function openInTerminal(
+  repoId: string,
+  relativePath?: string | null,
+): Promise<void> {
+  return invoke<void>("open_in_terminal", { repoId, relativePath });
+}
+
 export async function blameFile(
   repoId: string,
   path: string,

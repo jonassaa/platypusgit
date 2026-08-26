@@ -77,6 +77,7 @@ import {
 import { useTreeViewMode } from "@/lib/useTreeViewMode";
 import { StageDropBar, useDragSource, type DragPayload } from "@/features/dnd";
 import { fuzzyMatch } from "@/features/palette/fuzzyMatch";
+import { usePlatform } from "@/lib/platform";
 import {
   WhitespaceToggle,
   useHunkActionsDisabledReason,
@@ -156,6 +157,7 @@ export function RepoBrowserScreen() {
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const ignoreWhitespace = useIgnoreWhitespace();
   const hunkActionsDisabled = useHunkActionsDisabledReason();
+  const platform = usePlatform();
 
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   const [treeFilter, setTreeFilter] = React.useState("");
@@ -606,16 +608,19 @@ export function RepoBrowserScreen() {
       // path carries a trailing slash the key has already lost, and that slash
       // is what makes "Add to .gitignore" write valid directory syntax.
       const path = st?.path ?? treeKeyToPath(key);
-      return fileMenuItems({
-        path,
-        staged: !!st && isStaged(st) && !isUnstaged(st),
-        embedded: !!st?.embedded,
-        untracked: !!st && isUntracked(st),
-        conflicted: !!st && isConflicted(st),
-        // A registered submodule gets its own menu (#93) — the ordinary file
-        // entries are all dead ends on a gitlink.
-        submodule: !!st?.submodule,
-      });
+      return fileMenuItems(
+        {
+          path,
+          staged: !!st && isStaged(st) && !isUnstaged(st),
+          embedded: !!st?.embedded,
+          untracked: !!st && isUntracked(st),
+          conflicted: !!st && isConflicted(st),
+          // A registered submodule gets its own menu (#93) — the ordinary
+          // file entries are all dead ends on a gitlink.
+          submodule: !!st?.submodule,
+        },
+        platform,
+      );
     },
   );
 

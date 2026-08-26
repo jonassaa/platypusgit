@@ -41,3 +41,22 @@ export function __resetPlatformCacheForTests() {
   cache = null;
   inflight = null;
 }
+
+/**
+ * Platform-specific wording for "reveal in the OS file manager" (#215) — the
+ * command is the same everywhere, but the app that opens is not, and naming
+ * it beats a generic "Show in file manager" on the two platforms where the
+ * app has an actual name. `undefined` (platform not resolved yet) reads the
+ * same as Linux, which is the least presumptuous default for the brief
+ * window before `usePlatform()` settles.
+ */
+export function fileManagerLabel(platform: Platform | undefined): string {
+  switch (platform) {
+    case "macos":
+      return "Reveal in Finder";
+    case "windows":
+      return "Show in Explorer";
+    default:
+      return "Show in file manager";
+  }
+}

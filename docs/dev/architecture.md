@@ -20,6 +20,15 @@ proc.rs          THE only sanctioned child-process spawner (issue 172):
                  git / git_async / git_async_in (CREATE_NO_WINDOW,
                  GIT_TERMINAL_PROMPT=0, stdin closed), program / program_async,
                  and the two *_keeping_console exceptions. See backend.md
+reveal.rs        "Reveal in Finder/Explorer" + "Open in terminal" (#215).
+                 HostPlatform decouples argv building from the actual host, so
+                 reveal_plan/terminal_plan are PURE and unit-tested for all
+                 three platforms from any host. Spawns via proc.rs only.
+                 explorer.exe's exit-1-on-success is carried as a FLAG on the
+                 plan (not a program-name compare — the program is an absolute
+                 pinned path); Windows launchers are pinned to System32 /
+                 WindowsApps against binary planting; a missing Linux terminal
+                 falls through an ordered candidate list rather than silently
 forge/           GitHub/GitLab PR/MR integration (#92). Trait = URL builders +
                  response parsers, pure and testable against recorded JSON:
 ├── mod.rs       Types + Forge trait, forge_for(kind), injection guards
@@ -104,8 +113,11 @@ commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs      open_repo, close_repo, trust_repo_path, get_status, head_info
 │                (HEAD's branch/oid, re-polled every refresh — unlike
 │                RepoHandle.head, which open_repo sets once), list_all_files,
-│                append_gitignore, open_in_editor, and THREE distinct file
-│                readers: read_file_content (working tree),
+│                append_gitignore, open_in_editor, reveal_in_file_manager,
+│                open_in_terminal (#215 — both take an optional relative_path;
+│                omitted/empty targets the repo ROOT instead, for the repo
+│                tab's menu), and THREE distinct file readers:
+│                read_file_content (working tree),
 │                read_file_content_at_rev + list_files_at_rev (a commit's tree),
 │                read_file_content_at_index (the STAGED blob)
 ├── cli.rs       take_launch_intent, cli_shim_status, install_cli_shim

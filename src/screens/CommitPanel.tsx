@@ -77,6 +77,7 @@ import {
 } from "@/lib/diffRows";
 import { fileDiffToText, selectedLinesToText } from "@/lib/diffCopy";
 import { useVariableWindow } from "@/lib/useVariableWindow";
+import { usePlatform } from "@/lib/platform";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
 import { MinimapGutter } from "@/features/diff/DiffMinimap";
@@ -136,6 +137,7 @@ export function CommitPanelScreen() {
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const ignoreWhitespace = useIgnoreWhitespace();
   const hunkActionsDisabled = useHunkActionsDisabledReason();
+  const platform = usePlatform();
   // One box for the whole commit message: first line is the subject, the rest
   // is the body — the same shape git itself stores, so nothing is re-joined on
   // the way out.
@@ -205,14 +207,17 @@ export function CommitPanelScreen() {
       if (f && sel.keys.length > 1 && sel.keys.includes(keyOf(f))) {
         return multiFileMenuItems(splitFileSelection(sel.keys, selectionSource));
       }
-      return fileMenuItems({
-        path: f?.path,
-        staged: f?.side === "staged",
-        embedded: f?.status.embedded,
-        untracked: !!f && f.side === "unstaged" && isUntracked(f.status),
-        conflicted: !!f && isConflicted(f.status),
-        submodule: !!f?.status.submodule,
-      });
+      return fileMenuItems(
+        {
+          path: f?.path,
+          staged: f?.side === "staged",
+          embedded: f?.status.embedded,
+          untracked: !!f && f.side === "unstaged" && isUntracked(f.status),
+          conflicted: !!f && isConflicted(f.status),
+          submodule: !!f?.status.submodule,
+        },
+        platform,
+      );
     },
   );
 

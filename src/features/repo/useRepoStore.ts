@@ -29,6 +29,8 @@ import {
   bisectStatus as bisectStatusFn,
   appendGitignore as appendGitignoreFn,
   openInEditor as openInEditorFn,
+  revealInFileManager as revealInFileManagerFn,
+  openInTerminal as openInTerminalFn,
   checkoutBranch,
   checkoutRef,
   cherryPick,
@@ -324,6 +326,10 @@ interface RepoStoreState extends RepoSlice {
   bisectReset: () => Promise<void>;
   appendGitignore: (pattern: string) => Promise<void>;
   openInEditor: (relativePath: string) => Promise<void>;
+  /** Reveal in the OS file manager; omitted reveals the repo root (#215). */
+  revealInFileManager: (relativePath?: string) => Promise<void>;
+  /** Open a terminal at the containing directory; omitted uses the repo root. */
+  openInTerminal: (relativePath?: string) => Promise<void>;
 }
 
 /**
@@ -1585,6 +1591,26 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await openInEditorFn(repo.id, relativePath);
+    } catch (e) {
+      setErrorFor(repo.id, e);
+    }
+  },
+
+  async revealInFileManager(relativePath) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await revealInFileManagerFn(repo.id, relativePath);
+    } catch (e) {
+      setErrorFor(repo.id, e);
+    }
+  },
+
+  async openInTerminal(relativePath) {
+    const repo = get().current;
+    if (!repo) return;
+    try {
+      await openInTerminalFn(repo.id, relativePath);
     } catch (e) {
       setErrorFor(repo.id, e);
     }

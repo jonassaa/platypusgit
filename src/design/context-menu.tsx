@@ -24,6 +24,7 @@ import { WORKDIR } from "@/features/compare/compareSides";
 import { currentBranch } from "@/lib/derive";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { chordFor } from "@/features/keymap";
+import { fileManagerLabel, type Platform } from "@/lib/platform";
 // pgFlash lives in ui-helpers.tsx — a toast is not a context-menu concern, and
 // keeping it out of this module is what lets features/keymap import it without
 // closing a cycle back through this file (which imports chordFor from there).
@@ -1590,6 +1591,7 @@ export function fileMenuItems(
     conflicted?: boolean;
     submodule?: boolean;
   } | null,
+  platform?: Platform,
 ): ContextMenuItem[] {
   const staged = !!file?.staged;
   const untracked = !!file?.untracked;
@@ -1691,6 +1693,20 @@ export function fileMenuItems(
       icon: "copy",
       label: "Copy path",
       onClick: () => navigator.clipboard?.writeText(path),
+    },
+    {
+      icon: "folder",
+      label: fileManagerLabel(platform),
+      onClick: () => {
+        if (path) useRepoStore.getState().revealInFileManager(path);
+      },
+    },
+    {
+      icon: "terminal",
+      label: "Open in terminal",
+      onClick: () => {
+        if (path) useRepoStore.getState().openInTerminal(path);
+      },
     },
     { divider: true },
     // An untracked file has no copy in the index or in history, so discarding
