@@ -4024,6 +4024,7 @@ impl GitBackend for Libgit2Backend {
     }
     fn create_branch(&self, repo_id: &RepoId, name: &str, from: Option<&str>) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
+            crate::git::tag::validate_branch_name(name)?;
             let target_commit = match from {
                 Some(rev) => {
                     let obj = repo
@@ -4075,6 +4076,7 @@ impl GitBackend for Libgit2Backend {
 
     fn rename_branch(&self, repo_id: &RepoId, from: &str, to: &str) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
+            crate::git::tag::validate_branch_name(to)?;
             let mut branch = repo.find_branch(from, git2::BranchType::Local)?;
             branch.rename(to, false)?;
             Ok(())

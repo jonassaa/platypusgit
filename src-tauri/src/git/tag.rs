@@ -60,24 +60,30 @@ pub fn normalize_message(message: &str) -> String {
     format!("{trimmed}\n")
 }
 
-/// Reject a tag name before it reaches an argv or a refname.
+/// Reject a ref component name before it reaches an argv or a refname.
+///
+/// Shared by [`validate_tag_name`] and [`validate_branch_name`]: both a tag and
+/// a branch are a single path component under `refs/{tags,heads}/`, and
+/// `git check-ref-format` applies the same rules to both. `noun` names the
+/// caller in the error message ("tag" / "branch") so a rejected name still reads
+/// like it came from the field the user typed it into.
 ///
 /// Same class as `verify_commit`'s hex check and the D5 review's `git show`
-/// finding: `git verify-tag` would read a leading `-` as an option, and the name
-/// arrives from a text field. The rest mirrors `git check-ref-format`, so a name
-/// we accept is one git can hold.
-pub fn validate_tag_name(name: &str) -> AppResult<()> {
+/// finding: a leading `-` would be read as an option by every git command that
+/// receives the name, and the name arrives from a text field. The rest mirrors
+/// `git check-ref-format`, so a name we accept is one git can hold.
+pub(crate) fn validate_ref_component(name: &str, noun: &str) -> AppResult<()> {
     let bad = |why: &str| Err(AppError::InvalidRef(format!("{name}: {why}")));
 
     if name.is_empty() {
-        return bad("a tag needs a name");
+        return bad(&format!("a {noun} needs a name"));
     }
     // An option, not a ref, to every git command that would receive it.
     if name.starts_with('-') {
-        return bad("a tag name cannot start with '-'");
+        return bad(&format!("a {noun} name cannot start with '-'"));
     }
     if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
-        return bad("a tag name cannot have an empty path component");
+        return bad(&format!("a {noun} name cannot have an empty path component"));
     }
     // A leading '.' is refused for the same reason "/." is: `check_refname_component`
     // rejects a component beginning with a dot, and the leading one is not covered
@@ -87,20 +93,42 @@ pub fn validate_tag_name(name: &str) -> AppResult<()> {
         || name.ends_with(".lock")
         || name.contains("/.")
     {
-        return bad("invalid tag name");
+        return bad(&format!("invalid {noun} name"));
     }
     if name.contains("..") || name.contains("@{") {
-        return bad("invalid tag name");
+        return bad(&format!("invalid {noun} name"));
     }
     for ch in name.chars() {
         if ch.is_whitespace() || ch.is_control() {
-            return bad("a tag name cannot contain whitespace or control characters");
+            return bad(&format!(
+                "a {noun} name cannot contain whitespace or control characters"
+            ));
         }
         if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\' | '\x7f') {
-            return bad("a tag name cannot contain ~ ^ : ? * [ or backslash");
+            return bad(&format!(
+                "a {noun} name cannot contain ~ ^ : ? * [ or backslash"
+            ));
         }
     }
     Ok(())
+}
+
+/// Reject a tag name before it reaches an argv or a refname.
+///
+/// See [`validate_ref_component`] for the shared rule set.
+pub fn validate_tag_name(name: &str) -> AppResult<()> {
+    validate_ref_component(name, "tag")
+}
+
+/// Reject a branch name before it reaches an argv or a refname (#214).
+///
+/// Branches got no equivalent of [`validate_tag_name`]: `Libgit2Backend::create_branch`
+/// and `rename_branch` passed the name straight to libgit2 and let the user see
+/// whatever `git2::Error` came back. See [`validate_ref_component`] for the
+/// shared rule set — identical to the tag rules, since both are a single path
+/// component under a `refs/<kind>/` prefix.
+pub fn validate_branch_name(name: &str) -> AppResult<()> {
+    validate_ref_component(name, "branch")
 }
 
 /// GPG status tokens, in the order they are checked.
@@ -365,6 +393,39 @@ mod tests {
                 validate_tag_name(bad).is_err(),
                 "{bad:?} should have been refused"
             );
+        }
+    }
+
+    #[test]
+    fn accepts_ordinary_branch_names() {
+        for ok in ["feature/login", "v2", "release-2026-08", "a/b/c"] {
+            validate_branch_name(ok).unwrap_or_else(|e| panic!("{ok} should be valid: {e:?}"));
+        }
+    }
+
+    #[test]
+    fn refuses_branch_names_git_itself_would_refuse() {
+        // Same table as `refuses_names_git_itself_would_refuse`, using the
+        // examples named in #214 (`foo bar`, `-foo`, `foo..bar`, `foo~1`, `.hidden`).
+        for bad in [
+            "", "foo bar", "-foo", "foo..bar", "foo~1", "foo^", "a:b", "foo?", "foo*", "a[b",
+            "a\\b", "/foo", "foo/", "a//b", "foo.", "foo.lock", "a/.b", "HEAD@{0}", ".hidden",
+        ] {
+            assert!(
+                validate_branch_name(bad).is_err(),
+                "{bad:?} should have been refused"
+            );
+        }
+    }
+
+    #[test]
+    fn branch_error_names_the_offending_field_as_a_branch_not_a_tag() {
+        let err = validate_branch_name("foo bar").expect_err("space is invalid");
+        match err {
+            AppError::InvalidRef(msg) => {
+                assert!(msg.contains("branch"), "message should say 'branch': {msg}");
+            }
+            other => panic!("expected InvalidRef, got {other:?}"),
         }
     }
 
