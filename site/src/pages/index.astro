@@ -4,6 +4,7 @@ import CTAButton from '../components/CTAButton.astro';
 import FeatureCard from '../components/FeatureCard.astro';
 import Screenshot from '../components/Screenshot.astro';
 import OsIcon from '../components/OsIcon.astro';
+import ComparisonTable from '../components/ComparisonTable.astro';
 import { site, downloads } from '../data/site.ts';
 import { heroFeatures } from '../data/features.ts';
 import { descriptions, softwareApplicationSchema, websiteSchema } from '../data/seo.ts';
@@ -105,6 +106,13 @@ const comingSoon = downloads.filter((d) => !d.available);
       <div class="why-item"><h3>Dev-first</h3><p>A TortoiseGit alternative designed around how developers actually work — keyboard-driven, dense, no hand-holding. Hunks, rebases, conflicts — all first-class.</p></div>
       <div class="why-item"><h3>Cross-platform & native</h3><p>Small native binary with real windows on macOS, Windows, and Linux — not a bundled browser.</p></div>
     </div>
+  </section>
+
+  <!-- HOW IT COMPARES — the evidence for the four claims above, on facts a
+       reader can check for themselves rather than adjectives -->
+  <section class="container section compare">
+    <h2 class="section-title">How it compares.</h2>
+    <ComparisonTable sources={false} sourcesHref={base + '/features/#compare'} />
   </section>
 
   <!-- FEATURES -->

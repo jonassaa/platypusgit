@@ -1,0 +1,138 @@
+---
+// The competitor comparison, rendered from `data/comparison.json` (#210).
+//
+// A component rather than markup on a page because it appears twice — the
+// landing page and /features — and the whole point of the exercise is that the
+// comparison exists once. `test/comparison.test.ts` holds the README to the
+// same data.
+//
+// `sources` is a claim-honesty switch, not decoration: wherever the table makes
+// a claim about somebody else's product, the reader must be one click from the
+// vendor page it came from. Turning the list off REQUIRES `sourcesHref` so that
+// click still exists.
+import { checkedOn, comparisonRows, comparisonSources, runtimeNote } from '../data/comparison.ts';
+import { site } from '../data/site.ts';
+
+interface Props {
+  /** Render the per-vendor source list. */
+  sources?: boolean;
+  /** Where the sources live when they are not rendered here. Required then. */
+  sourcesHref?: string;
+}
+
+const { sources = true, sourcesHref } = Astro.props;
+
+if (!sources && !sourcesHref) {
+  throw new Error(
+    'ComparisonTable: sources={false} needs sourcesHref — a claim about another ' +
+      "product must never be more than one click from the vendor page it came from.",
+  );
+}
+---
+
+<div class="compare-scroll">
+  <table class="compare-table">
+    <thead>
+      <tr>
+        <th scope="col"><span class="sr-only">Client</span></th>
+        <th scope="col">Price</th>
+        <th scope="col">Account</th>
+        <th scope="col">Telemetry</th>
+        <th scope="col">Platforms</th>
+        <th scope="col">Licence</th>
+      </tr>
+    </thead>
+    <tbody>
+      {comparisonRows.map((r) => (
+        <tr class={r.us ? 'us' : undefined}>
+          <th scope="row">
+            {r.href
+              ? <a href={r.href} target="_blank" rel="noopener">{r.name}</a>
+              : r.name}
+          </th>
+          <td>{r.price}</td>
+          <td>{r.account}</td>
+          <td>{r.telemetry}</td>
+          <td>{r.platforms}</td>
+          <td>{r.licence}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
+
+<p class="compare-note">{runtimeNote}</p>
+
+<p class="compare-date">
+  Checked against each vendor's own pages on {checkedOn}. Prices and privacy
+  policies change, so every claim links to the page it came from{sources
+    ? ' — any cell here can be re-checked in a minute.'
+    : null}
+  {!sources && <> — <a href={sourcesHref}>see the sources</a>.</>}
+</p>
+
+{sources && (
+  <div class="sources">
+    <h3>Sources, claim by claim</h3>
+    <ul>
+      {comparisonSources.map((s) => (
+        <li>
+          <span class="vendor">{s.vendor}</span>
+          <span class="links">
+            {s.links.map((l, i) => (
+              <>
+                {i > 0 && <span class="sep" aria-hidden="true">·</span>}
+                <a href={l.url} target="_blank" rel="noopener">{l.label}</a>
+              </>
+            ))}
+          </span>
+        </li>
+      ))}
+      <li>
+        <span class="vendor">{site.name}</span>
+        <span class="links">
+          <a href={site.repo + '/blob/main/LICENSE'} target="_blank" rel="noopener">GPL-3.0</a>
+          <span class="sep" aria-hidden="true">·</span>
+          <span class="own">no analytics dependency and no SDK in the tree, nothing to sign in to,
+          and the only outbound traffic is your git remotes, the update check and forge APIs you
+          configured — <a href={site.repo + '/issues/226'} target="_blank" rel="noopener">kept honest by a guard test</a></span>
+        </span>
+      </li>
+    </ul>
+  </div>
+)}
+
+<style>
+  /* A six-column table does not fit a phone; it scrolls inside its own box
+     rather than making the page scroll sideways. */
+  .compare-scroll { margin-top: var(--s-7); overflow-x: auto;
+    border: 1px solid var(--border-0); border-radius: var(--r-5); }
+  .compare-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; }
+  .compare-table th, .compare-table td { text-align: left; vertical-align: top;
+    padding: var(--s-5) var(--s-6); border-bottom: 1px solid var(--border-0); }
+  .compare-table thead th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--fg-3); font-weight: 600; background: var(--bg-1); white-space: nowrap; }
+  .compare-table tbody th { font-weight: 600; color: var(--fg-0); white-space: nowrap; }
+  .compare-table tbody td { color: var(--fg-2); }
+  .compare-table tbody tr:last-child th, .compare-table tbody tr:last-child td { border-bottom: 0; }
+  .compare-table tbody tr.us { background: var(--bg-1); }
+  .compare-table tbody tr.us th { color: var(--accent); }
+  .compare-table tbody tr.us td { color: var(--fg-1); }
+  .compare-note { margin: var(--s-6) 0 0; color: var(--fg-2); font-size: 14px; max-width: 720px; }
+  .compare-date { margin: var(--s-5) 0 0; color: var(--fg-3); font-size: 13px; max-width: 720px; }
+  .sources { margin-top: var(--s-8); }
+  .sources h3 { font-size: 14px; margin: 0 0 var(--s-5); color: var(--fg-1); }
+  .sources ul { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-4); }
+  .sources li { font-size: 13px; color: var(--fg-3); display: flex; gap: var(--s-5);
+    align-items: baseline; flex-wrap: wrap; }
+  .sources .vendor { color: var(--fg-1); min-width: 148px; flex-shrink: 0; }
+  .sources .links, .sources .own { color: var(--fg-3); }
+  .sources .sep { padding: 0 var(--s-3); color: var(--fg-4); }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  @media (max-width: 480px) {
+    .sources .vendor { min-width: 0; }
+    .sources li { gap: var(--s-3); }
+  }
+</style>

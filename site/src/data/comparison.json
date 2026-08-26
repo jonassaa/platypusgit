@@ -15,7 +15,7 @@
       "name": "GitKraken Desktop",
       "href": "https://www.gitkraken.com/pricing",
       "price": "Free for local and public repos — a paid seat for private ones",
-      "account": "GitKraken account",
+      "account": "Account for private repos",
       "telemetry": "Usage analytics plus the folder and file names where you keep your code",
       "platforms": "macOS · Windows · Linux",
       "licence": "Proprietary"
@@ -59,6 +59,10 @@
           "url": "https://help.gitkraken.com/gitkraken-desktop/gitkraken-account-site-faq/"
         },
         { "label": "the GitKraken account", "url": "https://help.gitkraken.com/gk-dev/gk-dev-account/" },
+        {
+          "label": "install — \"open the app and start working\"",
+          "url": "https://help.gitkraken.com/gitkraken-desktop/how-to-install/"
+        },
         { "label": "privacy policy", "url": "https://www.gitkraken.com/privacy" },
         { "label": "built on Electron", "url": "https://www.gitkraken.com/blog/nodegit-libgit2" }
       ]
