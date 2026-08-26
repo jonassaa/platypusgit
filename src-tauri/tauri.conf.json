@@ -70,7 +70,9 @@
     },
     "linux": {
       "deb": {
-        "depends": [],
+        "depends": ["git"],
+        "provides": ["platypusgit"],
+        "section": "vcs",
         "files": { "/usr/bin/pgit": "deb/pgit" },
         "postInstallScript": "deb/postinst"
       },
