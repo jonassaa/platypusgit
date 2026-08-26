@@ -24,9 +24,11 @@ fn cherry_pick_applies_commit_onto_head() {
                 author_override: None,
                 signoff: false,
                 sign: None,
+                no_verify: false,
             },
         )
-        .unwrap();
+        .unwrap()
+        .oid;
 
     backend.checkout_branch(&handle.id, "main").unwrap();
     assert!(!tr.path().join("NOTES.md").exists());
@@ -53,9 +55,11 @@ fn revert_undoes_commit() {
                 author_override: None,
                 signoff: false,
                 sign: None,
+                no_verify: false,
             },
         )
-        .unwrap();
+        .unwrap()
+        .oid;
 
     backend.revert(&handle.id, &bad_oid).unwrap();
 

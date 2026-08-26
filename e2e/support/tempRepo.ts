@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -26,6 +33,21 @@ export class TempRepo {
 
   read(rel: string): string {
     return readFileSync(path.join(this.path, rel), "utf8");
+  }
+
+  /**
+   * Install an executable git hook (#232).
+   *
+   * The chmod is the whole point, and it is why this is a helper rather than a
+   * `write` call in a spec: **git silently skips a non-executable hook.** A spec
+   * that forgot the bit would still go green — the commit succeeds because no
+   * hook ran at all, not because the flow under test works.
+   */
+  writeHook(name: string, body: string): void {
+    const abs = path.join(this.path, ".git", "hooks", name);
+    mkdirSync(path.dirname(abs), { recursive: true });
+    writeFileSync(abs, body);
+    chmodSync(abs, 0o755);
   }
 
   commitFile(rel: string, content: string, msg: string): void {

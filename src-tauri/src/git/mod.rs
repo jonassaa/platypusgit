@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod bisect;
 pub mod cli;
+pub mod hooks;
 pub mod libgit2;
 pub mod lfs;
 pub mod ownership;
@@ -19,7 +20,7 @@ use std::path::{Path, PathBuf};
 use crate::error::AppResult;
 use types::{
     AheadBehind,
-    BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
+    BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
     DiffKind, FileContent,
     FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
     RemoteInfo,
@@ -400,7 +401,7 @@ pub trait GitBackend: Send + Sync {
     ) -> AppResult<()>;
 
     // === commit ===
-    fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String>;
+    fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<CommitResult>;
 
     // === refs ===
     fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;

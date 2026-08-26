@@ -25,9 +25,13 @@ use std::path::{Path, PathBuf};
 const RAW_SPAWN_ALLOWED: &[(&str, usize, &str)] = &[
     (
         "src/proc.rs",
-        4,
-        "The module that OWNS spawning. Its four constructors are the raw sites: \
-         `program`, `program_async`, and the two `*_keeping_console` exceptions.",
+        5,
+        "The module that OWNS spawning. Four are its constructors: `program`, \
+         `program_async`, and the two `*_keeping_console` exceptions. The fifth \
+         is `probe_login_path`'s login shell (issue 232) — the one child that \
+         must NOT be handed the environment we are trying to replace, which is \
+         why it cannot go through a constructor. It is `#[cfg(not(windows))]`, \
+         so it creates no Windows console either.",
     ),
     (
         "src/detach.rs",

@@ -4,7 +4,7 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        AheadBehind, BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides,
+        AheadBehind, BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
         DiffKind, FileContent,
         FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
@@ -238,7 +238,7 @@ impl GitBackend for CliBackend {
     ) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<String> {
+    fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<CommitResult> {
         Err(AppError::NotImplemented)
     }
     fn branches(&self, _repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {

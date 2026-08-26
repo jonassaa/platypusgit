@@ -87,6 +87,20 @@ fn an_unsigned_commit_is_verified_without_spawning_git() {
             .to_string()
     };
 
+    // A stub on `PATH` only works if children actually inherit this process's
+    // `PATH` — and since issue 232, `proc.rs` PINS a resolved login-shell `PATH`
+    // on every child it constructs, which would send `git` to the real binary
+    // and leave the stub untouched. Pointing `SHELL` at nothing makes the probe
+    // fail, so `child_path()` is `None` and children inherit ours again.
+    //
+    // This must happen BEFORE the first `proc.rs` spawn, because the answer is
+    // cached in a `OnceLock` for the life of the process. That is safe here for
+    // the reason in the module doc: one `#[test]` per binary, so nothing races.
+    //
+    // If a future change gives the probe a static fallback list for when no
+    // shell is available, this stops working and the test needs a real opt-out
+    // rather than a starved probe.
+    std::env::set_var("SHELL", "/nonexistent/pgit-test-shell");
     std::env::set_var("PATH", bindir.path());
 
     // ── the fixture proves itself: a spawn IS observable ─────────────────────

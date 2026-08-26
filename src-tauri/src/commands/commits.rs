@@ -3,7 +3,7 @@ use tauri::State;
 use crate::{
     error::{AppError, AppResult},
     git::types::{
-        AheadBehind, AuthorOverride, CommitInfo, CommitOptions, LogFilter, LogPage, RepoId,
+        AheadBehind, AuthorOverride, CommitInfo, CommitOptions, CommitResult, LogFilter, LogPage, RepoId,
     },
     state::AppState,
 };
@@ -150,7 +150,10 @@ pub async fn commit(
     author_override: Option<AuthorOverride>,
     // None = follow `commit.gpgsign`; Some overrides it for this commit (#61 D6).
     sign: Option<bool>,
-) -> AppResult<String> {
+    // Skip every commit-side hook for this commit only (#232). Optional so a
+    // caller that omits it keeps hooks ON, which is the safe default.
+    no_verify: Option<bool>,
+) -> AppResult<CommitResult> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let opts = CommitOptions {
@@ -159,6 +162,7 @@ pub async fn commit(
         author_override,
         signoff: signoff.unwrap_or(false),
         sign,
+        no_verify: no_verify.unwrap_or(false),
     };
     tokio::task::spawn_blocking(move || backend.commit(&repo_id, opts))
         .await

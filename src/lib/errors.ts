@@ -48,7 +48,14 @@ export type AppError =
    */
   | { kind: "LfsUnavailable"; message: string }
   /** An op needed a bisect in progress and found none (#93). */
-  | { kind: "NoBisect"; message?: string };
+  | { kind: "NoBisect"; message?: string }
+  /**
+   * A git hook ran and refused (#232). The payload is a STRUCT, and its
+   * `output` is deliberately NOT rendered into the banner sentence: forty lines
+   * of eslint belong in the dedicated output block, which scrolls. See
+   * `appErrorDetail`.
+   */
+  | { kind: "HookRejected"; message: HookRejection };
 
 /** Which credential the remote is asking for. */
 export type AuthKind = "Https" | "SshPassphrase" | "SshKey";
@@ -57,6 +64,15 @@ export interface AuthChallenge {
   /** Host the credential is for, when git's stderr named one. */
   host: string | null;
   kind: AuthKind;
+}
+
+/**
+ * A hook's refusal (#232). `output` is whatever the hook printed, verbatim —
+ * stdout and stderr both, as git delivers them.
+ */
+export interface HookRejection {
+  hook: string;
+  output: string;
 }
 
 export function isAppError(e: unknown): e is AppError {
@@ -105,6 +121,17 @@ function appErrorDetail(e: AppError): string {
   // prose. Rendered raw, the banner would just read "github.com".
   if (e.kind === "ForgeAuth" && typeof message === "string") {
     return forgeAuthMessage(message);
+  }
+  // HookRejected carries a struct, and its `output` is deliberately dropped
+  // here: the output goes to the block that can scroll, while a banner gets the
+  // sentence naming which hook to go and look at.
+  if (
+    e.kind === "HookRejected" &&
+    typeof message === "object" &&
+    message !== null &&
+    typeof (message as HookRejection).hook === "string"
+  ) {
+    return `The ${(message as HookRejection).hook} hook rejected this commit.`;
   }
   if (e.kind === "BranchExists" && typeof message === "string") {
     return `A local branch named ${message} already exists.`;

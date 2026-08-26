@@ -18,6 +18,7 @@ import {
   PGTextarea,
   fileMenuItems,
   multiFileMenuItems,
+  PGHookOutput,
   pgConfirm,
   pgFlash,
   pgPrompt,
@@ -129,6 +130,8 @@ export function CommitPanelScreen() {
   const unstage = useRepoStore((s) => s.unstage);
   const commitAction = useRepoStore((s) => s.commit);
   const pushAction = useRepoStore((s) => s.push);
+  const hookRejection = useRepoStore((s) => s.hookRejection);
+  const clearHookRejection = useRepoStore((s) => s.clearHookRejection);
   const activity = useRepoStore((s) => s.activity);
   const commits = useRepoStore((s) => s.commits);
   const setNavIntent = useNavStore((s) => s.setIntent);
@@ -152,6 +155,10 @@ export function CommitPanelScreen() {
   // Signing (#61 D6). null = follow the setting, which itself defaults to
   // following commit.gpgsign; a per-commit toggle overrides just this commit.
   const [signOverride, setSignOverride] = React.useState<boolean | null>(null);
+  // Skip hooks for this commit only (#232). Never persisted: a "skip once" that
+  // quietly becomes "never run hooks again" is a worse version of the bug that
+  // running hooks fixes.
+  const [noVerify, setNoVerify] = React.useState(false);
   const signSetting = useSettingsStore((s) => s.signCommits);
   const signForCommit =
     signOverride ??
@@ -1018,29 +1025,33 @@ export function CommitPanelScreen() {
   // the message/staged state — key auto-repeat (holding ⌘↵) and double-taps
   // both re-dispatch the chord while canCommit is still true.
   const committingRef = React.useRef(false);
-  const doCommit = async (): Promise<string | null> => {
+  const doCommit = async (skipHooks = noVerify): Promise<string | null> => {
     if (committingRef.current) return null;
     committingRef.current = true;
     try {
       const full = buildMessage(message, coAuthorTrailers(coAuthors));
-      const oid = await commitAction(
+      const result = await commitAction(
         full,
         amend,
         signoff,
         authorIdentity,
         signForCommit,
+        skipHooks,
       );
-      if (oid) {
+      if (result) {
         setMessage("");
         setAmend(false);
         draftRef.current = null;
         // Per-commit signing override is not sticky: it is an override, and
         // carrying it silently into the next commit would surprise.
         setSignOverride(null);
+        // Same reasoning for skipping hooks — and more sharply, because a
+        // sticky one would silently disable a team's gates from then on.
+        setNoVerify(false);
         // Attribution is sticky: pairing usually spans several commits, so
         // clearing it after each one would mean retyping every time.
       }
-      return oid;
+      return result?.oid ?? null;
     } finally {
       committingRef.current = false;
     }
@@ -1058,7 +1069,7 @@ export function CommitPanelScreen() {
       void doCommit();
       return true;
     },
-    [canCommit, message, amend, signoff, authorIdentity, coAuthors],
+    [canCommit, message, amend, signoff, authorIdentity, coAuthors, noVerify],
   );
   useAction(
     "commit.commitAndPush",
@@ -1076,6 +1087,8 @@ export function CommitPanelScreen() {
       coAuthors,
       headBranch,
       defaultRemote,
+      // Without this the chord commits with the PREVIOUS value of the toggle.
+      noVerify,
     ],
   );
   // Checking amend pulls HEAD's message into the box (that's the message being
@@ -1127,7 +1140,17 @@ export function CommitPanelScreen() {
 
   // A clean tree still has one thing worth doing: fixing the message of the
   // commit that just landed. Checking amend brings the composer back.
-  if (!loading && staged.length === 0 && unstaged.length === 0 && !amend) {
+  // `!hookRejection` is part of the condition on purpose: a `pre-commit` hook
+  // that reformats and restages can leave the tree clean while its refusal is
+  // still the most important thing on screen. Without this the block would be
+  // unmounted by the very hook that produced it.
+  if (
+    !loading &&
+    staged.length === 0 &&
+    unstaged.length === 0 &&
+    !amend &&
+    !hookRejection
+  ) {
     return (
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <PGEmpty
@@ -1568,6 +1591,22 @@ export function CommitPanelScreen() {
             />
           </div>
 
+          {/*
+            A hook's refusal (#232), between the message box and the toggles —
+            next to the message it is usually complaining about. Persists until
+            dismissed or until the next attempt clears it, because the user is
+            about to act on it rather than acknowledge it.
+          */}
+          {hookRejection && (
+            <PGHookOutput
+              rejection={hookRejection}
+              onDismiss={clearHookRejection}
+              // Retry with hooks off. Deliberately does NOT tick the checkbox:
+              // this is one commit, not a new default.
+              onCommitAnyway={() => void doCommit(true)}
+            />
+          )}
+
           <div
             style={{
               display: "flex",
@@ -1610,6 +1649,21 @@ export function CommitPanelScreen() {
                     ? "Sign this commit"
                     : "Don't sign this commit"
               }
+            />
+            {/*
+              Skip hooks (#232). Visible rather than hidden away, so a user with
+              a slow hook can opt out on purpose — and so nobody skips hooks
+              without knowing they did. Not sticky: cleared after every commit.
+            */}
+            <PGCheckbox
+              checked={noVerify}
+              onChange={setNoVerify}
+              label={
+                <span title="Run no pre-commit, prepare-commit-msg, commit-msg or post-commit hook. Equivalent to `git commit --no-verify`.">
+                  Skip hooks for this commit
+                </span>
+              }
+              testId="commit-no-verify"
             />
           </div>
 

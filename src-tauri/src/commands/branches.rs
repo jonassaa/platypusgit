@@ -220,7 +220,13 @@ pub async fn pull(
 /// Build `git push` args. `set_upstream` adds `-u`, which the caller passes
 /// only when the branch has no upstream yet — re-sending `-u` on every push
 /// would rewrite tracking the user may have deliberately pointed elsewhere.
-fn push_args(remote: &str, branch: &str, force: PushForce, set_upstream: bool) -> Vec<String> {
+fn push_args(
+    remote: &str,
+    branch: &str,
+    force: PushForce,
+    set_upstream: bool,
+    no_verify: bool,
+) -> Vec<String> {
     let mut args: Vec<String> = vec!["push".to_string()];
     if set_upstream {
         args.push("-u".to_string());
@@ -231,6 +237,11 @@ fn push_args(remote: &str, branch: &str, force: PushForce, set_upstream: bool) -
         PushForce::None => {}
         PushForce::WithLease => args.push("--force-with-lease".to_string()),
         PushForce::Force => args.push("--force".to_string()),
+    }
+    // Skips `pre-push` (#232). Required rather than defaulted, so the compiler
+    // finds every call site instead of one silently keeping hooks on.
+    if no_verify {
+        args.push("--no-verify".to_string());
     }
     args
 }
@@ -243,6 +254,8 @@ pub async fn push(
     branch: String,
     force: PushForce,
     credentials: Option<Credentials>,
+    // Skip `pre-push` for this push only (#232).
+    no_verify: Option<bool>,
 ) -> AppResult<()> {
     let repo_id = RepoId(repo_id);
     let path = get_repo_path(&state, &repo_id).await?;
@@ -265,7 +278,7 @@ pub async fn push(
             .unwrap_or(false)
     };
 
-    let args = push_args(&remote, &branch, force, needs_upstream);
+    let args = push_args(&remote, &branch, force, needs_upstream, no_verify.unwrap_or(false));
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     run_git_creds(&path, &arg_refs, credentials.as_ref()).await
 }
@@ -275,13 +288,42 @@ mod push_args_tests {
     use super::*;
 
     #[test]
+    fn no_verify_is_added_only_when_asked() {
+        assert_eq!(
+            push_args("origin", "main", PushForce::None, false, false),
+            vec!["push", "origin", "main"]
+        );
+        assert_eq!(
+            push_args("origin", "main", PushForce::None, false, true),
+            vec!["push", "origin", "main", "--no-verify"]
+        );
+    }
+
+    #[test]
+    fn no_verify_composes_with_upstream_and_force() {
+        assert_eq!(
+            push_args("origin", "feat/x", PushForce::WithLease, true, true),
+            vec![
+                "push",
+                "-u",
+                "origin",
+                "feat/x",
+                "--force-with-lease",
+                "--no-verify"
+            ]
+        );
+    }
+
+    use super::*;
+
+    #[test]
     fn adds_u_only_when_requested() {
         assert_eq!(
-            push_args("origin", "main", PushForce::None, true),
+            push_args("origin", "main", PushForce::None, true, false),
             vec!["push", "-u", "origin", "main"]
         );
         assert_eq!(
-            push_args("origin", "main", PushForce::None, false),
+            push_args("origin", "main", PushForce::None, false, false),
             vec!["push", "origin", "main"]
         );
     }
@@ -289,11 +331,11 @@ mod push_args_tests {
     #[test]
     fn force_flag_comes_last() {
         assert_eq!(
-            push_args("origin", "main", PushForce::WithLease, false),
+            push_args("origin", "main", PushForce::WithLease, false, false),
             vec!["push", "origin", "main", "--force-with-lease"]
         );
         assert_eq!(
-            push_args("origin", "feat/x", PushForce::Force, true),
+            push_args("origin", "feat/x", PushForce::Force, true, false),
             vec!["push", "-u", "origin", "feat/x", "--force"]
         );
     }

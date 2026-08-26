@@ -12,6 +12,7 @@ import type {
   ChecksSummary,
   CliShimStatus,
   CommitInfo,
+  CommitResult,
   ConflictSides,
   DiffKind,
   FileContent,
@@ -419,14 +420,20 @@ export async function commit(
    * config; `true`/`false` overrides it for this commit.
    */
   sign: boolean | null = null,
-): Promise<string> {
-  return invoke<string>("commit", {
+  /**
+   * Skip every commit-side hook for this commit only (#232), matching
+   * `git commit --no-verify`. Defaults to running them.
+   */
+  noVerify = false,
+): Promise<CommitResult> {
+  return invoke<CommitResult>("commit", {
     repoId,
     message,
     amend,
     signoff,
     authorOverride,
     sign,
+    noVerify,
   });
 }
 
@@ -856,8 +863,17 @@ export async function push(
   branch: string,
   force: PushForce = "None",
   credentials?: Credentials,
+  /** Skip `pre-push` for this push only (#232). */
+  noVerify = false,
 ): Promise<void> {
-  return invoke<void>("push", { repoId, remote, branch, force, credentials });
+  return invoke<void>("push", {
+    repoId,
+    remote,
+    branch,
+    force,
+    credentials,
+    noVerify,
+  });
 }
 
 // ─── Remote management ───────────────────────────────────────────────────────

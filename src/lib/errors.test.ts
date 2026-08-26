@@ -219,3 +219,46 @@ describe("appErrorMessage", () => {
     expect(appErrorMessage({ code: 7 })).not.toContain(OBJ);
   });
 });
+
+describe("HookRejected (#232)", () => {
+  it("names the hook rather than rendering the struct", () => {
+    const e: AppError = {
+      kind: "HookRejected",
+      message: { hook: "pre-commit", output: "eslint: 2 problems" },
+    };
+    const text = appErrorMessage(e);
+    expect(text).toContain("pre-commit");
+    // The struct must never reach a banner as an object.
+    expect(text).not.toContain("[object Object]");
+  });
+
+  it("keeps the hook's output out of the one-line message", () => {
+    // The output belongs in the dedicated block, not a banner: a forty-line
+    // eslint dump inside a toast is the bug this feature exists to fix.
+    const e: AppError = {
+      kind: "HookRejected",
+      message: { hook: "commit-msg", output: "line1\nline2\nline3" },
+    };
+    expect(appErrorMessage(e)).not.toContain("line2");
+  });
+
+  it("renders safely when the payload has the wrong shape", () => {
+    // A future Rust change that made the payload a plain string must not put
+    // "[object Object]" in front of the user, and must not throw.
+    const e = {
+      kind: "HookRejected",
+      message: "not a struct",
+    } as unknown as AppError;
+    expect(() => appErrorMessage(e)).not.toThrow();
+    expect(appErrorMessage(e)).not.toContain("[object Object]");
+  });
+
+  it("still names the hook when the hook printed nothing", () => {
+    // A hook can exit 1 in silence; the name is then the only clue there is.
+    const e: AppError = {
+      kind: "HookRejected",
+      message: { hook: "pre-commit", output: "" },
+    };
+    expect(appErrorMessage(e)).toContain("pre-commit");
+  });
+});

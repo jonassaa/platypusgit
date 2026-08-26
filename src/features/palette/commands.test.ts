@@ -137,6 +137,27 @@ describe("buildCommands", () => {
     expect(push).toHaveBeenCalledWith("origin", "main", "None");
   });
 
+  it("offers a danger-marked push that skips hooks, and refuses without a confirm", () => {
+    // #232: the escape hatch must be per-invocation and VISIBLE. There is no
+    // push dialog to hang a checkbox on, so it is its own command — the shape
+    // force-push already uses.
+    const push = vi.fn();
+    setRepo({ branches: [mkBranch("main", true, "origin/main")] });
+    useRepoStore.setState({ push } as never);
+
+    const item = buildCommands().find(
+      (i) => i.id === "action:push-current-no-verify",
+    );
+    expect(item).toBeTruthy();
+    expect(item!.danger).toBe(true);
+
+    // No <PGDialogHost/> is mounted in this file, so pgConfirm resolves FALSE —
+    // which makes this the decline path, and the safety-critical direction:
+    // an unconfirmed skip must push nothing at all.
+    item!.run();
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("omits stash-pop when there are no stashes", () => {
     expect(ids()).not.toContain("action:stash-pop-latest");
   });

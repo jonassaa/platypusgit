@@ -662,3 +662,15 @@ export interface BisectStatus {
   badCount: number;
   skippedCount: number;
 }
+
+/**
+ * What a commit produced (#232).
+ *
+ * The message comes back because `commit-msg` may **rewrite** it, so what
+ * landed is not necessarily what the user typed — and a panel that keeps showing
+ * the typed version is lying about the repository.
+ */
+export interface CommitResult {
+  oid: string;
+  message: string;
+}

@@ -93,4 +93,52 @@ describe("commit", () => {
     // Amend rewrites, never adds — history length is the proof.
     expect(repo.git("rev-list", "--count", "HEAD").trim()).toBe(commitsBefore);
   });
+
+  it("shows a rejecting pre-commit hook's output, and can commit past it", async () => {
+    // Installed inside the test, not before openRepo: unlike dirty files (which
+    // the store reads at open), a hook is only read by git when the commit runs.
+    // `writeHook` chmods — git skips a non-executable hook, and this spec would
+    // then pass because nothing ran.
+    repo.writeHook(
+      "pre-commit",
+      "#!/bin/sh\necho 'HOOK SAYS NO: subject too long'\nexit 1\n",
+    );
+
+    await $("button*=Stage all").click();
+    await browser.waitUntil(
+      async () => !(await $('[data-testid="changes-list"] [data-path]').isExisting()),
+      { timeout: 20_000, timeoutMsg: "changes list should be empty after staging all" },
+    );
+    await $('[data-testid="commit-message"]').setValue("feat: rejected by a hook");
+
+    const headBefore = repo.headSha();
+    await $('[data-testid="commit-button"]').click();
+
+    // UI as the wait condition: the refusal block only mounts once the backend
+    // call has returned, so it is strictly after git finished with the hook.
+    const block = $('[data-testid="hook-output"]');
+    await block.waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the hook-output block never appeared for a rejecting pre-commit",
+    });
+    // The hook's own words have to reach the user — that is the entire feature.
+    await expect($('[data-testid="hook-body"]')).toHaveText(
+      expect.stringContaining("HOOK SAYS NO"),
+    );
+
+    // Repo truth as acceptance: a refused commit creates NOTHING.
+    expect(repo.headSha()).toBe(headBefore);
+
+    // The escape hatch on the refusal itself.
+    await $('[data-testid="hook-skip"]').click();
+    await $("div*=Working tree clean").waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "committing without hooks did not return the panel to clean",
+    });
+
+    expect(repo.git("log", "-1", "--pretty=%s").trim()).toBe(
+      "feat: rejected by a hook",
+    );
+    expect(repo.headSha()).not.toBe(headBefore);
+  });
 });

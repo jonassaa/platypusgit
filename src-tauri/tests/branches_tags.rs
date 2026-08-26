@@ -191,6 +191,7 @@ fn delete_unmerged_branch_is_refused_without_force() {
                 author_override: None,
                 signoff: false,
                 sign: None,
+                no_verify: false,
             },
         )
         .unwrap();
