@@ -19,6 +19,7 @@ fn opts(message: &str, sign: Option<bool>) -> CommitOptions {
         author_override: None,
         signoff: false,
         sign,
+        no_verify: false,
     }
 }
 
@@ -104,7 +105,8 @@ fn signed_commit_is_reachable_from_head_and_has_a_gpgsig_header() {
 
     let oid = backend
         .commit(&handle.id, opts("signed", Some(true)))
-        .expect("signed commit");
+        .expect("signed commit")
+        .oid;
 
     // THE trap: commit_signed writes the object but does not move HEAD.
     let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
@@ -171,7 +173,8 @@ fn signed_amend_replaces_head_and_stays_signed() {
                 ..opts("amended", Some(true))
             },
         )
-        .expect("signed amend");
+        .expect("signed amend")
+        .oid;
 
     let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(head.id().to_string(), amended, "amend must move HEAD");
@@ -195,7 +198,8 @@ fn unsigned_commit_path_is_unchanged() {
 
     let oid = backend
         .commit(&handle.id, opts("plain", Some(false)))
-        .unwrap();
+        .unwrap()
+        .oid;
 
     let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(head.id().to_string(), oid);
@@ -215,7 +219,7 @@ fn sign_none_follows_commit_gpgsign_being_off() {
         .unwrap();
 
     // No commit.gpgsign set → unsigned, and crucially no attempt to run gpg.
-    let oid = backend.commit(&handle.id, opts("plain", None)).unwrap();
+    let oid = backend.commit(&handle.id, opts("plain", None)).unwrap().oid;
     let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(head.id().to_string(), oid);
     assert!(head.header_field_bytes("gpgsig").is_err());
@@ -297,7 +301,8 @@ fn verify_commit_grades_our_own_signature_good() {
         .unwrap();
     let oid = backend
         .commit(&handle.id, opts("signed", Some(true)))
-        .expect("signed commit");
+        .expect("signed commit")
+        .oid;
 
     let status = backend.verify_commit(&handle.id, &oid).expect("verify");
     assert_eq!(

@@ -316,3 +316,75 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   note relies on this). `close` is the only removal.
 - Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block
   the async runtime.
+
+## The hook chain
+
+Commit-side hooks run in `Libgit2Backend::commit`, one per name, through
+`git/hooks.rs` — the only place a hook is spawned. The order is load-bearing:
+
+    pre-commit → read index → write tree → prepare-commit-msg → commit-msg
+    → build/sign/move ref → post-commit
+
+- **`pre-commit` runs before the index is read, and outside `with_repo`.** A hook
+  that runs `git add` (lint-staged: reformat, restage) mutates the on-disk index,
+  and only a read that happens afterwards sees it. Running it outside the lock
+  also means a hook shelling out to git cannot deadlock against us.
+- **`index.read(false)` after `repo.index()` is required, not incidental.**
+  `with_repo` hands back a *cached* `git2::Repository`, and libgit2 keeps its
+  index in memory — so reading the index after the hook still returned the
+  pre-hook snapshot, and a reformatting hook's work was silently dropped.
+  `tests/hooks.rs::a_pre_commit_that_restages_is_honoured` found this and pins
+  it; it fails if either the read or the reload moves.
+- **A non-zero `pre-commit`, `prepare-commit-msg` or `commit-msg` creates
+  nothing** — no object, no ref move — the same guarantee the signing chain
+  makes, for the same reason. The index is deliberately **not** rolled back: a
+  hook that restaged did work the user wants, and git does not undo it either.
+- **`post-commit`'s exit code is discarded**, because git discards it. Reporting
+  a commit that exists as failed sends the user hunting for work that landed.
+- **The final message is the hook's, not the user's.** `commit-msg` may rewrite
+  `$GIT_DIR/COMMIT_EDITMSG`, so `commit` returns
+  `CommitResult { oid, message }` and the panel shows what actually landed.
+- **Sign-off is applied before any hook sees the message**, matching
+  `git commit -s` — verified against real git, so a hook validating trailers sees
+  what git would show it.
+- **`prepare-commit-msg` gets source `message` and two arguments, amend
+  included.** The source is `commit` (with the object as `$3`) only when the
+  message is taken *from* a commit, as with `-c`/`-C` or a bare `--amend`; we
+  always supply it as text.
+- **`no_verify` skips all four.** Per-invocation, never persisted — a "skip once"
+  that silently becomes "never run hooks again" is a worse version of the bug
+  that running hooks fixes. `push_args` grows `--no-verify` for `pre-push`.
+- **Support is detected, never inferred from a version string.**
+  `git hook run --ignore-missing <a-hook-name-that-cannot-exist>` exits 0 on a
+  git that has the subcommand and non-zero on one that does not, with no side
+  effects. Probed once, cached.
+- `AppError::HookRejected` carries the hook's name and its output as separate
+  fields, because the output renders *as output* — not as a banner.
+
+### The `PATH` every child gets
+
+`proc.rs` resolves the user's login-shell `PATH` once, caches it, and applies it
+to every child it constructs. Without it a hook calling `node`, or a
+`gpg.program` in `/opt/homebrew/bin`, works or fails depending on whether the app
+was launched from a terminal or from the Dock.
+
+Two things about it that are easy to get wrong:
+
+- **It is a union — login entries first, then the inherited `PATH`.** Measured:
+  `Command::env("PATH", …)` governs where the child *binary itself* is looked up
+  and uses only that value, never the parent's. Assigning the login `PATH`
+  verbatim would break `Command::new("git")` for anyone whose login `PATH` lacks
+  git's directory — a regression caused by the fix.
+- **Children no longer inherit a `PATH` this process changes at runtime.** That
+  is the point, but it means a test that stubs a binary by mutating `PATH` has to
+  starve the probe first; `tests/verify_commit_no_spawn.rs` does, with a comment.
+- **`child_path()` is a non-blocking cache read; `warm_child_path()` is the only
+  resolver**, called once on a background thread from `run()`'s setup. Resolving
+  inside the reader would make the FIRST spawn of the session wait for a login
+  shell to run the user's rc files — a slow `.zshrc` (nvm, a network mount) would
+  then stall their first git operation by up to the probe timeout. The window
+  before the probe lands fails safe: those spawns inherit our environment, which
+  is exactly the pre-feature behaviour. `proc.rs`'s
+  `only_warm_child_path_resolves_the_probe` guards this at the source level,
+  because a timing test in a parallel test binary gets warmed by a sibling and
+  passes vacuously.

@@ -150,6 +150,22 @@ pub fn run() {
                 "platypusgit starting v{}",
                 env!("CARGO_PKG_VERSION")
             );
+            // Resolve the login-shell PATH off the main thread (issue 232). The
+            // probe spawns a shell that runs the user's rc files, which is slow
+            // enough to be visible at launch.
+            //
+            // This is the ONLY place that resolves it. `child_path()` is a
+            // non-blocking cache read, so a spawn landing before this finishes
+            // inherits our environment exactly as it did before the feature
+            // existed — rather than waiting on someone's `.zshrc`. See
+            // `proc::warm_child_path`.
+            std::thread::spawn(|| {
+                crate::proc::warm_child_path();
+                match crate::proc::child_path() {
+                    Some(p) => log::debug!("resolved child PATH ({} chars)", p.len()),
+                    None => log::debug!("no login-shell PATH; children inherit ours"),
+                }
+            });
             // macOS uses titleBarStyle: Overlay (set in tauri.conf.json) to keep native
             // traffic lights while letting our content extend under them. On Windows /
             // Linux we hide the OS frame entirely and render PGWindowControls ourselves.

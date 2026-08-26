@@ -124,6 +124,28 @@ pub enum AppError {
     /// bisect — so the UI refreshes rather than alarms.
     #[error("no bisect in progress")]
     NoBisect,
+
+    /// A git hook ran and refused (#232).
+    ///
+    /// Carries the hook's NAME and its OUTPUT as separate fields rather than one
+    /// formatted sentence: the output is the whole point of the feature and has
+    /// to render *as output* — monospace, scrollable, forty lines of eslint —
+    /// not pasted into a one-line banner.
+    ///
+    /// Distinct from `Io`, which is a hook we could not *launch*: that is a
+    /// broken environment, not a policy decision by the repository. And distinct
+    /// from no error at all, which is what an absent hook produces.
+    #[error("the {} hook rejected this commit", .0.hook)]
+    HookRejected(HookRejection),
+}
+
+/// A hook's refusal (#232). `output` is whatever the hook printed, verbatim —
+/// stdout and stderr both, as git delivers them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookRejection {
+    pub hook: String,
+    pub output: String,
 }
 
 impl From<git2::Error> for AppError {

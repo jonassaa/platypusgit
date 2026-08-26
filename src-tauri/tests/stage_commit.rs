@@ -98,11 +98,12 @@ fn commit_from_staged_changes_advances_head() {
                 author_override: None,
                 signoff: false,
                 sign: None,
+                no_verify: false,
             },
         )
         .expect("commit");
 
-    assert_eq!(oid.len(), 40);
+    assert_eq!(oid.oid.len(), 40);
     let log = backend.log(&handle.id, None, 10).unwrap();
     assert_eq!(log.len(), 2, "should have initial + new commit");
     assert_eq!(log[0].summary, "update readme");
@@ -126,6 +127,7 @@ fn amend_replaces_tip() {
                 author_override: None,
                 signoff: false,
                 sign: None,
+                no_verify: false,
             },
         )
         .unwrap();
@@ -144,6 +146,7 @@ fn amend_replaces_tip() {
                 author_override: None,
                 signoff: false,
                 sign: None,
+                no_verify: false,
             },
         )
         .unwrap();
@@ -171,6 +174,7 @@ fn commit_with_signoff_appends_trailer_from_repo_identity() {
                 author_override: None,
                 signoff: true,
                 sign: None,
+                no_verify: false,
             },
         )
         .expect("commit");
@@ -203,6 +207,7 @@ fn commit_signoff_does_not_duplicate_existing_trailer() {
                 author_override: None,
                 signoff: true,
                 sign: None,
+                no_verify: false,
             },
         )
         .expect("commit");
@@ -230,6 +235,7 @@ fn commit_without_signoff_leaves_message_untouched() {
                 author_override: None,
                 signoff: false,
                 sign: None,
+                no_verify: false,
             },
         )
         .expect("commit");
@@ -256,6 +262,7 @@ fn commit_on_unborn_branch_creates_root() {
                 author_override: None,
                 signoff: false,
                 sign: None,
+                no_verify: false,
             },
         )
         .unwrap();

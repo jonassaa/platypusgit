@@ -413,6 +413,38 @@ export function buildCommands(): PaletteItem[] {
             items: remoteItems("push", (r) => guardedForcePush(r, name)),
           })),
     });
+    // Push skipping `pre-push` (#232). A SEPARATE command rather than a toggle,
+    // for the same reason force-push is one: there is no push dialog to hang a
+    // checkbox on, and the escape hatch has to be per-invocation and visible so
+    // nobody skips a team's gate without meaning to. Confirmed, and marked
+    // danger, because the hook it skips is usually the test suite.
+    const guardedNoVerifyPush = (remote: string, branch: string) => {
+      void (async () => {
+        if (
+          !(await pgConfirm({
+            title: `Push ${branch} to ${remote} without hooks?`,
+            body: "Skips this repository's pre-push hook — whatever it checks (tests, lint, protected branches) will not run for this push.",
+            danger: true,
+            confirmLabel: "Push without hooks",
+          }))
+        ) {
+          return;
+        }
+        void repo.push(remote, branch, "None", true);
+      })();
+    };
+    items.push({
+      type: "command", id: "action:push-current-no-verify",
+      search: "Push current branch without hooks no-verify skip pre-push",
+      label: `Push ${name} without hooks`, danger: true,
+      detail: head?.upstream ?? undefined, icon: "push",
+      run: upstream
+        ? direct(() => guardedNoVerifyPush(upstream[0], upstream[1]))
+        : step(() => ({
+            kind: "pick", title: `Push ${name} without hooks to…`,
+            items: remoteItems("push", (r) => guardedNoVerifyPush(r, name)),
+          })),
+    });
   }
 
   // -- branch ops --

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   AuthorOverride,
   BisectMark,
+  CommitResult,
   FileContent,
   FileStatus,
   LogFilter,
@@ -9,9 +10,10 @@ import type {
   RebaseStep,
   RepoHandle,
 } from "@/lib/types";
-import type { AppError } from "@/lib/errors";
+import type { AppError, HookRejection } from "@/lib/errors";
 import {
   dubiousOwnershipPath,
+  isAppError,
   isAuthError,
   isDubiousOwnershipError,
   toAppError,
@@ -243,7 +245,11 @@ interface RepoStoreState extends RepoSlice {
     authorOverride?: AuthorOverride | null,
     /** Sign this commit (#61 D6). null follows commit.gpgsign. */
     sign?: boolean | null,
-  ) => Promise<string | null>;
+    /** Skip every commit-side hook for this commit only (#232). */
+    noVerify?: boolean,
+  ) => Promise<CommitResult | null>;
+  /** Dismiss the hook refusal on display (#232). */
+  clearHookRejection: () => void;
   reset: (target: string, mode: ResetMode) => Promise<void>;
   checkoutBranch: (name: string) => Promise<void>;
   checkoutRef: (reference: string) => Promise<void>;
@@ -293,7 +299,13 @@ interface RepoStoreState extends RepoSlice {
   fetch: (remote: string) => Promise<void>;
   fetchAll: () => Promise<void>;
   pull: (remote: string, branch: string, mode?: PullMode) => Promise<void>;
-  push: (remote: string, branch: string, force?: PushForce) => Promise<void>;
+  push: (
+    remote: string,
+    branch: string,
+    force?: PushForce,
+    /** Skip `pre-push` for this push only (#232). */
+    noVerify?: boolean,
+  ) => Promise<void>;
   // remote management
   addRemote: (name: string, url: string) => Promise<void>;
   removeRemote: (name: string) => Promise<void>;
@@ -871,24 +883,45 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     signoff = false,
     authorOverride = null,
     sign = null,
+    noVerify = false,
   ) {
     const repo = get().current;
     if (!repo) return null;
+    // Clear the previous refusal first: a stale block sitting above a fresh
+    // attempt reads as though the new attempt failed too.
+    setFor(repo.id, { hookRejection: null });
     try {
-      const oid = await commitFn(
+      const result = await commitFn(
         repo.id,
         message,
         amend,
         signoff,
         authorOverride,
         sign,
+        noVerify,
       );
       await get().refreshAll();
-      return oid;
+      return result;
     } catch (e) {
+      // A hook refusal is NOT a banner error. Its output needs a surface that
+      // scrolls, and the user is about to act on it in the panel rather than
+      // dismiss it — so it lands in its own per-repo field.
+      if (isAppError(e) && e.kind === "HookRejected") {
+        // refreshAll regardless: a `pre-commit` hook may have reformatted and
+        // restaged files before refusing, so the lists on screen are stale.
+        await get().refreshAll();
+        setFor(repo.id, { hookRejection: e.message as HookRejection });
+        return null;
+      }
       setErrorFor(repo.id, e);
       return null;
     }
+  },
+
+  clearHookRejection() {
+    const repo = get().current;
+    if (!repo) return;
+    setFor(repo.id, { hookRejection: null });
   },
 
   async checkoutBranch(name) {
@@ -1305,7 +1338,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     );
   },
 
-  async push(remote, branch, force = "None") {
+  async push(remote, branch, force = "None", noVerify = false) {
     const repo = get().current;
     if (!repo) return;
     setActivity("push", `Pushing ${remote}/${branch}…`);
@@ -1313,7 +1346,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await withAuthRetry(
         repo.id,
         async (creds) => {
-          await pushRemote(repo.id, remote, branch, force, creds);
+          await pushRemote(repo.id, remote, branch, force, creds, noVerify);
           await get().refreshAll();
         },
         (e) => setErrorFor(repo.id, e),

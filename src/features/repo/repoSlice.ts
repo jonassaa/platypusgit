@@ -37,7 +37,7 @@ import type {
   TagInfo,
 } from "@/lib/types";
 import { LOG_REF_ALL } from "@/lib/types";
-import type { AppError } from "@/lib/errors";
+import type { AppError, HookRejection } from "@/lib/errors";
 import type { RepoActivity } from "./repoActivity";
 
 export const DEFAULT_REBASE_STATUS: RebaseStatus = {
@@ -128,6 +128,15 @@ export interface RepoSlice {
   bisectStatus: BisectStatus;
   /** Active long-running ops keyed by op kind. */
   activity: RepoActivity;
+  /**
+   * The git hook refusal to display, or null (#232).
+   *
+   * Per-repo, and therefore here: a commit rejected by one repository's
+   * `pre-commit` must not show its output in another tab's commit panel. It is
+   * kept out of `error` on purpose — a hook's output needs a surface that
+   * scrolls, and the user is about to act on it rather than dismiss it.
+   */
+  hookRejection: HookRejection | null;
 }
 
 /**
@@ -162,6 +171,7 @@ export function emptySlice(): RepoSlice {
     rebaseStatus: DEFAULT_REBASE_STATUS,
     bisectStatus: DEFAULT_BISECT_STATUS,
     activity: {},
+    hookRejection: null,
   };
 }
 

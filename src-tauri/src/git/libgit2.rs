@@ -16,7 +16,8 @@ use crate::opener::safe_workdir_path;
 use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus,
-        BlameLine, BranchInfo, CommitInfo, CommitOptions, ConflictSides, DiffHunk, DiffKind,
+        BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides, DiffHunk,
+        DiffKind,
         DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage,
         RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag,
@@ -3749,27 +3750,106 @@ impl GitBackend for Libgit2Backend {
         git_apply(&repo_path, &["--reverse"], &patch_text)
     }
 
-    fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<String> {
+    fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<CommitResult> {
+        use crate::git::hooks;
         use crate::git::signature::{apply_signoff, default_signature};
 
-        self.with_repo(repo_id, |repo| {
+        /// Run one hook and turn a refusal into the error the frontend renders.
+        fn gate(workdir: &std::path::Path, name: &str, args: &[&str]) -> AppResult<()> {
+            let out = hooks::run_hook(workdir, name, args)?;
+            if out.rejected() {
+                return Err(AppError::HookRejected(crate::error::HookRejection {
+                    hook: name.to_string(),
+                    output: out.output,
+                }));
+            }
+            Ok(())
+        }
+
+        let repo_path = self.repo_path(repo_id)?;
+
+        // `pre-commit` runs BEFORE the index is read, and OUTSIDE `with_repo`.
+        // Both matter:
+        //
+        //  - A hook that runs `git add` (the lint-staged shape: reformat, then
+        //    restage) mutates the on-disk index, and only a read that happens
+        //    afterwards sees it. `tests/hooks.rs` pins this.
+        //  - `with_repo` holds the per-repo mutex, and a hook shelling out to
+        //    git must not deadlock against us.
+        //
+        // A refusal here returns before anything is created.
+        if !opts.no_verify {
+            gate(&repo_path, "pre-commit", &[])?;
+        }
+
+        // Sign-off goes on before any hook sees the message, matching
+        // `git commit -s` — verified that git has already appended the trailer
+        // by the time `commit-msg` reads the file, so a hook validating trailers
+        // has to see it here too.
+        //
+        // This takes the per-repo lock a second time. The stash TOCTOU rule
+        // would normally forbid that, but this is a READ of the config identity
+        // rather than a verify-then-mutate: the worst a race can do is trail a
+        // `Signed-off-by` for the identity the user had a moment ago. It cannot
+        // be folded into the commit's own `with_repo` either — sign-off must be
+        // applied before the hooks run, and the hooks must run outside the lock.
+        let message_in = if opts.signoff {
+            let (name, email) = self.with_repo(repo_id, |repo| {
+                let c = default_signature(repo)?;
+                Ok((
+                    c.name().unwrap_or("").to_string(),
+                    c.email().unwrap_or("").to_string(),
+                ))
+            })?;
+            apply_signoff(&opts.message, &name, &email)
+        } else {
+            opts.message.clone()
+        };
+
+        // The message hooks negotiate over lives in `$GIT_DIR/COMMIT_EDITMSG`,
+        // where git puts it — so a hook that ignores `$1` and hardcodes the path
+        // still works.
+        let message = if opts.no_verify {
+            message_in
+        } else {
+            let git_dir = self.with_repo(repo_id, |repo| Ok(repo.path().to_path_buf()))?;
+            let msg_path = git_dir.join("COMMIT_EDITMSG");
+            std::fs::write(&msg_path, &message_in).map_err(|e| AppError::Io(e.to_string()))?;
+            let msg_arg = msg_path
+                .to_str()
+                .ok_or_else(|| AppError::InvalidPath(msg_path.display().to_string()))?;
+
+            // Our source is always `message`, with no third argument — amend
+            // INCLUDED. Verified rather than assumed: the source is `commit`
+            // (with the object as `$3`) only when the message is taken FROM a
+            // commit, as with `-c`/`-C` or a bare `--amend`. We always supply it
+            // as text, so git's equivalent is `commit --amend -m <msg>`, which
+            // reports `message` and passes two arguments.
+            gate(&repo_path, "prepare-commit-msg", &[msg_arg, "message"])?;
+            gate(&repo_path, "commit-msg", &[msg_arg])?;
+
+            // Re-read: either hook may have rewritten the file, and what it left
+            // there is what git would commit.
+            std::fs::read_to_string(&msg_path).map_err(|e| AppError::Io(e.to_string()))?
+        };
+
+        let oid = self.with_repo(repo_id, |repo| {
             let sig = match &opts.author_override {
                 Some(o) => git2::Signature::now(&o.name, &o.email)?,
                 None => default_signature(repo)?,
             };
 
-            // Sign-off trailer uses the committer identity (repo config), which
-            // mirrors `git commit -s` even when the author is overridden.
-            let message = if opts.signoff {
-                let committer = default_signature(repo)?;
-                let name = committer.name().unwrap_or("");
-                let email = committer.email().unwrap_or("");
-                apply_signoff(&opts.message, name, email)
-            } else {
-                opts.message.clone()
-            };
-
+            // Read the index HERE, after `pre-commit` — see the note above.
+            //
+            // And `read(false)` is not optional. `with_repo` hands back a CACHED
+            // `git2::Repository`, and libgit2 caches its index in memory, so
+            // `index()` alone returns the snapshot from before the hook ran — a
+            // `pre-commit` that reformats and restages would silently commit the
+            // unformatted content. `read(false)` reloads only if the on-disk
+            // index actually changed, so it costs a stat in the common case.
+            // Pinned by `a_pre_commit_that_restages_is_honoured`.
             let mut index = repo.index()?;
+            index.read(false)?;
             let tree_oid = index.write_tree()?;
             let tree = repo.find_tree(tree_oid)?;
 
@@ -3817,7 +3897,16 @@ impl GitBackend for Libgit2Backend {
                 &parent_refs,
             )?;
             Ok(oid.to_string())
-        })
+        })?;
+
+        // `post-commit` runs after the ref moved, and its exit code is
+        // DISCARDED because git discards it. Reporting a commit that exists as
+        // failed would send the user hunting for work that already landed.
+        if !opts.no_verify {
+            let _ = hooks::run_hook(&repo_path, "post-commit", &[]);
+        }
+
+        Ok(CommitResult { oid, message })
     }
 
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {

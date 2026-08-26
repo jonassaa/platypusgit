@@ -344,7 +344,7 @@ pub struct FileContent {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitOptions {
     pub message: String,
@@ -358,6 +358,26 @@ pub struct CommitOptions {
     /// `commit.gpgsign` from git config; `Some` overrides it for this commit.
     #[serde(default)]
     pub sign: Option<bool>,
+    /// Skip every commit-side hook for this one commit (#232), matching
+    /// `git commit --no-verify`. `#[serde(default)]` so a caller that omits it
+    /// keeps hooks ON, which is the safe default.
+    ///
+    /// Deliberately not a persisted setting: "skip once" that quietly becomes
+    /// "never run hooks again" is a worse version of the bug this fixes.
+    #[serde(default)]
+    pub no_verify: bool,
+}
+
+/// What a commit produced (#232).
+///
+/// The message is returned because `commit-msg` may **rewrite** it, so what
+/// landed is not necessarily what the user typed — and a panel that keeps
+/// showing the typed version is lying about the repository.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitResult {
+    pub oid: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

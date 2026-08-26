@@ -98,6 +98,12 @@ git/
 │                a rebase it cannot drive
 ├── auth.rs      PURE: classify_auth_failure (stderr → AuthKind; host-key
 │                failure deliberately not auth), AuthChallenge, scrub_credentials
+├── hooks.rs     The ONE place a git hook is executed (#232). `git hook run`,
+│                so git's own resolution (core.hooksPath, the executable bit,
+│                Windows' sh shim) is not reimplemented — behind a cached,
+│                side-effect-free capability probe, with a Unix-only direct-exec
+│                fallback for a git older than 2.36. NOTE `git hook run` sends
+│                the hook's STDOUT to stderr, so the captured stream is stderr
 ├── signing.rs   CRYPTOGRAPHIC signing, GPG/SSH — not signature.rs. Pure: key
 │                resolution, resolve_key_file (key::… literals refused), signer
 │                argv, parse_verify_output. Payload-agnostic: commits and tags

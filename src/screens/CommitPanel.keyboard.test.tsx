@@ -142,9 +142,11 @@ describe("CommitPanel keyboard navigation", () => {
           },
         ],
         remotes: [{ name: "origin", url: "/tmp/bare" }],
+        // Returns a CommitResult, not a bare oid (#232): the message comes back
+        // because `commit-msg` may have rewritten it.
         commit: async (m: string, amend?: boolean, signoff?: boolean) => {
           commitCalls.push([m, !!amend, !!signoff]);
-          return "oid123";
+          return { oid: "oid123", message: m };
         },
         push: async (remote: string, branch: string) => {
           pushCalls.push([remote, branch]);
