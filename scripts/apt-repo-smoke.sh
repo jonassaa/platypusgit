@@ -241,6 +241,22 @@ ok "/usr/bin/pgit is executable"
 [ -x /usr/bin/platypusgit ] || fail "/usr/bin/platypusgit is missing or not executable"
 ok "/usr/bin/platypusgit is executable"
 
+# Actually RUN it. This is the assertion that `test -x` cannot make: it proves
+# the ELF loads and every shared library the .deb declared resolved — a missing
+# Depends: shows up here as a loader error rather than as a broken app on
+# someone's machine.
+#
+# `--help` and not `--version`: both are handled in lib.rs before the Tauri
+# builder is constructed, but `--version` only exists since #218. An older .deb
+# in the pool does not recognise it, falls through to a launch, and panics in
+# GTK init with no display — which would make this gate fail for a reason that
+# has nothing to do with the repository. `--help` has been there throughout.
+pgit --help > /tmp/help.out 2>&1 \
+    || fail "pgit --help exited non-zero: $(head -3 /tmp/help.out)"
+grep -q 'Usage: pgit' /tmp/help.out \
+    || fail "pgit --help printed no usage: $(head -3 /tmp/help.out)"
+ok "pgit --help runs headless and prints usage"
+
 if command -v gpg > /dev/null 2>&1; then
     fail "gnupg got pulled in — the dearmored key path is supposed to avoid it"
 fi
