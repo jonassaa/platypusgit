@@ -5,7 +5,13 @@
 //
 // The files are pre-encoded WebP in public/screenshots/ (`pnpm screenshots`
 // regenerates them from the PNG masters in screenshots/), so there is no image
-// pipeline in the build and no dependency for CI to install.
+// pipeline in the build and no dependency for CI to install. Two variants per
+// figure — RENDER_W and RENDER_W*2 — and the browser picks by device pixel
+// ratio from the srcset below. Without the 2x, every Retina visitor sees a
+// 1.3x upscale of 1x text, which is what made these look blurry.
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 interface Props {
   /** Basename under public/screenshots/, no extension. */
   name: string;
@@ -25,18 +31,50 @@ interface Props {
 const { name, alt, caption, priority = false, maxWidth } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
-// Every capture is this size. Set on the element so the box is reserved before
-// the bytes arrive — without it the taller-than-before hero shifts the whole
-// page down on load.
-const WIDTH = 1600;
-const HEIGHT = 1112;
+// The intrinsic aspect ratio of every master, NOT the byte size of either
+// variant. Set on the element so the box is reserved before the bytes arrive —
+// without it the taller-than-before hero shifts the whole page down on load.
+// scripts/screenshots.mjs refuses a master that disagrees with this ratio.
+const RATIO_W = 1600;
+const RATIO_H = 1112;
+
+// Must match RENDER_W in scripts/screenshots.mjs: --maxw (1080px) minus the
+// .container gutter (--s-7, 20px a side). The `sizes` value below is what tells
+// the browser which variant it needs, so a wrong number here ships the wrong
+// bytes even though nothing looks broken.
+const RENDER_W = 1040;
+
+// The 2x variant only exists when the master had the pixels for it — a 1x
+// master gets no @2x rather than an upscale that costs bytes and adds nothing.
+// Resolved from disk so there is no manifest to fall out of sync; this runs at
+// build time in Node, never in the browser.
+const publicDir = fileURLToPath(new URL('../../public/screenshots/', import.meta.url));
+const has2x = existsSync(`${publicDir}${name}@2x.webp`);
+
+const src1x = `${base}/screenshots/${name}.webp`;
+const srcset = has2x
+  ? `${src1x} ${RENDER_W}w, ${base}/screenshots/${name}@2x.webp ${RENDER_W * 2}w`
+  : undefined;
+
+// Width the figure actually occupies, so the browser can pick a variant before
+// layout. The gutter is 20px a side, 16px under 480px (see tokens.css), and the
+// column stops growing at --maxw. A capped figure stops growing at its own cap.
+const cap = maxWidth ?? RENDER_W;
+const breakpoint = maxWidth ? maxWidth + 40 : 1080;
+const sizes = [
+  '(max-width: 480px) calc(100vw - 32px)',
+  `(max-width: ${breakpoint}px) calc(100vw - 40px)`,
+  `${cap}px`,
+].join(', ');
 ---
 <figure class="shot" style={maxWidth ? `max-width: ${maxWidth}px` : undefined}>
   <img
-    src={`${base}/screenshots/${name}.webp`}
+    src={src1x}
+    srcset={srcset}
+    sizes={srcset ? sizes : undefined}
     alt={alt}
-    width={WIDTH}
-    height={HEIGHT}
+    width={RATIO_W}
+    height={RATIO_H}
     loading={priority ? 'eager' : 'lazy'}
     decoding={priority ? 'auto' : 'async'}
     fetchpriority={priority ? 'high' : 'auto'}

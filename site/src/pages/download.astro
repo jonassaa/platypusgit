@@ -33,269 +33,595 @@ const buildSteps = `# Prerequisites: Node 22+, pnpm, Rust stable
 git clone ${site.repo}.git
 cd platypusgit
 pnpm install
-pnpm tauri build --no-sign   # produces .dmg / .msi / .deb / .AppImage`;
+pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
+
+// Which channels install the `pgit` command as part of installing the app.
+// This was three sentences of prose that a reader had to hold in their head to
+// answer one question; it is a lookup, so it is a table.
+const pgitMatrix = [
+  { os: 'macos', channel: 'Homebrew cask', ships: true, note: 'Removed again on uninstall' },
+  { os: 'macos', channel: 'Disk image (.dmg)', ships: false, note: 'A drag-install runs no code' },
+  { os: 'windows', channel: 'Installer (.msi)', ships: true, note: 'Added to your PATH' },
+  { os: 'linux', channel: 'Debian package (.deb)', ships: true, note: 'Ships /usr/bin/pgit' },
+  { os: 'linux', channel: 'AppImage', ships: false, note: 'Portable, executes no hook' },
+];
+
+// macOS minimum is tauri.conf.json's bundle.macOS.minimumSystemVersion.
+const platforms = [
+  {
+    key: 'macos',
+    label: 'macOS',
+    iconSize: 20,
+    blurb: 'Apple Silicon & Intel, one universal build.',
+    specs: ['macOS 11 Big Sur or newer', 'Universal — arm64 + x86_64', 'Ships the pgit command'],
+  },
+  {
+    key: 'windows',
+    label: 'Windows',
+    iconSize: 18,
+    blurb: 'Windows 10 and 11, 64-bit.',
+    specs: ['Windows 10 or 11, x64', 'WebView2 — preinstalled on 11', 'Ships the pgit command'],
+  },
+  {
+    key: 'linux',
+    label: 'Linux',
+    iconSize: 20,
+    blurb: 'Debian package or portable AppImage.',
+    specs: ['webkit2gtk 4.1 required', 'x86_64', '.deb ships the pgit command'],
+  },
+] as const;
 ---
 <Layout
   title={'Download ' + site.name + ' for Mac, Windows & Linux'}
   description={descriptions.download}
   schemas={[softwareApplicationSchema]}
 >
+  {/* Resolve the platform BEFORE the panels below are parsed, so the page
+      paints with one panel open instead of rendering all three and collapsing
+      two on DOMContentLoaded. The old script also never sniffed at all — it
+      returned 'macos' unconditionally, so every Windows and Linux visitor
+      landed on Homebrew instructions. */}
+  <script is:inline>
+    (function () {
+      var known = ['macos', 'windows', 'linux'];
+      var hash = (location.hash || '').replace('#', '');
+      if (known.indexOf(hash) !== -1) {
+        document.documentElement.setAttribute('data-os', hash);
+        return;
+      }
+      var ua = navigator.userAgent || '';
+      var plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+      var hay = plat + ' ' + ua;
+      // Apple first: iPadOS reports "like Mac OS X" and Android reports "Linux".
+      var os = /mac|iphone|ipad|ipod/i.test(hay)
+        ? 'macos'
+        : /win/i.test(hay)
+          ? 'windows'
+          : /linux|x11|cros|android|bsd/i.test(hay)
+            ? 'linux'
+            : 'macos';
+      document.documentElement.setAttribute('data-os', os);
+    })();
+  </script>
+
   <section class="container page-head">
-    <h1>Download</h1>
-    <p class="lead">platypusgit runs on macOS, Windows, and Linux. Pick your platform below. Prebuilt binaries live on GitHub Releases.</p>
+    <p class="eyebrow mono">Free · GPL-3.0 · no account, no telemetry</p>
+    <h1>Download platypusgit</h1>
+    <p class="lead">
+      Prebuilt binaries for macOS, Windows and Linux on every release. Pick a platform —
+      yours is already selected.
+    </p>
     <div class="head-ctas">
-      <CTAButton href={site.releasesLatest} external>Latest release</CTAButton>
-      <CTAButton href={site.releases} variant="secondary" external>All releases</CTAButton>
+      <CTAButton href={site.releasesLatest} external>Latest release ↗</CTAButton>
+      <CTAButton href={site.releases} variant="secondary" external>All releases ↗</CTAButton>
     </div>
-    <div class="os-tabs" data-os-tabs>
-      <button class="os-tab" data-os="macos" type="button"><OsIcon os="macos" size={15} /> macOS</button>
-      <button class="os-tab" data-os="windows" type="button"><OsIcon os="windows" size={15} /> Windows</button>
-      <button class="os-tab" data-os="linux" type="button"><OsIcon os="linux" size={15} /> Linux</button>
-    </div>
+    <p class="head-note">
+      Builds are early but usable — expect frequent releases and rough edges. Nothing here is
+      notarized or code-signed yet, so first launch needs one extra step on macOS and Windows;
+      each panel says which.
+    </p>
   </section>
 
-  <section class="container">
-    <div class="notice">
-      <strong>Builds are early but usable.</strong> Every published release attaches prebuilt
-      binaries for all three platforms — macOS <code>.dmg</code>, Windows <code>.msi</code>,
-      Linux <code>.deb</code> &amp; <code>.AppImage</code>. On macOS, prefer
-      <a href="#macos">Homebrew</a> — it handles Gatekeeper and updates for you.
-      The download buttons above always
-      point at the <a href={site.releasesLatest} target="_blank" rel="noopener">latest release</a>;
-      browse <a href={site.releases} target="_blank" rel="noopener">all releases</a>, or
-      <a href="#build">build from source</a>.
-    </div>
-  </section>
-
-  <!-- INSTALL: macOS -->
-  <section class="container install" id="macos" data-os-section="macos">
-    <div class="install-head">
-      <h2><OsIcon os="macos" size={22} /> macOS</h2>
-      <p>Apple Silicon &amp; Intel. Homebrew is the smoothest route — one command to install, one to update, no Gatekeeper detour.</p>
-    </div>
-
-    <div class="method method-primary">
-      <h3>Homebrew <span class="badge">Recommended</span></h3>
-      <CodeBlock code={'brew install --cask jonassaa/platypusgit/platypusgit'} lang="bash" />
-      <p class="method-note">Taps the cask and installs the universal build straight into <code>/Applications</code> — and the <a href="#cli"><code>pgit</code> command</a> with it. The app is ad-hoc signed but not notarized — the cask clears the macOS Gatekeeper quarantine flag on install, so it launches with no "unidentified developer" prompt and there is nothing to run by hand.</p>
+  <!-- PLATFORM PICKER — tablist joined to the panel it controls -->
+  <section class="container picker">
+    <div class="tabs" role="tablist" aria-label="Operating system">
+      {platforms.map((p) => (
+        <button
+          class="tab"
+          role="tab"
+          type="button"
+          id={`tab-${p.key}`}
+          data-os={p.key}
+          aria-controls={`panel-${p.key}`}
+          aria-selected="false"
+        >
+          <OsIcon os={p.key} size={15} />
+          {p.label}
+        </button>
+      ))}
     </div>
 
-    <div class="method method-primary">
-      <h3>Updating with Homebrew</h3>
-      <p class="method-note">Homebrew owns updates on macOS — there is no in-app self-update here. Every release bumps the cask, so upgrading is:</p>
-      <CodeBlock code={'brew update\nbrew upgrade --cask platypusgit'} lang="bash" />
-      <p class="method-note"><code>brew update</code> refreshes the tap, <code>brew upgrade</code> fetches the new build and replaces the app. Quit platypusgit first so the running app isn't swapped underneath it. Check what you have with <code>brew info --cask platypusgit</code>, and remove it with <code>brew uninstall --cask platypusgit</code>.</p>
-    </div>
+    {platforms.map((p) => (
+      <div
+        class="panel"
+        role="tabpanel"
+        id={`panel-${p.key}`}
+        aria-labelledby={`tab-${p.key}`}
+        data-os-section={p.key}
+        tabindex="0"
+      >
+        <div class="panel-head">
+          <h2 id={p.key}><OsIcon os={p.key} size={p.iconSize} /> {p.label}</h2>
+          <p>{p.blurb}</p>
+        </div>
 
-    <div class="method">
-      <h3>DMG (manual)</h3>
-      <p class="method-note">No Homebrew? Download the universal <code>.dmg</code> and drag <code>PlatypusGit.app</code> into <code>/Applications</code>. Updates are then manual — repeat the download for every release. A drag-install runs no code, so the <a href="#cli"><code>pgit</code> command</a> is a separate one-liner.</p>
-      <CTAButton href={assets.macosDmg} external>Download .dmg</CTAButton>
-    </div>
+        <div class="grid">
+          {/* ── macOS ─────────────────────────────────────────────── */}
+          {p.key === 'macos' && (
+            <>
+              <article class="card card-wide card-primary">
+                <span class="pill">Recommended</span>
+                <h3>Homebrew</h3>
+                <p class="card-lead">One command to install, one to update, and no Gatekeeper detour.</p>
+                <CodeBlock code={'brew install --cask jonassaa/platypusgit/platypusgit'} lang="bash" />
+                <p class="card-note">
+                  Taps the cask and installs the universal build straight into <code>/Applications</code>,
+                  and the <a href="#cli"><code>pgit</code></a> command with it. The app is ad-hoc signed
+                  but not notarized — the cask clears the macOS Gatekeeper quarantine flag on install, so
+                  it launches with no “unidentified developer” prompt and there is nothing to run by hand.
+                </p>
+                <details>
+                  <summary>Updating and removing</summary>
+                  <p class="card-note">
+                    Homebrew owns updates on macOS — there is no in-app self-update. Every release bumps
+                    the cask, so upgrading is:
+                  </p>
+                  <CodeBlock code={'brew update\nbrew upgrade --cask platypusgit'} lang="bash" />
+                  <p class="card-note">
+                    <code>brew update</code> refreshes the tap, <code>brew upgrade</code> fetches the new
+                    build and replaces the app. Quit platypusgit first so the running app isn’t swapped
+                    underneath it. Check what you have with <code>brew info --cask platypusgit</code>, and
+                    remove it with <code>brew uninstall --cask platypusgit</code>.
+                  </p>
+                </details>
+              </article>
 
-    <div class="method">
-      <h3>First launch — DMG only</h3>
-      <p class="method-note">The <code>.dmg</code> isn't notarized, so on first launch macOS may say the app is damaged or from an unidentified developer. Clear the quarantine flag (Homebrew installs never hit this):</p>
-      <CodeBlock code={'xattr -cr /Applications/PlatypusGit.app'} lang="bash" />
-      <p class="method-note">Or: <strong>System Settings → Privacy &amp; Security → Open Anyway</strong> for platypusgit.</p>
-    </div>
-  </section>
+              <article class="card">
+                <h3>Disk image</h3>
+                <p class="card-lead">No Homebrew? Drag-install the universal build.</p>
+                <CTAButton href={assets.macosDmg} external>Download .dmg</CTAButton>
+                <p class="filename mono">PlatypusGit_universal.dmg</p>
+                <p class="card-note">
+                  Drag <code>PlatypusGit.app</code> into <code>/Applications</code>. Updates are then
+                  manual — repeat the download for every release — and because a drag-install runs no
+                  code, the <a href="#cli"><code>pgit</code></a> command is a separate one-liner.
+                </p>
+                <details>
+                  <summary>First launch warning</summary>
+                  <p class="card-note">
+                    The <code>.dmg</code> isn’t notarized, so macOS may say the app is damaged or from an
+                    unidentified developer. Clear the quarantine flag — Homebrew installs never hit this:
+                  </p>
+                  <CodeBlock code={'xattr -cr /Applications/PlatypusGit.app'} lang="bash" />
+                  <p class="card-note">
+                    Or: <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>.
+                  </p>
+                </details>
+              </article>
+            </>
+          )}
 
-  <!-- INSTALL: Windows -->
-  <section class="container install" id="windows" data-os-section="windows">
-    <div class="install-head">
-      <h2><OsIcon os="windows" size={20} /> Windows</h2>
-      <p>Windows 10 &amp; 11. WebView2 ships with Windows 11.</p>
-    </div>
+          {/* ── Windows ───────────────────────────────────────────── */}
+          {p.key === 'windows' && (
+            <>
+              <article class="card card-wide card-primary">
+                <span class="pill">Recommended</span>
+                <h3>Installer</h3>
+                <p class="card-lead">Download the 64-bit installer and run it.</p>
+                <CTAButton href={assets.windowsMsi} external>Download .msi</CTAButton>
+                <p class="filename mono">PlatypusGit_x64.msi</p>
+                <p class="card-note">
+                  Installs the app and the <a href="#cli"><code>pgit</code></a> command together, and puts
+                  <code>pgit</code> on your PATH. WebView2 is already present on Windows 11; on Windows 10
+                  the installer pulls it in if it is missing.
+                </p>
+                <details>
+                  <summary>First launch warning</summary>
+                  <p class="card-note">
+                    The installer isn’t code-signed yet, so Windows SmartScreen shows a warning. Click
+                    <strong>More info → Run anyway</strong> to proceed.
+                  </p>
+                </details>
+              </article>
 
-    <div class="method">
-      <h3>Installer (.msi)</h3>
-      <p class="method-note">Download the 64-bit <code>.msi</code> and run it. It installs the <a href="#cli"><code>pgit</code> command</a> too, and puts it on your PATH.</p>
-      <CTAButton href={assets.windowsMsi} external>Download .msi</CTAButton>
-    </div>
+              <article class="card">
+                <h3>Other routes</h3>
+                <p class="card-lead">No packaged alternative yet.</p>
+                <p class="card-note">
+                  There is no winget or Chocolatey package today. If you would rather not run the
+                  installer, <a href="#build">build from source</a> — the standard Tauri toolchain
+                  produces the same <code>.msi</code>.
+                </p>
+              </article>
+            </>
+          )}
 
-    <div class="method">
-      <h3>First launch — unsigned build</h3>
-      <p class="method-note">The installer isn't code-signed yet, so Windows SmartScreen shows a warning. Click <strong>More info → Run anyway</strong> to proceed.</p>
-    </div>
-  </section>
+          {/* ── Linux ─────────────────────────────────────────────── */}
+          {p.key === 'linux' && (
+            <>
+              <article class="card card-primary">
+                <span class="pill">Recommended</span>
+                <h3>Debian package</h3>
+                <p class="card-lead">Debian, Ubuntu and derivatives.</p>
+                <CTAButton href={assets.linuxDeb} external>Download .deb</CTAButton>
+                <p class="filename mono">PlatypusGit_amd64.deb</p>
+                <CodeBlock code={'sudo apt install ./PlatypusGit_amd64.deb'} lang="bash" />
+                <p class="card-note">
+                  Ships <code>/usr/bin/pgit</code>, so the <a href="#cli"><code>pgit</code></a> command
+                  works straight away. Needs <code>webkit2gtk 4.1</code>, which apt resolves for you.
+                </p>
+              </article>
 
-  <!-- INSTALL: Linux -->
-  <section class="container install" id="linux" data-os-section="linux">
-    <div class="install-head">
-      <h2><OsIcon os="linux" size={22} /> Linux</h2>
-      <p>Needs <code>webkit2gtk 4.1</code>. Two formats — Debian package or portable AppImage.</p>
-    </div>
+              <article class="card">
+                <h3>AppImage</h3>
+                <p class="card-lead">Portable — nothing is installed.</p>
+                <CTAButton href={assets.linuxAppImage} external>Download .AppImage</CTAButton>
+                <p class="filename mono">PlatypusGit_amd64.AppImage</p>
+                <CodeBlock code={'chmod +x PlatypusGit_amd64.AppImage\n./PlatypusGit_amd64.AppImage'} lang="bash" />
+                <p class="card-note">
+                  Download, make it executable, run. Because nothing is installed and no hook executes,
+                  the <a href="#cli"><code>pgit</code></a> command is a separate one-liner.
+                </p>
+              </article>
+            </>
+          )}
 
-    <div class="method">
-      <h3>Debian / Ubuntu (.deb)</h3>
-      <p class="method-note">Download the package, then install it — it ships <code>/usr/bin/pgit</code>, so the <a href="#cli"><code>pgit</code> command</a> works straight away:</p>
-      <CodeBlock code={'sudo apt install ./PlatypusGit_amd64.deb'} lang="bash" />
-      <CTAButton href={assets.linuxDeb} external>Download .deb</CTAButton>
-    </div>
-
-    <div class="method">
-      <h3>AppImage (portable)</h3>
-      <p class="method-note">Download, make it executable, and run — no install needed. Nothing is installed, so the <a href="#cli"><code>pgit</code> command</a> is a separate one-liner:</p>
-      <CodeBlock code={'chmod +x PlatypusGit_amd64.AppImage\n./PlatypusGit_amd64.AppImage'} lang="bash" />
-      <CTAButton href={assets.linuxAppImage} external>Download .AppImage</CTAButton>
-    </div>
+          <aside class="card card-specs">
+            <h3>Requirements</h3>
+            <ul>{p.specs.map((s) => <li>{s}</li>)}</ul>
+          </aside>
+        </div>
+      </div>
+    ))}
   </section>
 
   <!-- THE pgit COMMAND -->
-  <section class="container cli" id="cli">
+  <section class="container section" id="cli">
+    <p class="eyebrow mono">Command line</p>
     <h2>The <code>pgit</code> command</h2>
-    <p class="lead"><code>pgit .</code> opens the repository you are standing in and hands the prompt straight back. <code>pgit log</code>, <code>pgit commit</code> and <code>pgit branches</code> open onto that screen; a path opens the repository containing it.</p>
+    <p class="lead">
+      <code>pgit .</code> opens the repository you are standing in and hands the prompt straight
+      back. <code>pgit log</code>, <code>pgit commit</code> and <code>pgit branches</code> open onto
+      that screen; a path opens the repository containing it.
+    </p>
 
-    <div class="notice">
-      <strong>Most installs already have it.</strong> The Homebrew cask, the Linux
-      <code>.deb</code> and the Windows <code>.msi</code> install <code>pgit</code> as part of
-      installing the app, and remove it again when you uninstall — there is nothing to run and
-      nothing to copy. Check with <code>pgit --help</code> in a new terminal. Only the macOS
-      <code>.dmg</code> and the Linux <code>.AppImage</code> run no install code — a drag-install
-      and a portable AppImage never execute a hook — so those two need the command below, or
-      <strong>Settings → Command line</strong> inside the app.
+    <h3 class="sub">Most installs already have it</h3>
+    <div class="matrix" role="table" aria-label="Which install channels ship the pgit command">
+      <div class="mrow mhead" role="row">
+        <span role="columnheader">Channel</span>
+        <span role="columnheader">Ships <code>pgit</code></span>
+        <span role="columnheader">Notes</span>
+      </div>
+      {pgitMatrix.map((r) => (
+        <div class="mrow" role="row" data-ships={String(r.ships)}>
+          <span role="cell"><OsIcon os={r.os} size={13} /> {r.channel}</span>
+          <span role="cell" class="ships">{r.ships ? 'Yes' : 'No'}</span>
+          <span role="cell" class="mnote">{r.note}</span>
+        </div>
+      ))}
+    </div>
+    <p class="matrix-note">
+      Check with <code>pgit --help</code> in a new terminal. The two channels that run no install
+      code need the one-liner below, or <strong>Settings → Command line</strong> inside the app.
+    </p>
+
+    <div class="grid grid-2">
+      <article class="card">
+        <h3>macOS .dmg &amp; Linux AppImage</h3>
+        <CodeBlock code={cliUnix} lang="bash" />
+        <p class="card-note">
+          Links <code>pgit</code> to the app you already installed, from a directory you own — no
+          <code>sudo</code>. If Homebrew or the <code>.deb</code> already put a <code>pgit</code> on
+          your PATH, the script says so and exits without touching it.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Windows PowerShell</h3>
+        <CodeBlock code={cliWindows} lang="powershell" />
+        <p class="card-note">
+          For the Windows installs the <code>.msi</code> does not cover: a build from source, an
+          unpacked layout, or an <code>.msi</code> whose PATH change has not reached the shell you are
+          in. Writes <code>pgit.cmd</code> into <code>%LOCALAPPDATA%\PlatypusGit\bin</code> and appends
+          that directory to your <em>user</em> PATH — no admin rights.
+        </p>
+      </article>
     </div>
 
-    <div class="method">
-      <h3>macOS DMG &amp; Linux AppImage</h3>
-      <CodeBlock code={cliUnix} lang="bash" />
-      <p class="method-note">Links <code>pgit</code> to the app you already installed, from a directory you own — no <code>sudo</code>. If Homebrew or the <code>.deb</code> already put a <code>pgit</code> on your PATH, the script says so and exits without touching it.</p>
-    </div>
-
-    <div class="method">
-      <h3>Windows PowerShell</h3>
-      <CodeBlock code={cliWindows} lang="powershell" />
-      <p class="method-note">For the Windows installs the <code>.msi</code> does not cover: a build from source, an unpacked layout, or an <code>.msi</code> whose PATH change has not reached the shell you are in. Writes <code>pgit.cmd</code> into <code>%LOCALAPPDATA%\PlatypusGit\bin</code> and appends that directory to your <em>user</em> PATH — no admin rights, and nothing the machine PATH has to be edited for.</p>
-    </div>
-
-    <div class="method">
-      <h3>Read it before you run it</h3>
-      <p class="method-note">Piping a URL into a shell runs whatever that URL returns, so both scripts are plain text meant to be read first — <a href={installShUrl}>install-pgit.sh</a> and <a href={installPs1Url}>install-pgit.ps1</a> open in the browser, and the same files live in the repo under <a href={site.repo + '/tree/main/scripts'} target="_blank" rel="noopener">scripts/</a> (the site serves a build-time copy of exactly those bytes). Or download, inspect, then run:</p>
+    <details class="audit">
+      <summary>Read it before you run it</summary>
+      <p class="card-note">
+        Piping a URL into a shell runs whatever that URL returns, so both scripts are plain text meant
+        to be read first — <a href={installShUrl}>install-pgit.sh</a> and
+        <a href={installPs1Url}>install-pgit.ps1</a> open in the browser, and the same files live in
+        the repo under <a href={site.repo + '/tree/main/scripts'} target="_blank" rel="noopener">scripts/</a>
+        (the site serves a build-time copy of exactly those bytes). Or download, inspect, then run:
+      </p>
       <CodeBlock code={cliUnixAudit} lang="bash" />
-      <p class="method-note method-note-tight">Windows PowerShell:</p>
+      <p class="card-note card-note-tight">Windows PowerShell:</p>
       <CodeBlock code={cliWindowsAudit} lang="powershell" />
-      <p class="method-note">Both take a dry run that prints what would happen and changes nothing: <code>curl -fsSL … | sh -s -- --dry-run</code>, or <code>-DryRun</code> for the PowerShell script.</p>
-    </div>
+      <p class="card-note">
+        Both take a dry run that prints what would happen and changes nothing:
+        <code>curl -fsSL … | sh -s -- --dry-run</code>, or <code>-DryRun</code> for the PowerShell
+        script.
+      </p>
+    </details>
   </section>
 
   <!-- BUILD FROM SOURCE -->
-  <section class="container build" id="build">
-    <h2>Build from source</h2>
-    <p class="lead">Standard Tauri toolchain. Works on all three platforms.</p>
+  <section class="container section" id="build">
+    <p class="eyebrow mono">From source</p>
+    <h2>Build it yourself</h2>
+    <p class="lead">Standard Tauri toolchain. Works on all three platforms, and produces the same artifacts the release workflow publishes.</p>
     <CodeBlock code={buildSteps} lang="bash" />
-    <p class="readme-link"><a href={site.repo + '#development'} target="_blank" rel="noopener">Full development guide on GitHub →</a></p>
+    <p class="readme-link">
+      <a href={site.repo + '#development'} target="_blank" rel="noopener">Full development guide on GitHub →</a>
+    </p>
   </section>
 </Layout>
 
 <script>
-  // OS selector: sniff platform (or honor #hash), show that install section.
+  // Tab behaviour only. Which panel is OPEN is decided by the inline script in
+  // <head> position above and applied in CSS off html[data-os], so nothing here
+  // runs before first paint and there is no layout shift to see.
   (function () {
-    var sections = Array.from(document.querySelectorAll('[data-os-section]'));
-    var tabs = Array.from(document.querySelectorAll('.os-tab'));
-    if (!sections.length || !tabs.length) return;
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+    if (!tabs.length) return;
     var known = ['macos', 'windows', 'linux'];
+    var root = document.documentElement;
 
-    function detect() {
-      var hash = (location.hash || '').replace('#', '');
-      if (known.indexOf(hash) !== -1) return hash;
-      return 'macos';
+    function current() {
+      var os = root.getAttribute('data-os');
+      return known.indexOf(os) !== -1 ? os : 'macos';
     }
 
-    function select(os) {
-      sections.forEach(function (s) { s.hidden = s.getAttribute('data-os-section') !== os; });
-      tabs.forEach(function (t) { t.classList.toggle('on', t.getAttribute('data-os') === os); });
+    // aria-selected is the accessible half of the highlight CSS already draws.
+    function sync() {
+      var os = current();
+      tabs.forEach(function (t) {
+        var on = t.getAttribute('data-os') === os;
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+        t.setAttribute('tabindex', on ? '0' : '-1');
+      });
+    }
+
+    function select(os, focus) {
+      root.setAttribute('data-os', os);
+      sync();
+      if (focus) {
+        var t = tabs.filter(function (x) { return x.getAttribute('data-os') === os; })[0];
+        if (t) t.focus();
+      }
     }
 
     tabs.forEach(function (t) {
       t.addEventListener('click', function () {
         var os = t.getAttribute('data-os');
-        select(os);
+        select(os, false);
         history.replaceState(null, '', '#' + os);
       });
     });
 
-    select(detect());
+    // A tablist is one tab stop; arrows move between tabs.
+    document.querySelector('.tabs').addEventListener('keydown', function (e) {
+      var i = tabs.indexOf(document.activeElement);
+      if (i === -1) return;
+      var next =
+        e.key === 'ArrowRight' || e.key === 'ArrowDown' ? i + 1
+        : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? i - 1
+        : e.key === 'Home' ? 0
+        : e.key === 'End' ? tabs.length - 1
+        : -1;
+      if (next === -1) return;
+      e.preventDefault();
+      next = (next + tabs.length) % tabs.length;
+      select(tabs[next].getAttribute('data-os'), true);
+      history.replaceState(null, '', '#' + tabs[next].getAttribute('data-os'));
+    });
+
     window.addEventListener('hashchange', function () {
       var hash = (location.hash || '').replace('#', '');
-      if (known.indexOf(hash) !== -1) select(hash);
+      if (known.indexOf(hash) !== -1) select(hash, false);
     });
+
+    sync();
   })();
 </script>
 
 <style>
+  /* ── page head ─────────────────────────────────────────────── */
   .page-head { padding-top: var(--s-12); }
-  .os-tabs { display: inline-flex; margin-top: var(--s-8); border: 1px solid var(--border-1);
-    border-radius: var(--r-5); overflow: hidden; }
-  .os-tab { display: inline-flex; align-items: center; gap: 7px; padding: 8px 18px; background: transparent;
-    border: none; border-right: 1px solid var(--border-1);
-    color: var(--fg-2); font-family: var(--font-sans); font-size: 14px; font-weight: 600; cursor: pointer;
-    transition: background var(--t-fast), color var(--t-fast); }
-  .os-tab:last-child { border-right: none; }
-  .os-tab:hover { color: var(--fg-0); }
-  .os-tab.on { background: var(--accent); color: var(--accent-ink); }
-  [data-os-section][hidden] { display: none; }
-  .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
-  .lead { color: var(--fg-2); font-size: 16px; max-width: 640px; margin: 0; }
+  .eyebrow { color: var(--accent); font-size: 12px; letter-spacing: 0.04em;
+    text-transform: uppercase; margin: 0 0 var(--s-5); }
+  .page-head h1 { font-size: 42px; margin: 0 0 var(--s-5); }
+  .lead { color: var(--fg-2); font-size: 16px; max-width: 620px; margin: 0; }
   .head-ctas { display: flex; gap: var(--s-4); margin-top: var(--s-7); flex-wrap: wrap; }
-  .notice { background: color-mix(in oklab, var(--accent-2) 12%, transparent);
-    border: 1px solid color-mix(in oklab, var(--accent-2) 40%, transparent);
-    color: var(--fg-1); padding: var(--s-5) var(--s-6); border-radius: var(--r-5);
-    margin: var(--s-10) 0 0; font-size: 14px; }
-  .notice a { color: var(--accent); }
+  /* The old page put a full notice box here that re-listed every platform and
+     format before the panels did the same thing in detail. One paragraph of
+     the part a reader cannot get further down. */
+  .head-note { color: var(--fg-3); font-size: 13.5px; line-height: 1.6; max-width: 640px;
+    margin: var(--s-7) 0 0; padding-left: var(--s-5);
+    border-left: 2px solid color-mix(in oklab, var(--accent-2) 55%, transparent); }
 
-  .install { margin-top: var(--s-11); padding-bottom: var(--s-9); border-bottom: 1px solid var(--border-0); scroll-margin-top: 72px; }
-  .install-head { margin-bottom: var(--s-7); }
-  .install-head h2 { font-size: 26px; margin: 0 0 var(--s-2); display: flex; align-items: center; gap: var(--s-4); }
-  .install-head p { color: var(--fg-3); font-size: 14px; margin: 0; }
-  .os-glyph { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); display: inline-block; }
+  /* ── platform picker ───────────────────────────────────────── */
+  /* The tabs used to float above a notice box, with the section they controlled
+     starting further down the page — clicking one silently mutated something
+     offscreen. Now the row sits ON the panel: one surface, one border. */
+  .picker { margin-top: var(--s-11); }
+  .tabs { display: flex; gap: var(--s-2); position: relative; z-index: 1;
+    margin-bottom: -1px; padding: 0 var(--s-3); }
+  .tab { display: inline-flex; align-items: center; gap: 7px; padding: 10px 18px;
+    background: transparent; border: 1px solid transparent; border-bottom-color: var(--border-0);
+    border-radius: var(--r-5) var(--r-5) 0 0;
+    color: var(--fg-3); font-family: var(--font-sans); font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: color var(--t-fast), background var(--t-fast); }
+  .tab:hover { color: var(--fg-1); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-  .method { margin-top: var(--s-7); max-width: 760px; }
-  .method h3 { font-size: 15px; margin: 0 0 var(--s-4); color: var(--fg-0); font-family: var(--font-sans); font-weight: 600;
-    display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
-  .method-primary { border-left: 2px solid var(--accent); padding-left: var(--s-6); }
-  .badge { background: var(--accent); color: var(--accent-ink); font-size: 10px; font-weight: 700;
-    letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; }
-  .method-note { color: var(--fg-2); font-size: 14px; margin: 0 0 var(--s-4); line-height: 1.6; }
-  .method-note code { background: var(--bg-2); border: 1px solid var(--border-0); border-radius: var(--r-2);
-    padding: 1px 5px; font-size: 12px; color: var(--fg-1); }
-  .method-note a { color: var(--accent); }
+  /* Selected tab + open panel both come off html[data-os], set before the
+     panels are parsed — so the correct one is open at first paint. With JS off
+     no attribute is ever set, and macOS opens as the fallback. */
+  :global(html[data-os='macos']) .tab[data-os='macos'],
+  :global(html[data-os='windows']) .tab[data-os='windows'],
+  :global(html[data-os='linux']) .tab[data-os='linux'] {
+    background: var(--bg-1); border-color: var(--border-0); border-bottom-color: var(--bg-1);
+    color: var(--fg-0);
+  }
 
-  .cli { margin-top: var(--s-11); padding-bottom: var(--s-9); border-bottom: 1px solid var(--border-0); scroll-margin-top: 72px; }
-  .cli h2 { font-size: 26px; margin: 0 0 var(--s-3); }
-  /* .notice is written for the top of the page, where it opens a section. */
-  .cli .notice { margin-top: var(--s-6); }
-  /* A label directly above its own code block, not a paragraph of prose. */
-  .method-note-tight { margin-top: var(--s-5); }
+  .panel { display: none; background: var(--bg-1); border: 1px solid var(--border-0);
+    border-radius: var(--r-6); padding: var(--s-9); scroll-margin-top: 72px; }
+  .panel:focus { outline: none; }
+  :global(html[data-os='macos']) .panel[data-os-section='macos'],
+  :global(html[data-os='windows']) .panel[data-os-section='windows'],
+  :global(html[data-os='linux']) .panel[data-os-section='linux'] { display: block; }
+  :global(html:not([data-os])) .panel[data-os-section='macos'] { display: block; }
 
-  .build { margin-top: var(--s-12); scroll-margin-top: 72px; }
-  .build h2 { font-size: 26px; margin: 0 0 var(--s-3); }
-  .build .lead { margin-bottom: var(--s-7); }
+  .panel-head { margin-bottom: var(--s-8); }
+  /* The per-OS anchors the homepage links (/download/#macos) target this h2.
+     72px only clears the nav, which parked the heading at the top with the tab
+     row scrolled out of sight — so the control that had just been set for you
+     was invisible. Clear the nav AND the tabs above it. */
+  .panel-head h2 { font-size: 26px; margin: 0 0 var(--s-3); display: flex; align-items: center;
+    gap: var(--s-4); scroll-margin-top: 150px; }
+  .panel-head p { color: var(--fg-3); font-size: 14px; margin: 0; }
+
+  /* ── cards ─────────────────────────────────────────────────── */
+  /* The old page floated h3 + prose + code in open whitespace, capped at 760px
+     inside a 1040px column — so nothing was grouped and a third of every row
+     was dead margin. A grid uses the column, and a border says where a method
+     starts and stops. */
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-6);
+    align-items: start; }
+  .card { background: var(--bg-0); border: 1px solid var(--border-0); border-radius: var(--r-6);
+    padding: var(--s-7); min-width: 0; }
+  .card-wide { grid-column: 1 / -1; }
+  /* Exactly one card per panel carries the accent, so "recommended" means
+     something. The old page gave the same left-border to Homebrew AND to
+     "Updating with Homebrew", which flattened the distinction it was drawing. */
+  .card-primary { border-color: color-mix(in oklab, var(--accent) 40%, var(--border-0));
+    background: linear-gradient(180deg,
+      color-mix(in oklab, var(--accent) 5%, var(--bg-0)), var(--bg-0) 55%); }
+
+  .pill { display: inline-block; background: var(--accent); color: var(--accent-ink);
+    font-family: var(--font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px; margin-bottom: var(--s-5); }
+  /* 15px sans headings read as captions above five lines of 14px prose. These
+     are the labels a scanning reader navigates by, so they get the display face
+     and enough size to win. */
+  .card h3 { font-size: 19px; margin: 0 0 var(--s-3); color: var(--fg-0); }
+  .card-lead { color: var(--fg-1); font-size: 14.5px; margin: 0 0 var(--s-6); line-height: 1.55; }
+  .card-note { color: var(--fg-2); font-size: 13.5px; line-height: 1.65; margin: var(--s-5) 0 0; }
+  .card-note-tight { margin-top: var(--s-6); }
+  .card-note code, .card-lead code, .lead code, .matrix-note code, .mrow code {
+    background: var(--bg-2); border: 1px solid var(--border-0); border-radius: var(--r-2);
+    padding: 1px 5px; font-size: 12px; color: var(--fg-1); font-family: var(--font-mono); }
+  .card-note a, .matrix-note a { color: var(--accent); }
+  .filename { font-size: 11.5px; color: var(--fg-3); margin: var(--s-4) 0 0; }
+  .card :global(.cta) { margin-top: var(--s-2); }
+  /* A download button and a command are a sequence — get the file, then run the
+     thing that consumes it — so they need air between them in either order. */
+  .card :global(.codeblock) + :global(.cta) { margin-top: var(--s-5); }
+  .card .filename + :global(.codeblock) { margin-top: var(--s-6); }
+
+  .card-specs { background: transparent; border-style: dashed; }
+  .card-specs h3 { font-size: 13px; font-family: var(--font-mono); font-weight: 600;
+    letter-spacing: 0.03em; text-transform: uppercase; color: var(--fg-3);
+    margin-bottom: var(--s-5); }
+  .card-specs ul { list-style: none; margin: 0; padding: 0; }
+  .card-specs li { color: var(--fg-2); font-size: 13.5px; padding: var(--s-3) 0;
+    border-top: 1px solid var(--border-0); }
+  .card-specs li:first-child { border-top: none; padding-top: 0; }
+
+  /* ── disclosures ───────────────────────────────────────────── */
+  /* Gatekeeper flags, SmartScreen, upgrade commands: needed exactly once, by
+     some readers. As top-level sections they made the page look like a manual;
+     folded away they are still one click and one Ctrl+F from being found. */
+  details { margin-top: var(--s-6); border-top: 1px solid var(--border-0); padding-top: var(--s-5); }
+  summary { display: flex; align-items: center; gap: var(--s-4); cursor: pointer;
+    color: var(--fg-1); font-size: 13px; font-weight: 600; list-style: none;
+    font-family: var(--font-mono); }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: '›'; display: inline-block; color: var(--accent);
+    font-size: 16px; line-height: 1; transition: transform var(--t-med); }
+  details[open] > summary::before { transform: rotate(90deg); }
+  summary:hover { color: var(--fg-0); }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--r-2); }
+  details :global(.codeblock) { margin-top: var(--s-5); }
+  .audit { margin-top: var(--s-8); border: 1px solid var(--border-0); border-radius: var(--r-6);
+    padding: var(--s-6) var(--s-7); }
+  .audit[open] { padding-bottom: var(--s-7); }
+
+  /* ── sections ──────────────────────────────────────────────── */
+  .section { margin-top: var(--s-12); scroll-margin-top: 72px; }
+  .section h2 { font-size: 30px; margin: 0 0 var(--s-5); }
+  .section .lead { margin-bottom: var(--s-9); }
+  .sub { font-size: 13px; font-family: var(--font-mono); font-weight: 600; letter-spacing: 0.03em;
+    text-transform: uppercase; color: var(--fg-3); margin: 0 0 var(--s-5); }
+  .grid-2 { margin-top: var(--s-9); }
   .readme-link { margin-top: var(--s-6); font-size: 14px; }
 
+  /* ── pgit matrix ───────────────────────────────────────────── */
+  /* Was a five-line paragraph a reader had to parse to answer "do I need to run
+     anything?". It is a lookup with two answers, so it is a table. */
+  .matrix { border: 1px solid var(--border-0); border-radius: var(--r-6); overflow: hidden; }
+  .mrow { display: grid; grid-template-columns: minmax(0, 1.3fr) 92px minmax(0, 1.4fr);
+    gap: var(--s-5); align-items: center; padding: var(--s-5) var(--s-6);
+    border-top: 1px solid var(--border-0); font-size: 13.5px; }
+  .mrow:first-child { border-top: none; }
+  .mrow > span:first-child { display: flex; align-items: center; gap: var(--s-4);
+    color: var(--fg-1); min-width: 0; }
+  .mhead { background: var(--bg-1); font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-3); }
+  .mhead > span:first-child { color: var(--fg-3); }
+  .mhead code { background: none; border: none; padding: 0; font-size: 11px; color: inherit; }
+  .ships { font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
+  [data-ships='true'] .ships { color: var(--git-added); }
+  [data-ships='false'] .ships { color: var(--accent-2); }
+  .mnote { color: var(--fg-3); font-size: 12.5px; }
+  .matrix-note { color: var(--fg-2); font-size: 13.5px; line-height: 1.65;
+    margin: var(--s-6) 0 0; max-width: 720px; }
+
+  /* ── responsive ────────────────────────────────────────────── */
+  @media (max-width: 860px) {
+    .grid { grid-template-columns: minmax(0, 1fr); }
+    .card-wide { grid-column: auto; }
+  }
   @media (max-width: 720px) {
     .page-head { padding-top: var(--s-11); }
-    .page-head h1 { font-size: 30px; }
-    .install-head h2, .build h2, .cli h2 { font-size: 22px; }
-    .install { margin-top: var(--s-10); }
-    .cli { margin-top: var(--s-10); }
-    .build { margin-top: var(--s-11); }
-    .notice { margin-top: var(--s-9); }
-    .os-tabs { margin-top: var(--s-7); }
+    .page-head h1 { font-size: 32px; }
+    .panel { padding: var(--s-7); }
+    .panel-head h2, .section h2 { font-size: 22px; }
+    .picker { margin-top: var(--s-10); }
+    .section { margin-top: var(--s-11); }
+    /* The matrix' third column is the first thing to go: it is a gloss, and the
+       answer is the second column. */
+    .mrow { grid-template-columns: minmax(0, 1fr) 64px; }
+    .mnote { display: none; }
+    .mhead > span:last-child { display: none; }
   }
   /* The nav becomes two rows at this width, so an anchored section landed
      underneath it with the 72px offset calibrated for the one-row bar. */
   @media (max-width: 640px) {
-    .install, .build, .cli { scroll-margin-top: 96px; }
+    .section, .panel { scroll-margin-top: 96px; }
+    .panel-head h2 { scroll-margin-top: 180px; }
   }
   @media (max-width: 560px) {
-    /* Three inline tabs at 18px side padding measured ~335px — wider than a
-       360px phone's content box. A three-column grid divides the row it has
-       instead of demanding one. */
-    .os-tabs { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
-    .os-tab { justify-content: center; padding: 9px 4px; font-size: 13px; gap: 5px; }
-    .page-head h1 { font-size: 26px; }
-    .method { margin-top: var(--s-6); }
-    .method-primary { padding-left: var(--s-5); }
+    /* Three tabs at 18px side padding measured wider than a 360px content box.
+       A three-column grid divides the row it has instead of demanding one. */
+    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 0; }
+    .tab { justify-content: center; padding: 10px 4px; font-size: 13px; gap: 5px;
+      border-radius: var(--r-5) var(--r-5) 0 0; }
+    .page-head h1 { font-size: 27px; }
+    .panel { padding: var(--s-6); border-radius: var(--r-5); }
+    .card { padding: var(--s-6); }
   }
 </style>
