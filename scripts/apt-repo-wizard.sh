@@ -263,13 +263,39 @@ REVOKE
 
             rm -rf "$gen_home"
             chmod 0600 "$KEY_DIR"/* 2> /dev/null || true
+
+            # The private key is the one thing that must exist; without it
+            # nothing downstream works and a silent failure here would surface
+            # much later as an unsigned publish.
+            for required in "$PRIV" "$PUB_GPG" "$PUB_ASC" "$FPR_FILE"; do
+                [ -s "$required" ] || die "key generation produced no $required"
+            done
+
             FINGERPRINT="$(cat "$FPR_FILE")"
             say ""
             say "Key generated. Fingerprint:"
             say "  $FINGERPRINT"
             say ""
+
+            # --gen-revoke is driven by a canned answer sequence, which is the
+            # most brittle part of this script. It is allowed to fail rather than
+            # abort a successful key generation — but NOT allowed to fail
+            # quietly, because the certificate is the only way to retire a key
+            # that has no expiry (§C). Say so, with the command to run by hand.
+            if [ -s "$REVOKE" ]; then
+                say "Revocation certificate: $REVOKE"
+            else
+                warn ""
+                warn "!! NO REVOCATION CERTIFICATE WAS PRODUCED."
+                warn "!! This key has no expiry, so revocation is the ONLY way to"
+                warn "!! retire it. Generate one by hand before going further:"
+                warn "!!"
+                warn "!!   gpg --output apt-revocation.asc --gen-revoke $FINGERPRINT"
+                warn "!!"
+                warn "!! and keep it with the private key, offline."
+            fi
+            say ""
             warn "MOVE $KEY_DIR SOMEWHERE OFFLINE once step 6 has stored the secret."
-            warn "The revocation certificate is the only way to retire this key."
         fi
     fi
 fi
