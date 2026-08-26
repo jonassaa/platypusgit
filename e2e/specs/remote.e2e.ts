@@ -1,6 +1,7 @@
 import { browser, $, expect } from "@wdio/globals";
 import {
-  remoteRepo, makeAhead, makeBehind, makeDiverged, type RemotePair,
+  remoteRepo, makeAhead, makeBehind, makeDiverged, stalledGitRemote,
+  type RemotePair, type StalledRemote,
 } from "../support/tempRepo";
 import {
   openRepo, resetApp, switchScreen, stubNativeDialogs,
@@ -9,11 +10,47 @@ import {
 
 describe("remote operations", () => {
   let pair: RemotePair | null = null;
+  let stalled: StalledRemote | undefined;
 
   afterEach(async () => {
     await resetApp();
     pair?.dispose();
     pair = null;
+    // A listener left open keeps a git child alive past its own test.
+    stalled?.dispose();
+    stalled = undefined;
+  });
+
+  it("Stop cancels a stalled fetch, with no error banner", async () => {
+    // The titlebar's Stop button (#234), through the real IPC path: mint an id,
+    // fetch, kill the child's process group, and report `Cancelled` — which no
+    // surface may render as a failure.
+    pair = remoteRepo();
+    stalled = await stalledGitRemote();
+    // Point origin at something that connects and then never answers, so the
+    // fetch cannot finish on its own.
+    pair.repo.git("remote", "set-url", "origin", stalled.url);
+    await openRepo(pair.repo.path);
+
+    await $("button*=Fetch").click(); // titlebar (default screen — unambiguous)
+
+    const stop = $('[data-testid="net-cancel"]');
+    await stop.waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "Stop never appeared while the fetch was in flight",
+    });
+    await stop.click();
+
+    // It disappears when the op clears, which is the UI's own signal that the
+    // fetch is over — and it can only clear once the backend call returned.
+    await stop.waitForExist({
+      reverse: true,
+      timeout: 30_000,
+      timeoutMsg: "the fetch never stopped after Stop was clicked",
+    });
+    // A cancel is not a failure: the user pressed the button, and a banner
+    // saying so looks exactly like the failures that do need attention.
+    expect(await $('div[role="alert"]').isExisting()).toBe(false);
   });
 
   it("lists origin with url; ahead count shows on the ahead fixture", async () => {

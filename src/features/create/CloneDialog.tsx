@@ -17,6 +17,8 @@ export function CloneDialog() {
   const close = useCreateStore((s) => s.close);
   const runClone = useCreateStore((s) => s.runClone);
   const setProgress = useCreateStore((s) => s.setProgress);
+  const cloneOpId = useCreateStore((s) => s.cloneOpId);
+  const cancelClone = useCreateStore((s) => s.cancelClone);
 
   const [url, setUrl] = React.useState("");
   const [parentDir, setParentDir] = React.useState(
@@ -25,6 +27,10 @@ export function CloneDialog() {
   const [name, setName] = React.useState("");
   const [nameEdited, setNameEdited] = React.useState(false);
   const [recurse, setRecurse] = React.useState(true);
+  // Local, not store state: it is about what THIS dialog has been asked to do,
+  // and the store's own `busy`/`cloneOpId` are what actually gate the button.
+  // Cleared on the next open along with the rest of the form.
+  const [cancelling, setCancelling] = React.useState(false);
 
   // Listen before the first clone starts: the first progress tick can land
   // before the invoke promise settles. This dialog stays mounted for the
@@ -53,6 +59,7 @@ export function CloneDialog() {
     setName("");
     setNameEdited(false);
     setRecurse(true);
+    setCancelling(false);
     setParentDir(useSettingsStore.getState().lastCreateDir);
   }, [open]);
 
@@ -142,7 +149,11 @@ export function CloneDialog() {
           data-testid="clone-progress"
           style={{ marginTop: 12, fontSize: "var(--fs-12)" }}
         >
-          {progress ? `${progress.phase} — ${progress.percent}%` : "Cloning…"}
+          {cancelling
+            ? "Stopping…"
+            : progress
+              ? `${progress.phase} — ${progress.percent}%`
+              : "Cloning…"}
           <div
             style={{
               height: 4,
@@ -185,7 +196,36 @@ export function CloneDialog() {
           marginTop: 16,
         }}
       >
-        <PGButton onClick={close} disabled={busy}>
+        {/*
+          One button, two jobs — and deliberately so: while a clone runs, Cancel
+          is the control the user is already reaching for, and a separate Stop
+          next to a disabled Cancel would be two ways to say the same thing.
+          `close()` still refuses to close mid-run; the store closes the dialog
+          once the backend confirms it has cleaned up the partial destination.
+
+          Disabled while busy with no op id: that clone was started without one
+          (an older frontend, or the id was dropped), so nothing can stop it and
+          the button must not pretend otherwise.
+        */}
+        <PGButton
+          data-testid="clone-cancel"
+          onClick={() => {
+            if (!busy) {
+              close();
+              return;
+            }
+            setCancelling(true);
+            cancelClone();
+          }}
+          disabled={busy && !cloneOpId}
+          title={
+            busy
+              ? cancelling
+                ? "Still stopping — click again to force it"
+                : "Stop the clone and remove the partial download"
+              : undefined
+          }
+        >
           Cancel
         </PGButton>
         <PGButton

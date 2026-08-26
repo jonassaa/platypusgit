@@ -135,6 +135,11 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   exported `withAuthRetry`. Never a second auth path. Secrets travel in env,
   never argv; end option parsing with `--` before user-supplied values.
   (`docs/dev/backend.md`)
+- **One cancel path.** A long-running child is stopped through
+  `cancel::OpRegistry` — the frontend mints the `opId` before the invoke, and
+  cancel kills the child's process group with SIGTERM (never SIGKILL first: git's
+  handlers remove its lock files). A cancelled op returns `AppError::Cancelled`,
+  which no surface may render as an error. (`docs/dev/backend.md`)
 - **Forge tokens are NOT git credentials** — separate storage, separate types
   (`Secret`), no command returns a token. (`docs/dev/backend.md`)
 - **One signing chain** (`libgit2.rs::sign_payload`) for commits AND tags; a

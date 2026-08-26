@@ -38,7 +38,7 @@ import type {
 } from "@/lib/types";
 import { LOG_REF_ALL } from "@/lib/types";
 import type { AppError, HookRejection } from "@/lib/errors";
-import type { RepoActivity } from "./repoActivity";
+import type { NetOps, RepoActivity } from "./repoActivity";
 
 export const DEFAULT_REBASE_STATUS: RebaseStatus = {
   inProgress: false,
@@ -129,6 +129,14 @@ export interface RepoSlice {
   /** Active long-running ops keyed by op kind. */
   activity: RepoActivity;
   /**
+   * Backend op ids for the cancellable network ops in flight (#234).
+   *
+   * Per-repo, and therefore here: a fetch you started in one tab must not offer
+   * its Stop button over another repository, and switching back must not find a
+   * stale id whose cancel would signal a pid that has since been recycled.
+   */
+  netOps: NetOps;
+  /**
    * The git hook refusal to display, or null (#232).
    *
    * Per-repo, and therefore here: a commit rejected by one repository's
@@ -171,6 +179,7 @@ export function emptySlice(): RepoSlice {
     rebaseStatus: DEFAULT_REBASE_STATUS,
     bisectStatus: DEFAULT_BISECT_STATUS,
     activity: {},
+    netOps: {},
     hookRejection: null,
   };
 }

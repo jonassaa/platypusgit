@@ -130,7 +130,9 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
 - **One runner.** Every network shell-out goes through
   `commands::net::run_git_authenticated` (clone uses its primitives
   `apply_auth_env` + `map_git_failure` for a streamed stderr): fetch, fetch_all,
-  pull, push, push_tag, push_delete_branch, clone_repo,
+  pull, push, push_tag, push_delete_branch, clone_repo (fetch/fetch_all/pull/
+  push go through `run_git_cancellable`, which IS `run_git_authenticated` plus an
+  `Op` — see "Cancelling a network op"),
   forge_checkout_pull_request's fetch (its second git call passes `None` — the
   tip is already local), submodule_update, lfs_fetch/lfs_pull.
   `grep -rn 'run_git_authenticated\|run_git_creds\|apply_auth_env' src-tauri/src/`
@@ -166,6 +168,64 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
 - `credential_approve` refuses values containing a newline rather than escaping
   them — the credential protocol is line-based, so a newline injects keys and
   could file a password against another host.
+
+## Cancelling a network op (#234)
+
+`git clone`, `fetch`, `pull` and `push` can be stopped from the UI. Before this
+the only escape from a stalled transfer was force-quitting the app.
+
+- **The registry never interrupts the op.** `cancel.rs` holds `id → Op`, and a
+  cancel kills the op's **child**; the op then *notices* — its `wait()` returns
+  because git is dead, and it checks `Op::is_cancelled()` before mapping stderr.
+  The two shapes that look more natural both fail: `tokio::select!` over
+  `child.wait()` and a cancel future needs `&mut child` in both arms, and
+  `Arc<Mutex<Child>>` deadlocks because the op holds the lock across the very
+  `wait()` the killer is trying to interrupt.
+- **The frontend mints the id, before the invoke** (`src/lib/opId.ts`). A
+  backend-assigned id emitted back would leave the op unaddressable for exactly
+  as long as it fails to answer, which is the case this feature exists for.
+  `op_id: Option<String>` — omitted means uncancellable, which is what every op
+  outside the four still is (`push_tag`, `push_delete_branch`, LFS, submodule
+  update, forge checkout). Each of those is one argument away from opting in.
+- **The child gets its own process group, and cancel signals the GROUP.**
+  `git` is rarely the process doing the waiting — over https it spawns
+  `git-remote-https`, over ssh it spawns `ssh` — so killing only `git` leaves the
+  transfer's child holding the connection. `proc::git_async`/`git_async_in` set
+  `process_group(0)`; the console-keeping constructors deliberately do NOT (an
+  interactive child outside the terminal's foreground group is stopped by
+  SIGTTIN/SIGTTOU). `kill_tree` still checks `getpgid(pid) == pid` and falls back
+  to a single-process kill: without that check, a future spawn site that skipped
+  the process group would have a cancel signal *our own* group.
+- **SIGTERM, not SIGKILL.** git's own handlers remove its lock files
+  (`lockfile.c`) and, in `clone`, the partial destination
+  (`remove_junk_on_signal`). SIGKILL skips all of it, so a SIGKILLed pull strands
+  `.git/index.lock` and the NEXT pull fails with "Unable to create
+  '…/index.lock': File exists". A cancel that breaks the following operation is
+  worse than no cancel. **A second cancel escalates to SIGKILL** — the user
+  clicking again is the escalation signal, which is why there is no timer here.
+- **Windows is the abrupt case, knowingly.** No SIGTERM, and our children are
+  spawned `CREATE_NO_WINDOW` so they have no console for
+  `GenerateConsoleCtrlEvent` either; cancel is `taskkill /F /T`. git therefore
+  gets no chance to clean up: `discard_partial_clone` covers the clone
+  destination, and a stale `index.lock` after a cancelled pull is the known
+  remaining gap.
+- **A cancelled clone restores the pre-clone state exactly.**
+  `validate_clone_target` accepts only an absent target or an existing EMPTY
+  directory, so `run_clone` records which it saw and `discard_partial_clone`
+  undoes it: a directory *we* created is removed, a directory the **user already
+  had** is emptied and kept. Cancel only — a failed `git clone` removes its own
+  destination, and widening this to every failure would mean deleting a directory
+  on a path we have not just proved is ours.
+- **`AppError::Cancelled` is a state, not a failure.** Checked *before*
+  `map_git_failure` at every site, so a killed git's dying words cannot become a
+  `Network` banner — or, worse, an `Auth` one that pops the credential dialog
+  over a cancel. The frontend's `isCancelledError` then keeps it out of every
+  error surface.
+- **Window close cancels everything** (`lib.rs`'s `on_window_event`, gated on the
+  `main` label so closing the `merge` resolver does not stop a fetch).
+  `kill_on_drop` only fires when a future is dropped, and process exit does not
+  unwind — so without this a clone outlives the app and finishes populating a
+  destination the frontend was told never got created.
 
 ## Signing: one chain for commits and tags (#61 D6, #132)
 

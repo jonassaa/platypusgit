@@ -19,6 +19,7 @@ import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
 import { headUpstream, resolveConflictsOp } from "@/features/repo/ops";
 import type { ActionId } from "@/features/keymap";
+import type { CancellableOp } from "@/features/repo/useRepoStore";
 import type { BranchInfo, CommitInfo, FileStatus } from "@/lib/types";
 import type { PaletteItem, PaletteStep } from "./types";
 
@@ -780,6 +781,33 @@ export function buildCommands(): PaletteItem[] {
           })),
         });
       }
+    }
+  }
+
+  // -- stop a running network op (#234) --
+  // Listed only while one is running, the same gating `Resolve conflicts…` uses:
+  // a row that only ever says "nothing to stop" is noise the rest of the time.
+  // This is the KEYBOARD route to the titlebar's Stop button — a hung fetch must
+  // not need a mouse.
+  {
+    const running: CancellableOp | null = repo.netOps.push
+      ? "push"
+      : repo.netOps.pull
+        ? "pull"
+        : repo.netOps.fetch
+          ? "fetch"
+          : null;
+    if (running) {
+      items.push({
+        type: "command",
+        id: "action:cancel-net-op",
+        search: "Cancel stop abort fetch pull push network operation",
+        label: `Stop the running ${running}`,
+        icon: "x",
+        run: direct(() => {
+          repoState().cancelNetOp(running);
+        }),
+      });
     }
   }
 

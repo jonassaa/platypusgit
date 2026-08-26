@@ -33,6 +33,7 @@ import { SubmodulesScreen } from "@/screens/Submodules";
 import { WorktreesScreen } from "@/screens/Worktrees";
 
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import type { CancellableOp } from "@/features/repo/useRepoStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { RepoTabs } from "@/features/repo/RepoTabs";
 import { headUpstream, openRepoDialog } from "@/features/repo/ops";
@@ -96,6 +97,17 @@ export type ScreenId =
   | "submodules"
   | "worktrees"
   | "settings";
+
+/**
+ * How long a fetch started by the auto-fetch TIMER may run before it is
+ * cancelled (#234).
+ *
+ * Two minutes rather than something tight: a real fetch of a large repository
+ * over a slow link can legitimately take a while, and cancelling those would
+ * make the setting worse than useless. What this catches is the fetch that is
+ * never going to finish — and it only applies to the unwatched ones.
+ */
+const AUTO_FETCH_DEADLINE_MS = 120_000;
 
 // Deep views are reachable ONLY via a nav intent (no activity-bar entry). They
 // carry no valid payload after a reload and have no "you are here" anchor, so
@@ -210,13 +222,34 @@ export function AppShell() {
   const autoFetchMinutes = useSettingsStore((s) => s.autoFetchMinutes);
   React.useEffect(() => {
     if (!repo || !autoFetchEnabled) return;
+    const deadlines = new Set<number>();
     const id = window.setInterval(
       () => {
-        useRepoStore.getState().fetchAll();
+        const store = useRepoStore.getState();
+        // Skip while one is still running (#234). A host that accepts the
+        // connection and then stalls used to collect another fetch every N
+        // minutes, each holding a git process nobody could see or stop.
+        if (store.activity.fetch) return;
+        void store.fetchAll();
+        // And cancel it if it is still going in two minutes. ONLY the timer's
+        // fetches get a deadline: an interactive fetch has the user watching it,
+        // and yanking a slow-but-working one out from under them would be worse
+        // than the stall. This one has nobody, so a stall is indistinguishable
+        // from a hang and costs a process either way.
+        const deadline = window.setTimeout(() => {
+          deadlines.delete(deadline);
+          useRepoStore.getState().cancelNetOp("fetch");
+        }, AUTO_FETCH_DEADLINE_MS);
+        deadlines.add(deadline);
       },
       Math.max(1, autoFetchMinutes) * 60_000,
     );
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearInterval(id);
+      // Or a deadline armed by the outgoing repo would fire on the incoming one
+      // and cancel a fetch the user just started by hand.
+      for (const d of deadlines) window.clearTimeout(d);
+    };
   }, [repo, autoFetchEnabled, autoFetchMinutes]);
 
   // Single global keymap listener — resolves chord → action → handler or
@@ -661,6 +694,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const branches = useRepoStore((s) => s.branches);
   const status = useRepoStore((s) => s.status);
   const activity = useRepoStore((s) => s.activity);
+  const netOps = useRepoStore((s) => s.netOps);
   const refresh = useRepoStore((s) => s.refreshAll);
   const activePath = useTabsStore((s) => s.activePath);
   const defaultPullMode = useSettingsStore((s) => s.defaultPullMode);
@@ -698,6 +732,17 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     }
     useRepoStore.getState().pull(upstream[0], upstream[1], defaultPullMode);
   };
+
+  // One op at a time in practice; the order is the same precedence the status
+  // bar's activity label already uses, so the two never disagree about which op
+  // is "the" running one.
+  const cancellableOp: CancellableOp | null = netOps.push
+    ? "push"
+    : netOps.pull
+      ? "pull"
+      : netOps.fetch
+        ? "fetch"
+        : null;
 
   const onPush = () => {
     if (!upstream) {
@@ -761,6 +806,28 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                 >
                   Push {ahead > 0 && <span style={{ marginLeft: 4 }}>↑{ahead}</span>}
                 </PGButton>
+                {/*
+                  One Stop for all three ops, and only while one is running
+                  (#234). Deliberately NOT a mode switch on Fetch/Pull/Push: a
+                  button whose meaning changes under the pointer is a mis-click
+                  waiting to happen, and the user reaching for Stop is not
+                  necessarily the one who pressed the button that started it.
+                  Also not the status-bar label, which is a label.
+                */}
+                {cancellableOp && (
+                  <PGButton
+                    size="sm"
+                    variant="danger"
+                    icon="x"
+                    data-testid="net-cancel"
+                    onClick={() =>
+                      useRepoStore.getState().cancelNetOp(cancellableOp)
+                    }
+                    title={`Stop the running ${cancellableOp} — click again to force it`}
+                  >
+                    Stop
+                  </PGButton>
+                )}
                 <div
                   style={{
                     width: 1,

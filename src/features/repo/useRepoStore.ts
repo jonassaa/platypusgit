@@ -10,11 +10,13 @@ import type {
   RebaseStep,
   RepoHandle,
 } from "@/lib/types";
+import { newOpId } from "@/lib/opId";
 import type { AppError, HookRejection } from "@/lib/errors";
 import {
   dubiousOwnershipPath,
   isAppError,
   isAuthError,
+  isCancelledError,
   isDubiousOwnershipError,
   toAppError,
 } from "@/lib/errors";
@@ -35,6 +37,7 @@ import {
   openInTerminal as openInTerminalFn,
   checkoutBranch,
   checkoutRef,
+  cancelOperation,
   cherryPick,
   commit as commitFn,
   continueOperation,
@@ -115,9 +118,9 @@ import {
   sliceOf,
   type RepoSlice,
 } from "./repoSlice";
-import type { RepoActivity } from "./repoActivity";
+import type { CancellableOp, RepoActivity } from "./repoActivity";
 
-export type { RepoActivity } from "./repoActivity";
+export type { CancellableOp, NetOps, RepoActivity } from "./repoActivity";
 
 /**
  * Commits per log page (#68 G11). Was a `500` literal repeated at four call
@@ -306,6 +309,18 @@ interface RepoStoreState extends RepoSlice {
     /** Skip `pre-push` for this push only (#232). */
     noVerify?: boolean,
   ) => Promise<void>;
+  /**
+   * Stop the in-flight fetch / pull / push (#234). No-op when that kind is not
+   * running — the button is gated on `netOps`, but a click can always land after
+   * the op finished.
+   *
+   * The op's own promise reports the outcome (an `AppError::Cancelled` its error
+   * arm then declines to raise a banner for), so this returns immediately rather
+   * than waiting for the child to die.
+   */
+  cancelNetOp: (kind: CancellableOp) => void;
+  /** Stop everything cancellable in this repository. */
+  cancelAllNetOps: () => void;
   // remote management
   addRemote: (name: string, url: string) => Promise<void>;
   removeRemote: (name: string) => Promise<void>;
@@ -402,6 +417,39 @@ export async function withAuthRetry(
   }
 }
 
+/**
+ * Run a cancellable network op: mint an id, publish it so the UI can stop the
+ * op, and clear it however the op ends (#234).
+ *
+ * One place rather than four copies, because the invariant that matters is
+ * pairing — an id left in `netOps` after the op finished offers a Stop button
+ * that signals a pid the OS has since handed to somebody else.
+ *
+ * `run` receives the id and must forward it to the backend command.
+ *
+ * # Called INSIDE the retried closure, never around `withAuthRetry`
+ *
+ * `withAuthRetry` resolves as soon as a credential challenge is RAISED, not when
+ * the retry finishes (see its own doc comment). Wrapping it would therefore clear
+ * the id while the prompt is still up, and the retry — a SECOND git process,
+ * every bit as able to stall as the first — would run with no Stop button and a
+ * stale id. So each attempt mints its own, exactly as the clone path does in
+ * `useCreateStore`.
+ */
+async function runCancellable(
+  kind: CancellableOp,
+  setNetOp: (kind: CancellableOp, opId: string | null) => void,
+  run: (opId: string) => Promise<void>,
+): Promise<void> {
+  const opId = newOpId(kind);
+  setNetOp(kind, opId);
+  try {
+    await run(opId);
+  } finally {
+    setNetOp(kind, null);
+  }
+}
+
 export const useRepoStore = create<RepoStoreState>((set, get) => {
   /**
    * Apply `patch` only while `repoId` is still the open repository (#90).
@@ -421,6 +469,36 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   const setErrorFor = (repoId: string, e: unknown) => {
     if (get().current?.id !== repoId) return;
     set({ error: toAppError(e) });
+  };
+  /**
+   * Publish (or clear) the backend op id for a cancellable network op.
+   *
+   * Deliberately NOT guarded by `setFor`, unlike the error and refresh writers:
+   * this is bookkeeping for a process that is running right now, and dropping
+   * the write because the user switched tabs mid-op would leave the id in the
+   * slice forever — a Stop button for an op that finished. The slice is per-repo,
+   * so the parked tab's copy is what a switch back restores.
+   */
+  const setNetOp = (key: CancellableOp, opId: string | null) => {
+    set((s) => {
+      const next = { ...s.netOps };
+      if (opId === null) delete next[key];
+      else next[key] = opId;
+      return { netOps: next };
+    });
+  };
+  /**
+   * `setErrorFor`, except that a cancel is not a failure (#234).
+   *
+   * The user pressed Stop; a red banner telling them the operation was cancelled
+   * is the app arguing with them, and it looks exactly like the failures that do
+   * need attention. Used by every cancellable op's error arm — the ones that are
+   * not cancellable keep calling `setErrorFor` directly, so this check cannot
+   * silently swallow anything that has no cancel button.
+   */
+  const reportNetFailure = (repoId: string, e: unknown) => {
+    if (isCancelledError(e)) return;
+    setErrorFor(repoId, e);
   };
   const setActivity = (key: keyof RepoActivity, label: string | null) => {
     set((s) => {
@@ -1252,16 +1330,18 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       await withAuthRetry(
         repo.id,
-        async (creds) => {
-          await fetchRemote(
-            repo.id,
-            remote,
-            useSettingsStore.getState().pruneOnFetch,
-            creds,
-          );
-          await get().refreshAll();
-        },
-        (e) => setErrorFor(repo.id, e),
+        (creds) =>
+          runCancellable("fetch", setNetOp, async (opId) => {
+            await fetchRemote(
+              repo.id,
+              remote,
+              useSettingsStore.getState().pruneOnFetch,
+              creds,
+              opId,
+            );
+            await get().refreshAll();
+          }),
+        (e) => reportNetFailure(repo.id, e),
       );
     } finally {
       setActivity("fetch", null);
@@ -1275,14 +1355,36 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       await withAuthRetry(
         repo.id,
-        async (creds) => {
-          await fetchAll(repo.id, useSettingsStore.getState().pruneOnFetch, creds);
-          await get().refreshAll();
-        },
-        (e) => setErrorFor(repo.id, e),
+        (creds) =>
+          runCancellable("fetch", setNetOp, async (opId) => {
+            await fetchAll(
+              repo.id,
+              useSettingsStore.getState().pruneOnFetch,
+              creds,
+              opId,
+            );
+            await get().refreshAll();
+          }),
+        (e) => reportNetFailure(repo.id, e),
       );
     } finally {
       setActivity("fetch", null);
+    }
+  },
+
+  cancelNetOp(kind) {
+    const opId = get().netOps[kind];
+    if (!opId) return;
+    // Fire and forget. The op's own promise is what reports the outcome, and a
+    // rejected cancel means the op had already finished — nothing the user needs
+    // to hear about, and nothing to retry.
+    void cancelOperation(opId).catch(() => {});
+  },
+
+  cancelAllNetOps() {
+    const { netOps } = get();
+    for (const kind of Object.keys(netOps) as CancellableOp[]) {
+      get().cancelNetOp(kind);
     }
   },
 
@@ -1297,43 +1399,47 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     let stashed: string | null = null;
     await withAuthRetry(
       repo.id,
-      async (creds) => {
-        // Each attempt owns its own progress indicator: the retry runs long
-        // after the first attempt's `finally` would have cleared it.
-        setActivity("pull", `Pulling ${remote}/${branch}…`);
-        try {
-          // Carry over uncommitted work when the setting is on: stash → pull →
-          // pop, mirroring checkoutBranch's auto-stash. stashSave returns null
-          // when the tree is clean, so this is a no-op in the common case. If
-          // the pull fails, the stash is deliberately NOT popped — the work
-          // stays safe in the stash list rather than colliding with a conflicted
-          // worktree (same policy as checkoutBranch).
-          if (useSettingsStore.getState().autoStashBeforePull && stashed === null) {
-            setActivity("pull", "Stashing changes…");
-            stashed = await stashSave(repo.id, {
-              message: `auto: pull ${remote}/${branch}`,
-              includeUntracked: true,
-              keepIndex: false,
-            });
-            setActivity("pull", `Pulling ${remote}/${branch}…`);
+      (creds) =>
+        runCancellable("pull", setNetOp, async (opId) => {
+          // Each attempt owns its own progress indicator AND its own op id: the
+          // retry runs long after the first attempt's `finally` would have
+          // cleared either.
+          setActivity("pull", `Pulling ${remote}/${branch}…`);
+          try {
+            // Carry over uncommitted work when the setting is on: stash → pull →
+            // pop, mirroring checkoutBranch's auto-stash. stashSave returns null
+            // when the tree is clean, so this is a no-op in the common case. If
+            // the pull fails, the stash is deliberately NOT popped — the work
+            // stays safe in the stash list rather than colliding with a conflicted
+            // worktree (same policy as checkoutBranch).
+            if (useSettingsStore.getState().autoStashBeforePull && stashed === null) {
+              setActivity("pull", "Stashing changes…");
+              stashed = await stashSave(repo.id, {
+                message: `auto: pull ${remote}/${branch}`,
+                includeUntracked: true,
+                keepIndex: false,
+              });
+              setActivity("pull", `Pulling ${remote}/${branch}…`);
+            }
+            await pullRemote(repo.id, remote, branch, mode, creds, opId);
+            if (stashed) {
+              setActivity("pull", "Restoring stashed changes…");
+              await stashPop(repo.id, 0);
+              // Popped — a later attempt must not pop it a second time.
+              stashed = null;
+            }
+            await get().refreshAll();
+          } finally {
+            setActivity("pull", null);
           }
-          await pullRemote(repo.id, remote, branch, mode, creds);
-          if (stashed) {
-            setActivity("pull", "Restoring stashed changes…");
-            await stashPop(repo.id, 0);
-            // Popped — a later attempt must not pop it a second time.
-            stashed = null;
-          }
-          await get().refreshAll();
-        } finally {
-          setActivity("pull", null);
-        }
-      },
+        }),
       async (e) => {
         // See mergeBranch's catch: refresh first, error last, so it isn't
-        // batched away by refreshAll's own `error: null` reset.
+        // batched away by refreshAll's own `error: null` reset. A cancel gets
+        // the refresh too — a partly-applied pull still changed the tree — and
+        // only the banner is skipped.
         await get().refreshAll();
-        setErrorFor(repo.id, e);
+        reportNetFailure(repo.id, e);
       },
     );
   },
@@ -1345,11 +1451,20 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       await withAuthRetry(
         repo.id,
-        async (creds) => {
-          await pushRemote(repo.id, remote, branch, force, creds, noVerify);
-          await get().refreshAll();
-        },
-        (e) => setErrorFor(repo.id, e),
+        (creds) =>
+          runCancellable("push", setNetOp, async (opId) => {
+            await pushRemote(
+              repo.id,
+              remote,
+              branch,
+              force,
+              creds,
+              noVerify,
+              opId,
+            );
+            await get().refreshAll();
+          }),
+        (e) => reportNetFailure(repo.id, e),
       );
     } finally {
       setActivity("push", null);

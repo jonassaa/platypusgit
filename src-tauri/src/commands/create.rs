@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::io::AsyncReadExt;
 
 use crate::{
+    cancel::{Op, OpRegistry},
     error::{AppError, AppResult},
     git::libgit2::default_branch_name,
     git::types::{CloneProgress, RepoHandle},
@@ -211,12 +212,20 @@ pub fn clone_args(url: &str, name: &str, recurse_submodules: bool) -> Vec<String
 /// Keeps `run_git`'s environment exactly (`commands/branches.rs`): prompts are
 /// hard-disabled, so a private repo works only when the user's credential
 /// helper or SSH agent answers without a TTY. Returns the destination path.
+///
+/// `op` makes it cancellable (#234). Cancel kills the child from another task;
+/// this function notices at three points — before the spawn, when `attach`
+/// refuses, and once the child has died — and every one of them runs
+/// [`discard_partial_clone`] before returning `Cancelled`, so a cancelled clone
+/// leaves the destination as it found it. Pass `&Op::detached()` for a clone
+/// nobody can stop.
 pub async fn run_clone(
     url: &str,
     parent: &Path,
     name: &str,
     recurse_submodules: bool,
     creds: Option<&crate::commands::net::Credentials>,
+    op: &Op,
     mut on_progress: impl FnMut(CloneProgress),
 ) -> AppResult<PathBuf> {
     // Trimmed once, here, and reused for both validation and argv below.
@@ -241,6 +250,11 @@ pub async fn run_clone(
     }
 
     let target = validate_clone_target(parent, name)?;
+    // Recorded BEFORE git touches anything, because it is the only way to know
+    // what "as we found it" means on a cancel. `validate_clone_target` has
+    // already narrowed the possibilities to exactly two: the target is absent,
+    // or it is an existing EMPTY directory. See `discard_partial_clone`.
+    let target_existed = std::fs::symlink_metadata(&target).is_ok();
     let args = clone_args(url, name, recurse_submodules);
 
     // `git_async_in` and not `git_async`: a clone's working directory is the
@@ -268,9 +282,27 @@ pub async fn run_clone(
     // so it cannot be silently overridden by one of the calls above.
     crate::commands::net::apply_auth_env(&mut cmd, creds);
 
+    // Cancelled between the click and here — do not start a transfer nobody is
+    // waiting for.
+    if op.is_cancelled() {
+        discard_partial_clone(&target, target_existed);
+        return Err(AppError::Cancelled);
+    }
+
     let mut child = cmd
         .spawn()
         .map_err(|e| AppError::Io(format!("failed to run git clone: {e}")))?;
+
+    // `id()` answers `None` once the child has been reaped, so read it now.
+    if let Some(pid) = child.id() {
+        if !op.attach(pid) {
+            // Cancel landed between the check above and the spawn. Nothing else
+            // holds this child yet, so kill it here.
+            let _ = child.start_kill();
+            discard_partial_clone(&target, target_existed);
+            return Err(AppError::Cancelled);
+        }
+    }
 
     let mut stderr = child
         .stderr
@@ -293,10 +325,19 @@ pub async fn run_clone(
     const MAX_PENDING: usize = 4096;
 
     loop {
-        let read = stderr
-            .read(&mut chunk)
-            .await
-            .map_err(|e| AppError::Io(format!("reading git clone output: {e}")))?;
+        let read = match stderr.read(&mut chunk).await {
+            Ok(n) => n,
+            // A cancel kills git mid-stream, and what that looks like from here
+            // is a broken pipe. Claim it before it becomes an `Io` error the
+            // dialog would render in red.
+            Err(e) => {
+                if op.is_cancelled() {
+                    discard_partial_clone(&target, target_existed);
+                    return Err(AppError::Cancelled);
+                }
+                return Err(AppError::Io(format!("reading git clone output: {e}")));
+            }
+        };
         if read == 0 {
             break;
         }
@@ -320,6 +361,13 @@ pub async fn run_clone(
         .wait()
         .await
         .map_err(|e| AppError::Io(format!("waiting for git clone: {e}")))?;
+    // BEFORE `map_git_failure`: a killed `git clone`'s last words read like a
+    // network failure, and on a bad day like an auth failure — which would pop
+    // the credential dialog over a cancel.
+    if op.is_cancelled() {
+        discard_partial_clone(&target, target_existed);
+        return Err(AppError::Cancelled);
+    }
     if !status.success() {
         // Routed through the shared classifier so a private repo yields Auth
         // (promptable + retryable) rather than a dead-end Network error, and so
@@ -344,6 +392,56 @@ fn clone_failure_message(tail: &[String], exit_code: Option<i32>) -> String {
     match exit_code {
         Some(code) => format!("git clone failed (exit {code})"),
         None => "git clone failed (terminated by signal)".to_string(),
+    }
+}
+
+/// Put the clone destination back the way we found it, after a cancel (#234).
+///
+/// `validate_clone_target` accepts exactly two starting states, so there are
+/// exactly two things to undo:
+///
+/// | Before the clone | What this does |
+/// | --- | --- |
+/// | the target did not exist | removes the directory git created |
+/// | the target existed and was empty | removes its CONTENTS, keeps the directory |
+///
+/// The split is the point: the second case is a directory **the user already
+/// had**, and deleting it because a clone into it was cancelled would be
+/// destroying something we were never given.
+///
+/// Usually a no-op on unix, and deliberately so: cancel sends SIGTERM, and `git
+/// clone`'s own `remove_junk_on_signal` handler has already removed its
+/// destination by the time we look. This is the backstop for the cases where
+/// that does not happen — Windows, where cancel is a hard `taskkill`, and a git
+/// killed before its handler is installed.
+///
+/// Best-effort by design: every failure here is ignored. A cancel that reports
+/// "could not clean up" on top of itself tells the user nothing they can act on,
+/// and the operation they asked to stop HAS stopped.
+///
+/// Cancel only, never failure: a failed `git clone` removes its own destination,
+/// and widening this to every failure would mean deleting a directory on a path
+/// we have not just proved is ours.
+pub fn discard_partial_clone(target: &Path, existed_before: bool) {
+    if !existed_before {
+        let _ = std::fs::remove_dir_all(target);
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(target) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // `file_type` reports the LINK for a symlink rather than following it,
+        // so a link git wrote is unlinked instead of being walked into.
+        match entry.file_type() {
+            Ok(t) if t.is_dir() => {
+                let _ = std::fs::remove_dir_all(&path);
+            }
+            _ => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
     }
 }
 
@@ -374,23 +472,30 @@ fn handle_clone_line(bytes: &[u8], on_progress: &mut impl FnMut(CloneProgress), 
 #[tauri::command]
 pub async fn clone_repo(
     app: AppHandle,
+    registry: State<'_, std::sync::Arc<OpRegistry>>,
     url: String,
     parent_dir: String,
     name: String,
     recurse_submodules: bool,
     credentials: Option<crate::commands::net::Credentials>,
+    // The frontend's handle on this clone, for `cancel_operation` (#234).
+    op_id: Option<String>,
 ) -> AppResult<String> {
     let url = url.trim().to_string();
     if url.is_empty() {
         return Err(AppError::InvalidPath("no repository URL given".into()));
     }
     let parent = PathBuf::from(parent_dir);
+    // Registered before the first await, and de-registered by the guard's Drop
+    // on every path out of here — including the `?` below.
+    let guard = registry.begin(op_id.as_deref());
     let dest = run_clone(
         &url,
         &parent,
         &name,
         recurse_submodules,
         credentials.as_ref(),
+        guard.op(),
         |p| {
             // A dropped event only costs a progress tick, never the clone.
             let _ = app.emit("clone://progress", &p);
@@ -455,6 +560,74 @@ mod tests {
             clone_failure_message(&["fatal: repository not found".to_string()], Some(128)),
             "fatal: repository not found"
         );
+    }
+
+    /// The case that matters most: a directory the user already had, cloned into
+    /// and then cancelled, keeps existing and comes back empty.
+    #[test]
+    fn discarding_keeps_a_directory_that_existed_before_the_clone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("dest");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir_all(target.join(".git/objects")).unwrap();
+        std::fs::write(target.join(".git/config"), "partial").unwrap();
+        std::fs::write(target.join("README.md"), "half a checkout").unwrap();
+
+        discard_partial_clone(&target, true);
+
+        assert!(target.is_dir(), "the user's own directory must survive");
+        assert_eq!(
+            std::fs::read_dir(&target).unwrap().count(),
+            0,
+            "everything git wrote is gone"
+        );
+    }
+
+    #[test]
+    fn discarding_removes_a_directory_the_clone_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("dest");
+        std::fs::create_dir_all(target.join(".git")).unwrap();
+        std::fs::write(target.join(".git/config"), "partial").unwrap();
+
+        discard_partial_clone(&target, false);
+
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn discarding_a_target_git_already_removed_is_a_no_op() {
+        // The common case on unix: SIGTERM, and `git clone`'s own signal handler
+        // removed the destination before we looked. Must not be an error, and
+        // must not touch the parent.
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("gone");
+
+        discard_partial_clone(&target, false);
+        discard_partial_clone(&target, true);
+
+        assert!(tmp.path().is_dir());
+    }
+
+    /// A symlink git wrote into the destination is unlinked, not followed — or a
+    /// cancelled clone of a repository containing `link -> /etc` would take the
+    /// cleanup outside the destination.
+    #[test]
+    fn discarding_unlinks_a_symlink_instead_of_walking_into_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("keep.txt"), "not ours to delete").unwrap();
+
+        let target = tmp.path().join("dest");
+        std::fs::create_dir(&target).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, target.join("link")).unwrap();
+
+        discard_partial_clone(&target, true);
+
+        assert!(target.is_dir());
+        assert!(outside.join("keep.txt").exists(), "followed the symlink");
     }
 
     #[test]

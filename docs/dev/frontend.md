@@ -349,6 +349,26 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   evict (`mergeWindowHoldsRepo`/`closeMergeWindow`, which waits for the window
   label to disappear — `close()` resolves on delivery, not on gone). An
   unattributable live resolver counts as a match on purpose.
+- **A cancellable network op publishes its id, and clears it in the same
+  `finally` as its activity label** (#234). `activity.fetch` says a fetch is
+  running; `netOps.fetch` says how to stop it — same keys, one per-repo slice
+  field each, both cleared together by `runCancellable`. An id left behind offers
+  a Stop button that would signal a pid the OS has since reissued.
+  - The two are separate fields rather than one richer `RepoActivity` value
+    because `pull` re-labels itself three times (stash → pull → pop), and
+    threading the id through each relabel is how one relabel drops it.
+  - `setNetOp` is deliberately NOT `setFor`-guarded, unlike every other write:
+    it is bookkeeping for a process running right now, and dropping the write
+    because the user switched tabs would leave the id in the slice forever.
+  - **Cancelled is not an error.** Cancellable ops report failures through
+    `reportNetFailure`, which is `setErrorFor` minus `isCancelledError`. Ops with
+    no cancel button keep calling `setErrorFor` directly, so the filter cannot
+    silently swallow something the user did not ask to stop. The `refreshAll()`
+    still happens — a partly-applied pull changed the tree — only the banner is
+    skipped.
+  - The **clone**'s id lives in `useCreateStore` (`cloneOpId`), not the repo
+    slice: there is no repository yet. A fresh id per attempt, because the
+    credential retry is a second `git clone`.
 - **Danger-op error paths refresh first, set error last** (see `mergeBranch`):
   `refreshAll` starts with `set({ error: null })` and React batches same-tick
   sets, so the opposite order wipes the banner. A failed git op must still

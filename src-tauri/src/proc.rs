@@ -71,6 +71,36 @@ fn silence_async(cmd: &mut tokio::process::Command) {
 #[cfg(not(windows))]
 fn silence_async(_cmd: &mut tokio::process::Command) {}
 
+/// Put the child in its **own process group**, so cancelling it can signal the
+/// whole group rather than just `git` (#234).
+///
+/// `git` is rarely the process doing the waiting: over https it spawns
+/// `git-remote-https`, over ssh it spawns `ssh`. Signalling only `git` leaves
+/// that child holding the connection, so a cancelled transfer carries on.
+///
+/// Applied **inside the constructors**, for the same reason `CREATE_NO_WINDOW`
+/// is: a call site can forget, and here forgetting is not cosmetic —
+/// `cancel::kill_tree` would find a child that is not a group leader. (It checks
+/// `getpgid` and falls back to a single-process kill precisely so that a miss
+/// degrades instead of signalling our own group, but the constructor is where
+/// the guarantee belongs.)
+///
+/// Deliberately NOT applied by [`git_async_keeping_console`] /
+/// [`program_async_keeping_console`]: those are interactive terminal programs,
+/// and a console process in a group other than the terminal's foreground group
+/// is stopped by SIGTTIN/SIGTTOU the moment it reads or writes the tty. An
+/// invisible stopped `vimdiff` is exactly the failure those two exist to avoid.
+#[cfg(unix)]
+fn own_process_group(cmd: &mut tokio::process::Command) {
+    cmd.process_group(0);
+}
+
+/// No-op off unix. Windows has no process group to signal, and our children have
+/// no console for `GenerateConsoleCtrlEvent` either; cancellation there walks the
+/// tree with `taskkill /T` instead — see `cancel::kill_tree`.
+#[cfg(not(unix))]
+fn own_process_group(_cmd: &mut tokio::process::Command) {}
+
 /// Spawn `prog` with no console window.
 ///
 /// Nothing else is applied: this is for children that are not git and whose
@@ -285,11 +315,12 @@ pub fn git(workdir: &Path) -> std::process::Command {
     cmd
 }
 
-/// [`git`], async.
+/// [`git`], async — plus its own process group, so it can be cancelled (#234).
 pub fn git_async(workdir: &Path) -> tokio::process::Command {
     let mut cmd = program_async("git");
     cmd.arg("-C").arg(workdir);
     prompt_less_async(&mut cmd);
+    own_process_group(&mut cmd);
     cmd
 }
 
@@ -301,6 +332,7 @@ pub fn git_async_in(dir: &Path) -> tokio::process::Command {
     let mut cmd = program_async("git");
     cmd.current_dir(dir);
     prompt_less_async(&mut cmd);
+    own_process_group(&mut cmd);
     cmd
 }
 

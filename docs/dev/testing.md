@@ -18,7 +18,10 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   Run one with `pnpm vitest run --project unit`.
 - **E2E** — WebdriverIO specs in `e2e/specs/` (one file per feature area)
   driving the real debug binary via the embedded `@wdio/tauri-service`
-  provider; temp repos from `e2e/support/tempRepo.ts`.
+  provider; temp repos from `e2e/support/tempRepo.ts` — which also holds
+  `stalledGitRemote()`, a `git://` listener that accepts and never answers, for
+  the one thing every other fixture is too fast to test: cancelling an op that
+  cannot finish (#234).
 
 ## E2E rules
 

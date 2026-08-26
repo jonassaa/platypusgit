@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::{
+    cancel::OpRegistry,
     commands::net::Credentials,
     error::{AppError, AppResult},
     git::types::{BranchInfo, PullMode, PushForce, RemoteInfo, RepoId, StashInfo, TagInfo, TagTarget},
@@ -150,6 +153,23 @@ async fn run_git_creds(
     crate::commands::net::run_git_authenticated(cwd, args, creds).await
 }
 
+/// [`run_git_creds`], stoppable while `op_id` is in flight (#234).
+///
+/// `op_id: None` means "not cancellable" and behaves exactly like
+/// `run_git_creds` — that is what keeps the option open for `push_tag` and the
+/// rest without changing them now. The guard de-registers on drop, including on
+/// the `?` paths below.
+async fn run_git_cancellable(
+    registry: &Arc<OpRegistry>,
+    op_id: Option<&str>,
+    cwd: &std::path::Path,
+    args: &[&str],
+    creds: Option<&Credentials>,
+) -> AppResult<()> {
+    let guard = registry.begin(op_id);
+    crate::commands::net::run_git_cancellable(cwd, args, creds, guard.op()).await
+}
+
 /// Build the argument list for `git fetch`. `remote = None` means all remotes.
 fn fetch_args(remote: Option<&str>, prune: bool) -> Vec<&str> {
     let mut args = vec!["fetch"];
@@ -166,6 +186,7 @@ fn fetch_args(remote: Option<&str>, prune: bool) -> Vec<&str> {
 #[tauri::command]
 pub async fn fetch(
     state: State<'_, AppState>,
+    registry: State<'_, Arc<OpRegistry>>,
     repo_id: String,
     remote: String,
     prune: bool,
@@ -173,9 +194,15 @@ pub async fn fetch(
     // the first attempt is always prompt-less, and only a retry carries a
     // credential (#61 D5).
     credentials: Option<Credentials>,
+    // The frontend's handle on this op, for `cancel_operation` (#234). Minted
+    // before the invoke so the cancel button is live from the first frame —
+    // omitted means uncancellable, which is what it was before.
+    op_id: Option<String>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git_creds(
+    run_git_cancellable(
+        &registry,
+        op_id.as_deref(),
         &path,
         &fetch_args(Some(remote.as_str()), prune),
         credentials.as_ref(),
@@ -186,22 +213,33 @@ pub async fn fetch(
 #[tauri::command]
 pub async fn fetch_all(
     state: State<'_, AppState>,
+    registry: State<'_, Arc<OpRegistry>>,
     repo_id: String,
     prune: bool,
     credentials: Option<Credentials>,
+    op_id: Option<String>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git_creds(&path, &fetch_args(None, prune), credentials.as_ref()).await
+    run_git_cancellable(
+        &registry,
+        op_id.as_deref(),
+        &path,
+        &fetch_args(None, prune),
+        credentials.as_ref(),
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn pull(
     state: State<'_, AppState>,
+    registry: State<'_, Arc<OpRegistry>>,
     repo_id: String,
     remote: String,
     branch: String,
     mode: PullMode,
     credentials: Option<Credentials>,
+    op_id: Option<String>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
     let mode_flag = match mode {
@@ -209,7 +247,9 @@ pub async fn pull(
         PullMode::Merge => "--no-rebase",
         PullMode::Rebase => "--rebase",
     };
-    run_git_creds(
+    run_git_cancellable(
+        &registry,
+        op_id.as_deref(),
         &path,
         &["pull", mode_flag, remote.as_str(), branch.as_str()],
         credentials.as_ref(),
@@ -249,6 +289,7 @@ fn push_args(
 #[tauri::command]
 pub async fn push(
     state: State<'_, AppState>,
+    registry: State<'_, Arc<OpRegistry>>,
     repo_id: String,
     remote: String,
     branch: String,
@@ -256,6 +297,7 @@ pub async fn push(
     credentials: Option<Credentials>,
     // Skip `pre-push` for this push only (#232).
     no_verify: Option<bool>,
+    op_id: Option<String>,
 ) -> AppResult<()> {
     let repo_id = RepoId(repo_id);
     let path = get_repo_path(&state, &repo_id).await?;
@@ -280,7 +322,14 @@ pub async fn push(
 
     let args = push_args(&remote, &branch, force, needs_upstream, no_verify.unwrap_or(false));
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    run_git_creds(&path, &arg_refs, credentials.as_ref()).await
+    run_git_cancellable(
+        &registry,
+        op_id.as_deref(),
+        &path,
+        &arg_refs,
+        credentials.as_ref(),
+    )
+    .await
 }
 
 #[cfg(test)]

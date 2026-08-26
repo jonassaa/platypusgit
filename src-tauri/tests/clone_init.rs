@@ -1,6 +1,7 @@
 mod support;
 
-use platypusgit_lib::commands::create::{clone_args, validate_clone_target};
+use platypusgit_lib::cancel::{Op, OpRegistry};
+use platypusgit_lib::commands::create::{clone_args, discard_partial_clone, validate_clone_target};
 use platypusgit_lib::error::AppError;
 use platypusgit_lib::git::{libgit2::default_branch_name, libgit2::Libgit2Backend, GitBackend};
 
@@ -454,6 +455,7 @@ async fn clone_from_a_local_bare_repo_lands_the_files() {
         "cloned",
         false,
         None,
+        &Op::detached(),
         |_| {},
     )
     .await
@@ -510,6 +512,7 @@ async fn clone_streams_progress_ticks_as_they_arrive() {
         "cloned",
         false,
         None,
+        &Op::detached(),
         move |p| ticks_for_closure.lock().unwrap().push(p),
     )
     .await
@@ -555,6 +558,7 @@ async fn run_clone_trims_whitespace_from_the_name_and_matches_disk() {
         "cloned ", // trailing space, exactly the reviewer's repro
         false,
         None,
+        &Op::detached(),
         |_| {},
     )
     .await
@@ -590,6 +594,7 @@ async fn run_clone_reports_a_missing_parent_directory_by_name() {
         "cloned",
         false,
         None,
+        &Op::detached(),
         |_| {},
     )
     .await
@@ -622,6 +627,7 @@ async fn a_failed_clone_reports_git_stderr_and_leaves_nothing_behind() {
         "cloned",
         false,
         None,
+        &Op::detached(),
         |_| {},
     )
     .await
@@ -639,4 +645,121 @@ async fn a_failed_clone_reports_git_stderr_and_leaves_nothing_behind() {
         !dest_parent.path().join("cloned").exists(),
         "a failed clone must not leave a partial destination"
     );
+}
+
+/// A clone cancelled while it is running reports `Cancelled` — not a `Network`
+/// error quoting git's death rattle — and leaves nothing behind (#234).
+///
+/// The stall is a real TCP listener that accepts and never answers, so
+/// `git clone` blocks in the git-protocol handshake indefinitely. No network
+/// access, and no sleep used as synchronisation: the clone cannot finish on its
+/// own, so the only thing that can end this test is the cancel working.
+#[tokio::test]
+async fn cancelling_a_running_clone_reports_cancelled_and_removes_the_destination() {
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("stall listener");
+    let port = listener.local_addr().unwrap().port();
+    // Accept and HOLD. Dropping the accepted stream would let git see EOF and
+    // fail on its own, which would test nothing.
+    std::thread::spawn(move || {
+        let held: Vec<_> = listener.incoming().take(1).flatten().collect();
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        drop(held);
+    });
+
+    let dest_parent = tempfile::tempdir().unwrap();
+    let target = dest_parent.path().join("cloned");
+    let registry = std::sync::Arc::new(OpRegistry::default());
+    let guard = registry.begin(Some("clone-1"));
+
+    // Cancel once git has actually started. `git clone` creates its destination
+    // before it connects, so the directory appearing is proof that a child is
+    // running — which is the state this test is about, as distinct from the
+    // cancelled-before-spawn path covered below.
+    //
+    // A plain OS thread rather than a tokio task: `tokio::time` is not one of
+    // the features this crate asks for, and a test must not be the thing that
+    // makes it load-bearing.
+    let cancel_side = {
+        let registry = registry.clone();
+        let target = target.clone();
+        std::thread::spawn(move || {
+            for _ in 0..600 {
+                if target.exists() {
+                    return registry.cancel("clone-1");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            false
+        })
+    };
+
+    let err = platypusgit_lib::commands::create::run_clone(
+        &format!("git://127.0.0.1:{port}/stalled.git"),
+        dest_parent.path(),
+        "cloned",
+        false,
+        None,
+        guard.op(),
+        |_| {},
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        cancel_side.join().unwrap(),
+        "the cancel never saw the clone start"
+    );
+    assert!(
+        matches!(err, AppError::Cancelled),
+        "a cancelled clone must not surface as a failure: {err:?}"
+    );
+    assert!(
+        !target.exists(),
+        "a cancelled clone left a half-written destination behind"
+    );
+}
+
+/// Cancelling before the child is spawned still reports `Cancelled`, and still
+/// creates nothing — the window between the invoke and the spawn.
+#[tokio::test]
+async fn a_clone_cancelled_before_it_starts_creates_nothing() {
+    let bare = BareTempRepo::new();
+    let dest_parent = tempfile::tempdir().unwrap();
+    let registry = std::sync::Arc::new(OpRegistry::default());
+    let guard = registry.begin(Some("clone-2"));
+    registry.cancel("clone-2");
+
+    let err = platypusgit_lib::commands::create::run_clone(
+        bare.path.to_str().unwrap(),
+        dest_parent.path(),
+        "cloned",
+        false,
+        None,
+        guard.op(),
+        |_| {},
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(err, AppError::Cancelled), "{err:?}");
+    assert!(!dest_parent.path().join("cloned").exists());
+}
+
+/// The other half of the cleanup contract, asserted from outside the module
+/// because getting it wrong deletes a directory the user handed us.
+#[test]
+fn discarding_a_cancelled_clone_never_deletes_a_directory_the_user_supplied() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("mine");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::create_dir_all(target.join(".git")).unwrap();
+
+    discard_partial_clone(&target, true);
+    assert!(target.is_dir(), "emptied, not deleted");
+    assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+
+    discard_partial_clone(&target, false);
+    assert!(!target.exists(), "a directory we created is removed");
 }

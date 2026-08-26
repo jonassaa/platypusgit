@@ -137,6 +137,21 @@ pub enum AppError {
     /// from no error at all, which is what an absent hook produces.
     #[error("the {} hook rejected this commit", .0.hook)]
     HookRejected(HookRejection),
+
+    /// The user stopped a long-running operation (#234).
+    ///
+    /// A **state**, not a failure: the user already knows what happened, so no
+    /// surface may raise a banner for it — see `isCancelledError` in
+    /// `src/lib/errors.ts` and the catch arms in `useRepoStore`.
+    ///
+    /// Distinct from `Network` because that is what a killed git would otherwise
+    /// classify as: cancel kills the child, git dies mid-transfer, and its last
+    /// stderr line reads like a broken connection. Every cancellable op
+    /// therefore checks the cancel flag BEFORE `map_git_failure` ever sees that
+    /// line — which also keeps a dying remote from popping the credential dialog
+    /// over a cancel.
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 /// A hook's refusal (#232). `output` is whatever the hook printed, verbatim —

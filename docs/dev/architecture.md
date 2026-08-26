@@ -18,8 +18,17 @@ update.rs        Update discovery: semver compare, dev-build (0.0.0) short-circu
                  https_only. Logic only — handlers live in commands/update.rs
 proc.rs          THE only sanctioned child-process spawner (issue 172):
                  git / git_async / git_async_in (CREATE_NO_WINDOW,
-                 GIT_TERMINAL_PROMPT=0, stdin closed), program / program_async,
-                 and the two *_keeping_console exceptions. See backend.md
+                 GIT_TERMINAL_PROMPT=0, stdin closed, and — the async git two —
+                 their OWN process group so a cancel can signal the group),
+                 program / program_async, and the two *_keeping_console
+                 exceptions, which get NO process group (SIGTTIN/SIGTTOU would
+                 stop an interactive child). See backend.md
+cancel.rs        Cancelling a running clone/fetch/pull/push (#234): OpRegistry
+                 (id → Op, managed as Arc state), OpGuard (de-registers on Drop),
+                 Op::attach/cancel/is_cancelled, kill_tree (unix: SIGTERM to the
+                 process group, but killpg ONLY when getpgid(pid) == pid;
+                 windows: taskkill /F /T). The op is NOT interrupted — its child
+                 is killed and it notices via is_cancelled. See backend.md
 reveal.rs        "Reveal in Finder/Explorer" + "Open in terminal" (#215).
                  HostPlatform decouples argv building from the actual host, so
                  reveal_plan/terminal_plan are PURE and unit-tested for all
@@ -141,14 +150,18 @@ commands/        Thin Tauri handlers, one file per area:
 │                vs its first parent) and diff_commits (rev↔rev) — check arity
 ├── branches.rs  list_branches/tags/stashes/remotes,
 │                checkout/create/delete/rename_branch, set_upstream,
-│                fetch, fetch_all, pull, push,
+│                fetch, fetch_all, pull, push (all four take an optional op_id
+│                and are cancellable — #234; the rest of this file's network ops
+│                are not, and pass none),
 │                add/remove/rename/prune_remote, set_remote_url,
 │                create/delete/push_tag, verify_tag, merge_branch, rebase_onto,
 │                checkout_ref, push_delete_branch
 ├── net.rs       Shared network plumbing (Credentials, run_git_authenticated,
-│                apply_auth_env, map_git_failure, credential_approve) + ONE
-│                command, remember_credential — stored only after the credential
-│                worked. See backend.md
+│                run_git_cancellable, apply_auth_env, map_git_failure,
+│                credential_approve) + TWO commands: remember_credential —
+│                stored only after the credential worked — and cancel_operation
+│                (#234), which answers false for an id that already finished.
+│                See backend.md
 ├── update.rs    check_for_update, get_update_capability, open_url — thin
 │                handlers for src-tauri/src/update.rs (same basename, two files)
 ├── history.rs   reset, cherry_pick, revert
@@ -169,7 +182,10 @@ commands/        Thin Tauri handlers, one file per area:
 ├── lfs.rs       lfs_status, lfs_checkout (local), lfs_fetch/lfs_pull (credentialed)
 ├── bisect.rs    bisect_status/start/mark/reset
 └── create.rs    init_repo, default_init_branch, clone_repo (streaming
-                 clone://progress events)
+                 clone://progress events, optional op_id). Also
+                 discard_partial_clone (#234): on a cancel, a destination we
+                 created is removed and one that already existed is EMPTIED,
+                 never deleted
 ```
 
 ## Frontend (`src/`)
@@ -177,10 +193,13 @@ commands/        Thin Tauri handlers, one file per area:
 ```
 main.tsx             Entry point (routes ?window=merge)
 App.tsx              Thin wrapper around <AppShell />
-AppShell.tsx         Shell: titlebar (branch chip, remote buttons), tab strip,
-                     activity bar, status bar, error banner, settings. Owns
-                     per-tab screen restore and keys the screen subtree by the
-                     active repository (a switch REMOUNTS it)
+AppShell.tsx         Shell: titlebar (branch chip, remote buttons, and the Stop
+                     button that cancels the running fetch/pull/push — #234),
+                     tab strip, activity bar, status bar, error banner, settings.
+                     Owns per-tab screen restore and keys the screen subtree by
+                     the active repository (a switch REMOUNTS it), plus the
+                     auto-fetch timer: skips while a fetch is in flight and
+                     cancels its own after AUTO_FETCH_DEADLINE_MS
 store.ts             Re-export hub — keep thin
 
 design/              In-house design system (NOT components/ui/), exported via
@@ -209,9 +228,12 @@ screens/             One per activity-bar item + deep views: RepoBrowser,
                      Conflict screen (#108)
 
 features/            Components + Zustand store colocated per feature:
-├── repo/            useRepoStore (ONE repo's live state — the active tab's),
+├── repo/            useRepoStore (ONE repo's live state — the active tab's,
+│                    incl. cancelNetOp / cancelAllNetOps — #234),
 │                    repoSlice (RepoSlice / REPO_SLICE_KEYS / emptySlice),
-│                    repoActivity, tabs.ts (pure tab reducers, labelTabs,
+│                    repoActivity (RepoActivity labels + NetOps: the op ids the
+│                    Stop button cancels, keyed the same way), tabs.ts (pure tab
+│                    reducers, labelTabs,
 │                    pg-open-repos persistence), useTabsStore (open set +
 │                    activate/close/cycle + session restore), RepoTabs,
 │                    useRecentsStore, ops (shared runners), OperationBar
@@ -251,7 +273,10 @@ features/            Components + Zustand store colocated per feature:
 │                    the secret) + CredentialDialog. withAuthRetry LIVES IN
 │                    useRepoStore.ts, exported — never grow a second retry path
 ├── create/          Clone + Init dialogs (PGModal), useCreateStore,
-│                    deriveRepoName. Clone shells out with the prompt-less env
+│                    deriveRepoName. Clone shells out with the prompt-less env;
+│                    while it runs the dialog's Cancel button IS the cancel
+│                    (#234) — cloneOpId / cancelClone, and the dialog closes only
+│                    once the backend confirms it cleaned up
 ├── forge/           useForgeStore (hostKinds+logins under pg-forge-hosts, NEVER
 │                    a token), forgeLabels (prNoun/prNumberLabel/localBranchFor),
 │                    PullRequestRow, CreatePullRequestDialog, ForgeSettings
@@ -302,7 +327,9 @@ lib/                 tauri.ts (typed invoke wrappers — frontend NEVER calls
                      (+ splitFileSelection), tree.ts (buildStatusTree /
                      buildStatusList — SAME row keys), useTreeViewMode.ts,
                      recents.ts (pg-recent-repos; the OPEN set is pg-open-repos
-                     in features/repo/tabs.ts)
+                     in features/repo/tabs.ts), opId.ts (newOpId — the frontend
+                     mints cancellable-op ids BEFORE the invoke, #234; not
+                     crypto.randomUUID, which needs a secure context)
 
 test/ (src/test/)    jsdom component-test harness (root test/ is unrelated —
                      doc invariants, see testing.md): setup.ts (invoke/dialog/

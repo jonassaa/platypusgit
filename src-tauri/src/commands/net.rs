@@ -8,6 +8,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::{
+    cancel::{Op, OpRegistry},
     cli::{ASKPASS_MODE_ENV, ASKPASS_SECRET_ENV, ASKPASS_USERNAME_ENV},
     error::{AppError, AppResult},
     git::auth::{classify_auth_failure, host_from_stderr, scrub_credentials, AuthChallenge},
@@ -88,26 +89,98 @@ pub fn map_git_failure(stderr: &str) -> AppError {
 }
 
 /// Run `git -C cwd <args>`, mapping a non-zero exit through `map_git_failure`.
+///
+/// Uncancellable, which is right for every op with no progress surface —
+/// `push_tag`, `push_delete_branch`, `git lfs fetch/pull`, `submodule update`,
+/// the forge PR checkout. Fetch, pull and push go through
+/// [`run_git_cancellable`] instead; opting one of these in later is passing an
+/// `Op` instead of a detached one.
 pub async fn run_git_authenticated(
     cwd: &Path,
     args: &[&str],
     creds: Option<&Credentials>,
 ) -> AppResult<()> {
+    run_git_cancellable(cwd, args, creds, &Op::detached()).await
+}
+
+/// [`run_git_authenticated`], stoppable through `op` (#234).
+///
+/// The cancel path does not interrupt this function; it kills the child from
+/// another task and this one **notices** — `wait_with_output` returns because the
+/// child is dead, and the `is_cancelled` check below claims that death before
+/// `map_git_failure` can classify it. See `cancel.rs` for why it is arranged that
+/// way rather than as a `select!`.
+pub async fn run_git_cancellable(
+    cwd: &Path,
+    args: &[&str],
+    creds: Option<&Credentials>,
+    op: &Op,
+) -> AppResult<()> {
     // `proc::git_async` carries GIT_TERMINAL_PROMPT=0 (which `apply_auth_env`
     // sets too), a closed stdin — nothing feeds it, so an unexpected read would
-    // block forever — and, on Windows, CREATE_NO_WINDOW: without it every fetch,
+    // block forever — on Windows CREATE_NO_WINDOW: without it every fetch,
     // pull and push flashed a console, including the ones auto-fetch runs on a
-    // timer with no user action at all (issue 172).
+    // timer with no user action at all (issue 172) — and, on unix, its own
+    // process group, which is what `cancel::kill_tree` signals (issue 234).
     let mut cmd = crate::proc::git_async(cwd);
     cmd.args(args);
     apply_auth_env(&mut cmd, creds);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // A dropped future must not leave git running: it would finish the
+        // fetch, move refs, and report to nobody.
+        .kill_on_drop(true);
 
-    let output = cmd.output().await.map_err(|e| AppError::Io(e.to_string()))?;
+    // Cancelled before we even spawn — the user clicked Cancel while a previous
+    // attempt of the same op was still unwinding. Spawning here would start work
+    // nobody is waiting for.
+    if op.is_cancelled() {
+        return Err(AppError::Cancelled);
+    }
+
+    let mut child = cmd.spawn().map_err(|e| AppError::Io(e.to_string()))?;
+    // `id()` answers `None` once the child has been reaped, so read it now.
+    let pid = child.id();
+    if let Some(pid) = pid {
+        if !op.attach(pid) {
+            // Cancel landed between the check above and the spawn. Nothing else
+            // holds this child, so kill it here.
+            let _ = child.start_kill();
+            return Err(AppError::Cancelled);
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?;
+
+    // BEFORE `map_git_failure`: a killed git dies mid-transfer, and its last
+    // stderr line reads like a network failure — or, on a bad day, like an auth
+    // failure, which would pop the credential dialog over a cancel.
+    if op.is_cancelled() {
+        return Err(AppError::Cancelled);
+    }
 
     if !output.status.success() {
         return Err(map_git_failure(&String::from_utf8_lossy(&output.stderr)));
     }
     Ok(())
+}
+
+/// Stop the operation the frontend registered under `op_id` (#234).
+///
+/// `false` means nothing with that id is in flight — the op finished between the
+/// click and this call. Not an error: what the user asked for has happened.
+///
+/// Calling it a second time for the same op escalates SIGTERM to SIGKILL; see
+/// `cancel::Op::cancel`.
+#[tauri::command]
+pub async fn cancel_operation(
+    registry: tauri::State<'_, std::sync::Arc<OpRegistry>>,
+    op_id: String,
+) -> AppResult<bool> {
+    Ok(registry.cancel(&op_id))
 }
 
 /// Store a credential with the user's own git credential helper (#61 D5).

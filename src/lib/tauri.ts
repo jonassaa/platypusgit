@@ -818,13 +818,26 @@ export async function rememberCredential(
   return invoke<void>("remember_credential", { repoId, host, credentials });
 }
 
+/**
+ * Stop the operation running under `opId` (#234).
+ *
+ * `false` means nothing with that id is in flight — it finished between the
+ * click and this call. Not a failure: what the user asked for has happened.
+ * A second call for the same id escalates SIGTERM to SIGKILL.
+ */
+export async function cancelOperation(opId: string): Promise<boolean> {
+  return invoke<boolean>("cancel_operation", { opId });
+}
+
 export async function fetch(
   repoId: string,
   remote: string,
   prune = true,
   credentials?: Credentials,
+  /** Handle for `cancelOperation`; omitted makes this fetch uncancellable. */
+  opId?: string,
 ): Promise<void> {
-  return invoke<void>("fetch", { repoId, remote, prune, credentials });
+  return invoke<void>("fetch", { repoId, remote, prune, credentials, opId });
 }
 
 /** Fetch all remotes, pruning deleted remote refs. */
@@ -832,8 +845,9 @@ export async function fetchAll(
   repoId: string,
   prune = true,
   credentials?: Credentials,
+  opId?: string,
 ): Promise<void> {
-  return invoke<void>("fetch_all", { repoId, prune, credentials });
+  return invoke<void>("fetch_all", { repoId, prune, credentials, opId });
 }
 
 /**
@@ -848,8 +862,16 @@ export async function pull(
   branch: string,
   mode: PullMode = "Merge",
   credentials?: Credentials,
+  opId?: string,
 ): Promise<void> {
-  return invoke<void>("pull", { repoId, remote, branch, mode, credentials });
+  return invoke<void>("pull", {
+    repoId,
+    remote,
+    branch,
+    mode,
+    credentials,
+    opId,
+  });
 }
 
 /**
@@ -865,6 +887,7 @@ export async function push(
   credentials?: Credentials,
   /** Skip `pre-push` for this push only (#232). */
   noVerify = false,
+  opId?: string,
 ): Promise<void> {
   return invoke<void>("push", {
     repoId,
@@ -873,6 +896,7 @@ export async function push(
     force,
     credentials,
     noVerify,
+    opId,
   });
 }
 
@@ -1103,6 +1127,7 @@ export async function cloneRepo(
   name: string,
   recurseSubmodules: boolean,
   credentials?: Credentials,
+  opId?: string,
 ): Promise<string> {
   return invoke<string>("clone_repo", {
     url,
@@ -1110,6 +1135,7 @@ export async function cloneRepo(
     name,
     recurseSubmodules,
     credentials,
+    opId,
   });
 }
 

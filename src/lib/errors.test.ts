@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { appErrorMessage, describeError, toAppError, type AppError } from "./errors";
+import {
+  appErrorMessage,
+  describeError,
+  isCancelledError,
+  toAppError,
+  type AppError,
+} from "./errors";
 
 /**
  * #146: every backend failure reached the log file as `[object Object]`, so the
@@ -260,5 +266,36 @@ describe("HookRejected (#232)", () => {
       message: { hook: "pre-commit", output: "" },
     };
     expect(appErrorMessage(e)).toContain("pre-commit");
+  });
+});
+
+describe("isCancelledError (#234)", () => {
+  it("narrows a cancel", () => {
+    expect(isCancelledError({ kind: "Cancelled" })).toBe(true);
+  });
+
+  it("does not narrow anything else", () => {
+    // Especially not `Network`, which is what a killed git would look like if
+    // the backend ever stopped claiming the cancel first.
+    for (const e of [
+      { kind: "Network", message: "connection reset" },
+      { kind: "Auth", message: { host: "github.com", kind: "Https" } },
+      { kind: "Io", message: "broken pipe" },
+      new Error("cancelled"),
+      "Cancelled",
+      null,
+      undefined,
+    ]) {
+      expect(isCancelledError(e)).toBe(false);
+    }
+  });
+
+  it("still renders as SOMETHING if a surface does show it", () => {
+    // The variant carries no message, so this is the no-prose fallback path —
+    // a blank banner would be worse than a terse one.
+    const e: AppError = { kind: "Cancelled" };
+    expect(appErrorMessage(e)).toBe("Cancelled");
+    expect(describeError(e)).toBe("Cancelled");
+    expect(toAppError(e)).toBe(e);
   });
 });

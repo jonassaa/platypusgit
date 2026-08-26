@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { $, expect } from "@wdio/globals";
-import { bareSourceRepo, type BareRepo } from "../support/tempRepo";
+import {
+  bareSourceRepo,
+  stalledGitRemote,
+  type BareRepo,
+  type StalledRemote,
+} from "../support/tempRepo";
 import { resetApp, waitRepoLoaded } from "../support/app";
 
 describe("clone & init", () => {
@@ -13,6 +18,9 @@ describe("clone & init", () => {
   // fixture created by the clone test must not leak when an earlier
   // assertion in that test throws.
   let source: BareRepo | undefined;
+  // Same reason as `source`: a listener left open would keep a git child alive
+  // past the test that started it.
+  let stalled: StalledRemote | undefined;
 
   beforeEach(() => {
     dest = mkdtempSync(join(tmpdir(), "pgit-create-"));
@@ -23,6 +31,8 @@ describe("clone & init", () => {
     rmSync(dest, { recursive: true, force: true });
     source?.dispose();
     source = undefined;
+    stalled?.dispose();
+    stalled = undefined;
   });
 
   it("initializes a new repository and opens it", async () => {
@@ -117,5 +127,54 @@ describe("clone & init", () => {
       encoding: "utf8",
     });
     expect(files.trim().split("\n").sort()).toEqual(["a.txt", "b.txt"]);
+  });
+
+  it("cancels a stalled clone, closing the dialog and leaving nothing behind", async () => {
+    // The case #234 is about: a host that completes the TCP handshake and then
+    // never answers. Before this, the only way out was force-quitting the app —
+    // which left git finishing the transfer into a directory the frontend had
+    // already given up on.
+    stalled = await stalledGitRemote();
+
+    await $('[data-testid="welcome-clone"]').waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "Welcome screen never showed the Clone button",
+    });
+    await $('[data-testid="welcome-clone"]').click();
+
+    const urlInput = $('[data-testid="clone-url"]');
+    await urlInput.waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "Clone dialog never opened",
+    });
+    await urlInput.setValue(stalled.url);
+    await $('[data-testid="clone-parent"]').setValue(dest);
+    await $('[data-testid="clone-name"]').setValue("cancelled");
+    await $('[data-testid="clone-submit"]').click();
+
+    // Running, and unable to finish. This wait is also the proof that the clone
+    // really started — a URL git rejected outright would land in the error slot
+    // instead, and there would be nothing to cancel.
+    await $('[data-testid="clone-progress"]').waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg: "the clone never started, so there was nothing to cancel",
+    });
+
+    // The one control the user reaches for, which used to be disabled here.
+    const cancel = $('[data-testid="clone-cancel"]');
+    expect(await cancel.isEnabled()).toBe(true);
+    await cancel.click();
+
+    // Back to Welcome: the dialog closed AND no repository was opened. It closes
+    // only on the backend's `Cancelled`, so reaching this state means the
+    // cleanup has already run.
+    await $('[data-testid="welcome-clone"]').waitForDisplayed({
+      timeout: 30_000,
+      timeoutMsg:
+        "the Clone dialog never closed after Cancel — is the cancel reaching the backend?",
+    });
+
+    // repo truth: no half-written destination.
+    expect(existsSync(join(dest, "cancelled"))).toBe(false);
   });
 });

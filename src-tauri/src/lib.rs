@@ -1,3 +1,4 @@
+pub mod cancel;
 pub mod cli;
 pub mod commands;
 pub mod detach;
@@ -144,7 +145,33 @@ pub fn run() {
     #[cfg(feature = "e2e")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
 
+    let cancel_registry = std::sync::Arc::new(crate::cancel::OpRegistry::default());
+
     builder
+        // Cancel every in-flight network op when the main window closes (#234).
+        //
+        // `kill_on_drop` on the children only fires if the future is dropped,
+        // and process exit does not unwind — so without this a `git clone`
+        // outlives the app, finishing a transfer nobody can see into a
+        // destination the user was told never got created
+        // (`commands/create.rs`'s comment on the same subject).
+        //
+        // Gated on the MAIN window: the merge resolver is a second window
+        // labelled `merge`, and closing it must not stop a fetch.
+        .on_window_event({
+            let registry = cancel_registry.clone();
+            move |window, event| {
+                if window.label() != "main" {
+                    return;
+                }
+                if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                    let stopped = registry.cancel_all();
+                    if stopped > 0 {
+                        log::info!("window closing — cancelled {stopped} network op(s)");
+                    }
+                }
+            }
+        })
         .setup(|_app| {
             log::info!(
                 "platypusgit starting v{}",
@@ -180,6 +207,11 @@ pub fn run() {
             }
             Ok(())
         })
+        // Cancel a running clone / fetch / pull / push (#234). An Arc rather
+        // than a bare value because `on_window_event` above and every
+        // cancellable command need the same registry, and `begin` hands its
+        // guard a clone.
+        .manage(cancel_registry)
         .manage(AppState::new(backend))
         // Per-host forge API tokens, cached for this process only (#92). NOT the
         // git-transport credential path — see forge/token.rs for why the two
@@ -316,6 +348,7 @@ pub fn run() {
             commands::forge::forge_pull_request_checks,
             commands::forge::forge_create_pull_request,
             commands::forge::forge_checkout_pull_request,
+            commands::net::cancel_operation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

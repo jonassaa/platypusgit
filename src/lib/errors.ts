@@ -55,7 +55,17 @@ export type AppError =
    * of eslint belong in the dedicated output block, which scrolls. See
    * `appErrorDetail`.
    */
-  | { kind: "HookRejected"; message: HookRejection };
+  | { kind: "HookRejected"; message: HookRejection }
+  /**
+   * The user stopped a long-running operation (#234). A STATE, not a failure:
+   * no surface may raise a banner for it — they already know, they clicked the
+   * button. Narrow with `isCancelledError` in every catch arm that reports.
+   *
+   * Distinct from `Network`, which is what a killed git would otherwise be
+   * classified as — see the Rust variant for why the backend claims the death
+   * before the classifier sees it.
+   */
+  | { kind: "Cancelled"; message?: string };
 
 /** Which credential the remote is asking for. */
 export type AuthKind = "Https" | "SshPassphrase" | "SshKey";
@@ -309,6 +319,18 @@ export function forgeAuthHost(e: unknown): string | null {
  */
 export function forgeAuthMessage(host: string): string {
   return `The API token for ${host} is missing or was rejected. Add one in Settings → Integrations.`;
+}
+
+/**
+ * Narrow to "the user cancelled it" (#234).
+ *
+ * Every catch arm that would set an error must check this FIRST. A banner that
+ * says "operation cancelled" after the user pressed Cancel is the app arguing
+ * with them, and — worse — it is indistinguishable at a glance from the failures
+ * that do need attention.
+ */
+export function isCancelledError(e: unknown): boolean {
+  return isAppError(e) && e.kind === "Cancelled";
 }
 
 /** Narrow to "a local branch of that name already exists". */

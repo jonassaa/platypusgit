@@ -6,6 +6,7 @@ import { useTabsStore } from "@/features/repo/useTabsStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useAuthStore } from "@/features/auth/useAuthStore";
 import {
+  cancelOperation,
   cloneRepo,
   closeRepo as closeRepoIpc,
   initRepo,
@@ -13,11 +14,13 @@ import {
   trustRepoPath,
   type Credentials,
 } from "@/lib/tauri";
+import { newOpId } from "@/lib/opId";
 import type { CloneProgress, RepoHandle } from "@/lib/types";
 import {
   appErrorMessage,
   dubiousOwnershipPath,
   isAuthError,
+  isCancelledError,
   isDubiousOwnershipError,
 } from "@/lib/errors";
 
@@ -28,9 +31,23 @@ interface CreateState {
   busy: boolean;
   progress: CloneProgress | null;
   error: string | null;
+  /**
+   * The running clone's backend op id, or null (#234).
+   *
+   * Also what the dialog's Cancel button is gated on: a clone with no id is one
+   * the backend cannot be asked to stop, so the button must not offer to.
+   */
+  cloneOpId: string | null;
   openClone: () => void;
   openInit: () => void;
   close: () => void;
+  /**
+   * Stop the running clone (#234). Returns immediately; `runClone`'s own catch
+   * closes the dialog when the backend confirms with `AppError::Cancelled`,
+   * which is also what guarantees the half-written destination has been removed
+   * before the dialog says it is over.
+   */
+  cancelClone: () => void;
   setProgress: (p: CloneProgress) => void;
   runClone: (args: {
     url: string;
@@ -50,12 +67,12 @@ export const useCreateStore = create<CreateState>((set, get) => ({
   busy: false,
   progress: null,
   error: null,
+  cloneOpId: null,
 
-  // Guarded against `busy`: a clone/init in flight has no cancel, so a chord
-  // or palette command that swaps `open` to the other dialog mid-run would
-  // unmount the running dialog's view behind a disabled, undismissable one —
-  // and once the run finishes, its result (including a failure) would render
-  // into the wrong dialog's error slot.
+  // Guarded against `busy`: a chord or palette command that swaps `open` to the
+  // other dialog mid-run would unmount the running dialog's view — taking the
+  // Cancel button for the op with it — and once the run finishes, its result
+  // (including a failure) would render into the wrong dialog's error slot.
   openClone: () => {
     if (get().busy) return;
     set({ open: "clone", error: null, progress: null });
@@ -64,11 +81,23 @@ export const useCreateStore = create<CreateState>((set, get) => ({
     if (get().busy) return;
     set({ open: "init", error: null, progress: null });
   },
-  // Never closes mid-run: a clone in flight has no cancel, so dropping the
-  // dialog would leave a git process with no UI attached to it.
+  // Still never closes mid-run — but the way out is now Cancel, not waiting.
+  // Dropping the dialog while a clone runs would leave a git process with no UI
+  // attached to it AND a half-written destination nobody is going to clean up;
+  // `cancelClone` does both, and this closes once the backend has confirmed.
   close: () => {
     if (get().busy) return;
     set({ open: "none", error: null, progress: null });
+  },
+
+  cancelClone: () => {
+    const opId = get().cloneOpId;
+    if (!opId) return;
+    // Fire and forget: `runClone`'s catch owns the transition out of `busy`,
+    // because only it knows the backend finished cleaning up. A failed cancel
+    // means the clone had already finished — which is the outcome the user wanted
+    // reported by the clone itself, not by an error here.
+    void cancelOperation(opId).catch(() => {});
   },
   setProgress: (p) => set({ progress: p }),
 
@@ -76,17 +105,50 @@ export const useCreateStore = create<CreateState>((set, get) => ({
     set({ busy: true, error: null, progress: null });
 
     const attempt = async (creds?: Credentials) => {
-      const dest = await cloneRepo(url, parentDir, name, recurseSubmodules, creds);
-      useSettingsStore.getState().set("lastCreateDir", parentDir);
-      // busy false BEFORE close(), which refuses to close while busy.
-      set({ busy: false, progress: null });
+      // A fresh id per attempt. The credential retry is a SECOND `git clone`, so
+      // reusing the first attempt's id would leave the Cancel button pointed at
+      // a process that has already exited.
+      const opId = newOpId("clone");
+      set({ cloneOpId: opId });
+      try {
+        const dest = await cloneRepo(
+          url,
+          parentDir,
+          name,
+          recurseSubmodules,
+          creds,
+          opId,
+        );
+        useSettingsStore.getState().set("lastCreateDir", parentDir);
+        // busy false BEFORE close(), which refuses to close while busy.
+        set({ busy: false, progress: null });
+        set({ open: "none" });
+        await useTabsStore.getState().openRepo(dest);
+      } finally {
+        set({ cloneOpId: null });
+      }
+    };
+
+    /**
+     * A cancelled clone closes the dialog and says nothing.
+     *
+     * By the time this rejection arrives the backend has already removed the
+     * half-written destination, so there is nothing left for the user to decide
+     * — and an error banner reading "operation cancelled" over the form they
+     * just dismissed is the app arguing with them.
+     */
+    const settleCancel = () => {
+      set({ busy: false, progress: null, error: null, cloneOpId: null });
       set({ open: "none" });
-      await useTabsStore.getState().openRepo(dest);
     };
 
     try {
       await attempt();
     } catch (e) {
+      if (isCancelledError(e)) {
+        settleCancel();
+        return;
+      }
       // A private remote is exactly what the credential flow exists for. The
       // backend already classifies clone failures as AppError::Auth and
       // clone_repo already takes credentials; without raising the challenge the
@@ -123,6 +185,10 @@ export const useCreateStore = create<CreateState>((set, get) => ({
               }
             }
           } catch (retryError) {
+            if (isCancelledError(retryError)) {
+              settleCancel();
+              return;
+            }
             set({
               busy: false,
               progress: null,

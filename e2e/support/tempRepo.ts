@@ -456,3 +456,48 @@ export function bisectRepo(): TempRepo {
   }
   return r;
 }
+
+/**
+ * A remote that accepts the TCP connection and then never answers (#234).
+ *
+ * The only way to test a cancel is to have something that cannot finish, and
+ * every other fixture here is deliberately local and instant. A `file://` clone
+ * is over before a button can be clicked; a bad host fails fast. This is the
+ * third case — the one the issue is actually about, and the one that used to
+ * mean force-quitting the app: `git clone`/`fetch` completes its TCP handshake,
+ * sends its request, and waits for a reply that never comes.
+ *
+ * `git://` rather than https: the git protocol's first move is a plain request
+ * line with no TLS handshake to fail, so a bare `net` listener that reads and
+ * says nothing is enough. No network access, no sleeps, nothing to flake — the
+ * op hangs until something kills it, which is the thing under test.
+ *
+ * The spec process and the app share a network namespace (the e2e container runs
+ * both), so 127.0.0.1 here is 127.0.0.1 there.
+ */
+export interface StalledRemote {
+  /** A URL that will connect and then hang forever. */
+  url: string;
+  dispose: () => void;
+}
+
+export async function stalledGitRemote(): Promise<StalledRemote> {
+  const { createServer } = await import("node:net");
+  const held: import("node:net").Socket[] = [];
+  // Sockets are HELD, not dropped: closing one would let git see EOF and fail
+  // on its own, which would leave nothing to cancel.
+  const server = createServer((socket) => {
+    held.push(socket);
+    socket.on("error", () => {});
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  return {
+    url: `git://127.0.0.1:${port}/stalled.git`,
+    dispose: () => {
+      for (const socket of held) socket.destroy();
+      server.close();
+    },
+  };
+}
