@@ -9,7 +9,8 @@
     "preview": "astro preview",
     "installers": "node scripts/copy-installers.mjs",
     "og": "node scripts/og-image.mjs",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "capture": "node scripts/capture.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.2.0",
