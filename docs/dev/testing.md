@@ -80,9 +80,12 @@ Two workflows, both on PRs to `main`, pushes to `main`, and `workflow_dispatch`:
 Rules that keep the gates honest:
 
 - **A path filter must list the suite's INPUTS, not just its sources.**
-  `tests.yml`'s `js` filter also matches `test/`, `CLAUDE.md`, `docs/dev/` and
-  `e2e.yml` because the `docs` project reads them — each was once skippable by
-  exactly the change it polices. Any new assertion about a file outside `src/`
+  `tests.yml`'s `js` filter also matches `test/`, `CLAUDE.md`, `docs/dev/`,
+  `README.md`, `site/src/data/comparison.json` and `e2e.yml` because the `docs`
+  project reads them — each was once skippable by exactly the change it
+  polices. The comparison table (#210) proved it again: the guard shipped
+  without its inputs in the filter, and the next README-only PR ran no suite
+  at all. Any new assertion about a file outside `src/`
   must add that file to the filter, or the guard is decorative.
 - Each workflow front-loads a `changes` job and reports through an
   always-running gate job (`unit-tests`, `rust-tests`, `e2e-linux`). **Branch
@@ -202,7 +205,9 @@ Rules that keep the gates honest:
   importing `comparison.ts` — that module sits under `site/`, whose tsconfig
   extends Astro's, and the root package has no astro to resolve it with. What it
   cannot check is whether the claims are still TRUE: that is what the date is
-  for, so re-read the vendors' pages before moving `checkedOn`.
+  for, so re-read the vendors' pages before moving `checkedOn`. Its inputs
+  (`README.md`, `site/src/data/comparison.json`) are in `tests.yml`'s `js`
+  filter — without them the guard never runs on the PRs that edit the table.
 - **`test/e2eSelectors.test.ts`** guards the `[data-testid="X"]*=text` trap:
   WebdriverIO compiles it to a SUBSTRING attribute test plus an innermost-match
   condition, so any other testid containing `X` makes the outer element match
