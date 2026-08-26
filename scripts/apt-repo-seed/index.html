@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>platypusgit APT repository</title>
+<meta name="description" content="The signed APT repository for platypusgit — a developer-focused git desktop app.">
+<meta name="robots" content="index, follow">
+<!--
+  Served at the root of apt.platypusgit.com.
+
+  This page is not decoration. Someone will paste this host into a browser —
+  after reading it in an install command, or while deciding whether to trust the
+  signing key — and a 404 at the root of a package repository reads as
+  abandoned or compromised.
+
+  Deliberately self-contained: no external CSS, fonts, scripts or images. A
+  package repository should not be making requests to third parties, and this
+  file has to keep working with nothing else in the repo but the index.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa; --fg: #1c1c1a; --fg-2: #5c5c56;
+    --card: #ffffff; --line: #e5e4e0; --accent: #7a5cff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a; --fg: #ececea; --fg-2: #a0a09a;
+      --card: #1e1e23; --line: #2e2e35; --accent: #9d86ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 3rem 1.25rem 5rem;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.05rem; margin: 2.5rem 0 .6rem; letter-spacing: -.01em; }
+  p { margin: .6rem 0; }
+  .lead { color: var(--fg-2); margin-bottom: 2rem; }
+  a { color: var(--accent); }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .875em;
+  }
+  pre {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: .85rem 1rem; overflow-x: auto; margin: .6rem 0;
+  }
+  .fpr {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: .85rem 1rem; word-break: break-all;
+  }
+  footer {
+    margin-top: 3.5rem; padding-top: 1.25rem;
+    border-top: 1px solid var(--line); color: var(--fg-2); font-size: .875rem;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>platypusgit APT repository</h1>
+  <p class="lead">
+    The signed Debian/Ubuntu package repository for
+    <a href="https://www.platypusgit.com/">platypusgit</a>, a developer-focused
+    git desktop app. amd64, one suite (<code>stable</code>).
+  </p>
+
+  <h2>Install</h2>
+  <pre>curl -fsSL https://www.platypusgit.com/install-platypusgit.sh | sh</pre>
+  <p>
+    That script is plain text and meant to be read first — it is served from the
+    main site and the same bytes live in
+    <a href="https://github.com/jonassaa/platypusgit/tree/main/scripts">the repo</a>.
+    It does exactly this:
+  </p>
+  <pre>sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://apt.platypusgit.com/key.gpg \
+  | sudo tee /etc/apt/keyrings/platypusgit.gpg &gt; /dev/null
+sudo chmod 0644 /etc/apt/keyrings/platypusgit.gpg
+sudo tee /etc/apt/sources.list.d/platypusgit.sources &gt; /dev/null &lt;&lt;'EOF'
+Types: deb
+URIs: https://apt.platypusgit.com
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /etc/apt/keyrings/platypusgit.gpg
+EOF
+sudo apt update &amp;&amp; sudo apt install platypus-git</pre>
+
+  <h2>Update</h2>
+  <pre>sudo apt update &amp;&amp; sudo apt upgrade platypus-git</pre>
+  <p>
+    The package is <code>platypus-git</code> — the name <code>apt search</code>,
+    <code>apt remove</code> and <code>dpkg -l</code> use.
+    <code>apt install platypusgit</code> also resolves, because the package
+    declares that name too.
+  </p>
+
+  <h2>Signing key</h2>
+  <p>
+    Every <code>Release</code> file here is signed. The key is published in both
+    forms: <a href="key.gpg">key.gpg</a> (binary, what the install command uses,
+    so no <code>gnupg</code> is needed on your side) and
+    <a href="key.asc">key.asc</a> (armored, readable in a browser).
+  </p>
+  <p>Its fingerprint is:</p>
+  <p class="fpr"><code>{{FINGERPRINT}}</code></p>
+  <p>
+    Check what you were served against it:
+    <code>gpg --show-keys /etc/apt/keyrings/platypusgit.gpg</code>.
+  </p>
+
+  <h2>What is in here</h2>
+  <pre>dists/stable/InRelease                      signed index
+dists/stable/main/binary-amd64/Packages     the package list
+pool/main/p/platypus-git/                   the .deb files</pre>
+  <p>
+    The pool keeps the ten most recent releases. Older versions stay available
+    as
+    <a href="https://github.com/jonassaa/platypusgit/releases">GitHub release
+    assets</a> — nothing is deleted there.
+  </p>
+  <p>
+    Prereleases are deliberately absent: they attach a <code>.deb</code> to
+    their GitHub release and are never published here, so
+    <code>apt upgrade</code> only ever moves you between stable versions.
+  </p>
+
+  <footer>
+    Published by
+    <a href="https://github.com/jonassaa/platypusgit/blob/main/.github/workflows/release.yml">the
+    release workflow</a>, which refuses to push an index it has not first
+    installed from inside a container. Issues and source:
+    <a href="https://github.com/jonassaa/platypusgit">github.com/jonassaa/platypusgit</a>.
+  </footer>
+</main>
+</body>
+</html>
