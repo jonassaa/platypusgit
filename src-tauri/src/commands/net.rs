@@ -89,12 +89,18 @@ pub fn map_git_failure(stderr: &str) -> AppError {
 
 /// Run `git -C cwd <args>`, mapping a non-zero exit through `map_git_failure`.
 ///
-/// Cancellable (#234): the op registers under `cancel::Scope::Repo(cwd)` for as
-/// long as it runs, so `cancel_network_op` can stop a fetch, pull or push that
-/// has stalled. Registering HERE and not per command is the same choice the
-/// credential policy makes — a network op that grew its own spawn would be one
-/// nobody can cancel. `cwd` comes from `GitBackend::repo_path`, which is where
-/// `cancel_network_op` resolves its scope from too.
+/// Cancellable (#234, #263): the op registers under `cancel::Scope::Repo(cwd)`
+/// for as long as it runs, so `cancel_network_op` can stop a fetch, pull or
+/// push that has stalled. Registering HERE and not per command is the same
+/// choice the credential policy makes — a network op that grew its own spawn
+/// would be one nobody can cancel. `cwd` comes from `GitBackend::repo_path`,
+/// which is where `cancel_network_op` resolves its scope from too.
+///
+/// `cancel_network_op` kills the child directly, by pid, from its own task —
+/// SIGTERM to the whole process group first, escalating to SIGKILL on a second
+/// cancel (`cancel::kill_tree`). This function does not select on anything; it
+/// just notices that `wait_with_output` returned because the child died, and
+/// checks `is_cancelled()` before trusting what git's dying stderr says.
 pub async fn run_git_authenticated(
     cwd: &Path,
     args: &[&str],
@@ -102,43 +108,62 @@ pub async fn run_git_authenticated(
 ) -> AppResult<()> {
     // `proc::git_async` carries GIT_TERMINAL_PROMPT=0 (which `apply_auth_env`
     // sets too), a closed stdin — nothing feeds it, so an unexpected read would
-    // block forever — and, on Windows, CREATE_NO_WINDOW: without it every fetch,
+    // block forever — on Windows CREATE_NO_WINDOW: without it every fetch,
     // pull and push flashed a console, including the ones auto-fetch runs on a
-    // timer with no user action at all (issue 172).
+    // timer with no user action at all (issue 172) — and, on unix, its own
+    // process group, which `cancel::kill_tree` signals (issue 263).
     let mut cmd = crate::proc::git_async(cwd);
     cmd.args(args)
         // `Command::output()` sets these itself; spawning by hand below to keep
         // the `Child` reachable means setting them here instead.
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        // The kill on cancel: the branch below drops the `wait_with_output`
-        // future, which owns the `Child`, and a dropped `Child` with this set is
-        // a killed process. Also covers the window closing mid-fetch.
+        // Backstop for a dropped future (e.g. the window closing mid-fetch) —
+        // NOT what the ordinary cancel path relies on, which kills by pid
+        // instead of dropping this `Child`. See the module docs above.
         .kill_on_drop(true);
     apply_auth_env(&mut cmd, creds);
 
-    let (_registration, mut cancel) = crate::cancel::register(crate::cancel::Scope::repo(cwd));
+    let registration = crate::cancel::register(crate::cancel::Scope::repo(cwd));
 
-    let child = cmd.spawn().map_err(|e| AppError::Io(e.to_string()))?;
-    // `wait_with_output` and not two manual pipe reads: it drains stdout and
-    // stderr concurrently, and a fetch whose stderr filled the pipe buffer while
-    // we waited on the exit status would deadlock.
-    let output = tokio::select! {
-        // `biased` so a pending cancel is never lost to a coin toss against a
-        // child that happens to be ready in the same poll.
-        biased;
-        _ = cancel.cancelled() => return Err(AppError::Cancelled),
-        finished = child.wait_with_output() => finished.map_err(|e| AppError::Io(e.to_string()))?,
-    };
+    // Cancelled between the click and here — do not start a fetch/pull/push
+    // nobody is waiting for.
+    if registration.is_cancelled() {
+        return Err(AppError::Cancelled);
+    }
 
-    if !output.status.success() {
-        // A cancel that lands while git is already dying loses the `select!`
-        // race, and git's last words ("the remote end hung up unexpectedly")
-        // would then be reported as a network failure to a user who pressed
-        // Cancel. The request is what decides, not who got there first.
-        if cancel.is_cancelled() {
+    let mut child = cmd.spawn().map_err(|e| AppError::Io(e.to_string()))?;
+    // `id()` answers `None` once the child has already been reaped, so read it
+    // right away.
+    if let Some(pid) = child.id() {
+        if !registration.attach(pid) {
+            // A cancel landed in the window between the check above and the
+            // spawn. `cancel()` found no pid to signal that time, so nothing
+            // has been killed yet — do it here, now that we hold the child.
+            let _ = child.start_kill();
+            let _ = child.wait().await;
             return Err(AppError::Cancelled);
         }
+    }
+
+    // `wait_with_output` and not two manual pipe reads: it drains stdout and
+    // stderr concurrently, and a fetch whose stderr filled the pipe buffer
+    // while we waited on the exit status would deadlock.
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?;
+
+    // BEFORE `map_git_failure`: a cancelled op's git dies mid-transfer, and its
+    // last stderr line reads like a network failure — "the remote end hung up
+    // unexpectedly" — or, on a bad day, like an auth failure, which would pop
+    // the credential dialog over a cancel. The request is what decides the
+    // outcome, not whether git happened to be exiting on its own already.
+    if registration.is_cancelled() {
+        return Err(AppError::Cancelled);
+    }
+
+    if !output.status.success() {
         return Err(map_git_failure(&String::from_utf8_lossy(&output.stderr)));
     }
     Ok(())

@@ -167,7 +167,7 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   them — the credential protocol is line-based, so a newline injects keys and
   could file a password against another host.
 
-### Cancelling a stalled network op (#234)
+### Cancelling a stalled network op (#234, hardened by #263)
 
 - **One cancel path, at the same two choke points as the credential policy.**
   `cancel.rs` is a process-wide registry; `run_git_authenticated` and
@@ -183,27 +183,45 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   is where the ops themselves get their `cwd` and where `cancel_network_op`
   resolves a `repo_id` — **the three must keep agreeing** or Cancel silently
   matches nothing.
-- **`AppError::Cancelled`, never `Network`.** A SIGKILLed git's dying stderr
-  says "early EOF" / "the remote end hung up unexpectedly"; routed through
+- **`cancel()` kills by pid, from the cancelling call's own task — not through
+  the op's `Child`.** The obvious shape, a `select!` over `child.wait()` and a
+  cancel future, needs `&mut child` in both arms; `Arc<Mutex<Child>>` deadlocks,
+  since the op holds the lock across the very `wait()` the killer needs to
+  interrupt. So `Registration::attach(pid)` records the pid in the registry, and
+  `cancel(scope)` signals it directly via `kill_tree`. The op's task never calls
+  `select!`; it just notices that `wait()`/`wait_with_output()` returned because
+  the child died, and checks `is_cancelled()` before trusting git's exit.
+- **`SIGTERM` to the process group first; `SIGKILL` on a second cancel of the
+  same op.** `SIGKILL` is uncatchable, so a SIGKILLed git never runs
+  `remove_lock_file_on_signal` (`lockfile.c`) — a cancel landing mid-fetch could
+  strand `.git/FETCH_HEAD.lock`, and the NEXT fetch fails with "File exists".
+  `proc::git_async`/`git_async_in` put the child in its own process group
+  (`process_group(0)` on unix); `kill_tree` signals the WHOLE group, which is
+  what actually reaches `git-remote-https`/`ssh` — git's own child for the
+  transfer, invisible to a kill of `git` alone. `kill_tree` checks
+  `getpgid(pid) == pid` before `killpg`, so a future spawn site that forgot
+  `process_group(0)` degrades to a single-process `kill` instead of signalling
+  OUR OWN process group. The second click is the escalation signal — no timer,
+  no rule for how long the first gets. Windows has no `SIGTERM` and a
+  `CREATE_NO_WINDOW` child has no console for `GenerateConsoleCtrlEvent`, so
+  there `kill_tree` is always `taskkill /F /T`; git gets no chance to clean up
+  its lock files on Windows, a known and accepted gap, not one this closes.
+- **`AppError::Cancelled`, never `Network`.** A killed git's dying stderr says
+  "early EOF" / "the remote end hung up unexpectedly"; routed through
   `Network`, a user who pressed Cancel is told their connection broke. The
   frontend drops it in `useRepoStore`'s `setErrorFor` (one place, so a network op
   added later cannot forget) and in `useCreateStore`'s clone catch.
-- **Check `is_cancelled()` after the child exits, not just in the `select!`.**
-  A cancel landing as git dies of its own accord loses the race, and the request
-  is what decides the outcome, not who got there first.
+- **Check `is_cancelled()` after the child exits, always.** A cancel landing as
+  git dies of its own accord must still win: the request is what decides the
+  outcome, not who got there first.
 - **A cancelled clone removes its partial destination**, and puts back an empty
-  directory the user had picked. A SIGKILLed `git clone` cannot run its own
-  cleanup, and the leftovers fail the NEXT attempt's `validate_clone_target`
-  with "already exists and is not empty" — a cancel button whose real effect is
-  to poison the destination. Safe to delete only because `validate_clone_target`
-  already refused anything but "absent" or "empty": kill and **reap** first
-  (`kill_and_reap`), so git is provably not still writing into it.
-- **What it does not kill:** git's own transport helper (`git-remote-https`,
-  `ssh`). It is git's child, not ours, and a SIGKILLed parent cannot take it
-  along; it exits when its pipes close, which for a helper blocked on a network
-  read means when that read times out. Closing that gap means killing the process
-  group — a platform-specific kill path through the one sanctioned spawner —
-  and is deliberately not done. The user-visible hang is gone either way.
+  directory the user had picked. Even with `SIGTERM` giving git a chance to run
+  its own cleanup, the leftovers (a `SIGKILL` escalation, or Windows) fail the
+  NEXT attempt's `validate_clone_target` with "already exists and is not
+  empty" — a cancel button whose real effect is to poison the destination. Safe
+  to delete only because `validate_clone_target` already refused anything but
+  "absent" or "empty": **reap** first (`child.wait()`), so git is provably not
+  still writing into it, before the directory is touched.
 
 ## "No telemetry, no account" is a build gate (#226)
 

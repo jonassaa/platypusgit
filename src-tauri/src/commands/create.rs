@@ -211,6 +211,13 @@ pub fn clone_args(url: &str, name: &str, recurse_submodules: bool) -> Vec<String
 /// Keeps `run_git`'s environment exactly (`commands/branches.rs`): prompts are
 /// hard-disabled, so a private repo works only when the user's credential
 /// helper or SSH agent answers without a TTY. Returns the destination path.
+///
+/// Cancellable (#234, #263): registers under `cancel::Scope::Clone` for as long
+/// as it runs. `cancel_network_op` kills the child directly, by pid, from its
+/// own task — SIGTERM to the whole process group first, escalating to SIGKILL
+/// on a second cancel (see `cancel.rs`). This function only notices: a read or
+/// `wait` returns because the child died, and every exit path checks
+/// `registration.is_cancelled()` before trusting what git's dying stderr says.
 pub async fn run_clone(
     url: &str,
     parent: &Path,
@@ -266,8 +273,9 @@ pub async fn run_clone(
         // `.wait()`ed. Without this, git keeps running to completion in the
         // background and finishes populating the destination the frontend was
         // told never got created. A user-driven cancel does NOT rely on this —
-        // it kills and reaps explicitly, so the process is provably gone before
-        // the partial directory is removed.
+        // `cancel_network_op` kills the process directly, by pid (#263), and
+        // this function reaps it explicitly before the partial directory is
+        // removed, so the process is provably gone first.
         .kill_on_drop(true);
     // Shared with fetch/pull/push so the env policy cannot drift (#61 D5).
     // With credentials this points askpass at our own executable; without them
@@ -278,11 +286,31 @@ pub async fn run_clone(
     // Registered before the spawn so a cancel arriving in the same tick as the
     // click cannot slip through the gap and be ignored (#234). The guard
     // deregisters on every exit path, including the `?`s below.
-    let (_registration, mut cancel) = crate::cancel::register(crate::cancel::Scope::Clone);
+    let registration = crate::cancel::register(crate::cancel::Scope::Clone);
+
+    // Cancelled between the click and here — do not start a transfer nobody
+    // is waiting for.
+    if registration.is_cancelled() {
+        return Err(cancelled_clone(&target, target_preexisted).await);
+    }
 
     let mut child = cmd
         .spawn()
         .map_err(|e| AppError::Io(format!("failed to run git clone: {e}")))?;
+
+    // `id()` answers `None` once the child has already been reaped, so read it
+    // right away. Recording it is what lets `cancel_network_op` reach this
+    // exact process (#263) — before this, cancelling only ever reached the
+    // `git` we spawned, never its `git-remote-https`/`ssh` transport helper.
+    if let Some(pid) = child.id() {
+        if !registration.attach(pid) {
+            // A cancel landed in the window between the check above and the
+            // spawn. `cancel()` found no pid to signal that time, so nothing
+            // has been killed yet — do it here, now that we hold the child.
+            kill_and_reap(&mut child).await;
+            return Err(cancelled_clone(&target, target_preexisted).await);
+        }
+    }
 
     let mut stderr = child
         .stderr
@@ -306,22 +334,19 @@ pub async fn run_clone(
 
     loop {
         // Where a stalled clone actually sits: git has the connection open and
-        // is saying nothing, so this read never completes. Selecting on the
-        // cancel token here is what turns "force-quit the app" into a button
-        // (#234). `stderr` was `take()`n off the child, so borrowing `child`
-        // mutably in the cancel arm is not a conflict.
-        let read = tokio::select! {
-            // `biased` so a pending cancel always beats a ready read. Without
-            // it `select!` picks at random, and a fast-streaming clone would
-            // keep winning the coin toss for an unbounded number of iterations
-            // after the user had already pressed Cancel.
-            biased;
-            _ = cancel.cancelled() => {
-                kill_and_reap(&mut child).await;
-                return Err(cancelled_clone(&target, target_preexisted).await);
-            }
-            r = stderr.read(&mut chunk) => {
-                r.map_err(|e| AppError::Io(format!("reading git clone output: {e}")))?
+        // is saying nothing, so this read never completes on its own. What
+        // unsticks it is `cancel_network_op` killing the process directly, by
+        // pid, from its own task (#263, see `cancel.rs`) — not anything this
+        // loop does. `read` then returns because the pipe closed underneath
+        // it, either as EOF (the common case) or as an error.
+        let read = match stderr.read(&mut chunk).await {
+            Ok(n) => n,
+            Err(e) => {
+                if registration.is_cancelled() {
+                    let _ = child.wait().await;
+                    return Err(cancelled_clone(&target, target_preexisted).await);
+                }
+                return Err(AppError::Io(format!("reading git clone output: {e}")));
             }
         };
         if read == 0 {
@@ -343,24 +368,16 @@ pub async fn run_clone(
         handle_clone_line(&pending, &mut on_progress, &mut tail);
     }
 
-    // Stderr at EOF means git has closed it, which it only does on the way out —
-    // so this rarely waits. Selected on anyway: "rarely" is not "never", and a
-    // clone that hung between its last progress line and exiting would otherwise
-    // be exactly the unkillable one this issue is about.
-    let status = tokio::select! {
-        biased;
-        _ = cancel.cancelled() => {
-            kill_and_reap(&mut child).await;
-            return Err(cancelled_clone(&target, target_preexisted).await);
-        }
-        s = child.wait() => s.map_err(|e| AppError::Io(format!("waiting for git clone: {e}")))?,
-    };
-    // The cancel landed while git was already exiting and lost the `select!`
-    // race. It still cancelled: a clone the user asked us to stop is not one to
-    // hand back and open a tab for, and git's exit status — a success, or the
-    // torn-connection failure our own SIGKILL produced — is not what they should
-    // be told about. `child` is already reaped here, so only the directory goes.
-    if cancel.is_cancelled() {
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| AppError::Io(format!("waiting for git clone: {e}")))?;
+    // BEFORE `map_git_failure`: a cancelled clone's git dies mid-transfer, and
+    // its last stderr line reads like a network failure — or, on a bad day,
+    // like an auth failure, which would pop the credential dialog over a
+    // cancel. `child` is already reaped by the `wait` above, so only the
+    // directory goes.
+    if registration.is_cancelled() {
         return Err(cancelled_clone(&target, target_preexisted).await);
     }
     if !status.success() {
@@ -375,12 +392,19 @@ pub async fn run_clone(
     Ok(target)
 }
 
-/// Kill a cancelled `git clone` and wait for it to actually be gone (#234).
+/// Kill a cancelled `git clone` and wait for it to actually be gone.
 ///
-/// `kill_on_drop` would eventually do the killing, but "eventually" is the wrong
-/// guarantee here: [`cancelled_clone`] deletes the destination next, and a git
-/// process still writing objects into a directory being deleted is a race with
-/// nothing good on either side of it. Reaping first makes the order provable.
+/// The ONE caller left is the narrow race `Registration::attach` documents:
+/// a cancel that landed between registering and spawning, before
+/// `cancel_network_op` had a pid to signal. Every other cancellation is
+/// already killed by the time this function's callers see it — by
+/// `cancel::kill_tree`, from the cancelling call's own task — and only needs
+/// reaping, not a second kill; see `run_clone`.
+///
+/// A hard kill (not the SIGTERM-first escalation `kill_tree` otherwise does):
+/// this window is too small to matter, and there is no second click to wait
+/// for here — the child was never far enough along to leave a lock file, since
+/// it has not sent us so much as one byte of progress yet.
 ///
 /// Errors are swallowed on purpose — every one of them means "the process is
 /// already gone", which is the outcome being asked for.
