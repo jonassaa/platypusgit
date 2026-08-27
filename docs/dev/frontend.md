@@ -500,6 +500,33 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `submoduleMenuItems` (the file menu is dead ends on a gitlink); staging stays
   legal — an updated pointer is an ordinary commit.
 
+### Paths on the clipboard, and the file manager (#245)
+
+- **The label is the contract**: `copyPathItems(paths)` in
+  `design/context-menu.tsx` emits the "Copy path" (absolute) / "Copy relative
+  path" (workdir-relative) pair, plural above one path, and is the ONLY place a
+  file surface should spell either out. Before it, "Copy path" copied a
+  *relative* path on the file row, the embedded-repo row, the multi-select and
+  the diff pane's ⋯ menu, and an absolute one on the worktree menu and the repo
+  tab — one label, two meanings.
+- The arithmetic is pure and separate: `lib/paths.ts`
+  (`relativeToWorkdir` / `absoluteInWorkdir` / `normalizeSeparators` /
+  `isAbsolutePath`). No `node:path` in the webview, so the separator is inferred
+  from the value — a Windows or UNC workdir gets its own style back on the way
+  out, and comparison is case-insensitive only there. Out-of-workdir answers
+  `null`; it never emits `../..`.
+- Two surfaces deliberately have NO relative entry: `worktreeMenuItems` and
+  `RepoTabs.tsx`'s `tabMenuItems`. Their target is a repository root, whose path
+  relative to itself is `""`.
+- **"Open containing folder" is the reveal entry** — there is no second menu
+  item, on any platform. `reveal_in_file_manager` passes `is_dir: false` for a
+  relative path, and `reveal.rs` then runs `open -R` / `explorer /select,` (the
+  parent window, file selected) or xdg-opens the parent on Linux. The only
+  variant that would differ is a folder window with no selection, which needs
+  `reveal(parent, is_dir: true)` — a backend change, not a frontend one.
+  `context-menu.copyPath.test.tsx` pins the single entry so the synonym does not
+  get added.
+
 ## Drag and drop
 
 - **Pointer events, never HTML5 drag-and-drop** — WebDriver can't synthesize an
