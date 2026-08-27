@@ -398,6 +398,14 @@ update checks back on for someone who turned them off.
   `importSettings` reports, ignoring an id no `BUILTIN_PRESETS` entry has
   (`presetById` would silently resolve it to the default while the picker showed
   the unknown name).
+- **`themePreference` travels; the appearance it resolved against does not.**
+  The pairing is a preference like any other, so the export carries it. The
+  observed OS appearance is not in `PersistedState` at all, so `snapshot()` and
+  `PORTABLE_KEYS` — both derived from `DEFAULTS` — exclude it by construction
+  (the call #283 made for `lastCheckedAt`). On import, `coerceSettings` repairs
+  a half naming a theme this machine lacks and **re-derives** `activeThemeId`
+  from this machine's own appearance: the exported id only records which half
+  was on screen where the file was written.
 - **One theme format.** `themePayload()` is the per-theme serialiser behind both
   `exportTheme` and the settings bundle; the bundle adds only `id`, because
   `activeThemeId` has to stay resolvable. `normalizeCustomThemes` is lenient in
@@ -425,6 +433,37 @@ update checks back on for someone who turned them off.
   theme MODE and `SELECTION_TOKENS` derived from `--accent`. Light themes need
   their own calibration (#61 B4). The dark column stays byte-identical to
   `index.css` — edit both or they drift.
+- **Following the system appearance is a PAIRING, not a theme** (#236). A
+  `ThemeDef` is intrinsically one mode, so "system" cannot be one:
+  `themePreference: { mode: "system" | "fixed", lightId, darkId }` says which
+  light theme and which dark theme to pair, and `activeThemeId` stays the single
+  answer to "what is on screen" — DERIVED from the pairing while following, the
+  user's own choice while fixed. Keeping it derived is what makes the feature
+  invisible downstream: `getActiveTheme`, the theme editor and `DiffMinimap`'s
+  `activeThemeId` repaint subscription all work unchanged, and the minimap
+  repaints on an OS switch for free.
+  - `features/settings/systemAppearance.ts` reads the OS, from **two** sources
+    with different jobs: `prefers-color-scheme` is synchronous (so module load
+    can paint the right half with no flash, and it is the only source in a
+    browser tab or the unit suite), and `getCurrentWindow().theme()` +
+    `tauri://theme-changed` is authoritative and is what actually fires at
+    sunset. It asks BOTH media queries, never only the dark one — a webview
+    without the feature answers `false` to both, and reading that as "light"
+    flips the app on exactly the platforms that cannot correct it. Nothing here
+    is persisted or exported: the observed appearance is state about the
+    machine, so it lives on `SettingsState` and **not** in `PersistedState`.
+  - `main.tsx` calls `startSystemAppearanceWatch()` **before** the
+    `window=merge` branch, so the merge resolver — a second Tauri window on the
+    same bundle — subscribes for itself. A window still in last night's theme is
+    the bug the feature exists to fix. No Rust and no extra capability:
+    `core:window:allow-theme` is already inside `core:window:default`.
+  - Every path that used to assign `activeThemeId` (pick, fork, duplicate,
+    import) goes through `activationPatch`, which in system mode writes the id
+    into the half matching the theme's OWN mode. Without it a fork made while
+    following the system is thrown away by the next re-resolve. `pairedThemeId`
+    re-validates both halves on every read, because the theme editor can flip a
+    custom theme dark ↔ light behind the pairing's back — a pairing whose halves
+    share a mode never switches, which is the original bug wearing a disguise.
 - Never hardcode the accent hue: `var(--accent)` or
   `oklch(from var(--accent) l c h / <alpha>)`.
 - Fonts are vendored (`@fontsource-variable/*`). Inline `style={{…}}` with CSS

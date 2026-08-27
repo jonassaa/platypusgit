@@ -42,6 +42,11 @@ vi.mock("@tauri-apps/api/window", () => {
     isMaximized: vi.fn().mockResolvedValue(false),
     onResized: vi.fn().mockResolvedValue(() => {}),
     setTitle: vi.fn().mockResolvedValue(undefined),
+    // The OS appearance source (#236). `null` is the honest default here:
+    // nothing under test runs against a real window, and "the window cannot
+    // tell us" is the branch that has to keep working.
+    theme: vi.fn().mockResolvedValue(null),
+    onThemeChanged: vi.fn().mockResolvedValue(() => {}),
   };
   return { getCurrentWindow: () => win };
 });

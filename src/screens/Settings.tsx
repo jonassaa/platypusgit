@@ -21,6 +21,7 @@ import {
   type SettingsImportReport,
   type ThemeColors,
   type ThemeDef,
+  type ThemeFollowMode,
   type UpdateCheckMode,
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
@@ -922,6 +923,24 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
     return [...builtins, ...customs];
   }, [s.customThemes]);
 
+  // Each half of the pairing may only name a theme of its own mode — offering
+  // a dark theme as "the light one" would let the user build a pairing that
+  // never switches.
+  const pairOptions = React.useMemo(() => {
+    const of = (mode: "dark" | "light") => [
+      ...BUILTIN_THEMES.filter((t) => t.mode === mode).map((t) => ({
+        value: t.id,
+        label: t.name,
+      })),
+      ...s.customThemes
+        .filter((t) => t.mode === mode)
+        .map((t) => ({ value: t.id, label: `★ ${t.name}` })),
+    ];
+    return { light: of("light"), dark: of("dark") };
+  }, [s.customThemes]);
+
+  const following = s.themePreference.mode === "system";
+
   const onImportClick = () => fileInputRef.current?.click();
 
   const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -956,22 +975,75 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
       subtitle="Pick a theme, or customize every color and export it as a sharable file."
     >
       <Row
-        label="Theme"
+        label="Appearance"
         hint={
-          isBuiltin
-            ? "Built-in themes are read-only. Click “New custom theme” to fork and edit."
-            : "Custom theme. Click “Edit custom theme” to change its colors."
+          following
+            ? `Follows the OS — currently ${
+                s.systemAppearance === "light" ? "light" : "dark"
+              }. Pick the theme each half uses below.`
+            : "One theme, always. Switch to “Follow system” to pair a light theme with a dark one."
         }
         control={
-          <PGSelect
-            value={active.id}
-            onChange={(v) => s.setActiveThemeId(v)}
-            options={themeOptions}
+          <PGButtonGroup
             size="sm"
-            style={{ minWidth: 200 }}
+            value={s.themePreference.mode}
+            onChange={(v) => s.setThemeFollowMode(v as ThemeFollowMode)}
+            options={[
+              { value: "fixed", label: "Fixed" },
+              { value: "system", label: "Follow system" },
+            ]}
           />
         }
       />
+
+      {following ? (
+        <>
+          <Row
+            label="Light theme"
+            hint="Applied while the OS is in light appearance."
+            control={
+              <PGSelect
+                value={s.themePreference.lightId}
+                onChange={(v) => s.setPairedThemeId("light", v)}
+                options={pairOptions.light}
+                size="sm"
+                style={{ minWidth: 200 }}
+              />
+            }
+          />
+          <Row
+            label="Dark theme"
+            hint="Applied while the OS is in dark appearance."
+            control={
+              <PGSelect
+                value={s.themePreference.darkId}
+                onChange={(v) => s.setPairedThemeId("dark", v)}
+                options={pairOptions.dark}
+                size="sm"
+                style={{ minWidth: 200 }}
+              />
+            }
+          />
+        </>
+      ) : (
+        <Row
+          label="Theme"
+          hint={
+            isBuiltin
+              ? "Built-in themes are read-only. Click “New custom theme” to fork and edit."
+              : "Custom theme. Click “Edit custom theme” to change its colors."
+          }
+          control={
+            <PGSelect
+              value={active.id}
+              onChange={(v) => s.setActiveThemeId(v)}
+              options={themeOptions}
+              size="sm"
+              style={{ minWidth: 200 }}
+            />
+          }
+        />
+      )}
 
       <div
         style={{
@@ -1194,6 +1266,10 @@ function ThemeEditorDialog({
             : t,
         ),
       }));
+      // Through the store, not just `setState`: the draft's dark/light toggle
+      // may have flipped the mode the duplicate inherited, and in "follow the
+      // system" mode that decides WHICH half of the pairing this theme is.
+      useSettingsStore.getState().setActiveThemeId(created.id);
       // Re-apply so the saved version is what's showing.
       applyTheme({
         ...created,

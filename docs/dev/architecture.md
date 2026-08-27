@@ -283,7 +283,8 @@ features/            Components + Zustand store colocated per feature:
 │                    dragController.ts, resolveDrop.ts (pure drop tables),
 │                    useRowReorder, StageDropBar. See frontend.md
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
-├── settings/        useSettingsStore (autoFetch, defaultPullMode, …), headMarks
+├── settings/        useSettingsStore (autoFetch, defaultPullMode, …), headMarks,
+│                   systemAppearance (OS light/dark → themePreference)
 │                    + HeadMarksControl
 ├── palette/         usePaletteStore (step stack + chips), commands catalog,
 │                    frecency, CommandPalette (⌘P; rows show live keymap chords)

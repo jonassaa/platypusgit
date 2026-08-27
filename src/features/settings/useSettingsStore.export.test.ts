@@ -65,6 +65,12 @@ const PORTABLE = [
   "ignoreWhitespaceInDiff",
   "pruneOnFetch",
   "signCommits",
+  // A pairing of a light and a dark theme plus which one to follow (#236). A
+  // preference like any other — it says what the person likes, not what the
+  // machine is — so it travels. The OS appearance it RESOLVES against does
+  // not: that is observed state, it is not in PersistedState at all, and the
+  // "no systemAppearance" assertions below pin that.
+  "themePreference",
   "uiDensity",
   "uiZoom",
   "updateCheckMode",
@@ -95,6 +101,48 @@ describe("the exported key set", () => {
     const store = await freshStore();
     store.useSettingsStore.getState().set("updateCheckMode", "never");
     expect(exported(store).settings.updateCheckMode).toBe("never");
+  });
+
+  it("carries themePreference, and never the appearance it resolved against", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().setThemeFollowMode("system");
+    const json = store.useSettingsStore.getState().exportSettings();
+    const payload = JSON.parse(json) as Payload;
+    expect(payload.settings.themePreference).toEqual({
+      mode: "system",
+      lightId: "light",
+      darkId: "dark-cool",
+    });
+    // "It was dark on the machine that wrote this file" is not a preference —
+    // it is a fact about that machine at that moment, and importing it would
+    // be meaningless. Same call #283 made for the update store's lastCheckedAt.
+    expect(payload.settings).not.toHaveProperty("systemAppearance");
+    expect(json).not.toContain("systemAppearance");
+  });
+
+  it("repairs an imported pairing that names a theme this machine lacks", async () => {
+    const store = await freshStore();
+    const report = store.useSettingsStore.getState().importSettings(
+      JSON.stringify({
+        kind: "platypusgit-settings",
+        version: 1,
+        settings: {
+          themePreference: {
+            mode: "system",
+            lightId: "their-custom-light",
+            darkId: "their-custom-dark",
+          },
+        },
+      }),
+    );
+    const s = store.useSettingsStore.getState();
+    expect(s.themePreference).toEqual({
+      mode: "system",
+      lightId: "light",
+      darkId: "dark-cool",
+    });
+    expect(s.getActiveTheme().id).toBe("dark-cool");
+    expect(report.changed).toContain("themePreference");
   });
 
   it("leaves lastCreateDir behind — it names a directory on ONE machine", async () => {
@@ -188,6 +236,8 @@ function moveEverything(store: Store) {
   set("diffContextMode", "chunks");
   set("ignoreWhitespaceInDiff", true);
   set("updateCheckMode", "manual");
+  store.useSettingsStore.getState().setPairedThemeId("light", "github-light");
+  store.useSettingsStore.getState().setThemeFollowMode("system");
 }
 
 function portableSnapshot(state: Record<string, unknown>) {
