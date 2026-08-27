@@ -14,6 +14,7 @@ import type {
   CommitInfo,
   CommitResult,
   ConflictSides,
+  DiagnosticsReport,
   DiffKind,
   FileContent,
   FileDiff,
@@ -52,8 +53,46 @@ import type {
 
 const SLOW_INVOKE_MS = 250;
 
+/**
+ * How long an invoke may stay unsettled before the watchdog reports it.
+ *
+ * Deliberately far above `SLOW_INVOKE_MS`: this is not a "slow" threshold but a
+ * "we may never hear back" one. A real repository on a slow filesystem takes
+ * seconds legitimately — a WSL repo under `/mnt/c` spent 9.8s on the startup
+ * fan-out (#274) — so a low bound here would cry wolf on every launch.
+ */
+const STALL_INVOKE_MS = 10_000;
+
+/**
+ * Report an invoke that has not settled yet.
+ *
+ * Every other line this module writes is a PAST-TENSE record: emitted once the
+ * call returned or threw, carrying its duration. That made a whole failure
+ * class invisible — an invoke that hangs, or one that is never issued at all,
+ * produces no line ever. So a log from a repository that "would not open" was
+ * indistinguishable from a log of a session where nobody tried: the four WSL
+ * launches in #274 showed `check_for_update` and then silence, and the log
+ * could not say which.
+ *
+ * The watchdog logs in the PRESENT tense, from a timer, while the call is still
+ * outstanding. The absence of a matching completion line afterwards then
+ * becomes the evidence rather than the void: the call never came back.
+ *
+ * WARN, not DEBUG: the level has to clear the `Info` filter that
+ * `src-tauri/src/lib.rs` pins the log file to, or the one line worth having
+ * would be the one line dropped.
+ */
+function watchForStall(cmd: string): ReturnType<typeof setTimeout> {
+  return setTimeout(() => {
+    logWarn(`invoke ${cmd} still pending after ${STALL_INVOKE_MS}ms`);
+  }, STALL_INVOKE_MS);
+}
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const start = performance.now();
+  // Paired with the `clearTimeout` in `finally`. Armed BEFORE the call so a
+  // `rawInvoke` that throws synchronously cannot leave a timer running.
+  const stall = watchForStall(cmd);
   try {
     const result = await rawInvoke<T>(cmd, args);
     const ms = Math.round(performance.now() - start);
@@ -70,6 +109,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
     // user-supplied log carried no reason at all (#146).
     logError(`invoke ${cmd} failed after ${ms}ms: ${describeError(err)}`);
     throw err;
+  } finally {
+    clearTimeout(stall);
   }
 }
 
@@ -1083,6 +1124,32 @@ export async function cliShimStatus(): Promise<CliShimStatus> {
 
 export async function installCliShim(): Promise<CliInstallOutcome> {
   return invoke<CliInstallOutcome>("install_cli_shim");
+}
+
+/**
+ * Where the log is, and what machine is writing it (#274).
+ *
+ * The log path is per-platform and was previously undocumented anywhere the
+ * user could see, which made "send me your log" a support conversation instead
+ * of a click.
+ */
+export async function diagnosticsReport(): Promise<DiagnosticsReport> {
+  return invoke<DiagnosticsReport>("diagnostics_report");
+}
+
+/**
+ * The tail of the log file, ready to paste into an issue.
+ *
+ * A TAIL, not the whole file: the log rotates at 5 MB and the backend reads only
+ * the last megabyte of it. Rejects when no log file exists yet.
+ */
+export async function readLogTail(): Promise<string> {
+  return invoke<string>("read_log_tail");
+}
+
+/** Reveal the log file in the platform's file manager. */
+export async function revealLogFile(): Promise<void> {
+  return invoke<void>("reveal_log_file");
 }
 
 export function checkForUpdate(): Promise<UpdateInfo> {

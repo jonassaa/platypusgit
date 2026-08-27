@@ -36,6 +36,24 @@ reveal.rs        "Reveal in Finder/Explorer" + "Open in terminal" (#215).
                  pinned path); Windows launchers are pinned to System32 /
                  WindowsApps against binary planting; a missing Linux terminal
                  falls through an ordered candidate list rather than silently
+diagnostics.rs   What the log must say about the machine that wrote it (#274),
+                 plus the log-file helpers Settings needs. is_wsl_kernel /
+                 describe_wsl / parse_git_version / environment_line /
+                 mount_warning / tail_lines are PURE and unit-tested from any
+                 host — no WSL box needed to test the WSL logic.
+                 TWO fact types, split by COST not topic: WslFacts (two file
+                 reads, no spawn) via wsl_facts(), and HostFacts (adds
+                 `git --version` through proc.rs) via host_facts(); both cached
+                 in a OnceLock. open_repo must use wsl_facts — it is a hot path
+                 and e2e opens a repo while the login-shell PATH probe still
+                 holds the startup thread, so host_facts there would lose the
+                 race and pay for the spawn on every cold open.
+                 environment_line writes the one `host os=… wsl=… git=…` INFO
+                 line at startup; before it, a WSL log and a native Linux log
+                 were indistinguishable. mount_warning explains a /mnt/<drive>
+                 repo's slowness in the log rather than leaving a nine-second
+                 launch looking like a broken app. Handlers live in
+                 commands/diagnostics.rs
 forge/           GitHub/GitLab PR/MR integration (#92). Trait = URL builders +
                  response parsers, pure and testable against recorded JSON:
 ├── mod.rs       Types + Forge trait, forge_for(kind), injection guards
@@ -134,6 +152,16 @@ commands/        Thin Tauri handlers, one file per area:
 │                read_file_content_at_rev + list_files_at_rev (a commit's tree),
 │                read_file_content_at_index (the STAGED blob)
 ├── cli.rs       take_launch_intent, cli_shim_status, install_cli_shim
+├── diagnostics.rs
+│                Reaching the app's own log from Settings (#274):
+│                diagnostics_report (log path + `host …` line + version),
+│                read_log_tail (last 500 lines, seeking to the last 1 MB — the
+│                file rotates at 5 MB and shipping all of it across IPC is
+│                waste on the machine least able to afford it), and
+│                reveal_log_file (reuses reveal.rs, so it inherits the
+│                explorer.exe / xdg-open exit-code traps). LOG_FILE here must
+│                track the file_name configured in lib.rs — the plugin does not
+│                report what it picked. Thin over src-tauri/src/diagnostics.rs
 ├── commits.rs   get_log, commit, file_history, verify_commit (SELECTED commit
 │                only, never per row). REFSPEC_ALL sentinel = walk all refs, so
 │                the loaded log is NOT HEAD ancestry — rebase input must go

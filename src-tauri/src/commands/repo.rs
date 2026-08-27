@@ -8,6 +8,24 @@ use crate::{
     state::AppState,
 };
 
+/// Open a repository at `path`.
+///
+/// # Why this one command logs, when its siblings do not
+///
+/// It is the gate every session goes through, and a failure here leaves the app
+/// with nothing to show — so "it will not load my repository" is the report that
+/// arrives with the least evidence attached. Logging the path on the way IN and
+/// the outcome on the way out turns three indistinguishable silences into three
+/// different logs (#274):
+///
+/// * **No `open_repo` line at all** — the command was never reached. The folder
+///   picker returned nothing (on WSL, typically no `xdg-desktop-portal`), or the
+///   frontend never dispatched. Look for the webview's own stall warning.
+/// * **An `open_repo` line and nothing after it** — libgit2 is still working,
+///   or wedged. Paired with the webview's "still pending" line, that is a hang,
+///   and the path on this line says which filesystem it is hanging on.
+/// * **An `open_repo` line and a failure** — an ordinary error with a reason,
+///   which was always the easy case.
 #[tauri::command]
 pub async fn open_repo(
     state: State<'_, AppState>,
@@ -15,9 +33,32 @@ pub async fn open_repo(
 ) -> AppResult<RepoHandle> {
     let backend = state.backend.clone();
     let path_buf = PathBuf::from(path);
-    tokio::task::spawn_blocking(move || backend.open(&path_buf))
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
+    tokio::task::spawn_blocking(move || {
+        // Before the open, not after: the value of this line is that it is
+        // written even when the call below never returns.
+        log::info!("open_repo {}", path_buf.display());
+        // `wsl_facts`, NOT `host_facts`: this is the repository-open path, and
+        // the WSL question needs no `git --version`. e2e opens a repo about a
+        // second after launch, while the login-shell PATH probe still holds the
+        // startup thread — so a `host_facts` call here would lose that race and
+        // pay for the spawn itself on every cold open.
+        if let Some(warning) =
+            crate::diagnostics::mount_warning(&path_buf, crate::diagnostics::wsl_facts())
+        {
+            log::warn!("{warning}");
+        }
+        let result = backend.open(&path_buf);
+        match &result {
+            Ok(handle) => log::info!("open_repo ok: {}", handle.id.0),
+            // Logged backend-side as well as in the webview's invoke wrapper:
+            // this side survives a webview that has already torn down, and it
+            // is the only side that records the path the failure was about.
+            Err(e) => log::error!("open_repo failed for {}: {e}", path_buf.display()),
+        }
+        result
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 /// Forget an opened repository (a closed repository tab).

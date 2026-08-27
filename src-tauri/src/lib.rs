@@ -2,6 +2,7 @@ pub mod cancel;
 pub mod cli;
 pub mod commands;
 pub mod detach;
+pub mod diagnostics;
 pub mod error;
 pub mod forge;
 pub mod git;
@@ -166,6 +167,22 @@ pub fn run() {
                     Some(p) => log::debug!("resolved child PATH ({} chars)", p.len()),
                     None => log::debug!("no login-shell PATH; children inherit ours"),
                 }
+                // Which machine wrote this log. Emitted here — on this thread,
+                // AFTER the PATH probe — for two reasons: `read_host_facts`
+                // spawns `git --version`, which has no business on the main
+                // thread; and `git=` has to report the git the app will
+                // actually spawn, which resolves against the child PATH. Read
+                // before the probe, a user whose git lives only on the login
+                // PATH would be told `git=UNAVAILABLE` by an app that then
+                // proceeds to run git perfectly well.
+                //
+                // INFO, not DEBUG: the log file's filter is pinned at `Info`,
+                // and a header nobody receives is the problem this line was
+                // added to solve (#274).
+                log::info!(
+                    "{}",
+                    crate::diagnostics::environment_line(crate::diagnostics::host_facts())
+                );
             });
             // macOS uses titleBarStyle: Overlay (set in tauri.conf.json) to keep native
             // traffic lights while letting our content extend under them. On Windows /
@@ -202,6 +219,9 @@ pub fn run() {
             commands::repo::open_in_editor,
             commands::repo::reveal_in_file_manager,
             commands::repo::open_in_terminal,
+            commands::diagnostics::diagnostics_report,
+            commands::diagnostics::read_log_tail,
+            commands::diagnostics::reveal_log_file,
             commands::commits::get_log,
             commands::commits::get_log_filtered,
             commands::commits::get_log_page,
