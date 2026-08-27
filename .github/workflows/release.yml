@@ -919,6 +919,62 @@ jobs:
           git commit -m "chore: publish platypusgit ${VERSION}"
           git push
 
+  # Submits the new version to the Windows Package Manager community repository
+  # (microsoft/winget-pkgs). Same gate as bump-cask / bump-scoop / apt-publish —
+  # COPIED, not retyped: a typo there pushes a prerelease into a catalogue every
+  # winget user sees.
+  #
+  # SELF-DISABLING UNTIL THE PACKAGE EXISTS. winget-releaser requires the package
+  # to already be in winget-pkgs — it reads the existing manifest as the template
+  # — and fails the job if it is not there. The first submission is therefore a
+  # MANUAL one (`sh scripts/winget-wizard.sh`), and that wizard's last step is
+  # what stores WINGET_TOKEN. So the presence of the secret IS the signal "the
+  # manual submission happened", and this job no-ops without it.
+  #
+  # The check is a step, not the job's `if:` — the `secrets` context is not
+  # available in a job-level condition, so gating there would evaluate to false
+  # forever and the job would never run at all.
+  #
+  # The token must be a CLASSIC PAT with `public_repo`. Fine-grained tokens
+  # cannot open a pull request against winget-pkgs, and that failure reads as a
+  # permissions error rather than a wrong-token-type one. It is deliberately NOT
+  # the GitHub App that bump-cask and apt-publish mint from: those push to repos
+  # we own, this opens a pull request from a personal fork of a Microsoft repo.
+  winget-publish:
+    needs: [version, windows]
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Is winget set up yet?
+        id: gate
+        env:
+          TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TOKEN" ]; then
+            echo "have_token=false" >> "$GITHUB_OUTPUT"
+            echo "WINGET_TOKEN is not set — skipping the winget submission."
+            echo "Run scripts/winget-wizard.sh to make the first submission by hand;"
+            echo "its last step stores the secret and turns this job on."
+          else
+            echo "have_token=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `installers-regex` is pinned to the .msi rather than left at the action's
+      # default (which also matches .exe/.msix/.appx): the release attaches a
+      # portable .zip as well, and winget must never be pointed at the unpackaged
+      # build — it installs nowhere, writes no Add/Remove Programs entry, and so
+      # can never be correlated or upgraded.
+      - name: Submit to winget-pkgs
+        if: steps.gate.outputs.have_token == 'true'
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: JonasAasberg.PlatypusGit
+          version: ${{ needs.version.outputs.version }}
+          release-tag: ${{ needs.version.outputs.tag }}
+          installers-regex: 'PlatypusGit_x64\.msi$'
+          token: ${{ secrets.WINGET_TOKEN }}
+
   # Confirm the LIVE host actually serves what we just pushed. The gate above
   # cannot see any of this: DNS, the Pages build, HTTPS, propagation.
   #
