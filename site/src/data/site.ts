@@ -47,7 +47,7 @@ export const apt = {
   // to paste it here. The page renders the block only when this is non-empty,
   // so an unset value shows nothing rather than a placeholder that reads as a
   // real fingerprint.
-  keyFingerprint: '',
+  keyFingerprint: '294C261A1641704535EAC137DDA53BD2C15FB1FB',
 };
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
