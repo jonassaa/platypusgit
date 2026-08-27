@@ -78,9 +78,13 @@ describe("UpdatePanel — capability + platform arms", () => {
     );
   });
 
-  it("notify on Linux (.deb install) offers 'View release' AND the apt command", () => {
+  it("notify on Linux (sideloaded .deb) offers 'View release' AND the one-liner", () => {
     // Regression: this arm used to render no hint at all, so a .deb user got a
     // "View release" button with no hint of why in-app install was unavailable.
+    //
+    // Since #187 this arm means specifically a .deb that did NOT come from the
+    // apt repository — telling it `apt upgrade` would report "already the newest
+    // version" and dead-end again, so it gets the installer instead.
     platformMock.value = "linux";
     seed({ capability: "notify" });
     render(<UpdatePanel />);
@@ -88,9 +92,23 @@ describe("UpdatePanel — capability + platform arms", () => {
       /view release/i,
     );
     expect(screen.getByTestId("pg-update-pkg-hint")).toHaveTextContent(
-      "sudo apt install ./PlatypusGit_amd64.deb",
+      "curl -fsSL https://www.platypusgit.com/install-platypusgit.sh | sh",
     );
-    expect(screen.getByText(/package-manager installs/i)).toBeInTheDocument();
+    expect(screen.getByText(/apt repository/i)).toBeInTheDocument();
+  });
+
+  it("notify-apt on Linux offers 'View release' AND apt upgrade", () => {
+    // The third capability: the backend found the sources file this install's
+    // one-liner wrote, so apt owns updates here and the panel can say so.
+    platformMock.value = "linux";
+    seed({ capability: "notify-apt" });
+    render(<UpdatePanel />);
+    expect(screen.getByTestId("pg-update-action")).toHaveTextContent(
+      /view release/i,
+    );
+    expect(screen.getByTestId("pg-update-pkg-hint")).toHaveTextContent(
+      "sudo apt update && sudo apt upgrade platypus-git",
+    );
   });
 
   it("self-update offers 'Install' and never a package-manager hint", () => {
@@ -205,13 +223,25 @@ describe("UpdatePanel — the package-manager command is copyable", () => {
     expect(writeText).toHaveBeenCalledWith("brew upgrade platypusgit");
   });
 
-  it("copies the apt command on Linux", async () => {
+  it("copies the installer one-liner for a sideloaded .deb on Linux", async () => {
+    // `seed({})` leaves capability at the fixture default of "notify", which on
+    // Linux now means a .deb that did not come from the apt repository.
     platformMock.value = "linux";
     seed({});
     render(<UpdatePanel />);
     await userEvent.click(screen.getByTitle(/copy command/i));
     expect(writeText).toHaveBeenCalledWith(
-      "sudo apt install ./PlatypusGit_amd64.deb",
+      "curl -fsSL https://www.platypusgit.com/install-platypusgit.sh | sh",
+    );
+  });
+
+  it("copies the apt upgrade command for an apt-managed install", async () => {
+    platformMock.value = "linux";
+    seed({ capability: "notify-apt" });
+    render(<UpdatePanel />);
+    await userEvent.click(screen.getByTitle(/copy command/i));
+    expect(writeText).toHaveBeenCalledWith(
+      "sudo apt update && sudo apt upgrade platypus-git",
     );
   });
 

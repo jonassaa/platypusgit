@@ -458,7 +458,13 @@ export interface UpdateInfo {
   publishedAt: string;
 }
 
-export type UpdateCapability = "self-update" | "notify";
+/**
+ * Mirrors Rust `UpdateCapability` (update.rs). `notify-apt` is a `.deb` install
+ * that came from the platypusgit apt repository, so `apt upgrade` is the right
+ * advice; plain `notify` on Linux is a sideloaded `.deb`, where that command
+ * would report "already the newest version" and dead-end the user.
+ */
+export type UpdateCapability = "self-update" | "notify" | "notify-apt";
 
 /**
  * "Commit as" identity. Mirrors Rust `AuthorOverride` (git/types.rs) — it sets

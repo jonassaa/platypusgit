@@ -3,7 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 import OsIcon from '../components/OsIcon.astro';
-import { site, assets } from '../data/site.ts';
+import { site, assets, apt } from '../data/site.ts';
 import { descriptions, softwareApplicationSchema, ORIGIN } from '../data/seo.ts';
 
 // The two installer URLs. Built from `site` in astro.config.mjs rather than
@@ -15,6 +15,29 @@ import { descriptions, softwareApplicationSchema, ORIGIN } from '../data/seo.ts'
 const installBase = Astro.site ?? new URL(ORIGIN);
 const installShUrl = new URL('install-pgit.sh', installBase).href;
 const installPs1Url = new URL('install-pgit.ps1', installBase).href;
+const installAppUrl = new URL('install-platypusgit.sh', installBase).href;
+
+// The Linux one-liner, and the same thing spelled out for anyone who will not
+// pipe a URL into a shell. Both built from `apt` in data/site.ts so the page,
+// the script's own default, and the seed CNAME cannot drift apart.
+const aptOneLiner = `curl -fsSL ${installAppUrl} | sh`;
+const aptUpgrade = `sudo apt update && sudo apt upgrade ${apt.pkg}`;
+const aptManual = `sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL ${apt.url}/key.gpg \\
+  | sudo tee /etc/apt/keyrings/platypusgit.gpg > /dev/null
+sudo chmod 0644 /etc/apt/keyrings/platypusgit.gpg
+sudo tee /etc/apt/sources.list.d/platypusgit.sources > /dev/null <<'EOF'
+Types: deb
+URIs: ${apt.url}
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /etc/apt/keyrings/platypusgit.gpg
+EOF
+sudo apt update && sudo apt install ${apt.pkg}`;
+const aptAudit = `curl -fsSL ${installAppUrl} -o install-platypusgit.sh
+less install-platypusgit.sh   # read it, then run it
+sh install-platypusgit.sh`;
 
 const cliUnix = `curl -fsSL ${installShUrl} | sh`;
 const cliWindows = `irm ${installPs1Url} | iex`;
@@ -42,7 +65,8 @@ const pgitMatrix = [
   { os: 'macos', channel: 'Homebrew cask', ships: true, note: 'Removed again on uninstall' },
   { os: 'macos', channel: 'Disk image (.dmg)', ships: false, note: 'A drag-install runs no code' },
   { os: 'windows', channel: 'Installer (.msi)', ships: true, note: 'Added to your PATH' },
-  { os: 'linux', channel: 'Debian package (.deb)', ships: true, note: 'Ships /usr/bin/pgit' },
+  { os: 'linux', channel: 'APT repository', ships: true, note: 'Ships /usr/bin/pgit' },
+  { os: 'linux', channel: 'Debian package (.deb)', ships: true, note: 'Same package, same shim' },
   { os: 'linux', channel: 'AppImage', ships: false, note: 'Portable, executes no hook' },
 ];
 
@@ -66,8 +90,8 @@ const platforms = [
     key: 'linux',
     label: 'Linux',
     iconSize: 20,
-    blurb: 'Debian package or portable AppImage.',
-    specs: ['webkit2gtk 4.1 required', 'x86_64', '.deb ships the pgit command'],
+    blurb: 'One-line apt install, or a portable AppImage.',
+    specs: ['webkit2gtk 4.1 required', 'x86_64', 'apt handles updates'],
   },
 ] as const;
 ---
@@ -249,28 +273,97 @@ const platforms = [
           {/* ── Linux ─────────────────────────────────────────────── */}
           {p.key === 'linux' && (
             <>
-              <article class="card card-primary">
+              <article class="card card-wide card-primary">
                 <span class="pill">Recommended</span>
-                <h3>Debian package</h3>
-                <p class="card-lead">Debian, Ubuntu and derivatives.</p>
-                <CTAButton href={assets.linuxDeb} external>Download .deb</CTAButton>
-                <p class="filename mono">PlatypusGit_amd64.deb</p>
-                <CodeBlock code={'sudo apt install ./PlatypusGit_amd64.deb'} lang="bash" />
+                <h3>One-line install</h3>
+                <p class="card-lead">Debian, Ubuntu and derivatives. One command to install, and apt for every release after.</p>
+                <CodeBlock code={aptOneLiner} lang="bash" />
                 <p class="card-note">
-                  Ships <code>/usr/bin/pgit</code>, so the <a href="#cli"><code>pgit</code></a> command
-                  works straight away. Needs <code>webkit2gtk 4.1</code>, which apt resolves for you.
+                  Adds our signed APT repository and installs the app. The package ships
+                  <code>/usr/bin/pgit</code>, so the <a href="#cli"><code>pgit</code></a> command works
+                  straight away, and <code>webkit2gtk 4.1</code> comes with it as a dependency. The
+                  signing key is served pre-dearmored, so you need no <code>gnupg</code> — this works on
+                  a bare container or cloud image. On a system without <code>apt</code>, or on an
+                  architecture we don’t build yet, it says so and stops rather than quietly installing
+                  something else.
                 </p>
+                <details>
+                  <summary>Updating and removing</summary>
+                  <p class="card-note">
+                    Your package manager owns updates once the repository is added — a <code>.deb</code>
+                    cannot replace its own files, so there is no in-app self-update here. Every release
+                    publishes to the repository, so upgrading is:
+                  </p>
+                  <CodeBlock code={aptUpgrade} lang="bash" />
+                  <p class="card-note">
+                    Quit platypusgit first so the running app isn’t swapped underneath it. The package is
+                    called <code>{apt.pkg}</code> — that is the name <code>apt search</code>,
+                    <code>apt remove</code> and <code>dpkg -l</code> use. <code>apt install platypusgit</code>
+                    works too, because the package declares that name as well, but <code>{apt.pkg}</code>
+                    is the one to remember. Remove it with <code>sudo apt remove {apt.pkg}</code>.
+                  </p>
+                </details>
+                <details>
+                  <summary>The same thing, spelled out</summary>
+                  <p class="card-note">
+                    The one-liner does exactly this. Run it yourself if you would rather not pipe a URL
+                    into a shell:
+                  </p>
+                  <CodeBlock code={aptManual} lang="bash" />
+                  <p class="card-note">
+                    <code>Signed-By:</code> scopes the key to this one repository — never
+                    <code>apt-key add</code>, which is deprecated and gone on current Debian and Ubuntu.
+                    {apt.keyFingerprint ? (
+                      <> Verify the key before you trust it: its fingerprint is <code>{apt.keyFingerprint}</code>.</>
+                    ) : (
+                      <> Check the key you were served against the one published at <a href={apt.url} target="_blank" rel="noopener">{apt.url.replace('https://', '')}</a> — <code>gpg --show-keys /etc/apt/keyrings/platypusgit.gpg</code> prints its fingerprint.</>
+                    )}
+                  </p>
+                </details>
+                <details>
+                  <summary>Read the installer first, or dry-run it</summary>
+                  <p class="card-note">
+                    Piping a URL into a shell runs whatever that URL returns, so
+                    <a href={installAppUrl}>install-platypusgit.sh</a> is plain text meant to be read
+                    first — and the same bytes live in the repo under
+                    <a href={site.repo + '/tree/main/scripts'} target="_blank" rel="noopener">scripts/</a>,
+                    because the site serves a build-time copy of exactly that file. Or download, inspect,
+                    then run:
+                  </p>
+                  <CodeBlock code={aptAudit} lang="bash" />
+                  <p class="card-note">
+                    It also takes a dry run that prints what it would do and changes nothing:
+                    <code>curl -fsSL … | sh -s -- --dry-run</code>.
+                  </p>
+                </details>
               </article>
 
               <article class="card">
                 <h3>AppImage</h3>
-                <p class="card-lead">Portable — nothing is installed.</p>
+                <p class="card-lead">Fedora, Arch, and anything not Debian-based.</p>
                 <CTAButton href={assets.linuxAppImage} external>Download .AppImage</CTAButton>
                 <p class="filename mono">PlatypusGit_amd64.AppImage</p>
                 <CodeBlock code={'chmod +x PlatypusGit_amd64.AppImage\n./PlatypusGit_amd64.AppImage'} lang="bash" />
                 <p class="card-note">
-                  Download, make it executable, run. Because nothing is installed and no hook executes,
-                  the <a href="#cli"><code>pgit</code></a> command is a separate one-liner.
+                  Download, make it executable, run — nothing is installed.
+                  <strong>This is the only Linux build that updates itself:</strong> an AppImage can
+                  replace its own file, so platypusgit offers the update in-app, which is exactly what the
+                  <code>.deb</code> cannot do. Because nothing is installed and no hook executes, the
+                  <a href="#cli"><code>pgit</code></a> command is a separate one-liner.
+                </p>
+              </article>
+
+              <article class="card">
+                <h3>Debian package, by hand</h3>
+                <p class="card-lead">For an air-gapped box, or a one-off.</p>
+                <CTAButton href={assets.linuxDeb} external>Download .deb</CTAButton>
+                <p class="filename mono">PlatypusGit_amd64.deb</p>
+                <CodeBlock code={'sudo apt install ./PlatypusGit_amd64.deb'} lang="bash" />
+                <p class="card-note">
+                  The same package the repository serves, installed straight from the file. Updates are
+                  then manual — repeat the download for every release, because apt has no repository to
+                  upgrade from. platypusgit notices, and offers you the one-liner above rather than
+                  pretending <code>apt upgrade</code> will work.
                 </p>
               </article>
             </>

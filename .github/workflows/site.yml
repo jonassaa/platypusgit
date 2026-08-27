@@ -10,6 +10,7 @@ on:
     # site/** change happened to redeploy it.
     paths:
       - 'site/**'
+      - 'scripts/install-platypusgit.sh'
       - 'scripts/install-pgit.sh'
       - 'scripts/install-pgit.ps1'
       - '.github/workflows/site.yml'

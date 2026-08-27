@@ -35,13 +35,30 @@ pub struct UpdateInfo {
 }
 
 /// Whether this install can swap its own binary or should defer to a package
-/// manager. Serializes to `"self-update"` / `"notify"`.
+/// manager. Serializes to `"self-update"` / `"notify"` / `"notify-apt"`.
+///
+/// `NotifyApt` exists because after #187 there are TWO kinds of `.deb` install
+/// and they need different advice. On an apt-managed one, `apt upgrade` is the
+/// answer. On a sideloaded `.deb` the same command reports "already the newest
+/// version" while the panel says a new version exists — a dead end, which is
+/// the exact failure `packageHint` was written to remove.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateCapability {
     SelfUpdate,
     Notify,
+    NotifyApt,
 }
+
+/// The deb822 sources file `scripts/install-platypusgit.sh` writes.
+///
+/// A CONTRACT between that script and this module: its presence is the whole
+/// signal that this install is apt-managed. Change it in one place only and the
+/// update panel starts telling apt users to go download a file by hand. The
+/// script names this constant in its own comment, and
+/// `scripts/apt-repo-smoke.sh` asserts the path exists after a real install, so
+/// a drift fails the release gate rather than shipping quietly.
+pub const APT_SOURCES_PATH: &str = "/etc/apt/sources.list.d/platypusgit.sources";
 
 /// Subset of a GitHub release we care about.
 #[derive(Debug, Clone, PartialEq)]
@@ -126,10 +143,16 @@ pub fn discover(
 }
 
 /// Per-platform self-update vs notify decision. See the plan's Global Constraints.
-pub fn capability(os: &str, is_appimage: bool) -> UpdateCapability {
+///
+/// `apt_managed` is only ever true on Linux (the caller does not look for a
+/// sources file anywhere else), and the AppImage arm deliberately wins over it:
+/// an AppImage can replace itself, so it should, even on a machine that also has
+/// the apt repository configured for a different install.
+pub fn capability(os: &str, is_appimage: bool, apt_managed: bool) -> UpdateCapability {
     match os {
         "windows" => UpdateCapability::SelfUpdate,
         "linux" if is_appimage => UpdateCapability::SelfUpdate,
+        "linux" if apt_managed => UpdateCapability::NotifyApt,
         _ => UpdateCapability::Notify,
     }
 }

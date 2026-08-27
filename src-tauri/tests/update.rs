@@ -119,11 +119,60 @@ fn discover_propagates_fetch_errors() {
 
 #[test]
 fn capability_matches_platform_rule() {
-    assert_eq!(capability("windows", false), UpdateCapability::SelfUpdate);
-    assert_eq!(capability("linux", true), UpdateCapability::SelfUpdate);
-    assert_eq!(capability("linux", false), UpdateCapability::Notify);
-    assert_eq!(capability("macos", false), UpdateCapability::Notify);
-    assert_eq!(capability("macos", true), UpdateCapability::Notify);
+    assert_eq!(
+        capability("windows", false, false),
+        UpdateCapability::SelfUpdate
+    );
+    assert_eq!(
+        capability("linux", true, false),
+        UpdateCapability::SelfUpdate
+    );
+    assert_eq!(capability("linux", false, false), UpdateCapability::Notify);
+    assert_eq!(capability("macos", false, false), UpdateCapability::Notify);
+    assert_eq!(capability("macos", true, false), UpdateCapability::Notify);
+}
+
+#[test]
+fn capability_reports_apt_managed_linux_separately() {
+    // The whole point of the third variant: an apt-managed .deb is told to run
+    // `apt upgrade`, a sideloaded one is not.
+    assert_eq!(
+        capability("linux", false, true),
+        UpdateCapability::NotifyApt
+    );
+    assert_eq!(capability("linux", false, false), UpdateCapability::Notify);
+}
+
+#[test]
+fn capability_prefers_appimage_self_update_over_apt() {
+    // An AppImage can replace itself, so it should — even on a box that also has
+    // the apt repository configured for some other install.
+    assert_eq!(
+        capability("linux", true, true),
+        UpdateCapability::SelfUpdate
+    );
+}
+
+#[test]
+fn capability_ignores_apt_off_linux() {
+    // The caller never probes for a sources file off Linux; pin that a stray
+    // `true` cannot invent an apt install on macOS or Windows.
+    assert_eq!(capability("macos", false, true), UpdateCapability::Notify);
+    assert_eq!(
+        capability("windows", false, true),
+        UpdateCapability::SelfUpdate
+    );
+}
+
+#[test]
+fn apt_sources_path_is_the_documented_contract() {
+    // Pinned because scripts/install-platypusgit.sh writes this exact path and
+    // nothing else connects the two. If one side moves, this fails instead of
+    // the update panel quietly misreporting every apt install as sideloaded.
+    assert_eq!(
+        platypusgit_lib::update::APT_SOURCES_PATH,
+        "/etc/apt/sources.list.d/platypusgit.sources"
+    );
 }
 
 #[test]

@@ -155,6 +155,15 @@ const ALLOWED_HOSTS: Array<[string, string]> = [
       "app dereferences it, and no editor does either unless the USER opens " +
       "the file in one.",
   ],
+  [
+    "www.platypusgit.com",
+    "Part of the upgrade command shown to a sideloaded `.deb` install " +
+      "(`features/update/packageHint.ts`, #187): the apt one-liner it can run " +
+      "to get onto the managed path. It is a STRING IN A COPY BUTTON — the app " +
+      "renders it and never requests it, and the download page serves the same " +
+      "URL. The only thing that fetches it is the user's own shell, after they " +
+      "chose to paste it.",
+  ],
 ];
 
 /** SHIPPED frontend source only. Test files and the jsdom harness are out of

@@ -526,3 +526,160 @@ jobs:
           tag_name: ${{ needs.version.outputs.tag }}
           files: latest.json
           fail_on_unmatched_files: true
+
+  # Publish this release's .deb into the APT repository (#187), so Linux users
+  # install in one line and upgrade with `apt upgrade` instead of re-downloading
+  # from a browser.
+  #
+  # Same shape as bump-cask: mint a token from the GitHub App, check out the
+  # other repo, rewrite, push. The gate expression is COPIED from bump-cask, not
+  # retyped — a typo here does not bump a formula, it pushes a prerelease into a
+  # signed index that every installed client discovers on its next `apt update`.
+  #
+  # The repository is its own repo + GitHub Pages (jonassaa/apt-platypusgit,
+  # served at apt.platypusgit.com) because it CANNOT live in the marketing site:
+  # site.yml uploads site/dist as the whole Pages artifact, so every site deploy
+  # would delete a pool this job had pushed in. It holds no workflows and no
+  # code — Pages serves it straight off the branch.
+  #
+  # `vars.TAP_APP_ID` / `secrets.TAP_APP_PRIVATE_KEY` now cover TWO repos: the
+  # Homebrew tap and this one. The names are stale on purpose — renaming a live
+  # secret is a manual settings step whose only failure mode is a broken release.
+  # The App must be installed on apt-platypusgit with contents: write.
+  #
+  # NOTHING is pushed until a real `apt-get install` succeeds in a container
+  # (see the gate step). That is deliberate: this install path is the first
+  # thing a new Linux user touches, and a broken index is discovered by users on
+  # their next `apt update` rather than by us.
+  apt-publish:
+    needs: [version, linux]
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      # apt-ftparchive. Present on the runner images today; installed explicitly
+      # so a base-image change fails this step with a clear message instead of
+      # failing the publish script halfway through.
+      - name: Install apt-utils
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apt-utils
+
+      - name: Mint apt repo token from GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: jonassaa
+          repositories: apt-platypusgit
+
+      - name: Checkout the apt repository
+        uses: actions/checkout@v4
+        with:
+          repository: jonassaa/apt-platypusgit
+          token: ${{ steps.app-token.outputs.token }}
+          path: apt
+
+      # The same asset users download, rather than a job artifact — so what
+      # lands in the pool is provably the published bundle, and a
+      # workflow_dispatch against an existing tag works identically.
+      - name: Download the release .deb
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" \
+            --repo jonassaa/platypusgit \
+            --pattern PlatypusGit_amd64.deb \
+            --clobber
+          ls -la PlatypusGit_amd64.deb
+
+      - name: Build + sign the index
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # An unset signing key would otherwise fall through to "no secret key
+          # available to sign with" deep inside the script. Same guard shape as
+          # bump-cask's sha256 check and updater-manifest's signature check.
+          if [ -z "${APT_GPG_PRIVATE_KEY}" ]; then
+            echo "APT_GPG_PRIVATE_KEY is empty — refusing to publish an unsigned repository" >&2
+            exit 1
+          fi
+          scripts/apt-repo-publish.sh \
+            --repo apt \
+            --deb PlatypusGit_amd64.deb \
+            --version "$VERSION"
+
+      # THE GATE. A real `apt-get install` from this exact index, in a clean
+      # debian:bookworm, running the same installer the download page tells
+      # people to pipe into a shell.
+      #
+      # --expect-git additionally asserts Depends: git resolved and that
+      # Provides:/Section: landed in the control data. A workflow_dispatch
+      # against a tag built BEFORE those keys existed will fail here, by design:
+      # such a package installs without git and breaks at runtime, so it should
+      # not reach the repository.
+      - name: Gate — install it in a container before publishing
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/apt-repo-smoke.sh \
+            --repo apt \
+            --version "$VERSION" \
+            --installer scripts/install-platypusgit.sh \
+            --expect-git
+
+      - name: Commit & push to the apt repository
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd apt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # -A, not a path list: publishing both adds a pool file and REMOVES the
+          # ones pruned past the retention cap.
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Repository already up to date — nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore: publish platypusgit ${VERSION}"
+          git push
+
+  # Confirm the LIVE host actually serves what we just pushed. The gate above
+  # cannot see any of this: DNS, the Pages build, HTTPS, propagation.
+  #
+  # GitHub Pages publishes asynchronously after a push, so the smoke script's
+  # readiness loop doubles as the retry — hence the long --wait rather than a
+  # sleep. A failure here means users cannot install even though the index is
+  # correct, which is worth failing the run for.
+  apt-verify-live:
+    needs: [version, apt-publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Install from apt.platypusgit.com
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/apt-repo-smoke.sh \
+            --url https://apt.platypusgit.com \
+            --version "$VERSION" \
+            --installer scripts/install-platypusgit.sh \
+            --expect-git \
+            --wait 900

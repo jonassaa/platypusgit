@@ -30,6 +30,25 @@ export const assets = {
   linuxAppImage: releaseAsset('PlatypusGit_amd64.AppImage'),
 };
 
+// The APT repository (#187). Its own repo + GitHub Pages host, NOT this site:
+// site.yml uploads site/dist as the whole Pages artifact, so every deploy here
+// would wipe a pool that the release job pushed in out of band.
+export const apt = {
+  // Kept in sync with scripts/install-platypusgit.sh's DEFAULT_APT_URL and
+  // scripts/apt-repo-seed/CNAME.
+  url: 'https://apt.platypusgit.com',
+  // The canonical package name. `platypusgit` also resolves, via the .deb's
+  // `Provides:`, but this is the name apt search / apt remove / dpkg -l use.
+  pkg: 'platypus-git',
+  // Fingerprint of the repository signing key, printed on the download page so
+  // it is verifiable against something other than the script that installed it.
+  // Empty until the key exists — scripts/apt-repo-wizard.sh prints it and says
+  // to paste it here. The page renders the block only when this is non-empty,
+  // so an unset value shows nothing rather than a placeholder that reads as a
+  // real fingerprint.
+  keyFingerprint: '',
+};
+
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 // Trailing slashes are deliberate — the bare form 301s on GitHub Pages.

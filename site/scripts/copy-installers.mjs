@@ -20,7 +20,14 @@ const siteDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const repoRoot = dirname(siteDir);
 const destDir = join(siteDir, 'public');
 
-const INSTALLERS = ['install-pgit.sh', 'install-pgit.ps1'];
+// install-platypusgit.sh installs the APP from the APT repository (#187);
+// install-pgit.* link the `pgit` COMMAND to an app you already have (#144).
+// Different jobs, deliberately different names — see the download page.
+const INSTALLERS = [
+  'install-platypusgit.sh',
+  'install-pgit.sh',
+  'install-pgit.ps1',
+];
 
 await mkdir(destDir, { recursive: true });
 
