@@ -173,6 +173,20 @@ git/
 │                append_signature, validate_tag_name, parse_verify_tag. Also
 │                the shared ref-name validator (#214): validate_ref_component,
 │                validate_branch_name
+├── commit_template.rs
+│                `commit.template` + `core.commentChar` + `commit.cleanup`
+│                (#252). Resolves the
+│                template PATH (worktree-relative — `git commit` runs after
+│                setup_git_directory() chdir'd to the top — absolute, or `~`
+│                expanded) and the comment prefix, `auto` resolved git's way.
+│                `CleanupMode::Default` is deliberately NOT resolved here — it
+│                means "strip if the message is to be EDITED, whitespace
+│                otherwise", and only the composer knows which its box is. The
+│                STRIPPING is not here either: it lives in the composer
+│                (features/commits/message/cleanup.ts) so the box can show what
+│                it removes before Commit. Path + prefix resolution are pure fns
+│                unit-tested without a repo; tests/commit_template.rs covers the
+│                repo side
 └── signature.rs IDENTITY, not cryptography: default_signature
                  (user.name/email lookup, NoSignature when unset) and
                  apply_signoff (Signed-off-by trailer, idempotent)
@@ -209,9 +223,13 @@ commands/        Thin Tauri handlers, one file per area:
 │                track the file_name configured in lib.rs — the plugin does not
 │                report what it picked. Thin over src-tauri/src/diagnostics.rs
 ├── commits.rs   get_log, commit, file_history, verify_commit (SELECTED commit
-│                only, never per row) and commit_notes, which is lazy for the
+│                only, never per row), commit_notes, which is lazy for the
 │                same reason (#253 — the log walk is the hot path, so notes are
-│                read for the selected commit and cost the page nothing).
+│                read for the selected commit and cost the page nothing), and
+│                get_commit_template (#252 — the repo's commit.template +
+│                comment prefix; a configured template that cannot be read
+│                comes back FLAGGED, never as an error, so a stale config line
+│                cannot stop the commit screen opening).
 │                REFSPEC_ALL sentinel = walk all refs, so
 │                the loaded log is NOT HEAD ancestry — rebase input must go
 │                through headAncestryOf. Paged (see frontend.md): get_log_page /
@@ -314,8 +332,14 @@ features/            Components + Zustand store colocated per feature:
 │                    graphAncestry, rowIdentity, buildRebasePlan /
 │                    buildPreservePlan / withPlanBase / runRebasePlan /
 │                    planCommitSelection / squashMessage, headAncestry, logFilter
-│                    — plus CommitNotes, the one component here: `git notes` for
-│                    the SELECTED commit, debounced like SignatureBadge (#253)
+│                    — plus CommitNotes: `git notes` for the SELECTED commit,
+│                    debounced like SignatureBadge (#253)
+│   └── message/     THE commit-message composition surface (#252):
+│                    useCommitComposer (template pre-fill, cleanup, ticket,
+│                    type picker) + CommitMessageBar, over pure cleanup.ts /
+│                    ticket.ts / subject.ts. A new way to compose commit-message
+│                    text joins THIS hook and THIS bar's `extra` slot — see
+│                    frontend.md
 ├── rebase/          RebaseBasePicker + useRebaseMergeMode (flatten ⇄ preserve)
 ├── dnd/             ALL drag-and-drop (#91): useDragSource / useDropZone over
 │                    dragController.ts, resolveDrop.ts (pure drop tables),

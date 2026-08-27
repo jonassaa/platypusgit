@@ -31,6 +31,12 @@ import {
   type PGStageState,
   type SideLine,
 } from "@/design";
+import {
+  CommitMessageBar,
+  SUBJECT_LIMIT,
+  SUBJECT_SOFT_LIMIT,
+  useCommitComposer,
+} from "@/features/commits/message";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -142,6 +148,7 @@ export function CommitPanelScreen() {
   const commits = useRepoStore((s) => s.commits);
   const setNavIntent = useNavStore((s) => s.setIntent);
   const addSignoff = useSettingsStore((s) => s.addSignoff);
+  const ticketPattern = useSettingsStore((s) => s.commitTicketPattern);
   const setSetting = useSettingsStore((s) => s.set);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
   const ignoreWhitespace = useIgnoreWhitespace();
@@ -1045,11 +1052,27 @@ export function CommitPanelScreen() {
     () => coAuthorTrailers(coAuthors).length,
     [coAuthors],
   );
-  // Only the first line counts against the 50-char subject budget; everything
-  // below it is body text nobody truncates.
-  const subjectLength = message.split("\n", 1)[0].length;
+  // THE commit-message composition surface (#252): `commit.template` pre-fill,
+  // git's comment stripping, the branch's ticket, the conventional-commit type
+  // picker. One hook and one bar rather than four widgets in this file — see
+  // features/commits/message/useCommitComposer.ts.
+  const composer = useCommitComposer({
+    repoId: repo?.id ?? null,
+    branch: headBranch?.name ?? null,
+    ticketPattern,
+    message,
+    setMessage,
+    amend,
+  });
+  // Only the first line counts against the subject budget; everything below it
+  // is body text nobody truncates.
+  const subjectLength = composer.subjectLength;
+  // The CLEANED message decides, not the raw box: a template whose comment lines
+  // are all that is left is what git calls an empty commit message, and Commit
+  // has to be disabled for it rather than writing one. A hand-typed `#123 fix`
+  // is NOT that — nothing is stripped there, so it stays committable.
   const canCommit =
-    (amend || staged.length > 0) && !!message.trim() && !authorInvalid;
+    (amend || staged.length > 0) && !!composer.cleaned && !authorInvalid;
   const canCommitAndPush = canCommit && !!headBranch && !!defaultRemote;
   // Guards against a second commit firing before the first resolves and clears
   // the message/staged state — key auto-repeat (holding ⌘↵) and double-taps
@@ -1059,7 +1082,12 @@ export function CommitPanelScreen() {
     if (committingRef.current) return null;
     committingRef.current = true;
     try {
-      const full = buildMessage(message, coAuthorTrailers(coAuthors));
+      // git's own cleanup, in the mode git would use: whitespace only for a
+      // message the user typed (this box is `git commit -m`, where `#123 fix`
+      // is an ordinary subject), plus comment stripping once commit.template
+      // has seeded it. Applied here rather than in the backend so the box can
+      // show what it removes before anyone presses Commit.
+      const full = buildMessage(composer.cleaned, coAuthorTrailers(coAuthors));
       const result = await commitAction(
         full,
         amend,
@@ -1070,6 +1098,10 @@ export function CommitPanelScreen() {
       );
       if (result) {
         setMessage("");
+        // `git commit` re-applies commit.template on EVERY commit, so the next
+        // message starts from it too. Safe to call unconditionally: the box was
+        // just cleared, and with no template it does nothing.
+        composer.reseed();
         setAmend(false);
         draftRef.current = null;
         // Per-commit signing override is not sticky: it is an override, and
@@ -1612,18 +1644,28 @@ export function CommitPanelScreen() {
                     color: "var(--fg-3)",
                   }}
                 >
+                  {/*
+                    Advisory, never a limit (#252). git enforces no subject
+                    length and neither does this: the number turns amber past
+                    the 50-char convention and red past 72, where `git log
+                    --oneline` and most forges start truncating — and Commit
+                    stays enabled either way.
+                  */}
                   <span
                     data-testid="commit-subject-count"
+                    title={`Subject length. ${SUBJECT_SOFT_LIMIT} is the conventional target, ${SUBJECT_LIMIT} is where tools truncate. Neither is enforced.`}
                     style={{
                       color:
-                        subjectLength > 50
-                          ? "var(--git-modified)"
-                          : "var(--fg-3)",
+                        subjectLength > SUBJECT_LIMIT
+                          ? "var(--git-removed)"
+                          : subjectLength > SUBJECT_SOFT_LIMIT
+                            ? "var(--git-modified)"
+                            : "var(--fg-3)",
                     }}
                   >
-                    {subjectLength}/50
+                    {subjectLength}/{SUBJECT_LIMIT}
                   </span>
-                  <span>wrap at 72</span>
+                  <span>wrap body at 72</span>
                 </span>
               }
             />
@@ -1638,6 +1680,13 @@ export function CommitPanelScreen() {
               className="focusable"
               style={{ flex: 1 }}
             />
+            {/*
+              THE affordance row for this box (#252) — type picker, scope,
+              ticket chip, and the advisories the composer owes the user. A
+              later message-composition feature adds to this bar rather than
+              growing a second one beside it.
+            */}
+            <CommitMessageBar composer={composer} />
           </div>
 
           {/*

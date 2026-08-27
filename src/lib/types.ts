@@ -841,3 +841,36 @@ export interface CommitResult {
   oid: string;
   message: string;
 }
+
+/**
+ * `commit.cleanup`, in git's own spelling. Mirrors Rust
+ * `git/commit_template.rs::CleanupMode`.
+ *
+ * `default` stays unresolved across IPC on purpose: it means "strip if the
+ * message is to be EDITED, whitespace otherwise", and only the composer knows
+ * which of those the box it is holding is.
+ */
+export type CleanupMode =
+  | "default"
+  | "verbatim"
+  | "whitespace"
+  | "strip"
+  | "scissors";
+
+/**
+ * A repository's `commit.template` plus the two config values that govern how
+ * the text in the box is cleaned up on the way to a commit (#252). Mirrors Rust
+ * `git/commit_template.rs::CommitTemplate`.
+ */
+export interface CommitTemplate {
+  /** Where `commit.template` resolved to; reported even when unreadable. */
+  path: string | null;
+  /** The template's text, comments and all — what git would put in the editor. */
+  body: string | null;
+  /** `commit.template` is set but the file behind it could not be read. */
+  unreadable: boolean;
+  /** `core.commentChar` for this repo, `auto` already resolved. Never empty. */
+  commentPrefix: string;
+  /** `commit.cleanup`; `"default"` when unset or unrecognised. */
+  cleanup: CleanupMode;
+}

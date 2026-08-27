@@ -4423,6 +4423,16 @@ impl GitBackend for Libgit2Backend {
         Ok(CommitResult { oid, message })
     }
 
+    fn commit_template(
+        &self,
+        repo_id: &RepoId,
+    ) -> AppResult<crate::git::commit_template::CommitTemplate> {
+        // Read every time rather than cached: a template the user has just
+        // edited must not keep coming back stale, and this is one small file
+        // read per visit to the commit screen.
+        self.with_repo(repo_id, crate::git::commit_template::read)
+    }
+
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
         self.with_repo(repo_id, |repo| {
             let head_ref = repo.head().ok();

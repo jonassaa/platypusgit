@@ -9,6 +9,10 @@ import {
   type HeadWeight,
 } from "./headMarks";
 import {
+  DEFAULT_TICKET_PATTERN,
+  isValidTicketPattern,
+} from "@/features/commits/message/ticket";
+import {
   getSystemAppearance,
   watchSystemAppearance,
   type Appearance,
@@ -791,6 +795,17 @@ interface PersistedState {
    * repository that has already made this decision.
    */
   signCommits: "config" | "always" | "never";
+  /**
+   * Regex the commit composer runs over the BRANCH NAME to find a ticket key
+   * to offer (#252). Its own setting rather than a hard-coded shape because
+   * ticket conventions are per-team and there is no majority: Jira keys,
+   * `issue-NNN`, bare `#NNN`. Capture group 1 wins when the pattern has one.
+   *
+   * A pattern that does not compile is replaced with the default on load —
+   * `extractTicket` also refuses to throw, so a half-typed one in Settings only
+   * means "no chip", never a broken commit screen.
+   */
+  commitTicketPattern: string;
   diffContextLines: number;
   /**
    * Inline (unified) or side-by-side. Persisted so it is a preference rather
@@ -900,6 +915,7 @@ const DEFAULTS: PersistedState = {
   autoStashBeforePull: true,
   addSignoff: false,
   signCommits: "config",
+  commitTicketPattern: DEFAULT_TICKET_PATTERN,
   diffContextLines: 3,
   diffViewMode: "inline",
   diffContextMode: "wholeFile",
@@ -1209,6 +1225,13 @@ function coerceSettings(
   // "config", which defers to the repository rather than forcing signing on.
   if (!["config", "always", "never"].includes(out.signCommits as string)) {
     out.signCommits = DEFAULTS.signCommits;
+  }
+  // A pattern that does not compile would make the ticket chip permanently
+  // absent with nothing on screen saying why. `extractTicket` refuses to throw
+  // either way, so this is about the user getting their feature back, not about
+  // safety.
+  if (!isValidTicketPattern(String(out.commitTicketPattern))) {
+    out.commitTicketPattern = DEFAULTS.commitTicketPattern;
   }
   // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
   // factor is rejected by the webview and would leave the UI unzoomable.

@@ -63,14 +63,16 @@ describe("CommitPanel message composer", () => {
     );
   });
 
-  it("counts only the subject line against the 50-char budget", () => {
+  it("counts only the subject line against the subject budget", () => {
     fireEvent.change(messageField(), {
       target: {
         value: "feat: short\n\nA body line that is comfortably past fifty characters long.",
       },
     });
 
-    expect(screen.getByTestId("commit-subject-count").textContent).toBe("11/50");
+    // 72 since #252 — the number the convention actually names, and the one
+    // `git log --oneline` and the forges truncate at. Advisory either way.
+    expect(screen.getByTestId("commit-subject-count").textContent).toBe("11/72");
   });
 
   it("trims trailing blank lines so a trailer block joins cleanly", async () => {

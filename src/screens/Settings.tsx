@@ -24,6 +24,10 @@ import {
   type ThemeFollowMode,
   type UpdateCheckMode,
 } from "@/features/settings/useSettingsStore";
+import {
+  DEFAULT_TICKET_PATTERN,
+  isValidTicketPattern,
+} from "@/features/commits/message";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { ForgeSettings } from "@/features/forge/ForgeSettings";
 import {
@@ -203,6 +207,37 @@ export function SettingsScreen() {
               <PGToggle
                 checked={s.addSignoff}
                 onChange={(v) => s.set("addSignoff", v)}
+              />
+            }
+          />
+          <Row
+            label="Ticket pattern"
+            hint={
+              <>
+                Regular expression run over the BRANCH NAME to find a ticket key
+                the commit composer offers as a one-click insert (#252). Capture
+                group 1 wins when the pattern has one, so{" "}
+                <code>issue-(\d+)</code> inserts just the number. Leave it empty
+                for no chip. Nothing is inserted automatically.
+              </>
+            }
+            control={
+              <PGInput
+                value={s.commitTicketPattern}
+                onChange={(v) => s.set("commitTicketPattern", v)}
+                // A pattern that will not compile means no chip and no
+                // explanation, so the field says so while it is being typed.
+                // `aria-invalid` alongside `error` because PGInput's `error` is
+                // a border colour and nothing more — adding the attribute to the
+                // shared primitive would restate the semantics of every input in
+                // the app in a change that is not about that.
+                error={!isValidTicketPattern(s.commitTicketPattern)}
+                aria-invalid={!isValidTicketPattern(s.commitTicketPattern)}
+                mono
+                size="sm"
+                placeholder={DEFAULT_TICKET_PATTERN}
+                style={{ width: 220 }}
+                data-testid="settings-ticket-pattern"
               />
             }
           />

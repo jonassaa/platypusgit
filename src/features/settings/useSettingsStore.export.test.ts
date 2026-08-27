@@ -54,6 +54,10 @@ const PORTABLE = [
   "autoFetchEnabled",
   "autoFetchMinutes",
   "autoStashBeforePull",
+  // The branch-name → ticket regex (#252). Portable: it describes a TEAM's
+  // ticket convention, which is exactly the kind of thing a settings file is
+  // carried between machines to keep in step.
+  "commitTicketPattern",
   "confirmForcePush",
   "customThemes",
   "defaultPullMode",
@@ -231,6 +235,7 @@ function moveEverything(store: Store) {
   set("autoStashBeforePull", false);
   set("addSignoff", true);
   set("signCommits", "always");
+  set("commitTicketPattern", "issue-(\\d+)");
   set("diffContextLines", 9);
   set("diffViewMode", "split");
   set("diffContextMode", "chunks");
@@ -383,6 +388,22 @@ describe("import validates like load() does", () => {
       // "config" defers to the repository rather than forcing signing on.
       expect(store.useSettingsStore.getState().signCommits, String(bad)).toBe("config");
     }
+  });
+
+  it("falls back to the default for a ticket pattern that will not compile", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().importSettings(payloadOf({ commitTicketPattern: "([" }));
+    // Not left as-is: the chip would silently never appear, with nothing on
+    // screen saying the pattern is the reason.
+    expect(store.useSettingsStore.getState().commitTicketPattern).toBe(
+      "[A-Z][A-Z0-9]+-\\d+",
+    );
+  });
+
+  it("keeps an empty ticket pattern — that is 'no chip', deliberately", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().importSettings(payloadOf({ commitTicketPattern: "" }));
+    expect(store.useSettingsStore.getState().commitTicketPattern).toBe("");
   });
 
   it("falls back to auto for a bad updateCheckMode", async () => {

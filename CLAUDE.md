@@ -167,6 +167,14 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   `user-select: none`. A selection cannot leave the rendered window, so copying a
   long range goes through `lib/diffCopy.ts` (`diff.copy` / the right-click menu),
   and `Mod+C` must keep declining to the native copy. (`docs/dev/frontend.md`)
+- **One commit-message composition surface** — `features/commits/message/`
+  (`useCommitComposer` + `CommitMessageBar`). A new way to compose message text
+  joins it; it never grows a second surface beside it. The box stays plain text
+  (the picker parses it back out), git's cleanup decides what is sent AND
+  whether Commit is enabled, and nothing overwrites what the user typed.
+  Comment stripping is SCOPED the way git scopes it: the box is `git commit -m`
+  (a typed `#123 fix` commits as written) until `commit.template` seeds it.
+  (`docs/dev/frontend.md`)
 - **The log is paged** — `s.commits` is a prefix of history, never the answer
   to "does X exist / is X an ancestor"; ask the backend.
   (`docs/dev/frontend.md`)
