@@ -18,6 +18,7 @@ import {
   ZOOM_MIN,
   applyTheme,
   useSettingsStore,
+  type SettingsImportReport,
   type ThemeColors,
   type ThemeDef,
   type UpdateCheckMode,
@@ -285,6 +286,7 @@ export function SettingsScreen() {
         <KeyboardSection />
         <CliSection />
         <UpdatesSection />
+        <BackupSection />
         <DiagnosticsSection />
       </div>
     </div>
@@ -694,6 +696,204 @@ function UpdatesSection() {
         />
       </Section>
     </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BACKUP SECTION — export / import every setting as one file (#254)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The keymap lives in `useKeymapStore` under its own localStorage key, so this
+ * screen is what bridges the two stores: it hands the active preset to the
+ * export and applies the one an import reports. The settings store cannot read
+ * it directly — `keymap/actions.ts` imports the settings store, so the reverse
+ * import would be a cycle.
+ */
+function BackupSection() {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [exportedTo, setExportedTo] = React.useState<string | null>(null);
+  const [report, setReport] = React.useState<
+    (SettingsImportReport & { keymapApplied: string | null }) | null
+  >(null);
+  const [failure, setFailure] = React.useState<string | null>(null);
+
+  const onExport = () => {
+    setReport(null);
+    setFailure(null);
+    const name = useSettingsStore.getState().downloadSettings({
+      keymapPresetId: useKeymapStore.getState().activePresetId,
+    });
+    setExportedTo(name);
+    pgFlash(`Exported ${name}`);
+  };
+
+  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setExportedTo(null);
+    setReport(null);
+    setFailure(null);
+    let text: string;
+    try {
+      text = await file.text();
+    } catch (err) {
+      setFailure(appErrorMessage(err));
+      return;
+    }
+    // Asked before applying, not after: an import replaces every preference at
+    // once, and the file is the one thing the user can still recognise here.
+    if (
+      !(await pgConfirm({
+        title: "Replace your settings with this file?",
+        body: (
+          <>
+            Every preference in <Mono>{file.name}</Mono> is applied to this
+            machine. Nothing in your repositories changes, and what changed is
+            listed afterwards.
+          </>
+        ),
+        confirmLabel: "Import settings",
+      }))
+    )
+      return;
+
+    let result: SettingsImportReport;
+    try {
+      result = useSettingsStore.getState().importSettings(text);
+    } catch (err) {
+      setFailure(appErrorMessage(err));
+      return;
+    }
+
+    // The keymap half. An id this build has no preset for is reported as
+    // ignored rather than applied — `presetById` would silently resolve it to
+    // the default while the picker showed the unknown name.
+    const keymap = useKeymapStore.getState();
+    let keymapApplied: string | null = null;
+    const ignored = [...result.ignored];
+    if (result.keymapPresetId) {
+      const known = BUILTIN_PRESETS.some((p) => p.id === result.keymapPresetId);
+      if (!known) {
+        ignored.push(`keymap: ${result.keymapPresetId}`);
+      } else if (result.keymapPresetId !== keymap.activePresetId) {
+        keymap.setPreset(result.keymapPresetId);
+        keymapApplied = result.keymapPresetId;
+      }
+    }
+    setReport({ ...result, ignored, keymapApplied });
+    // The toast is the immediate answer; the report row below is the detail,
+    // because a list of key names outlives a 1.7s toast.
+    const count = result.changed.length + (keymapApplied ? 1 : 0);
+    pgFlash(
+      count === 0
+        ? "Settings already match this file"
+        : `Imported ${count} ${count === 1 ? "setting" : "settings"}`,
+    );
+  };
+
+  return (
+    <Section
+      title="Settings file"
+      subtitle="Move every preference to another machine, or share a house style with your team."
+    >
+      <Row
+        label="Export settings"
+        hint={
+          exportedTo ? (
+            <span data-testid="settings-export-result">
+              Saved <Mono>{exportedTo}</Mono> to your downloads folder.
+            </span>
+          ) : (
+            <>
+              One JSON file with every preference and every custom theme.
+              Forge tokens and git credentials are never in it, and neither is
+              anything specific to this machine.
+            </>
+          )
+        }
+        control={
+          <PGButton size="sm" icon="download" onClick={onExport}>
+            Export settings
+          </PGButton>
+        }
+      />
+      <Row
+        label="Import settings"
+        hint={
+          failure ? (
+            <span
+              data-testid="settings-import-error"
+              style={{ color: "var(--git-removed)" }}
+            >
+              {failure}
+            </span>
+          ) : report ? (
+            <ImportReport report={report} />
+          ) : (
+            <>
+              Reads a file exported here. Settings it does not mention are left
+              as they are, and you will see exactly what changed.
+            </>
+          )
+        }
+        control={
+          <PGButton
+            size="sm"
+            icon="upload"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Import settings…
+          </PGButton>
+        }
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        onChange={onImportFile}
+        data-testid="settings-import-input"
+        style={{ display: "none" }}
+      />
+    </Section>
+  );
+}
+
+/** What the import changed. Key names, not prose labels: this is a developer
+ *  tool, the names are what the file contains, and a second table of friendly
+ *  labels would be a second thing to keep in step with the schema. */
+function ImportReport({
+  report,
+}: {
+  report: SettingsImportReport & { keymapApplied: string | null };
+}) {
+  const changed = [
+    ...report.changed,
+    ...(report.keymapApplied ? [`keymap → ${report.keymapApplied}`] : []),
+  ];
+  return (
+    <span data-testid="settings-import-report">
+      {changed.length === 0 ? (
+        <>Nothing changed — this machine already matches the file.</>
+      ) : (
+        <>
+          Changed {changed.length}{" "}
+          {changed.length === 1 ? "setting" : "settings"}:{" "}
+          <Mono>{changed.join(", ")}</Mono>.
+        </>
+      )}
+      {report.ignored.length > 0 && (
+        <>
+          {" "}
+          Ignored (not a portable setting in this version):{" "}
+          <Mono>{report.ignored.join(", ")}</Mono>.
+        </>
+      )}
+      {report.fromNewerVersion && (
+        <> The file was written by a newer version of platypusgit.</>
+      )}
+    </span>
   );
 }
 

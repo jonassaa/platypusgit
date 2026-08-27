@@ -149,11 +149,14 @@ const ALLOWED_HOSTS: Array<[string, string]> = [
   ],
   [
     "platypusgit.dev",
-    "The `$schema` identifier written into an exported theme file " +
-      "(`features/settings/useSettingsStore.ts`, `screens/Settings.tsx`). A " +
+    "The `$schema` identifier written into an exported theme file and into an " +
+      "exported settings file (#254, both in " +
+      "`features/settings/useSettingsStore.ts`; `screens/Settings.tsx`). A " +
       "JSON Schema `$schema` is an identifier, not a fetch — nothing in the " +
       "app dereferences it, and no editor does either unless the USER opens " +
-      "the file in one.",
+      "the file in one. Both exports are local file downloads: the JSON is " +
+      "built in the renderer, handed to a blob URL and saved by the webview, " +
+      "with no request anywhere.",
   ],
   [
     "www.platypusgit.com",
