@@ -281,8 +281,11 @@ features/            Components + Zustand store colocated per feature:
 │                    useRepoStore). Applies via save_resolution, emits
 │                    merge://resolved → main refreshes
 ├── update/          useUpdateStore (discovery, semver-aware dismiss,
-│                    self-update), semver.ts (§11 precedence, tested),
-│                    UpdateChip, UpdatePanel (Escape via app.closeOverlay)
+│                    self-update; the updateCheckMode gate + lastCheckedAt live
+│                    HERE, not at the AppShell call site — see
+│                    docs/dev/distribution.md), semver.ts (§11 precedence,
+│                    tested), UpdateChip, UpdatePanel (Escape via
+│                    app.closeOverlay)
 ├── auth/            useAuthStore (ONE pending challenge + retry closure — never
 │                    the secret) + CredentialDialog. withAuthRetry LIVES IN
 │                    useRepoStore.ts, exported — never grow a second retry path

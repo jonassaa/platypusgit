@@ -105,6 +105,42 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   credentialed one — a pure-function test cannot show git still gets its
   answer.
 
+## The update check is opt-out, and the gate is in the store (#237)
+
+`updateCheckMode` (`PersistedState`, default `"auto"`) decides whether the app
+asks GitHub about a newer release: `auto` (startup check, today's behaviour),
+`manual` (nothing automatic; Settings → "Check for updates" still works), or
+`never` (no request from any path — the Settings button renders disabled and the
+titlebar `UpdateChip` is hidden).
+
+Three modes, not a toggle, because `manual` and `never` promise different things:
+`manual` is about controlling the *timing*, `never` is for a locked-down,
+offline, or blocked-endpoint machine where even an accidental click must produce
+no outbound traffic — and for users who read "no telemetry, no account" as
+covering the update endpoint too. Switching out of `never` is one click in the
+same row, so it is not a dead end.
+
+Two things are load-bearing about *where* this lives:
+
+- **The gate is inside `useUpdateStore.check()`, not at the `AppShell` call
+  site.** `check()` already takes `manual`, so it can decide before touching
+  `checkForUpdate()`: an automatic check needs `auto`, a manual one needs
+  anything but `never` (`checkAllowed`, pure and exported). Settings, the command
+  palette and the keymap all reach `check()`; gating only at the startup call
+  site would leave three paths able to spend a request the user switched off.
+  `src/features/update/updateCheckMode.test.ts` asserts `checkForUpdate` is
+  never **called** — a request whose result is discarded still hits the network.
+- **The last-checked timestamp is NOT in `PersistedState`.** It lives beside
+  `dismissedVersion` under the update store's own `pg-update-last-checked` key.
+  `PersistedState` is the portable-preferences bag that #254 exports to a
+  shareable JSON file, and a per-machine "when did this install last look" is
+  state, not a preference. It also only advances on a *completed* check: a
+  timestamp that moved on an offline failure would read as "checked fine just
+  now" on exactly the machine whose updater is stuck.
+
+The per-version snooze (`dismissedVersion` / `shouldNag`) is orthogonal and
+unchanged — that is "not this release", not "not ever".
+
 ## Permissions (Tauri 2)
 
 - Shared permissions in `src-tauri/capabilities/default.json`: `core:default`,

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useUpdateStore } from "./useUpdateStore";
 import { UpdatePanel } from "./UpdatePanel";
 import { UpdateChip } from "./UpdateChip";
@@ -42,9 +43,10 @@ function seed(partial: Partial<ReturnType<typeof useUpdateStore.getState>>) {
 }
 
 describe("UpdateChip", () => {
-  beforeEach(() =>
-    useUpdateStore.setState({ info: null, status: "idle", panelOpen: false }),
-  );
+  beforeEach(() => {
+    useSettingsStore.getState().set("updateCheckMode", "auto");
+    useUpdateStore.setState({ info: null, status: "idle", panelOpen: false });
+  });
 
   it("is hidden when no update is available", () => {
     render(<UpdateChip />);
@@ -58,6 +60,25 @@ describe("UpdateChip", () => {
     expect(chip).toHaveTextContent("0.1.0");
     await userEvent.click(chip);
     expect(useUpdateStore.getState().panelOpen).toBe(true);
+  });
+
+  // "Never" is not only "make no request": a chip nagging about a version found
+  // before the user turned checks off is the same interruption they opted out
+  // of, and its only action is a panel offering to update (#237).
+  it("is hidden when update checks are turned off", () => {
+    seed({ panelOpen: false });
+    useSettingsStore.getState().set("updateCheckMode", "never");
+    render(<UpdateChip />);
+    expect(screen.queryByTestId("pg-update-chip")).toBeNull();
+  });
+
+  it("still shows under 'only when I ask'", () => {
+    // manual gates the REQUEST, not the result: a check the user asked for that
+    // found something must still be visible outside Settings.
+    seed({ panelOpen: false });
+    useSettingsStore.getState().set("updateCheckMode", "manual");
+    render(<UpdateChip />);
+    expect(screen.getByTestId("pg-update-chip")).toHaveTextContent("0.1.0");
   });
 });
 

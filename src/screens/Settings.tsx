@@ -20,6 +20,7 @@ import {
   useSettingsStore,
   type ThemeColors,
   type ThemeDef,
+  type UpdateCheckMode,
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { ForgeSettings } from "@/features/forge/ForgeSettings";
@@ -31,6 +32,7 @@ import {
   revealLogFile,
   type PullMode,
 } from "@/lib/tauri";
+import { relativeTime } from "@/lib/derive";
 import { appErrorMessage } from "@/lib/errors";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import type {
@@ -576,6 +578,7 @@ function PathNote({
 }
 
 function UpdatesSection() {
+  const settings = useSettingsStore();
   const status = useUpdateStore((s) => s.status);
   const info = useUpdateStore((s) => s.info);
   const error = useUpdateStore((s) => s.error);
@@ -584,7 +587,9 @@ function UpdatesSection() {
   // Single source: the store owns the running version (seeded from getVersion,
   // and confirmed by check() from the backend's env!("CARGO_PKG_VERSION")).
   const currentVersion = useUpdateStore((s) => s.currentVersion);
+  const lastCheckedAt = useUpdateStore((s) => s.lastCheckedAt);
   const loadCurrentVersion = useUpdateStore((s) => s.loadCurrentVersion);
+  const off = settings.updateCheckMode === "never";
 
   React.useEffect(() => {
     void loadCurrentVersion();
@@ -624,6 +629,31 @@ function UpdatesSection() {
         subtitle="Check whether a newer PlatypusGit release is available."
       >
         <Row
+          label="Check for updates"
+          hint={
+            <>
+              <strong>Automatically</strong> asks GitHub shortly after launch.{" "}
+              <strong>Only when I ask</strong> never checks on its own — the
+              button below still works. <strong>Never</strong> makes no request
+              at all, from any part of the app.
+            </>
+          }
+          control={
+            <PGSelect
+              data-testid="update-check-mode"
+              value={settings.updateCheckMode}
+              onChange={(v) =>
+                settings.set("updateCheckMode", v as UpdateCheckMode)
+              }
+              options={[
+                { value: "auto", label: "Automatically" },
+                { value: "manual", label: "Only when I ask" },
+                { value: "never", label: "Never" },
+              ]}
+            />
+          }
+        />
+        <Row
           label="Current version"
           hint={
             <>
@@ -631,6 +661,21 @@ function UpdatesSection() {
                 {currentVersion || "…"}
               </code>
               {statusNode && <> — {statusNode}</>}
+              <div data-testid="update-last-checked" style={{ marginTop: 3 }}>
+                {off ? (
+                  // Not a dead end: the reason the button is disabled names the
+                  // setting one row up, which is one click from "Only when I
+                  // ask".
+                  <>Update checks are turned off.</>
+                ) : (
+                  <>
+                    Last checked:{" "}
+                    {lastCheckedAt
+                      ? relativeTime(Math.floor(lastCheckedAt / 1000))
+                      : "never"}
+                  </>
+                )}
+              </div>
             </>
           }
           control={
@@ -638,6 +683,10 @@ function UpdatesSection() {
               size="sm"
               onClick={() => check(true)}
               loading={status === "checking"}
+              disabled={off}
+              title={
+                off ? "Update checks are turned off in Settings" : undefined
+              }
             >
               Check for updates
             </PGButton>
