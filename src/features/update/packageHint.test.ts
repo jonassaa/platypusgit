@@ -34,6 +34,27 @@ describe("packageHint", () => {
     expect(hint?.note).toMatch(/apt repository/i);
   });
 
+  it("tells a Scoop install to run scoop update", () => {
+    const hint = packageHint("notify-scoop", "windows");
+    expect(hint?.command).toBe("scoop update platypusgit");
+    expect(hint?.note).toMatch(/scoop/i);
+  });
+
+  it("lets the backend's Scoop answer beat the platform arm", () => {
+    // A Scoop install IS a Windows install, and Windows has no `notify` arm at
+    // all — so if this were matched by platform first, the one install that most
+    // needs a command would render nothing. Pinned because the ordering inside
+    // packageHint is the whole mechanism.
+    expect(packageHint("notify-scoop", "windows")?.command).toBe(
+      "scoop update platypusgit",
+    );
+    // And it survives a platform the backend would never pair it with, rather
+    // than falling through to that platform's advice.
+    expect(packageHint("notify-scoop", undefined)?.command).toBe(
+      "scoop update platypusgit",
+    );
+  });
+
   it("keeps the Homebrew command for macOS", () => {
     expect(packageHint("notify", "macos")?.command).toBe(
       "brew upgrade platypusgit",
@@ -50,6 +71,9 @@ describe("packageHint", () => {
     // telling that user to run apt would be actively wrong.
     expect(packageHint("self-update", "linux")).toBeNull();
     expect(packageHint("self-update", "macos")).toBeNull();
+    // The .msi install, which is the Windows case that DOES self-update. It must
+    // not be told to run `scoop update` for a package Scoop does not have.
+    expect(packageHint("self-update", "windows")).toBeNull();
   });
 
   it("says nothing before capability has loaded", () => {
@@ -60,8 +84,10 @@ describe("packageHint", () => {
 
   it("invents no command for a platform it has no advice for", () => {
     expect(packageHint("notify", undefined)).toBeNull();
-    // Windows is unconditionally `self-update` today; if that ever changes we
-    // fall back to silence rather than guessing an installer command.
+    // BARE `notify` on Windows, which the backend does not produce: Windows is
+    // `self-update`, or `notify-scoop` when Scoop owns the install. So this
+    // combination means "a package manager we could not name", and silence beats
+    // guessing between an .msi, Scoop and a hand-unpacked copy.
     expect(packageHint("notify", "windows")).toBeNull();
   });
 });

@@ -20,24 +20,38 @@ pub async fn check_for_update() -> AppResult<UpdateInfo> {
 }
 
 /// Whether this install can self-update or should notify + defer to a package
-/// manager. Computed from the build's OS, the `APPIMAGE` env var, and — on Linux
-/// — whether the apt repository from #187 is configured.
+/// manager. Computed from the build's OS, the `APPIMAGE` env var, and — per
+/// platform — whether a package manager owns this install: the apt repository
+/// from #187 on Linux, Scoop on Windows.
 ///
-/// The apt probe is one `Path::exists`, deliberately: no process spawn, so there
+/// Both probes are one `Path::exists`, deliberately: no process spawn, so there
 /// is nothing to route through `proc.rs`, nothing to mock, and no reason for
-/// this command to stop being synchronous. It is skipped entirely off Linux
-/// rather than relying on the path simply not existing there.
+/// this command to stop being synchronous. Each is skipped entirely off its own
+/// platform rather than relying on a path simply not existing there.
+///
+/// The Scoop probe is two cheap checks that must BOTH hold: the exe sits in
+/// Scoop's `apps/<name>/<version>` layout, and Scoop's own `manifest.json` is
+/// beside it. The layout alone would also match a hand-made directory tree that
+/// happened to be shaped like one, and the file alone says nothing about which
+/// app it describes.
 #[tauri::command]
 pub fn get_update_capability() -> AppResult<UpdateCapability> {
     let os = std::env::consts::OS;
-    let apt_managed =
-        os == "linux" && std::path::Path::new(update::APT_SOURCES_PATH).exists();
-    Ok(update::capability(
-        os,
+    let apt_managed = os == "linux" && std::path::Path::new(update::APT_SOURCES_PATH).exists();
+    let scoop_managed = os == "windows"
+        && std::env::current_exe().is_ok_and(|exe| {
+            update::is_scoop_layout(&exe)
+                && exe
+                    .parent()
+                    .is_some_and(|dir| dir.join(update::SCOOP_MANIFEST_FILE).exists())
+        });
+    Ok(update::capability(update::InstallEnv {
         // `APPIMAGE=` (set but empty) is not an AppImage install.
-        std::env::var("APPIMAGE").is_ok_and(|v| !v.is_empty()),
+        is_appimage: std::env::var("APPIMAGE").is_ok_and(|v| !v.is_empty()),
         apt_managed,
-    ))
+        scoop_managed,
+        ..update::InstallEnv::new(os)
+    }))
 }
 
 /// Open an https URL in the user's default browser (notify-path "View release").

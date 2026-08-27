@@ -4,13 +4,14 @@ import type { UpdateCapability } from "@/lib/types";
 /**
  * What to tell a user whose install can't swap its own binary.
  *
- * A `notify` or `notify-apt` capability means the backend decided this install
- * defers to a package manager (see `update::capability` in Rust); `notify-apt`
- * additionally means it knows the platypusgit apt repository is configured, so
- * it can name the command. Without a hint the panel showed a bare "View
- * release" button and nothing else, so a `.deb` user had no way to know *why*
- * the in-app install was unavailable or what to run instead — the panel was a
- * silent dead end.
+ * Any capability other than `self-update` means the backend decided this install
+ * defers to a package manager (see `update::capability` in Rust). The suffixed
+ * ones additionally say WHICH: `notify-apt` that the platypusgit apt repository
+ * is configured, `notify-scoop` that this exe lives in a Scoop install — so the
+ * hint can name the exact command instead of guessing from the platform.
+ * Without a hint the panel showed a bare "View release" button and nothing
+ * else, so a `.deb` user had no way to know *why* the in-app install was
+ * unavailable or what to run instead — the panel was a silent dead end.
  */
 export interface PackageHint {
   /** One line on why in-app install is unavailable here. */
@@ -26,23 +27,37 @@ export interface PackageHint {
  * session) rather than guessing — a hint that flashes the wrong platform's
  * command is worse than no hint.
  *
- * Windows is never `notify` (`capability` returns `SelfUpdate` for it
- * unconditionally), so it has no arm; if that ever changes this yields `null`
- * rather than inventing a command.
+ * Windows reaches the notify path only as `notify-scoop`, handled below by
+ * capability rather than by platform. Bare `notify` on Windows has no arm — that
+ * combination means the backend deferred to a package manager it could not
+ * name, and inventing an installer command for it would be a guess — so it
+ * yields `null`.
  */
 export function packageHint(
   capability: UpdateCapability | null,
   platform: Platform | undefined,
 ): PackageHint | null {
-  // `notify-apt` is a notify path too — the backend already decided this install
-  // defers to a package manager, it just knows WHICH one. Forgetting it here is
-  // the one place a missed branch renders nothing at all.
+  // The suffixed variants are notify paths too — the backend already decided
+  // this install defers to a package manager, it just knows WHICH one. They are
+  // matched BEFORE the platform switch because the backend's answer is the more
+  // specific one: a Scoop install is a Windows install, and the platform arm
+  // must not get a chance to contradict it. Forgetting a variant here is the one
+  // place a missed branch renders nothing at all.
   if (capability === "notify-apt") {
     return {
       // Character-for-character the command on the download page. Two places
       // telling one user two different upgrade commands is worse than either.
       note: "Updates come from apt on this install:",
       command: "sudo apt update && sudo apt upgrade platypusgit",
+    };
+  }
+  if (capability === "notify-scoop") {
+    return {
+      // No URL in this one, deliberately: Scoop already has the bucket, so the
+      // upgrade needs nothing fetched from us. It is also why this arm adds no
+      // entry to test/privacy.test.ts's hostname allowlist.
+      note: "Updates come from Scoop on this install:",
+      command: "scoop update platypusgit",
     };
   }
   if (capability !== "notify") return null;

@@ -184,6 +184,7 @@ jobs:
     runs-on: windows-latest
     outputs:
       msi_sig: ${{ steps.sig.outputs.msi_sig }}
+      portable_sha256: ${{ steps.portable.outputs.portable_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -234,6 +235,68 @@ jobs:
           msi_dir="src-tauri/target/release/bundle/msi"
           cp "$(ls "$msi_dir"/*.msi | head -n1)" "$msi_dir/PlatypusGit_x64.msi"
 
+      # The PORTABLE payload, which is what the Scoop bucket installs (#187).
+      # Not the .msi: Scoop's msi handling is a deprecated path, and an msiexec
+      # install is per-machine and elevated — which defeats the three properties
+      # Scoop was picked for (per-user, no admin prompt, clean uninstall).
+      # Spec: docs/superpowers/specs/2026-08-27-scoop-bucket-spec.md §A.
+      #
+      # `pgit.cmd` travels INSIDE the zip and is load-bearing, not a courtesy:
+      # cli.rs::shim_status probes `exe_dir/pgit.cmd` before it scans PATH, and
+      # finding it is what makes a Scoop install classify as `Package` — which is
+      # what stops Settings offering to write a second, competing `pgit` that
+      # Scoop neither knows about nor removes. See src-tauri/windows/
+      # pgit-portable.cmd's own header.
+      - name: Build the portable zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = 'portable'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item 'src-tauri/target/release/platypusgit.exe' $stage
+          Copy-Item 'src-tauri/windows/pgit-portable.cmd' (Join-Path $stage 'pgit.cmd')
+          Copy-Item 'LICENSE' $stage
+          # -Path "<stage>/*" so the files land at the ZIP ROOT. Compressing the
+          # directory itself would give Scoop a wrapper folder: the package would
+          # install, find no platypusgit.exe where `bin` says it is, and shim
+          # nothing — an install that looks like it worked.
+          Compress-Archive -Path (Join-Path $stage '*') `
+                           -DestinationPath 'PlatypusGit_x64_portable.zip' -Force
+
+      # THE CHEAP GATE, run on the machine that made the asset. `scoop-verify-live`
+      # is the real one, but it cannot run until the manifest has been pushed —
+      # and a zip with the wrong shape must never get that far.
+      - name: Gate — the portable zip has the shape Scoop needs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = 'portable-check'
+          Expand-Archive -Path 'PlatypusGit_x64_portable.zip' -DestinationPath $out -Force
+          foreach ($f in 'platypusgit.exe', 'pgit.cmd', 'LICENSE') {
+            if (-not (Test-Path -LiteralPath (Join-Path $out $f))) {
+              throw "portable zip has no $f at its root"
+            }
+          }
+          # Relative, and naming the exe: the first keeps it correct across the
+          # `current` junction Scoop re-points on every update, the second is what
+          # cli.rs::references_app matches on.
+          $cmd = Get-Content -Raw (Join-Path $out 'pgit.cmd')
+          if ($cmd -notmatch [regex]::Escape('%~dp0platypusgit.exe')) {
+            throw 'pgit.cmd does not launch platypusgit.exe relative to itself'
+          }
+          Write-Host 'portable zip OK'
+
+      - name: Compute portable zip sha256
+        id: portable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Lowercased because that is how every Scoop manifest in the wild
+          # writes a hash; scoop-manifest.sh accepts either.
+          $sum = (Get-FileHash -Algorithm SHA256 'PlatypusGit_x64_portable.zip').Hash.ToLower()
+          Write-Host "sha256: $sum"
+          "portable_sha256=$sum" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       # Attach BEFORE reading the signature. Under `set -euo pipefail` a glob
       # miss in the sig step aborts the job, and when that step ran first the
       # release ended up with no installer attached at all.
@@ -241,7 +304,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
-          files: src-tauri/target/release/bundle/msi/PlatypusGit_x64.msi
+          files: |
+            src-tauri/target/release/bundle/msi/PlatypusGit_x64.msi
+            PlatypusGit_x64_portable.zip
           fail_on_unmatched_files: true
 
       - name: Read updater signature
@@ -460,6 +525,177 @@ jobs:
           git add Casks/platypusgit.rb
           git commit -m "chore: bump platypusgit to ${{ needs.version.outputs.version }}"
           git push
+
+  # Pin the Scoop bucket to this release: rewrite bucket/platypusgit.json in
+  # jonassaa/scoop-platypusgit and commit straight to its main (#187, Windows
+  # half). bump-cask's twin, deliberately — same gate, same App, same guard
+  # shape — so the two read as one pattern rather than two.
+  #
+  # Cheap because it needs NO new secret: the same GitHub App, scoped to one more
+  # repository. Contrast the apt half, which needed a DNS record, a Pages site
+  # and a signing key.
+  #
+  # The manifest is RENDERED by a script in this repo rather than patched in
+  # place, so the artifact users install from is reviewable here and cannot
+  # drift from a second copy nobody reads.
+  bump-scoop:
+    needs: [version, windows]
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Mint bucket token from GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: jonassaa
+          repositories: scoop-platypusgit
+
+      - name: Checkout the bucket
+        uses: actions/checkout@v4
+        with:
+          repository: jonassaa/scoop-platypusgit
+          token: ${{ steps.app-token.outputs.token }}
+          path: bucket-repo
+
+      - name: Render the manifest
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA256: ${{ needs.windows.outputs.portable_sha256 }}
+        run: |
+          set -euo pipefail
+          # Same guard shape as bump-cask's sha256 check. An empty hash renders a
+          # manifest that fails EVERY install with "hash check failed" against a
+          # download that is actually fine — the worst kind of broken, because it
+          # looks like our download is corrupt.
+          if [ -z "$SHA256" ]; then
+            echo "Empty sha256 from the windows job — refusing to publish a manifest" >&2
+            exit 1
+          fi
+          mkdir -p bucket-repo/bucket
+          scripts/scoop-manifest.sh \
+            --version "$VERSION" \
+            --hash "$SHA256" \
+            --out bucket-repo/bucket/platypusgit.json
+          echo "--- rendered manifest ---"
+          cat bucket-repo/bucket/platypusgit.json
+
+      - name: Commit & push to the bucket
+        run: |
+          set -euo pipefail
+          cd bucket-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/platypusgit.json
+          if git diff --cached --quiet; then
+            echo "Manifest already up to date — nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore: bump platypusgit to ${{ needs.version.outputs.version }}"
+          git push
+
+  # Confirm a real `scoop install` works from what we just pushed — the Windows
+  # counterpart of apt-verify-live, and the only place any of this is proven.
+  # Everything upstream of it was written and reviewed on a machine with no
+  # Windows in sight.
+  #
+  # No `platypusgit --version` here: the Windows binary is GUI-subsystem, so its
+  # stdout is not attached to the runner's console and the check would be a coin
+  # flip rather than a gate. What IS asserted is what the app and the shim
+  # contracts depend on.
+  scoop-verify-live:
+    needs: [version, bump-scoop]
+    runs-on: windows-latest
+    if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # -RunAsAdmin IS REQUIRED HERE, and only here. GitHub's windows runner
+          # user is in the Administrators group, and Scoop's installer refuses to
+          # run elevated by default ("Running the installer as administrator is
+          # disabled by default") — without the flag this step fails on every
+          # release. It is not advice to pass on to users, who are not elevated.
+          $env:SCOOP = "$env:USERPROFILE\scoop"
+          Invoke-Expression "& {$(Invoke-RestMethod -Uri https://get.scoop.sh)} -RunAsAdmin"
+          # Scoop puts its shims on the USER PATH in the registry; this process's
+          # environment was captured before that, and so is every later step's.
+          # $GITHUB_PATH and $GITHUB_ENV are the only things that carry either
+          # across steps — SCOOP is exported too rather than left to default, so
+          # a later step cannot silently resolve a different root than this one
+          # installed into.
+          "$env:SCOOP\shims" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "SCOOP=$env:SCOOP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & "$env:SCOOP\shims\scoop.cmd" --version
+
+      - name: Install platypusgit from the bucket
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Exactly the two lines the download page tells people to run, so the
+          # gate tests the documented route rather than a CI-only variant.
+          #
+          # $LASTEXITCODE is checked explicitly after each: a native command's
+          # non-zero exit is NOT a terminating error in PowerShell, so
+          # $ErrorActionPreference alone would let a failed install fall through
+          # to the assertions below and report a confusing "no platypusgit.exe".
+          scoop bucket add platypusgit https://github.com/jonassaa/scoop-platypusgit
+          if ($LASTEXITCODE -ne 0) { throw "scoop bucket add failed ($LASTEXITCODE)" }
+          scoop install platypusgit
+          if ($LASTEXITCODE -ne 0) { throw "scoop install failed ($LASTEXITCODE)" }
+
+      - name: Gate — the install has everything the app and the shims rely on
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Asked of Scoop rather than assumed: `scoop prefix` prints this app's
+          # `current` directory, so nothing here depends on where the root is.
+          $app = (scoop prefix platypusgit | Out-String).Trim()
+          Write-Host "app dir: $app"
+          if (-not $app) { throw 'scoop prefix returned nothing' }
+
+          # The zip's payload, at the root of the version directory.
+          foreach ($f in 'platypusgit.exe', 'pgit.cmd') {
+            if (-not (Test-Path -LiteralPath (Join-Path $app $f))) {
+              throw "installed app directory has no $f"
+            }
+          }
+
+          # THE update.rs CONTRACT. `update::SCOOP_MANIFEST_FILE` is how the app
+          # knows Scoop owns this install and must NOT self-update; if Scoop ever
+          # stops writing it, this fails the release instead of quietly handing
+          # every Scoop user the .msi self-updater and two installs.
+          if (-not (Test-Path -LiteralPath (Join-Path $app 'manifest.json'))) {
+            throw 'no manifest.json beside the exe — update::capability cannot detect this install'
+          }
+
+          # The other half of that probe: update::is_scoop_layout requires the exe
+          # to sit under apps/<CARGO_PKG_NAME>/<version>.
+          if ($app -notmatch [regex]::Escape('\apps\platypusgit\')) {
+            throw "install path is not apps/platypusgit/<version>: $app"
+          }
+
+          # The CLI, which is half of what #187 asked for on Windows.
+          $which = (scoop which pgit | Out-String).Trim()
+          Write-Host "scoop which pgit -> $which"
+          if ($which -notmatch 'pgit') { throw 'scoop did not shim pgit' }
+
+          # And that Scoop installed the version we just published, not a stale
+          # manifest it happened to have cached.
+          $list = (scoop list platypusgit | Out-String)
+          Write-Host $list
+          if ($list -notmatch [regex]::Escape($env:VERSION)) {
+            throw "scoop reports a different version than $env:VERSION"
+          }
+          Write-Host 'scoop install verified'
 
   # Publish the updater manifest so tauri-plugin-updater can verify + install.
   # Points at the stable-named release assets. macOS is intentionally omitted
