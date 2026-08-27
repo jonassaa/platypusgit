@@ -144,6 +144,145 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.1.0',
+    date: '2026-08-27',
+    status: 'feature & fixes',
+    summary:
+      'Installing on Debian and Ubuntu is one line now, and staying current is `apt upgrade` — a signed package repository, an installer served from the bytes that were reviewed, and an update panel that knows which kind of `.deb` you have. Committing runs the hooks it had been silently skipping, a hung clone or fetch finally has a Cancel button, and the app can hand a file to your file manager or a repository to your terminal.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'One line installs the app on Debian and Ubuntu',
+            detail:
+              '`curl -fsSL https://www.platypusgit.com/install-platypusgit.sh | sh` adds a signed APT repository and installs the app, so every later release arrives through `sudo apt update && sudo apt upgrade platypusgit`. It is safe under `curl | sh` the same way the `pgit` installer is: POSIX `sh`, `set -eu`, never reads stdin, every choice a flag or an environment variable, and a `--dry-run` that prints the plan and changes nothing. The served bytes ARE the repository\'s bytes — a build step copies the reviewed file rather than keeping a second copy — so what you pipe into a shell is what you can read first. It writes a deb822 `.sources` with an explicit `Architectures` and a pre-dearmored keyring, so the client needs no `gnupg` at all, and fetches to a temp file it moves into place, because an interrupted download that left a truncated keyring would break every later `apt update`. No `apt-get`, or an architecture other than amd64, prints why and points at the AppImage: a script that advertises an apt install and quietly drops a different package format costs more trust than it saves typing.',
+          },
+          {
+            title: 'The update panel tells an apt-managed install to run `apt upgrade`',
+            detail:
+              'There are two kinds of `.deb` install now and they need different advice — `apt upgrade` on a sideloaded one reports "already the newest version" while the panel says an update exists, which is the exact dead end this hint was written to remove. The app decides by whether `/etc/apt/sources.list.d/platypusgit.sources` exists: one path check, on Linux only, no process spawn. A managed install gets the apt command, character-for-character the one on the download page, because two places giving one user two different upgrade commands is worse than either alone. A sideloaded install gets the one-liner, which upgrades now AND moves the install onto the path where `apt upgrade` works from then on. The AppImage remains the only Linux build that updates itself in-app — true before this release and nowhere on the page until now.',
+          },
+          {
+            title: 'Committing runs the commit-side git hooks',
+            detail:
+              'Pushing ran `pre-push` while committing ran no hooks at all, so a repository with husky, lefthook, `pre-commit` or commitlint was enforced on push and silently bypassed on commit, with nothing in the UI saying so. `pre-commit`, `prepare-commit-msg`, `commit-msg` and `post-commit` now run around the commit. A non-zero `pre-commit`, `prepare-commit-msg` or `commit-msg` creates no object and moves no reference, mirroring the signing chain; `post-commit`\'s exit code is discarded, because git discards it. `commit-msg` may rewrite the message, so the panel now reports what was committed rather than what you typed. Hook output renders inline in the commit panel rather than in a toast, which auto-dismisses and cannot hold forty lines of eslint, or a modal, which would block the panel it is asking you to fix — and it is per-repository state, so switching tabs cannot carry one repository\'s rejected commit into another\'s panel.',
+          },
+          {
+            title: 'A hook can be skipped once, and cannot become "never again"',
+            detail:
+              'The escape hatch is visible in both places you need it: a non-sticky checkbox before the fact, and "Commit without hooks" on the refusal itself. Pushing gains a confirmed, danger-marked "Push <branch> without hooks" command following the shape force-push already uses. Neither is ever persisted — a "skip once" that quietly becomes "never run hooks again" is a worse version of the bug this fixes. The commit itself stays libgit2\'s: shelling out to `git commit` would have run the hooks for free, but it would also have signed through git\'s own `gpg.program`, a second signing chain beside the app\'s one.',
+          },
+          {
+            title: 'A clone, fetch, pull or push can be cancelled',
+            detail:
+              'One that hung could only be escaped by force-quitting the app. The Clone dialog\'s Cancel button now stays live while the clone runs and stops it, and the status bar grows a Cancel beside the "Fetching origin…" label that says what is stuck. Cancellation is keyed by scope rather than by an operation id on purpose: the auto-fetch timer stacks fetches behind a stalled one, and those are operations you never started and cannot point at — cancelling a scope reaches the whole pile where an id would leave it. Auto-fetch also skips a tick while a fetch is still running, so a stalled remote can no longer grow a pile of stuck processes. Pressing Cancel reports a cancellation, not a network failure: a killed git\'s dying stderr says "early EOF" and "the remote end hung up unexpectedly", and routed through the network error you would have been told your connection broke.',
+          },
+          {
+            title: 'A cancelled clone cleans up after itself',
+            detail:
+              'A killed `git clone` cannot run its own cleanup, and the leftovers would fail the NEXT attempt with "already exists and is not empty" — a cancel button whose real effect is to poison the destination. The partial destination is removed, and an empty directory you picked yourself is put back. Safe only because the target validation already refused anything but "absent" or "your own empty directory", and only after an explicit kill and reap, so git is provably no longer writing into it. Deliberately not included: a timeout. One short enough to rescue a stalled host is short enough to kill a legitimately slow clone of a large repository over a poor link, and you are the only one who can tell those apart — which is what the button is for.',
+          },
+          {
+            title: 'Reveal in Finder or Explorer, and open in terminal',
+            detail:
+              'Two context-menu actions on file rows in the Commit panel and the repository browser, beside Copy path, and on the repository tab strip\'s menu. Per-platform argv is built as pure functions and unit-tested for all three platforms from any host, and spawned only through the one sanctioned spawner. The Windows launchers are pinned to their system directories rather than looked up by name, because `CreateProcess` searches the current directory first and this app\'s working directory IS a repository whenever `pgit` launched it from inside one — a cloned repo shipping its own `cmd.exe` would otherwise be what runs. A missing Linux terminal falls through an ordered candidate list instead of failing silently.',
+          },
+          {
+            title: 'The window title names the active repository and branch',
+            detail:
+              'With several repositories open in one window, the title bar now says which one you are in and what is checked out, so the window is identifiable from the OS window list and from a switcher.',
+          },
+          {
+            title: '`pgit` opens every screen, and answers `--version`',
+            detail:
+              'The shim reached three of the app\'s eleven top-level screens — commit/status, log/history, branches — and a bare `pgit branch`, an easy typo, fell through to path handling instead of being recognised. All eleven resolve now: `branch`, `files`/`browse`/`tree`, `rebase`, `remote`/`remotes`, `pr`/`prs`/`pulls`, `reflog`, `submodules`, `worktrees` and `settings`/`config`, each in the alias test table, the usage text and the README. `pgit --version` and `-V` print the version. The deep views — diff, commit diff, compare, file history, blame — stay out deliberately: they need a payload the shell cannot restore from a screen id alone.',
+          },
+        ],
+      },
+      {
+        title: 'Improvements',
+        items: [
+          {
+            title: 'The `.deb` declares that it needs git',
+            detail:
+              'The backend shells out to real git wherever libgit2 falls short, so a fresh-box install used to succeed and then fail at runtime in exactly the operations that matter most. `Depends: git` is what makes "one command and it works" survive a container or a minimal cloud image. A git GUI without git is not degraded, it is broken. The package also declares its `vcs` section, which the index builder wants.',
+          },
+          {
+            title: 'An invalid branch name says what is wrong',
+            detail:
+              'Tags have given a clear message on a bad name since 0.0.13; branches passed the name straight to libgit2 and surfaced whatever came back. The ref-name rules are now shared between the two, so creating or renaming a branch with an invalid name is refused the same way an invalid tag name already was — and integration tests prove a rejected name never reaches the repository.',
+          },
+          {
+            title: 'The download page opens on the platform you are on',
+            detail:
+              'The OS selector never actually sniffed: it returned macOS unless a URL hash said otherwise, so every Windows and Linux visitor landed on Homebrew instructions. It reads the platform now — Apple first, since iPadOS reports "like Mac OS X" and Android reports "Linux" — and resolves it above the panels so the correct one is the only one ever painted, rather than rendering all three and collapsing the page under the reader. With JavaScript off, macOS opens as a fallback. The page itself is rebuilt from a wall of prose into bordered cards in a grid, with the tab row sitting ON the panel it controls, arrow-key support and `aria-selected`, Gatekeeper and SmartScreen notes folded into disclosures, and exactly one card per platform carrying the accent so "Recommended" means something. The Linux panel leads with the apt one-liner and reframes the AppImage as what it is: the route for non-Debian distributions, and the only Linux build that self-updates.',
+          },
+          {
+            title: 'The screenshots are sharp on whatever display you are reading on',
+            detail:
+              'The masters were 1x captures laid out at 1040 CSS px, so a 1x screen got a 0.65x downscale of 1px-stroke text and a Retina screen a 1.3x UPSCALE — both destroy glyph edges. The compression was never the cause and raising quality could not have helped: cropping the same region from the PNG master and the shipped q85 WebP at 1:1 gives visually identical output, so the detail was not in the file. One variant per device pixel ratio is emitted and offered in a `srcset` so each display paints 1:1, with the 1x variant pre-encoded at the layout width using lanczos3 rather than shipping 1600px for the browser to resample — 345KB down to 211KB. A master too small for an honest @2x variant gets a warning instead of an upscale that costs bytes and adds no detail, and the capture step now REJECTS a screenshot that is not 2x, because a capture size is not a detail to leave to whoever is holding the mouse.',
+          },
+          {
+            title: 'A comparison table, with every competitor claim citing that vendor\'s own page',
+            detail:
+              'Price, account, telemetry, platforms and licence for GitKraken, Fork, Sourcetree and TortoiseGit — on the landing page directly under the "why" grid, because that grid makes four claims and the table is the evidence for them on facts you can check rather than adjectives. One JSON file is the source of truth for both the site and the README, and a test parses the README table and fails the build on drift in any cell, the checked-on date or a source link; two tables that disagree are worse than one. A claim about somebody else\'s product is never more than one click from the vendor page it came from, enforced rather than intended. The section ends by naming where this app is behind rather than hiding it.',
+          },
+          {
+            title: 'The README and CONTRIBUTING were rebuilt, and audited against what the code does',
+            detail:
+              'The README leads with the product and moves install to the top; CONTRIBUTING is ordered clone → prerequisites → run → verify, with the timings said out loud, because the first `pnpm tauri dev` compiles the whole Rust tree for several minutes with no window and no output and a newcomer watching that assumes it has hung. The corrections matter more than the layout: the `pgit` shim was documented as unsupported on Windows when the `.msi` installs it; the feature list predated pull requests, multi-repo tabs, submodules, worktrees, LFS, bisect, branch compare, signed tags, log search, the minimap, syntax highlighting, side-by-side diffs, line-level staging and clone; `pnpm tauri build` was documented bare when it is a hard error without a signing key; and the Linux prerequisite list named a package CI does not install while omitting four that it does, so following it got you a linker error. Both files now have tests pinning the mechanically checkable half — links resolve, every `pnpm <name>` is a real script — so they cannot quietly drift back.',
+          },
+          {
+            title: 'The e2e suite stopped waiting on itself',
+            detail:
+              'A reload race owned 70-80% of the suite\'s wall time. Settling it makes the gate quick enough to run per shard without the run length being the reason not to look.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'The Debian package is `platypusgit`, not `platypus-git`',
+            detail:
+              '`productName` was the one place the project spelled itself "PlatypusGit", and that inconsistency was load-bearing: Tauri derives the Debian `Package` field from `productName` alone by kebab-casing it, and the internal capital is a word boundary. Lowercase maps straight through, so `apt install platypusgit` and `apt upgrade platypusgit` are the real commands rather than an alias. Done in this release because the window was closing — no release had published to apt yet, so the repository has only ever had to know one name; after the first publish every apt-managed install would have needed a `Replaces`/`Conflicts` migration instead. The `.deb` keeps the old name as `provides`, `replaces` and `conflicts`, because both packages own `/usr/bin/platypusgit` and a sideloaded older `.deb` would otherwise upgrade into a hard dpkg file conflict; verified in a container, old package replaced cleanly with `pgit` still working. The macOS app bundle is renamed with it, and the release now FAILS if the Homebrew cask\'s `app` stanza does not match `productName`, rather than shipping a cask that points at an app which no longer exists.',
+          },
+          {
+            title: 'Nothing reaches the package repository until a real `apt-get install` succeeds',
+            detail:
+              'The `.deb` is published to the signed index only after a gate installs it in a clean `debian:bookworm` container, driving the same installer the download page tells you to pipe into a shell, asserting the control fields, and running `pgit --help` — which proves the binary loads and every shared library resolved, where a permissions check cannot. A second job then installs from the live host, which the pre-push gate structurally cannot see: DNS, the Pages build, HTTPS, propagation. The `.deb` comes from the published release rather than a job artifact, so what lands in the pool is provably the bundle you get. The index is a pure function of the pool with no database — the pool is the state, git is the history — so a re-run against an existing tag is a genuine no-op, and a `Release` file that listed itself in its own checksums (measured on the first run, not theorised) is now refused outright.',
+          },
+          {
+            title: 'The three public promises have tests behind them',
+            detail:
+              'No telemetry, no account, and no outbound traffic beyond your git remotes, the update check and forge APIs you configured. All three were true by inspection and nothing kept them true — one transitive dependency that "just" reports errors, or one well-meant "help us improve" toggle, and the claim becomes a lie. Two guards, one per tree, because a single test over both would be skipped by exactly the change it polices: no analytics package in `package.json` or anywhere in the lockfile, no network call or analytics global in shipped frontend source, one direct HTTP client in the backend with `ureq` confined to its two disclosed call sites, the updater endpoint exactly as disclosed, no permission handing the webview its own client, and every hard-coded hostname allow-listed with a written reason. Every guard was verified to fail on a planted violation before it landed.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'The apt repository is amd64 only',
+            detail:
+              'There is no arm64 Linux build yet, so the installer detects the architecture and refuses with an explanation rather than installing a package that cannot run. The AppImage is the route in the meantime, and arm64 is tracked as its own issue. The client side of the smoke gate is pinned to amd64 for the same reason: on an arm64 machine apt verifies the index, fetches the package list and then reports "Unable to locate package", which reads as a broken repository rather than a wrong architecture.',
+          },
+          {
+            title: 'In-place `.msi` upgrades break once, on this release only',
+            detail:
+              'The MSI UpgradeCode is derived from `productName`, so the rename gives 0.1.0 a different one and Windows will not treat it as an upgrade of an installed 0.0.17 — it installs alongside. Harmless today because there are no real `.msi` installs to migrate, which is precisely why the rename happened now; it is written down as something to pin before there are.',
+          },
+          {
+            title: 'The installers are still unsigned, and macOS is not notarized',
+            detail:
+              'The app is ad-hoc signed but has no Developer ID, so Gatekeeper quarantines the `.dmg` — the Homebrew cask strips the flag, and a manual drag needs the `xattr` line the download page gives you — and Windows shows a SmartScreen warning on the `.msi`. Unchanged this release, and named in the comparison table rather than left out of it.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.17',
     date: '2026-08-25',
     status: 'feature & fixes',
