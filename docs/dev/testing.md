@@ -223,6 +223,21 @@ Rules that keep the gates honest:
   for, so re-read the vendors' pages before moving `checkedOn`. Its inputs
   (`README.md`, `site/src/data/comparison.json`) are in `tests.yml`'s `js`
   filter — without them the guard never runs on the PRs that edit the table.
+- **`test/contributing.test.ts`** keeps `CONTRIBUTING.md` — the only path a
+  newcomer has from `git clone` to a running window (#211) — from going stale
+  in the ways that already happened: it promised "Three independent layers" of
+  tests when there are four, never mentioned e2e at all (so a contributor tried
+  a native run), and pointed humans at `CLAUDE.md` instead of `docs/dev/`. The
+  test resolves every repo-relative link, checks every `pnpm <name>` in a fenced
+  block against `package.json` (plus a small builtin list — `install`, `exec`,
+  `tsc`, `vitest`, `tauri`), requires the four layer commands and all five
+  `docs/dev/` files by name, and asserts the build section still says
+  `--no-sign` for as long as `tauri.conf.json` actually makes a bare
+  `pnpm tauri build` a hard error — read from the config, so the doc and the
+  build fail together rather than drifting apart. It cannot check that the prose
+  WORKS; the acceptance for that is still a human who has never built a Tauri
+  app reaching a window without asking a question. `CONTRIBUTING.md` is in
+  `tests.yml`'s `js` filter, or a CONTRIBUTING-only PR would run no suite at all.
 - **`test/e2eSelectors.test.ts`** guards the `[data-testid="X"]*=text` trap:
   WebdriverIO compiles it to a SUBSTRING attribute test plus an innermost-match
   condition, so any other testid containing `X` makes the outer element match
