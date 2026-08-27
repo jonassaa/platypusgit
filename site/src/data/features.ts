@@ -144,6 +144,80 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.1.2',
+    date: '2026-08-27',
+    status: 'improvements & fixes',
+    summary:
+      'A log that can describe a hang instead of falling silent, and that you can find from Settings without knowing a per-platform path. The Windows installer also stops telling Add/Remove Programs that GitHub published it.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Settings → Diagnostics: find the log, and hand it to someone',
+            detail:
+              'The log path, a Show file button that opens it in your file manager, and Copy last 500 lines. The copy puts the version, the environment line and the path on the clipboard alongside the tail, because 500 lines may not reach back to the startup header — so a pasted report describes itself even when the interesting part scrolled that header away. Until now the log lived at a per-platform path documented nowhere a user could see.',
+          },
+        ],
+      },
+      {
+        title: 'Improvements',
+        items: [
+          {
+            title: 'A hung call now leaves a trace instead of a void',
+            detail:
+              'Calls into the backend were logged only once they finished, so one that hung and one that was never dispatched wrote exactly the same thing: nothing. A watchdog now warns when a call is still outstanding after 10 seconds — the only line written *while* a call is in flight, which turns the missing completion line afterwards into evidence rather than an absence. The threshold sits deliberately far above the slow-call mark: a repository on a Windows drive under WSL legitimately spends around ten seconds on the startup fan-out, and a warning that fires every launch is one nobody reads.',
+          },
+          {
+            title: 'Every launch records what it is running on',
+            detail:
+              'One line per start naming the OS, the kernel, whether this is WSL, and the `git` the app will actually spawn — written after the PATH probe, so it names the real one rather than a guess. A missing `git` is spelled out rather than omitted, because it pre-explains every git failure below it. Opening a repository now logs the path on the way in and the outcome on the way out, so three failures that used to produce identical silence now read differently. A repository under `/mnt` on WSL additionally warns that every file check crosses the VM boundary there — not an error, but an unexplained nine-second launch reads as a broken app.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'The folder picker could fail completely silently',
+            detail:
+              'Choosing a repository folder went through a call the app was not watching, invoked in a way that discarded its failure — so on a system without a desktop portal, which is the environment most likely to hit this, the dialog simply never appeared and nothing anywhere said why. It now reports the failure. Cancelling still says nothing, as it should.',
+          },
+          {
+            title: 'The Windows installer claimed GitHub published it',
+            detail:
+              'Add/Remove Programs listed the publisher as `github`. The field was never filled in, and the installer builder falls back to the second word of the app identifier — ours begins `io.github.…` — so every `.msi` up to and including 0.1.1 shipped that way. It now reads `Jonas Aasberg`. Upgrading over an older install behaves exactly as before; only the publisher line and one bookkeeping registry key change.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'The `.msi` upgrade identity is pinned',
+            detail:
+              'The value that tells Windows "this installer replaces that install" was being derived from the product name, so renaming the app would have quietly stopped upgrades from working and left two copies installed side by side. It is now written down explicitly — at the value it already had, so nothing changes for anyone already on 0.1.x.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: '`winget` is next, and it does not need a certificate after all',
+            detail:
+              '0.1.1 named a code-signing certificate as the blocker. Reading winget\'s published rules rather than assuming: signing is required for MSIX packages, not for the `.msi` we ship, and the reputation check behind SmartScreen warnings applies to the download URL — ours is GitHub — rather than to an unsigned installer. The groundwork is in this release, because a manifest has to declare the publisher the installer actually writes, and until now that was `github`. The submission itself is the next step. A certificate is still worth having; just not for this.',
+          },
+          {
+            title: 'The startup fan-out still queues behind one lock',
+            detail:
+              'The new logging made this legible rather than fixing it: on a slow filesystem the dozen calls a launch makes all finish in one cluster instead of spreading out, because reads of the same repository take turns. That is why a repository on a Windows drive under WSL takes so long to open. Tracked separately.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.1',
     date: '2026-08-27',
     status: 'feature',
