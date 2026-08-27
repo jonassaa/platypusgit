@@ -390,6 +390,12 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
     steps:
+      # Needed for tauri.conf.json — the cask names the .app bundle and the
+      # bundle name is productName, so the rewrite step below cross-checks them.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
       - name: Mint tap token from GitHub App
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -420,6 +426,26 @@ jobs:
           sed -i -E "s/^  sha256 \".*\"/  sha256 \"$sha\"/" "$f"
           echo "--- updated cask ---"
           grep -E '^  (version|sha256|url)' "$f"
+
+          # The cask names the .app bundle, and the bundle name IS productName.
+          # This job only rewrites version + sha256, so a productName change
+          # would otherwise ship a cask pointing at an app that no longer exists
+          # — and `brew install --cask` would fail for every macOS user, only
+          # discovered after the release was published.
+          #
+          # `.app` is stripped rather than matched whole because Homebrew accepts
+          # either casing on a case-insensitive volume; what must not drift is
+          # the NAME.
+          product="$(jq -r .productName src-tauri/tauri.conf.json)"
+          cask_app="$(sed -nE 's/^  app "(.*)\.app"$/\1/p' "$f" | head -n1)"
+          if [ "$cask_app" != "$product" ]; then
+            echo "Cask app stanza is \"$cask_app.app\" but productName is \"$product\"." >&2
+            echo "The .dmg contains \"$product.app\", so this cask would fail to install." >&2
+            echo "Fix jonassaa/homebrew-platypusgit: the app, binary and postflight" >&2
+            echo "stanzas all name the bundle. Then re-run this workflow." >&2
+            exit 1
+          fi
+          echo "cask app stanza matches productName: $product.app"
 
       - name: Commit & push to tap main
         run: |
