@@ -25,6 +25,7 @@ import { currentBranch } from "@/lib/derive";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { chordFor } from "@/features/keymap";
 import { fileManagerLabel, type Platform } from "@/lib/platform";
+import { absoluteInWorkdir, relativeToWorkdir } from "@/lib/paths";
 // pgFlash lives in ui-helpers.tsx — a toast is not a context-menu concern, and
 // keeping it out of this module is what lets features/keymap import it without
 // closing a cycle back through this file (which imports chordFor from there).
@@ -885,6 +886,59 @@ export function submoduleMenuItems(
   ];
 }
 
+/**
+ * The "Copy path" / "Copy relative path" pair, for one path or a whole
+ * selection (#245).
+ *
+ * One helper rather than four hand-written pairs because the two entries only
+ * make sense together: before this, "Copy path" copied a *relative* path on
+ * every file surface (the file row, the embedded-repo row, the multi-select and
+ * the diff pane's ⋯ menu) and an absolute one on the worktree menu and the repo
+ * tab, so the same label meant two different things depending on where you
+ * right-clicked. Now the label is the contract — "Copy path" is always
+ * absolute, "Copy relative path" always workdir-relative.
+ *
+ * `paths` are repository-relative (what git reports and every file list holds);
+ * an absolute one is passed through unharmed. Empty strings are dropped, so a
+ * row with no path yields two disabled entries instead of copying the workdir.
+ * The absolute entry is disabled — not silently downgraded — when no repository
+ * is open, since a path is either the real one or not worth pasting.
+ *
+ * Two surfaces deliberately do NOT call this: the worktree menu and the repo
+ * tab menu, whose target IS a repository root. Its path relative to itself is
+ * the empty string, so the pair would be one real entry and one that copies
+ * nothing.
+ */
+export function copyPathItems(paths: string[]): ContextMenuItem[] {
+  const workdir = useRepoStore.getState().current?.path ?? null;
+  const targets = paths.filter((p) => !!p && !!p.trim());
+  const plural = targets.length > 1;
+  const keep = (v: string | null): v is string => !!v;
+  const absolute = targets.map((p) => absoluteInWorkdir(workdir, p)).filter(keep);
+  const relative = targets.map((p) => relativeToWorkdir(workdir, p)).filter(keep);
+
+  const copy = (values: string[], what: string) => () => {
+    if (!values.length) return;
+    navigator.clipboard?.writeText(values.join("\n"));
+    pgFlash(`copied ${what}`);
+  };
+
+  return [
+    {
+      icon: "copy",
+      label: plural ? "Copy paths" : "Copy path",
+      disabled: !absolute.length,
+      onClick: copy(absolute, plural ? "paths" : "path"),
+    },
+    {
+      icon: "copy",
+      label: plural ? "Copy relative paths" : "Copy relative path",
+      disabled: !relative.length,
+      onClick: copy(relative, plural ? "relative paths" : "relative path"),
+    },
+  ];
+}
+
 export function worktreeMenuItems(
   worktree: {
     name?: string;
@@ -1574,11 +1628,7 @@ function embeddedRepoMenuItems(path: string): ContextMenuItem[] {
         if (path) useRepoStore.getState().openInEditor(path);
       },
     },
-    {
-      icon: "copy",
-      label: "Copy path",
-      onClick: () => navigator.clipboard?.writeText(path),
-    },
+    ...copyPathItems([path]),
   ];
 }
 
@@ -1689,11 +1739,14 @@ export function fileMenuItems(
       },
     },
     { divider: true },
-    {
-      icon: "copy",
-      label: "Copy path",
-      onClick: () => navigator.clipboard?.writeText(path),
-    },
+    ...copyPathItems([path]),
+    // This IS "open containing folder", on all three platforms: `open -R` and
+    // `explorer /select,` open the parent window with the file selected, and
+    // Linux xdg-opens the parent (there is no portable "select this file"
+    // verb). A separate "Open containing folder" entry would be a synonym — the
+    // only variant that differs is a folder window with NO selection, which
+    // needs `reveal(parent, is_dir: true)` and so a backend change. See
+    // docs/dev/frontend.md.
     {
       icon: "folder",
       label: fileManagerLabel(platform),
@@ -1909,17 +1962,7 @@ export function multiFileMenuItems(
         }),
     });
   }
-  items.push(
-    { divider: true },
-    {
-      icon: "copy",
-      label: "Copy paths",
-      onClick: () => {
-        navigator.clipboard?.writeText(all.join("\n"));
-        pgFlash("copied paths");
-      },
-    },
-  );
+  items.push({ divider: true }, ...copyPathItems(all));
   if (unstagedPaths.length) {
     items.push(
       { divider: true },

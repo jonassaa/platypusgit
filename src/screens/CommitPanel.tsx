@@ -16,6 +16,7 @@ import {
   PGStatusMark,
   PGResizeHandle,
   PGTextarea,
+  copyPathItems,
   fileMenuItems,
   multiFileMenuItems,
   PGHookOutput,
@@ -231,15 +232,7 @@ export function CommitPanelScreen() {
   const moreMenu = useContextMenu<{ path: string; diff: FileDiff | null }>(
     (p) => [
       { __menuTitle: p?.path || "file" },
-      {
-        icon: "copy",
-        label: "Copy path",
-        onClick: () => {
-          if (!p?.path) return;
-          navigator.clipboard?.writeText(p.path);
-          pgFlash("copied path");
-        },
-      },
+      ...copyPathItems(p?.path ? [p.path] : []),
       {
         icon: "copy",
         label: "Copy diff as text",

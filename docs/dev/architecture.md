@@ -337,7 +337,8 @@ lib/                 tauri.ts (typed invoke wrappers — frontend NEVER calls
                      ResizeObserver), useWindowedList.ts, useVariableWindow.ts
                      (incl. scrollTo — every programmatic diff scroll),
                      useDiffRowHeight.ts (--diff-row-h → px, jsdom fallback),
-                     platform.ts, fileIcon.ts, selection.ts
+                     platform.ts, fileIcon.ts, paths.ts (workdir-relative ⇄
+                     absolute, pure — no node:path in a webview), selection.ts
                      (+ splitFileSelection), tree.ts (buildStatusTree /
                      buildStatusList — SAME row keys), useTreeViewMode.ts,
                      recents.ts (pg-recent-repos; the OPEN set is pg-open-repos
