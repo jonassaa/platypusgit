@@ -88,13 +88,20 @@ confirm() {
     esac
 }
 
+# The prompt goes to STDERR, never stdout. The caller captures stdout with
+# `$(ask …)`, so a prompt written there is invisible to the user AND becomes part
+# of the value. That cost a real debugging session: the passphrase prompt never
+# appeared, Enter was pressed at what looked like the previous prompt, and the
+# "passphrase" ended up being this function's own prompt text — trailing space
+# included, which gpg's params parser trims and a passphrase file does not, so
+# the key was protected with one string and exported with another.
 ask() {
     if [ "$DRY_RUN" = yes ]; then
         printf '%s [dry-run]\n' "$1" >&2
         printf 'dry-run-value'
         return 0
     fi
-    printf '%s ' "$1"
+    printf '%s ' "$1" >&2
     read -r reply || reply=
     printf '%s' "$reply"
 }
@@ -179,7 +186,10 @@ PUB_GPG="$KEY_DIR/apt-public.gpg"
 REVOKE="$KEY_DIR/apt-revocation.asc"
 FPR_FILE="$KEY_DIR/apt-fingerprint.txt"
 
-if [ -f "$PRIV" ] && [ -f "$FPR_FILE" ]; then
+# -s, not -f: a previous run that failed part-way can leave a zero-byte
+# apt-private.asc behind, and treating that as "already generated" would skip
+# the step and then fail at every later one that needs a real key.
+if [ -s "$PRIV" ] && [ -s "$FPR_FILE" ]; then
     say "Already generated at $PRIV — skipping."
     FINGERPRINT="$(cat "$FPR_FILE")"
 else
@@ -193,7 +203,14 @@ else
     say "it, offline, or you have no way to retire this key."
     say ""
     if confirm "Generate it into $KEY_DIR?"; then
-        passphrase="$(ask 'Passphrase for the new key (visible, and stored as a repo secret):')"
+        passphrase="$(ask 'Passphrase for the new key (typed visibly, and stored as a repo secret):')"
+        # Whitespace-only is rejected as well as empty. A passphrase that is
+        # only spaces would be trimmed to nothing by gpg's own parser on one
+        # path and kept on another — see the note on the params file below.
+        case "$passphrase" in
+            '' | *[!\ ]*) ;;
+            *) die "a passphrase of only spaces is not a passphrase" ;;
+        esac
         [ -n "$passphrase" ] || die "a passphrase is required"
 
         if would "generate an RSA-4096 key in $KEY_DIR"; then
@@ -202,6 +219,23 @@ else
 
             gen_home="$(mktemp -d)"
             chmod 0700 "$gen_home"
+
+            # ONE SOURCE for the passphrase: this file, byte for byte, used by
+            # BOTH the generate and the export.
+            #
+            # There is deliberately NO `Passphrase:` line in the params below.
+            # gpg's control-file parser TRIMS TRAILING WHITESPACE from that
+            # value, while `--passphrase-file` does not — so a passphrase ending
+            # in a space protects the key with one string and then fails to
+            # export it with another, as
+            #   gpg: error receiving key from agent: Bad passphrase - skipped
+            #   gpg: WARNING: nothing exported
+            # Reproduced, not guessed. Keeping the passphrase out of the params
+            # file entirely makes that whole class of mismatch impossible, and
+            # keeps it out of a file on disk that also names the key.
+            printf '%s' "$passphrase" > "$gen_home/pass"
+            chmod 0600 "$gen_home/pass"
+
             cat > "$gen_home/params" <<PARAMS
 %echo generating the platypusgit APT signing key
 Key-Type: RSA
@@ -209,17 +243,17 @@ Key-Length: 4096
 Name-Real: $KEY_UID_NAME
 Name-Email: $KEY_UID_EMAIL
 Expire-Date: 0
-Passphrase: $passphrase
 %commit
 %echo done
 PARAMS
 
             if [ "$GPG_MODE" = docker ]; then
                 say "Running gpg in a container (no gpg on this machine)."
+                # The passphrase reaches the container only as the mounted file
+                # — not as an env var, which `docker inspect` would show.
                 docker run --rm \
                     -v "$gen_home:/work" \
                     -v "$KEY_DIR:/out" \
-                    -e "PASSPHRASE=$passphrase" \
                     debian:bookworm sh -c '
                         set -eu
                         export DEBIAN_FRONTEND=noninteractive
@@ -227,36 +261,45 @@ PARAMS
                         apt-get install -y -qq --no-install-recommends gnupg > /dev/null
                         export GNUPGHOME=/tmp/gnupg
                         mkdir -p "$GNUPGHOME" && chmod 0700 "$GNUPGHOME"
-                        gpg --batch --quiet --gen-key /work/params
+
+                        pass="--passphrase-file /work/pass"
+                        # shellcheck disable=SC2086
+                        gpg --batch --quiet --pinentry-mode loopback $pass \
+                            --gen-key /work/params
                         fpr="$(gpg --list-secret-keys --with-colons | awk -F: "/^fpr:/ { print \$10; exit }")"
-                        printf "%s" "$PASSPHRASE" > /tmp/pass
-                        gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file /tmp/pass \
+
+                        gpg --batch --yes --quiet --pinentry-mode loopback $pass \
                             --armor --export-secret-keys "$fpr" > /out/apt-private.asc
                         gpg --batch --yes --quiet --armor --export "$fpr" > /out/apt-public.asc
                         gpg --batch --yes --quiet --export "$fpr" > /out/apt-public.gpg
-                        gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file /tmp/pass \
-                            --output /out/apt-revocation.asc --gen-revoke "$fpr" <<REVOKE || true
-y
-0
 
-y
-REVOKE
+                        # gpg 2.1+ writes a revocation certificate at key
+                        # generation, so we copy its own rather than driving
+                        # --gen-revoke. That matters: --gen-revoke REFUSES
+                        # --batch ("cannot do this in batch mode") and without
+                        # --batch it wants /dev/tty, which a container does not
+                        # have. Both measured. gpgs file is also self-documenting
+                        # and its armor line is deliberately prefixed with ":"
+                        # so it cannot be imported by accident.
+                        cp "$GNUPGHOME/openpgp-revocs.d/$fpr.rev" /out/apt-revocation.asc || true
+
                         printf "%s\n" "$fpr" > /out/apt-fingerprint.txt
                     '
             else
                 GNUPGHOME="$gen_home" export GNUPGHOME
-                gpg --batch --quiet --gen-key "$gen_home/params"
+                gpg --batch --quiet --pinentry-mode loopback \
+                    --passphrase-file "$gen_home/pass" \
+                    --gen-key "$gen_home/params"
                 fpr="$(gpg --list-secret-keys --with-colons \
                        | awk -F: '/^fpr:/ { print $10; exit }')"
-                printf '%s' "$passphrase" > "$gen_home/pass"
                 gpg --batch --yes --quiet --pinentry-mode loopback \
                     --passphrase-file "$gen_home/pass" \
                     --armor --export-secret-keys "$fpr" > "$PRIV"
                 gpg --batch --yes --quiet --armor --export "$fpr" > "$PUB_ASC"
                 gpg --batch --yes --quiet --export "$fpr" > "$PUB_GPG"
-                printf 'y\n0\n\ny\n' | gpg --batch --yes --quiet --pinentry-mode loopback \
-                    --passphrase-file "$gen_home/pass" --command-fd 0 \
-                    --output "$REVOKE" --gen-revoke "$fpr" || true
+                # gpg's own auto-generated certificate — see the container
+                # branch above for why --gen-revoke is not used.
+                cp "$gen_home/openpgp-revocs.d/$fpr.rev" "$REVOKE" || true
                 printf '%s\n' "$fpr" > "$FPR_FILE"
                 unset GNUPGHOME
             fi
@@ -267,8 +310,16 @@ REVOKE
             # The private key is the one thing that must exist; without it
             # nothing downstream works and a silent failure here would surface
             # much later as an unsigned publish.
+            #
+            # A half-written key store is REMOVED rather than left behind: the
+            # skip check at the top of this step keys off $PRIV plus $FPR_FILE,
+            # so a partial directory could otherwise make a re-run think the key
+            # already exists and walk straight past the step that failed.
             for required in "$PRIV" "$PUB_GPG" "$PUB_ASC" "$FPR_FILE"; do
-                [ -s "$required" ] || die "key generation produced no $required"
+                if [ ! -s "$required" ]; then
+                    rm -f "$PRIV" "$PUB_GPG" "$PUB_ASC" "$FPR_FILE" "$REVOKE"
+                    die "key generation produced no $required — cleaned up $KEY_DIR, re-run to try again"
+                fi
             done
 
             FINGERPRINT="$(cat "$FPR_FILE")"
@@ -277,13 +328,16 @@ REVOKE
             say "  $FINGERPRINT"
             say ""
 
-            # --gen-revoke is driven by a canned answer sequence, which is the
-            # most brittle part of this script. It is allowed to fail rather than
-            # abort a successful key generation — but NOT allowed to fail
-            # quietly, because the certificate is the only way to retire a key
-            # that has no expiry (§C). Say so, with the command to run by hand.
+            # The certificate is copied from gpg's own openpgp-revocs.d, so it
+            # should always be here. The check stays anyway, and stays
+            # non-fatal: a missing certificate is not worth discarding a good
+            # key over, but it must never pass QUIETLY — with no expiry on this
+            # key (§C), revocation is the only way to ever retire it.
             if [ -s "$REVOKE" ]; then
                 say "Revocation certificate: $REVOKE"
+                say "  (gpg's own, from openpgp-revocs.d — its armor line is"
+                say "   prefixed with ':' on purpose, so it cannot be imported"
+                say "   by accident. Remove that character to use it.)"
             else
                 warn ""
                 warn "!! NO REVOCATION CERTIFICATE WAS PRODUCED."
@@ -421,7 +475,14 @@ elif [ ! -f "$PRIV" ]; then
 elif confirm "Set APT_GPG_PRIVATE_KEY and APT_GPG_PASSPHRASE?"; then
     if would "gh secret set APT_GPG_PRIVATE_KEY / APT_GPG_PASSPHRASE --repo $OWNER/$APP_REPO"; then
         gh secret set APT_GPG_PRIVATE_KEY --repo "$OWNER/$APP_REPO" < "$PRIV"
-        pass="$(ask 'Passphrase again (it goes straight into the secret):')"
+        # Reuse the passphrase from step 2 when this is one continuous run.
+        # Asking again is a second chance to mistype, and a mistyped secret does
+        # not fail here — it fails much later, as an unsigned release.
+        pass="${passphrase:-}"
+        if [ -z "$pass" ]; then
+            say "The key already existed, so its passphrase is not in this session."
+            pass="$(ask 'Passphrase for that key (it goes straight into the secret):')"
+        fi
         [ -n "$pass" ] || die "a passphrase is required"
         printf '%s' "$pass" | gh secret set APT_GPG_PASSPHRASE --repo "$OWNER/$APP_REPO"
         say "Both secrets stored."
