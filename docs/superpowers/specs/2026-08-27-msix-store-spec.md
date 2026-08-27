@@ -251,9 +251,16 @@ is the whole point:
 - After the first winget submission it is locked in by
   `AppsAndFeaturesEntries.Publisher`, which must match what the installer wrote.
 
-`src-tauri/tests/msi_identity.rs` reproduces the bundler's identifier fallback
-rather than hard-coding `github`, so the guard keeps working; only its expected
-value moves. `UpgradeCode` is untouched, so no existing install is orphaned.
+**The existing guards cannot see this.** All three in
+`src-tauri/tests/msi_identity.rs` are value-agnostic — publisher is non-empty,
+and publisher `!=` the identifier fallback — so every one of them passes with
+either value. It therefore needs a fourth test of its own rather than an edited
+expectation, which is the shape the file already argues for: the field has more
+than one wrong value, and each one that looks right deserves a guard.
+
+Done in PR #280, ahead of this spec's implementation, because the cost grows
+with every release. `UpgradeCode` is untouched, so no existing install is
+orphaned.
 
 ### G. State outside this repository
 
