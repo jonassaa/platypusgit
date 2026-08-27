@@ -73,6 +73,38 @@ fn the_publisher_is_not_the_identifier_fallback() {
     );
 }
 
+/// Tauri's own Microsoft Store page: *"Your application publisher name cannot
+/// match the application product name"*, and it names `bundle.publisher` as the
+/// way to resolve the clash. Nothing in the `.msi` path enforces this — a
+/// matching pair builds and installs fine — so the cost lands later, at a Store
+/// submission, by which point the publisher is already written into every
+/// installed machine's registry and into the winget `PackageIdentifier`.
+///
+/// This was not hypothetical: `publisher` first landed as `platypusgit`, which
+/// is exactly `productName`, and the clash was caught by reading
+/// `docs/superpowers/specs/2026-08-27-microsoft-store-research.md` rather than
+/// by any test. Hence this one.
+#[test]
+fn the_publisher_does_not_collide_with_the_product_name() {
+    let conf = conf();
+    let product = conf["productName"].as_str().expect("productName is a string");
+    let publisher = conf["bundle"]["publisher"]
+        .as_str()
+        .expect("bundle.publisher is a string");
+
+    // Case-insensitive: the constraint is about the displayed names being the
+    // same name, not the same bytes.
+    assert_ne!(
+        publisher.to_lowercase(),
+        product.to_lowercase(),
+        "bundle.publisher and productName are both `{product}`. Tauri documents \
+         this pair as invalid for the Microsoft Store — the publisher name may \
+         not match the product name — and fixing it after a release rewrites \
+         the publisher in every installed machine's Add/Remove Programs entry. \
+         See `docs/dev/distribution.md`."
+    );
+}
+
 #[test]
 fn the_wix_upgrade_code_is_pinned() {
     let conf = conf();
