@@ -529,3 +529,162 @@ seed, App install, verify the first publish). Interactive, `--dry-run`-able, run
 **by the user** — it creates a public repository. The bucket is seeded **empty of
 manifests** on purpose: the first `bump-scoop` writes one, and a hand-seeded
 manifest would carry a hash for an asset that did not exist yet.
+
+## The Microsoft Store — MSIX
+
+Spec: `docs/superpowers/specs/2026-08-27-msix-store-spec.md`; plan:
+`docs/superpowers/plans/2026-08-27-msix-store-plan.md`. Read the spec for the
+*why* — especially §E, which holds the one open question. This is the
+operational summary.
+
+**Why this channel exists at all:** Microsoft re-signs an MSIX submitted to the
+Store, for free. It is the only Windows channel that removes the SmartScreen
+warning without buying a $150–300/year certificate — the one distribution cost
+this project has otherwise avoided entirely.
+
+### Four Windows channels, one binary
+
+The binary is identical in all four. What differs is packaging and who owns the
+upgrade, which is exactly the axis `update::capability` expresses:
+
+| Channel | Install shape | `capability` |
+| --- | --- | --- |
+| `.msi` direct download | per-machine installer | `SelfUpdate` |
+| Scoop bucket | portable zip in Scoop's tree | `NotifyScoop` |
+| winget | the same `.msi` | `SelfUpdate` |
+| **Store MSIX** | **read-only package** | **`NotifyStore`** |
+
+**`NotifyStore` is matched FIRST among the Windows arms, and that order is
+load-bearing.** Unlike every other notify variant it is not about giving better
+advice: an MSIX is read-only after deployment and Windows *refuses to launch a
+package whose files were tampered with*, so a self-update here does not fail —
+it leaves an app that will not start. If a future probe gets it wrong, this
+order fails toward the answer with a broken app behind it rather than toward
+`scoop update` on an install Scoop does not own.
+
+**The probe is `update::is_msix_packaged`** — `GetCurrentPackageFamilyName`,
+twelve lines of `extern "system"`, no new crate. **Deliberately not** a
+"is the exe under `C:\Program Files\WindowsApps`" test: Microsoft documents that
+packages install to other PackageVolumes and other paths. Same trap as
+`$env:SCOOP`, rejected for the same reason — the question is *"was this install
+packaged"*, and there is an API that answers exactly that.
+
+### `makeappx` builds it; `winapp` is only for the local loop
+
+`release.yml`'s **`msix`** job: two `--no-bundle` builds (x64 + arm64) →
+`scripts/msix-pack.sh` per arch → `makeappx bundle` → shape gate → attach.
+
+- **Not `winapp pack` in CI.** `winapp` documents Windows 11 as a prerequisite
+  and `windows-latest` is Windows Server. `makeappx` ships with the Windows SDK
+  already on the runner.
+- **A separate job from `windows`**, so a broken manifest cannot take the `.msi`
+  and the portable zip down with it. It references no `TAURI_SIGNING_*` secret:
+  `--no-bundle` produces no updater artifact, and nothing here feeds
+  `latest.json` because a Store install never self-updates.
+- **`makeappx bundle` needs `/bv`.** Without it the bundle is stamped `0.0.0.0`,
+  which is lower than anything already in the Store and is rejected as a
+  downgrade. The inner packages carry the real version; the bundle must be told
+  separately.
+- **`webviewInstallMode: "skip"`** via `src-tauri/tauri.msstore.conf.json` — a
+  package runs no bootstrapper. Evergreen WebView2 is preinstalled on Windows 11
+  and arrives via Edge on Windows 10; `fixedRuntime` (~180 MB inside the package)
+  is the fallback if that proves wrong, and is a deliberate later decision.
+
+### `pgit` on a Store install — nothing in `cli.rs` changed
+
+Two separate mechanisms, and conflating them is the trap:
+
+1. **The `appExecutionAlias` in the manifest is what gives the user `pgit`.** An
+   MSIX runs no installer, so `wix/pgit-cli.wxs` has nothing to hook here.
+2. **`pgit.cmd`, staged into the package beside the exe, is what makes the
+   install classify as `CliShimSource::Package`** — `shim_status` probes
+   `exe_dir/pgit.cmd` before it scans PATH. That is what stops Settings offering
+   to write a second, competing shim into `%LOCALAPPDATA%` that uninstalling the
+   package would leave behind. It is byte-identical to the Scoop zip's copy
+   (`src-tauri/windows/pgit-portable.cmd`, `cli.rs::PORTABLE_SHIM_CMD`).
+
+**`path_state` reads `OffPath` on this channel, and that is correct.** The
+package's own directory genuinely is not on PATH; the alias directory is.
+`Settings.tsx` passes `null` to `PathNote` for any package-owned shim, so it is
+never rendered. **No code change is needed for this and none should be made to
+"fix" it** — the same note the Scoop section carries, for the same reason. An
+earlier draft of the design proposed adding the alias directory to the Windows
+package-paths table; that was wrong and is recorded as rejected in the spec.
+
+### The manifest is a source file, and a guard keeps it honest
+
+`src-tauri/windows/Package.appxmanifest` is hand-authored and committed, not
+generated by `winapp init` — a generated manifest is a contract nobody can see
+from one side, which is the shape of every packaging trap in this document.
+
+`src-tauri/tests/msix_identity.rs` pins it against the rest of the tree (exe
+name from Cargo, `DisplayName` from `productName`, `PublisherDisplayName` from
+`bundle.publisher`, the alias, `runFullTrust`, the `uap10` version floor, and
+that every `Assets\…` reference exists in `icons/`). Two of those guards exist
+because they caught real bugs while being written:
+
+- **XML comments cannot contain `--`.** Used as an em-dash it makes the manifest
+  unparseable — which `makeappx` would have reported at release time, from a
+  Windows runner, with the payload already staged.
+- The asset check first swallowed half the manifest as a "filename", because
+  `<Logo>Assets\…</Logo>` is element text while the tile logos are quoted
+  attributes.
+
+**Identity `Name` and `Publisher` stay `__MSIX_…__` tokens.** Partner Center
+assigns them; `msix-pack.sh` substitutes them and refuses to pack if any token
+survives, and a guard fails the build if a real value is committed. So a local
+build can never quietly claim the Store identity.
+
+`Wide310x150Logo` is deliberately absent: `icons/` holds only square renders and
+the slot is optional.
+
+### Verification, honestly
+
+`cargo test`/`pnpm test` cover the pure parts (the `capability` arm and its
+ordering, the packaged shim classification, the panel's hint, the manifest
+guards). `msix-pack.sh --stage-only` makes the token substitution testable on a
+Mac — the one step that must not be wrong is the one step needing no Windows.
+CI proves the bundle *builds* and has the right shape.
+
+**Six behaviours are NOT verified, and this channel should not be called done
+until they are.** The local loop for five of them is `winapp run .\dist`, which
+registers a loose-layout package and needs no certificate:
+
+1. **`GIT_ASKPASS`** — git execs this binary and reads a credential from its
+   stdout synchronously, and under MSIX that binary sits in a directory
+   Microsoft describes as "heavily locked down". A successful *launch* proves
+   nothing; test `git credential fill`. This is the highest risk in the channel.
+2. **Whether the package is virtualized** (spec §E), which decides whether the
+   app log and WebView2 `localStorage` move to a per-package private location.
+   Until measured, assume the paths in this doc set may differ here.
+3. **`pgit` from Git Bash / MSYS**, not merely cmd and PowerShell.
+4. **Spawning `git.exe`** from inside a full-trust package.
+5. **WebView2** on a clean Windows 10 with `webviewInstallMode: skip`.
+6. **Whether the Store accepts the manifest** — restricted-capability
+   justification, version format and runtime behaviour all meet reality for the
+   first time at upload.
+
+**One claim in the tree is unconfirmed:** that the MSIX version's fourth part
+must be `0`. `msix-pack.sh` appends `.0` and says so in its own comment. Settle
+it at the first upload and fix the script and spec §E together if it disagrees.
+
+### The manual setup
+
+`scripts/msstore-wizard.sh` walks the eight steps outside this repo.
+Interactive, `--dry-run`-able, run **by the user** — step 1 is a government ID
+check. It automates almost nothing by design; what it carries is the traps:
+
+- **The fee-free account flow exists ONLY from `storedeveloper.microsoft.com`.**
+  Reaching Partner Center any other way serves the legacy flow, which still
+  charges $19.
+- `runFullTrust` is a **restricted** capability: Partner Center requires a
+  written justification.
+- Policy **10.2.4** means the `git` dependency must be the **first line** of the
+  Store description, not a footnote.
+- Policy **10.5.1** requires a privacy policy URL for a Win32/Desktop Bridge
+  product regardless of what it collects — hence `site/src/pages/privacy.astro`,
+  served at `https://www.platypusgit.com/privacy`.
+
+The one thing it does automate is the step where a typo is silent: it turns the
+assigned identity values into the exact `msix-pack.sh` invocation. Those values
+are never written to disk.

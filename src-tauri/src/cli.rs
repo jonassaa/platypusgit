@@ -1279,6 +1279,37 @@ mod tests {
     }
 
     #[test]
+    fn a_packaged_msix_install_is_package_managed() {
+        // A CHARACTERISATION test, not a red-green one: the Microsoft Store
+        // channel stages the SAME pgit.cmd the Scoop zip does, so the existing
+        // `exe_dir/pgit.cmd` probe already classifies a packaged install as
+        // `Package` — which is what stops Settings writing a second, competing
+        // shim into %LOCALAPPDATA% that uninstalling the package would leave
+        // behind. If this ever fails, the MSIX spec's §D conclusion is wrong;
+        // do not "fix" it by changing production code here.
+        //
+        // FORWARD SLASHES, unlike the Scoop cases above: `std::path`'s separator
+        // set is per-target, so on a Unix host a backslashed path is ONE
+        // component and `parent()` yields an empty path — which would compare
+        // unequal to our shim dirs for the wrong reason. `/` is a separator on
+        // both and Windows accepts it, so the "this directory is not one of
+        // ours" comparison is actually exercised here.
+        let app = dirs(&["C:/Users/ada/AppData/Local/PlatypusGit/bin"]);
+        let install = "C:/Program Files/WindowsApps/platypusgit_0.1.2.0_x64__8wekyb3d8bbwe";
+        assert_eq!(
+            classify_sighting(
+                Path::new(&format!("{install}/pgit.cmd")),
+                &app,
+                None,
+                Some(PORTABLE_SHIM_CMD),
+                Path::new(&format!("{install}/platypusgit.exe")),
+                "platypusgit"
+            ),
+            CliShimSource::Package
+        );
+    }
+
+    #[test]
     fn the_portable_shim_names_the_binary_relatively() {
         // Two properties the zip's shim must keep, both invisible until Windows:
         // it must name the exe (or `references_app` stops recognising it, and

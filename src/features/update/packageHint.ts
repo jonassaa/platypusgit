@@ -16,7 +16,11 @@ import type { UpdateCapability } from "@/lib/types";
 export interface PackageHint {
   /** One line on why in-app install is unavailable here. */
   note: string;
-  /** Copy-pasteable upgrade command. */
+  /**
+   * Copy-pasteable upgrade command, or `""` when there is genuinely nothing to
+   * run — `notify-store`, where the Store upgrades the package itself.
+   * `UpdatePanel` renders the command box only when this is non-empty.
+   */
   command: string;
 }
 
@@ -58,6 +62,20 @@ export function packageHint(
       // entry to test/privacy.test.ts's hostname allowlist.
       note: "Updates come from Scoop on this install:",
       command: "scoop update platypusgit",
+    };
+  }
+  if (capability === "notify-store") {
+    return {
+      // The one hint with an EMPTY command, and the reason is in the Rust enum:
+      // the Store updates this install by itself. Naming `winget upgrade` here
+      // would send a Store user to a channel they are not on; naming a download
+      // would send them to a file they cannot install over the package.
+      //
+      // UpdatePanel renders the command box only for a non-empty command, so
+      // this arm shows its note alone. Returning `null` instead would be wrong:
+      // that is "nothing useful to say", and there IS something to say.
+      note: "This install came from the Microsoft Store, which keeps it up to date:",
+      command: "",
     };
   }
   if (capability !== "notify") return null;

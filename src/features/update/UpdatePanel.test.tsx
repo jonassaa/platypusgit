@@ -132,6 +132,24 @@ describe("UpdatePanel — capability + platform arms", () => {
     );
   });
 
+  it("notify-store on Windows shows the note and NO command box", () => {
+    // The fifth capability, and the only one with nothing to copy: the Store
+    // updates the package itself. An empty code box with a copy button that
+    // copies "" is worse than no box, so the command half must not render —
+    // while the note, which is the whole hint here, must.
+    platformMock.value = "windows";
+    seed({ capability: "notify-store" });
+    render(<UpdatePanel />);
+    expect(screen.getByTestId("pg-update-action")).toHaveTextContent(
+      /view release/i,
+    );
+    expect(screen.getByTestId("pg-update-action")).not.toHaveTextContent(
+      /install/i,
+    );
+    expect(screen.getByText(/Microsoft Store/)).toBeInTheDocument();
+    expect(screen.queryByTestId("pg-update-pkg-hint")).toBeNull();
+  });
+
   it("notify-scoop on Windows offers 'View release' AND scoop update", () => {
     // The fourth capability, and the only one that takes a platform OFF the
     // self-update path: an in-app install here would run the per-machine .msi

@@ -2,8 +2,8 @@ use std::cell::Cell;
 
 use platypusgit_lib::error::AppError;
 use platypusgit_lib::update::{
-    capability, compute_available, discover, is_newer, is_scoop_layout, parse_release, InstallEnv,
-    ReleaseMeta, UpdateCapability,
+    capability, compute_available, discover, is_msix_packaged, is_newer, is_scoop_layout,
+    parse_release, InstallEnv, ReleaseMeta, UpdateCapability,
 };
 
 #[test]
@@ -354,4 +354,70 @@ fn parse_release_maps_github_json() {
 #[test]
 fn parse_release_rejects_json_without_tag() {
     assert!(parse_release(r#"{"message":"Not Found"}"#).is_err());
+}
+
+#[test]
+fn capability_takes_a_packaged_install_off_the_self_update_path() {
+    // An MSIX is read-only after install and Windows REFUSES TO LAUNCH a package
+    // whose files were tampered with. So unlike every other notify variant, this
+    // one is not about giving better advice — self-updating here breaks the app.
+    assert_eq!(
+        capability(InstallEnv {
+            msix_packaged: true,
+            ..InstallEnv::new("windows")
+        }),
+        UpdateCapability::NotifyStore
+    );
+    // ...and the .msi install it is distinguished FROM keeps self-updating.
+    assert_eq!(
+        capability(InstallEnv::new("windows")),
+        UpdateCapability::SelfUpdate
+    );
+}
+
+#[test]
+fn capability_prefers_the_store_over_scoop_when_both_look_true() {
+    // The two are mutually exclusive in practice (Scoop unpacks a zip; it does
+    // not register a package), so this pins the ORDER rather than a real state:
+    // if a future probe ever gets it wrong, fail toward the answer with a broken
+    // app behind it, not toward `scoop update` on an install Scoop does not own.
+    assert_eq!(
+        capability(InstallEnv {
+            msix_packaged: true,
+            scoop_managed: true,
+            ..InstallEnv::new("windows")
+        }),
+        UpdateCapability::NotifyStore
+    );
+}
+
+#[test]
+#[cfg(not(windows))]
+fn the_identity_probe_is_false_off_windows() {
+    // The real probe cannot be exercised here — that needs a registered package
+    // (see the plan's Task 2 Windows verification). What IS worth pinning is that
+    // the non-Windows arm exists and is constant: `capability` must never receive
+    // a `true` it cannot mean.
+    assert!(!is_msix_packaged());
+}
+
+#[test]
+fn capability_ignores_msix_off_windows() {
+    // Mirror of the apt and Scoop cases: the caller never probes off Windows, so
+    // pin that a stray `true` cannot invent a Store install elsewhere.
+    assert_eq!(
+        capability(InstallEnv {
+            msix_packaged: true,
+            ..InstallEnv::new("macos")
+        }),
+        UpdateCapability::Notify
+    );
+    assert_eq!(
+        capability(InstallEnv {
+            msix_packaged: true,
+            is_appimage: true,
+            ..InstallEnv::new("linux")
+        }),
+        UpdateCapability::SelfUpdate
+    );
 }

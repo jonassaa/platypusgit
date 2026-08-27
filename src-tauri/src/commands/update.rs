@@ -22,18 +22,25 @@ pub async fn check_for_update() -> AppResult<UpdateInfo> {
 /// Whether this install can self-update or should notify + defer to a package
 /// manager. Computed from the build's OS, the `APPIMAGE` env var, and — per
 /// platform — whether a package manager owns this install: the apt repository
-/// from #187 on Linux, Scoop on Windows.
+/// from #187 on Linux, Scoop or the Microsoft Store on Windows.
 ///
-/// Both probes are one `Path::exists`, deliberately: no process spawn, so there
-/// is nothing to route through `proc.rs`, nothing to mock, and no reason for
-/// this command to stop being synchronous. Each is skipped entirely off its own
-/// platform rather than relying on a path simply not existing there.
+/// Every probe is cheap and synchronous — a `Path::exists` or a single API call,
+/// never a process spawn — so there is nothing to route through `proc.rs`,
+/// nothing to mock, and no reason for this command to stop being synchronous.
+/// Each is skipped entirely off its own platform rather than relying on a path
+/// simply not existing there.
 ///
 /// The Scoop probe is two cheap checks that must BOTH hold: the exe sits in
 /// Scoop's `apps/<name>/<version>` layout, and Scoop's own `manifest.json` is
 /// beside it. The layout alone would also match a hand-made directory tree that
 /// happened to be shaped like one, and the file alone says nothing about which
 /// app it describes.
+///
+/// The MSIX probe is an API call rather than a filesystem check, because package
+/// identity is a property of the PROCESS and not of a path — see
+/// `update::is_msix_packaged` for why the tempting `WindowsApps` path test is
+/// wrong. It is guarded by `os == "windows"` for the same reason the others are:
+/// the answer is meaningless elsewhere.
 #[tauri::command]
 pub fn get_update_capability() -> AppResult<UpdateCapability> {
     let os = std::env::consts::OS;
@@ -45,11 +52,13 @@ pub fn get_update_capability() -> AppResult<UpdateCapability> {
                     .parent()
                     .is_some_and(|dir| dir.join(update::SCOOP_MANIFEST_FILE).exists())
         });
+    let msix_packaged = os == "windows" && update::is_msix_packaged();
     Ok(update::capability(update::InstallEnv {
         // `APPIMAGE=` (set but empty) is not an AppImage install.
         is_appimage: std::env::var("APPIMAGE").is_ok_and(|v| !v.is_empty()),
         apt_managed,
         scoop_managed,
+        msix_packaged,
         ..update::InstallEnv::new(os)
     }))
 }

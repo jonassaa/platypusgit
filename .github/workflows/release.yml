@@ -327,6 +327,135 @@ jobs:
           fi
           echo "msi_sig=$sig" >> "$GITHUB_OUTPUT"
 
+  # The Microsoft Store package.
+  #
+  # A SEPARATE job from `windows` on purpose, on three counts: it builds twice
+  # (x64 + arm64), it needs NO signing key at all — the Store re-signs, which is
+  # the whole economics of this channel — and it must not be able to break the
+  # .msi or the portable zip if makeappx or the manifest is wrong. Nothing here
+  # feeds latest.json either: a Store install never self-updates
+  # (update::capability returns NotifyStore), so there is no signature to read.
+  #
+  # Spec: docs/superpowers/specs/2026-08-27-msix-store-spec.md §B
+  msix:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Inject version ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          tmp="$(mktemp)"
+          jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
+          jq --arg v "$v" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
+          sed -i -E "s/^version = \".*\"/version = \"$v\"/" src-tauri/Cargo.toml
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # `--no-bundle` twice over: the package payload is just the exe, and it
+      # produces NO updater artifact — so this job needs neither
+      # TAURI_SIGNING_PRIVATE_KEY nor an exception to the hard-error rule that
+      # key exists for. The msstore config sets webviewInstallMode to `skip`,
+      # because a package runs no bootstrapper.
+      - name: Build x64
+        run: pnpm tauri build --no-bundle --target x86_64-pc-windows-msvc --config src-tauri/tauri.msstore.conf.json
+
+      - name: Build arm64
+        run: pnpm tauri build --no-bundle --target aarch64-pc-windows-msvc --config src-tauri/tauri.msstore.conf.json
+
+      - name: Stage and pack both architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          sh scripts/msix-pack.sh --version "$v" --arch x64 \
+            --exe src-tauri/target/x86_64-pc-windows-msvc/release/platypusgit.exe \
+            --out msix-x64
+          sh scripts/msix-pack.sh --version "$v" --arch arm64 \
+            --exe src-tauri/target/aarch64-pc-windows-msvc/release/platypusgit.exe \
+            --out msix-arm64
+
+      # `/bv` is NOT optional: without it makeappx stamps the bundle 0.0.0.0,
+      # which is a lower version than anything already in the Store and is
+      # rejected as a downgrade. The inner packages carry the real version from
+      # msix-pack.sh; the bundle needs telling separately.
+      - name: Bundle x64 + arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p msix-bundle
+          cp msix-x64.msix msix-arm64.msix msix-bundle/
+          makeappx.exe bundle /d msix-bundle /bv "$v.0" /p PlatypusGit.msixbundle /o
+
+      # The .msi needs no equivalent gate because the bundler owns its shape.
+      # This one does: the payload is assembled by a script of ours, and a bundle
+      # with the wrong shape is otherwise only discovered at upload — days later,
+      # as a rejected submission. Mirrors the portable zip's shape gate above.
+      - name: Gate — the bundle has the shape the Store needs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'PlatypusGit.msixbundle')) { throw 'no msixbundle produced' }
+          $out = 'bundle-check'
+          Expand-Archive -Path 'PlatypusGit.msixbundle' -DestinationPath $out -Force
+          foreach ($arch in 'x64', 'arm64') {
+              $pkg = Join-Path $out "msix-$arch.msix"
+              if (-not (Test-Path $pkg)) { throw "msixbundle is missing the $arch package" }
+              $inner = "inner-$arch"
+              Expand-Archive -Path $pkg -DestinationPath $inner -Force
+              foreach ($f in 'platypusgit.exe', 'pgit.cmd', 'AppxManifest.xml') {
+                  if (-not (Test-Path (Join-Path $inner $f))) {
+                      throw "$arch package has no $f at its root"
+                  }
+              }
+              $manifest = Get-Content (Join-Path $inner 'AppxManifest.xml') -Raw
+              if ($manifest -match '__MSIX_') {
+                  throw "$arch manifest carries an unsubstituted token"
+              }
+              if ($manifest -notmatch 'Alias="pgit\.exe"') {
+                  throw "$arch manifest lost the pgit alias, so the package would ship no CLI"
+              }
+              if ($manifest -notmatch "ProcessorArchitecture=`"$arch`"") {
+                  throw "$arch package declares a different architecture"
+              }
+          }
+          Write-Host 'msixbundle OK'
+
+      - name: Attach msixbundle to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          files: PlatypusGit.msixbundle
+          fail_on_unmatched_files: true
+
   linux:
     needs: version
     runs-on: ubuntu-22.04
