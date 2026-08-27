@@ -1,5 +1,5 @@
 import React from "react";
-import { PGEmpty, PGSpinner } from "@/design";
+import { PGEmpty, PGSpinner, PGToggle } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { blameFile } from "@/lib/tauri";
@@ -8,7 +8,7 @@ import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { PGPane, FocusableScroll } from "@/features/keymap";
 import { useSyntax, type SyntaxToken } from "@/lib/syntax";
 import { buildLineSpans } from "@/lib/lineSpans";
-import type { BlameLine } from "@/lib/types";
+import type { BlameLine, BlameResult } from "@/lib/types";
 
 /**
  * One blame line's text, highlighted when tokens for it have arrived. Bare
@@ -27,15 +27,38 @@ function BlameText({ text, syntax }: { text: string; syntax?: SyntaxToken[] }) {
   );
 }
 
+/**
+ * git's own marks for a line an ignored revision touched: `?` when the
+ * attribution beside it is a guess, `*` when nothing earlier can own the line
+ * at all. Empty unless the repository asked for them
+ * (`blame.markIgnoredLines` / `blame.markUnblamableLines`) — git only marks
+ * when asked, and a mark nobody configured would read as a defect in the line.
+ */
+function markFor(l: BlameLine): string {
+  if (l.unblamable) return "*";
+  if (l.ignored) return "?";
+  return " ";
+}
+
 export function BlameScreen() {
   const repo = useRepoStore((s) => s.current);
   const intent = useNavStore((s) => s.intent);
   const clearIntent = useNavStore((s) => s.clearIntent);
 
   const [path, setPath] = React.useState<string | null>(null);
-  const [lines, setLines] = React.useState<BlameLine[]>([]);
+  const [result, setResult] = React.useState<BlameResult | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /**
+   * Honour `blame.ignoreRevsFile` — git's own default — until the user says
+   * otherwise.
+   *
+   * Deliberately NOT a persisted setting. The right default is git's behaviour
+   * every time you open a file; a remembered "off" would silently contradict
+   * the repository's own `.git-blame-ignore-revs` in some later session, with
+   * nothing on screen explaining why the formatter owns every line.
+   */
+  const [ignoreRevs, setIgnoreRevs] = React.useState(true);
 
   React.useEffect(() => {
     if (intent?.kind === "blame") {
@@ -49,12 +72,14 @@ export function BlameScreen() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    blameFile(repo.id, path)
-      .then((l) => { if (!cancelled) setLines(l); })
+    blameFile(repo.id, path, ignoreRevs)
+      .then((r) => { if (!cancelled) setResult(r); })
       .catch((e) => { if (!cancelled) setError(appErrorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [repo?.id, path]);
+  }, [repo?.id, path, ignoreRevs]);
+
+  const lines = result?.lines ?? [];
 
   // Blame already holds the whole file, so the tokens come from joining it back
   // up rather than a second read. Memoized: a new string identity on every
@@ -76,22 +101,78 @@ export function BlameScreen() {
     );
   }
 
+  const marked = result?.markIgnoredLines || result?.markUnblamableLines;
+
   return (
     <PGPane id="blame.content" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <DeepViewHeader crumbs={[`Blame — ${path}`]} />
+      {/* The toggle exists only where an ignore-revs file does: a repository
+          without one would gain a control that changes nothing. */}
+      {result?.ignoreRevsFile && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "6px 12px",
+            borderBottom: "1px solid var(--border-0)",
+            flexShrink: 0,
+          }}
+        >
+          <PGToggle
+            testId="blame-ignore-revs-toggle"
+            checked={ignoreRevs}
+            onChange={setIgnoreRevs}
+            label={`Ignore revisions in ${result.ignoreRevsFile}`}
+          />
+          <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-11)" }}>
+            {ignoreRevs
+              ? "lines a listed revision only reformatted are blamed on whoever wrote them"
+              : "showing the raw blame — listed revisions own their lines"}
+          </span>
+        </div>
+      )}
+      {result?.ignoreRevsError && (
+        <div
+          data-testid="blame-ignore-revs-warning"
+          style={{
+            padding: "6px 12px",
+            color: "var(--git-modified)",
+            fontSize: "var(--fs-11)",
+            borderBottom: "1px solid var(--border-0)",
+            flexShrink: 0,
+          }}
+        >
+          {result.ignoreRevsError}
+        </div>
+      )}
       {loading && <div style={{ padding: 12 }}><PGSpinner /></div>}
       {error && <div style={{ padding: 12, color: "var(--git-removed)" }}>{error}</div>}
-      <FocusableScroll style={{
+      <FocusableScroll testId="blame-content" style={{
         flex: 1,
         fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)",
       }}>
         {lines.map((l, i) => (
-          <div key={l.lineNo} style={{
+          <div key={l.lineNo} data-testid="blame-line" style={{
             display: "flex",
             gap: 12,
             padding: "0 12px",
             whiteSpace: "pre",
           }}>
+            {marked && (
+              <span
+                title={
+                  l.unblamable
+                    ? "Added by an ignored revision — no earlier commit can own this line"
+                    : l.ignored
+                      ? "Changed by an ignored revision — this attribution is git's best guess"
+                      : undefined
+                }
+                style={{ width: 8, color: "var(--git-modified)" }}
+              >
+                {markFor(l)}
+              </span>
+            )}
             <span style={{ width: 56, color: "var(--fg-3)" }}>{l.shortOid}</span>
             <span style={{ width: 120, color: "var(--fg-3)", overflow: "hidden", textOverflow: "ellipsis" }}>
               {l.author}

@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{BlameLine, DiffKind, FileDiff, RepoId, WorkdirDiff},
+    git::types::{BlameResult, DiffKind, FileDiff, RepoId, WorkdirDiff},
     state::AppState,
 };
 
@@ -243,16 +243,23 @@ pub async fn diff_ref_to_workdir(
     .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Blame one file as of HEAD (#253).
+///
+/// `ignore_revs` defaults to TRUE — git's own behaviour when the repository
+/// configures `blame.ignoreRevsFile`. The Blame screen passes `false` for the
+/// un-ignored view behind its toggle.
 #[tauri::command]
 pub async fn blame_file(
     state: State<'_, AppState>,
     repo_id: String,
     path: String,
-) -> AppResult<Vec<BlameLine>> {
+    ignore_revs: Option<bool>,
+) -> AppResult<BlameResult> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let path = PathBuf::from(path);
-    tokio::task::spawn_blocking(move || backend.blame_file(&repo_id, &path))
+    let ignore_revs = ignore_revs.unwrap_or(true);
+    tokio::task::spawn_blocking(move || backend.blame_file(&repo_id, &path, ignore_revs))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

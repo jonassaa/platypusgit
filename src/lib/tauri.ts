@@ -6,7 +6,7 @@ import type {
   AuthorOverride,
   BisectMark,
   BisectStatus,
-  BlameLine,
+  BlameResult,
   BranchInfo,
   BulkFastForward,
   CliInstallOutcome,
@@ -14,6 +14,7 @@ import type {
   DeleteFailure,
   CliShimStatus,
   CommitInfo,
+  CommitNote,
   CommitResult,
   ConflictSides,
   DiagnosticsReport,
@@ -1174,11 +1175,32 @@ export async function openInTerminal(
   return invoke<void>("open_in_terminal", { repoId, relativePath });
 }
 
+/**
+ * Blame one file as of HEAD (#253).
+ *
+ * `ignoreRevs` defaults to git's own behaviour — a configured
+ * `blame.ignoreRevsFile` is honoured. Pass `false` for the un-ignored truth
+ * behind the Blame screen's toggle.
+ */
 export async function blameFile(
   repoId: string,
   path: string,
-): Promise<BlameLine[]> {
-  return invoke<BlameLine[]>("blame_file", { repoId, path });
+  ignoreRevs = true,
+): Promise<BlameResult> {
+  return invoke<BlameResult>("blame_file", { repoId, path, ignoreRevs });
+}
+
+/**
+ * Every `refs/notes/*` note on ONE commit (#253).
+ *
+ * Called lazily for the SELECTED commit only — never per log row. No note is
+ * an empty array, at every level of absence.
+ */
+export async function commitNotes(
+  repoId: string,
+  oid: string,
+): Promise<CommitNote[]> {
+  return invoke<CommitNote[]>("commit_notes", { repoId, oid });
 }
 
 export async function takeLaunchIntent(): Promise<LaunchIntent | null> {

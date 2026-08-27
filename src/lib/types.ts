@@ -459,6 +459,41 @@ export interface BlameLine {
   timestamp: number;
   summary: string;
   content: string;
+  /**
+   * git's `?` mark — the line was changed by an ignored revision and git could
+   * only guess which earlier commit to hand it to (#253). Only ever true when
+   * `blame.markIgnoredLines` is on, because git gates the porcelain key on it.
+   */
+  ignored: boolean;
+  /** git's `*` mark — the ignored revision ADDED the line, so nothing earlier
+   * can own it. Gated on `blame.markUnblamableLines`. */
+  unblamable: boolean;
+}
+
+/**
+ * One blame run plus what the screen needs to explain it (#253).
+ *
+ * `ignoreRevsFile === null` means the repository configured none, which is
+ * what tells the Blame screen there is no toggle worth showing.
+ * `ignoreRevsError` is a WARNING, never a failure: the lines beside it are
+ * still a correct blame.
+ */
+export interface BlameResult {
+  lines: BlameLine[];
+  ignoreRevsFile: string | null;
+  ignoreRevsApplied: boolean;
+  markIgnoredLines: boolean;
+  markUnblamableLines: boolean;
+  ignoreRevsError: string | null;
+}
+
+/** One `git notes` entry attached to a commit (#253). Read-only. */
+export interface CommitNote {
+  /** Full ref the note lives on, e.g. `refs/notes/commits`. */
+  refName: string;
+  /** `refName` with `refs/notes/` stripped — what goes on the badge. */
+  label: string;
+  message: string;
 }
 
 /** CLI launch request (pgit [subcommand] [path]) — mirrors Rust cli::LaunchIntent. */

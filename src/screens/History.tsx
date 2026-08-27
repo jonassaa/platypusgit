@@ -36,6 +36,7 @@ import { headAncestryOf } from "@/features/commits/headAncestry";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
+import { CommitNotes } from "@/features/commits/CommitNotes";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { useNavStore } from "@/features/nav/useNavStore";
@@ -897,6 +898,13 @@ export function HistoryScreen() {
           date={relativeTime(current.timestamp)}
           parents={current.parents.map(shortSha)}
         />
+        {/* Notes hang off the commit, not off the log page: read lazily for
+            THIS commit, so the paged walk costs nothing (#253). Inside the
+            message scroll region, so a long note scrolls with the body rather
+            than pushing the action row out of the panel. */}
+        <div style={{ padding: "0 12px 12px" }}>
+          <CommitNotes oid={current.oid} />
+        </div>
       </FocusableScroll>
       <CommitActionRow commit={current} />
     </>
