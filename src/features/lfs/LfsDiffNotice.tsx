@@ -6,7 +6,7 @@
 
 import { PGBadge, PGIcon } from "@/design";
 import type { FileDiff } from "@/lib/types";
-import { formatBytes } from "./useLfsStore";
+import { formatBytes } from "@/lib/bytes";
 
 /** "1.4 MB → 2.1 MB", or the one side that exists for an add/delete. */
 export function lfsSizeSummary(diff: FileDiff): string {

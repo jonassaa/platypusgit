@@ -43,6 +43,8 @@ import {
   statusMark,
 } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
+import { ImageDiffOrEmpty, ImageDiffView } from "@/features/diff/ImageDiffView";
+import { diffImageSides } from "@/features/diff/useImagePreviews";
 import {
   clickSelection,
   emptySelection,
@@ -1220,18 +1222,66 @@ export function RepoBrowserScreen() {
                 })}
               />
             )}
+            {/* This pane compares WorktreeToHead, the same two sides its syntax
+                hook reads — so an image previews here instead of dead-ending
+                (#224). */}
             {selectedFile && !diffLoading && diff?.binary && (
-              <PGEmpty icon="file" title="Binary file">
+              <ImageDiffOrEmpty
+                repoId={repo?.id ?? null}
+                path={diff.path}
+                sides={diffImageSides({
+                  old: { kind: "rev", rev: "HEAD" },
+                  new: { kind: "worktree" },
+                  oldPath: diff.oldPath,
+                })}
+                title="Binary file"
+              >
                 Binary diffs aren&apos;t shown.
-              </PGEmpty>
+              </ImageDiffOrEmpty>
             )}
             {selectedFile && !diffLoading && diff?.lfs && (
-              <LfsDiffNotice diff={diff} />
+              <>
+                <LfsDiffNotice diff={diff} />
+                <ImageDiffView
+                  repoId={repo?.id ?? null}
+                  path={diff.path}
+                  sides={diffImageSides({
+                    old: { kind: "rev", rev: "HEAD" },
+                    new: { kind: "worktree" },
+                    oldPath: diff.oldPath,
+                  })}
+                />
+              </>
             )}
+            {/* CONTENT, not a diff: an unmodified file, or one browsed at a
+                revision. One panel, and no "Old"/"New" — there is one version
+                because one version was asked for. */}
             {selectedFile && !diffLoading && fileContent?.binary && (
-              <PGEmpty icon="file" title="Binary file">
+              <ImageDiffOrEmpty
+                repoId={repo?.id ?? null}
+                path={fileContent.path}
+                sides={[
+                  {
+                    key: "file",
+                    // Just "File": the toolbar above already says which
+                    // revision is being browsed, and a 40-character oid would
+                    // not fit a panel heading.
+                    label: "File",
+                    tone: "neutral",
+                    // The same side the content came from, so the preview and
+                    // the byte count below it describe one blob.
+                    source:
+                      browsingRev && rev
+                        ? { kind: "rev", revspec: rev }
+                        : fileContent.fromHead
+                          ? { kind: "rev", revspec: "HEAD" }
+                          : { kind: "worktree" },
+                  },
+                ]}
+                title="Binary file"
+              >
                 Binary contents aren&apos;t shown.
-              </PGEmpty>
+              </ImageDiffOrEmpty>
             )}
             {selectedFile && !diffLoading && fileContent && !fileContent.binary &&
               fileContent.text !== null && (

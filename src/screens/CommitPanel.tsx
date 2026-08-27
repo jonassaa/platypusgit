@@ -71,6 +71,8 @@ import {
 } from "@/lib/selection";
 import { getDiff, getLogPage } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
+import { ImageDiffOrEmpty, ImageDiffView } from "@/features/diff/ImageDiffView";
+import { diffImageSides } from "@/features/diff/useImagePreviews";
 import {
   flattenDiffRows,
   hunkExtentRows,
@@ -587,6 +589,15 @@ export function CommitPanelScreen() {
         ? { kind: "rev", rev: "HEAD", path: diff?.oldPath }
         : { kind: "index" },
     new: selected?.side === "staged" ? { kind: "index" } : { kind: "worktree" },
+  });
+
+  // The same pair, for the image preview: one derivation, so the preview and the
+  // tokens can never describe different revisions of the same file.
+  const commitPanelImageSides = diffImageSides({
+    old:
+      selected?.side === "staged" ? { kind: "rev", rev: "HEAD" } : { kind: "index" },
+    new: selected?.side === "staged" ? { kind: "index" } : { kind: "worktree" },
+    oldPath: diff?.oldPath,
   });
 
   // ── Windowed diff rows ───────────────────────────────────────────────────
@@ -1463,12 +1474,29 @@ export function CommitPanelScreen() {
               {diffError}
             </div>
           )}
+          {/* The two sides the diff was computed from — IndexToHead for a
+              staged row, WorktreeToIndex otherwise — so an image previews the
+              same pair the hunks describe (#224). */}
           {!diffLoading && !diffError && diff && diff.binary && (
-            <PGEmpty icon="file" title="Binary file">
+            <ImageDiffOrEmpty
+              repoId={repo?.id ?? null}
+              path={diff.path}
+              sides={commitPanelImageSides}
+              title="Binary file"
+            >
               Binary diffs aren&apos;t shown.
-            </PGEmpty>
+            </ImageDiffOrEmpty>
           )}
-          {!diffLoading && !diffError && diff?.lfs && <LfsDiffNotice diff={diff} />}
+          {!diffLoading && !diffError && diff?.lfs && (
+            <>
+              <LfsDiffNotice diff={diff} />
+              <ImageDiffView
+                repoId={repo?.id ?? null}
+                path={diff.path}
+                sides={commitPanelImageSides}
+              />
+            </>
+          )}
           {!diffLoading && !diffError && isTextualDiff(diff) && diff &&
             diff.hunks.length === 0 && (
               <PGEmpty icon="file" title="No diff">

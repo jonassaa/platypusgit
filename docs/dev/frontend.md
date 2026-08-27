@@ -54,6 +54,33 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   type back — silent truncation is worse than the overflow.
 - **Gate text rendering on `isTextualDiff(diff)`, not `!diff.binary`** (#93) —
   an LFS pointer is honestly text; the surfaces render `LfsDiffNotice` instead.
+- **The complement of `isTextualDiff` is not automatically a dead end** (#224).
+  When the binary is an IMAGE, all five diff surfaces render the shared
+  `ImageDiffView` (`features/diff/`) — old beside new, each with pixel
+  dimensions and byte size, plus the delta of both; an added or deleted file
+  shows the one side that exists; the merge resolver's binary chooser gets the
+  same pair above its two buttons, which is where it is worth the most.
+  * **One component, and it owns the empty state too.** `fallback` is a PROP,
+    because "is there anything to preview" is the question the component
+    answers. A PDF, a font, an archive — every binary #224 left out of scope —
+    keeps the exact sentence its surface printed before. A too-large blob, an
+    unfetched LFS object and an SVG say something more specific instead: a
+    silent nothing reads as a bug.
+  * **Sides come from `diffImageSides`**, built from the same `SideSource` pair
+    the surface already computes for `useDiffSyntax`, so the preview and the
+    coloured text can never disagree about which revision they show. A fifth
+    surface gets previews by passing the sides it already had. The merge chooser
+    is the exception and names index STAGES 2/3 — neither side is in any tree
+    while the merge is unresolved.
+  * **Nothing is fetched speculatively.** `useImagePreviews` is inert without a
+    path, and every surface mounts it only for the selected file. That is what
+    lets the backend's ceiling be as generous as it is.
+  * **Bytes arrive as base64 and go straight into a `data:` URL** — no decode on
+    this side, and a preview makes no request of any kind (#226). Dimensions
+    come from the `<img>`'s `naturalWidth/Height` on load, not from a decoder:
+    the webview already knows, and until it fires there simply are no
+    dimensions (never `0 × 0`). The backdrop is a checkerboard built from
+    `--bg-1`/`--bg-2` so transparency reads in both themes (#236).
 - **Diff CODE is selectable; diff CHROME is not.** `body` is `user-select: none`
   (native desktop feel), so each row's code cell opts back in with
   `.pg-selectable` (`index.css`) while the line-number cells and the `+`/`−`

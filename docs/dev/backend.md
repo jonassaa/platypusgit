@@ -233,6 +233,55 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   does not match `README.md`, so one test over both trees would be skipped by
   exactly the change it polices. See `docs/dev/testing.md`.
 
+## Image previews: the only reader that returns BYTES (#224)
+
+- **`read_image_preview` is the fourth file reader**, and the only one that can
+  feed an `<img>`: `FileContent.text` is `None` for a binary blob *by contract*,
+  so `read_file_content`, `_at_rev` and `_at_index` structurally cannot. It
+  takes a `BlobSource` (`worktree` / `index` / `rev` / conflict `stage`) rather
+  than a nullable revspec — a sentinel meaning three things is how call sites
+  get it wrong — and answers `AppResult<Option<ImagePreview>>`.
+- **Bytes cross IPC as base64, in the ordinary JSON payload.** Tauri serialises
+  a `Vec<u8>` as a JSON array of decimal numbers, ~5 bytes on the wire per byte
+  of image, so raw bytes were never the cheap option. The alternatives were a
+  raw `tauri::ipc::Response` (cannot also carry the sniffed media type, and
+  steps outside the `AppResult<T>` contract) and a custom URI scheme (a protocol
+  registration, a scope and a CSP, for a payload the ceiling already bounds).
+  Base64 costs ~1.33x and lands as the exact string a `data:` URL wants, so the
+  frontend concatenates it into an `src` with no decode and no second copy.
+- **The extension never decides.** `git/image.rs::sniff` reads magic bytes only,
+  and every rule checks enough of the header to be a real answer — a truncated
+  `\x89PNG` is `NotAnImage`, `BM` needs its reserved field zero, an ICONDIR
+  needs a non-zero image count. A repository is untrusted input, and a broken
+  `<img>` is worse than a sentence.
+- **SVG is recognised and REFUSED**, as its own `UnsupportedReason::Svg` so the
+  UI can say so rather than looking broken. It is the one format on the list
+  that is not inert (script, `<foreignObject>`, external `href`/`url()`,
+  `@import`), and `tauri.conf.json` ships `"csp": null` — so there is nothing
+  behind whatever the engine's `<img>` secure-static-mode does, and one engine
+  bug or one refactor to inline SVG is script execution against unrestricted
+  IPC. Sanitizing XML with a text scan is not a boundary worth pretending to
+  have. The argument lives in `git/image.rs`'s module doc; change it there.
+- **The ceiling is applied to the DECLARED size** — `metadata().len()` for the
+  worktree, `Blob::size()` for a blob — so an oversized asset is never read,
+  never encoded and never crosses IPC. It comes back as `TooLarge` carrying the
+  size and the limit. Sniffing first and measuring after would defeat the point.
+- **The worktree source does NOT fall back to HEAD**, unlike `read_file_content`.
+  A preview *pair* asks for each side by name; the fallback would paint the old
+  image into the "new" slot and claim a delete changed nothing.
+- **An LFS pointer resolves to its object by PATH**, not by shelling out:
+  `image::lfs_object_path` builds git-lfs's own `objects/aa/bb/<oid>` fan-out
+  under `lfs.storage` (default `.git/lfs`). Asking the `git lfs` binary would
+  refuse a perfectly readable object on a machine where git-lfs is not
+  installed, and it would put a spawn on a preview path. The oid comes from a
+  pointer file in an untrusted repository, so the builder refuses anything that
+  is not plain lowercase hex. An object that is not there answers `LfsMissing`
+  — never the pointer's own three lines.
+- Absence stays a **state** on every source (`Ok(None)`), the #146 rule: an
+  added file has no old side. A bad revspec or an unknown repository still
+  errors. Pinned by `tests/image_preview.rs`; the sniffing table is unit-tested
+  in `git/image.rs` with no repository at all, the `reveal.rs` model.
+
 ## Signing: one chain for commits and tags (#61 D6, #132)
 
 - **One chain, two callers:** `libgit2.rs::sign_payload` =

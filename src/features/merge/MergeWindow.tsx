@@ -31,6 +31,7 @@ import type { ConflictSides, FileStatus } from "@/lib/types";
 import { isConflicted } from "@/lib/derive";
 import { appErrorMessage } from "@/lib/errors";
 import { eventToChord, formatChord } from "@/features/keymap/chord";
+import { ImageDiffView } from "@/features/diff/ImageDiffView";
 import { buildMergeModel } from "./mergeModel";
 import { MergeBody, type MergeBodyHandle } from "./MergeBody";
 import type { RegionState } from "./resultEditor";
@@ -605,6 +606,10 @@ function ChooserPanel({
       data-testid="merge-chooser"
       style={{
         flex: 1,
+        minHeight: 0,
+        // The previews below can be taller than the pane; the buttons must stay
+        // reachable rather than being pushed off the bottom.
+        overflow: "auto",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -613,7 +618,36 @@ function ChooserPanel({
         color: "var(--fg-2)",
       }}
     >
-      <PGIcon name="file" size={32} />
+      {/* Where a preview is worth the most (#224): the chooser is otherwise two
+          buttons and no way to tell which side is which. `ours` and `theirs` are
+          index stages 2 and 3 — neither is in any tree while the merge is
+          unresolved, so nothing else can name them. Falls back to the icon this
+          panel always showed when the conflict is not over an image. */}
+      <div style={{ alignSelf: "stretch", minWidth: 0, maxWidth: 900, margin: "0 auto" }}>
+        <ImageDiffView
+          repoId={repoId}
+          path={sides.binary ? path : null}
+          sides={[
+            {
+              key: "ours",
+              label: "Ours (current)",
+              tone: "neutral",
+              source: { kind: "stage", stage: 2 },
+            },
+            {
+              key: "theirs",
+              label: "Theirs (incoming)",
+              tone: "neutral",
+              source: { kind: "stage", stage: 3 },
+            },
+          ]}
+          fallback={
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <PGIcon name="file" size={32} />
+            </div>
+          }
+        />
+      </div>
       <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-13)" }}>
         {sides.binary
           ? "Binary file — pick a side"

@@ -31,6 +31,8 @@ import {
 } from "@/features/diff/useDiffGaps";
 import { isTextualDiff, statusMark } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
+import { ImageDiffOrEmpty, ImageDiffView } from "@/features/diff/ImageDiffView";
+import { diffImageSides } from "@/features/diff/useImagePreviews";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import { getDiff } from "@/lib/tauri";
 import { useDiffSyntax } from "@/lib/syntax";
@@ -554,14 +556,40 @@ export function DiffViewerScreen() {
               <span data-testid="diff-error">{diffError}</span>
             </PGEmpty>
           )}
+          {/* An image previews here instead of dead-ending (#224); everything
+              else keeps the empty state. Same sides the syntax hook reads. */}
           {!diffLoading && diff?.binary && (
-            <PGEmpty icon="file" title="Binary file" />
+            <ImageDiffOrEmpty
+              repoId={repo?.id ?? null}
+              path={diff.path}
+              sides={diffImageSides({
+                old: { kind: "rev", rev: "HEAD" },
+                new: { kind: "worktree" },
+                oldPath: diff.oldPath,
+              })}
+              title="Binary file"
+            />
           )}
           {/* An LFS pointer is TEXT, so `binary` is honestly false — without this
               the pane would render "2 lines changed" for a multi-megabyte asset
               (#93). `isTextualDiff` is the shared gate; the notice is the shared
               replacement. */}
-          {!diffLoading && diff?.lfs && <LfsDiffNotice diff={diff} />}
+          {!diffLoading && diff?.lfs && (
+            <>
+              <LfsDiffNotice diff={diff} />
+              {/* A pointer to an IMAGE previews the object when it is present
+                  locally, and says so when it is not (#224). */}
+              <ImageDiffView
+                repoId={repo?.id ?? null}
+                path={diff.path}
+                sides={diffImageSides({
+                  old: { kind: "rev", rev: "HEAD" },
+                  new: { kind: "worktree" },
+                  oldPath: diff.oldPath,
+                })}
+              />
+            </>
+          )}
           {!diffLoading && isTextualDiff(diff) && diff && mode === "unified" && (
             <>
             <DiffFindBar find={find} />

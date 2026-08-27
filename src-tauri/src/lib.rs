@@ -215,6 +215,7 @@ pub fn run() {
             commands::repo::list_files_at_rev,
             commands::repo::read_file_content_at_rev,
             commands::repo::read_file_content_at_index,
+            commands::repo::read_image_preview,
             commands::repo::append_gitignore,
             commands::repo::delete_untracked_files,
             commands::repo::open_in_editor,

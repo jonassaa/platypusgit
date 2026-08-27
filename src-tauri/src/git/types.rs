@@ -402,6 +402,81 @@ pub struct FileContent {
     pub size: u64,
 }
 
+/// Which copy of a path an image preview should read (#224).
+///
+/// Spelled out rather than passing a nullable revspec: "the worktree", "the
+/// index" and "the third conflict stage" are not revisions, and a sentinel that
+/// means three things is how call sites get it wrong. Mirrors the frontend's
+/// `ImageSource`, and deliberately NOT `syntax`'s `SideSource` — that one feeds
+/// a text tokenizer, where a conflict stage has nothing to say.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum BlobSource {
+    /// The file on disk. NO fallback to HEAD, unlike `read_file_content`: a
+    /// preview PAIR needs each side to be exactly that side, and the fallback
+    /// would paint the old image into the "new" slot for a deleted file.
+    Worktree,
+    /// The staged blob — stage 0 of the index.
+    Index,
+    /// A committed tree.
+    Rev { revspec: String },
+    /// A conflict stage: 1 base, 2 ours, 3 theirs. The merge resolver's binary
+    /// chooser has no other way to name its two sides — neither is in any tree.
+    Stage { stage: u16 },
+}
+
+/// Why a blob that exists is not being previewed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnsupportedReason {
+    /// The bytes are not any image format a webview displays. Includes every
+    /// binary explicitly out of scope for #224 — PDF, fonts, archives.
+    NotAnImage,
+    /// Recognised as SVG and refused on purpose. See `git/image.rs`.
+    Svg,
+}
+
+/// One side of an image preview (#224).
+///
+/// A tagged union rather than a struct of nullable fields, because the four
+/// outcomes are genuinely different things to render and the UI must not have to
+/// infer which one it got from which fields happen to be set. `Ok(None)` from
+/// the reader is a FIFTH state and means something else again: there is no blob
+/// at that path on that side — an added file's old side, a deleted file's new
+/// one — which every diff surface already renders as "one side only".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ImagePreview {
+    /// Displayable. `data` is standard base64 of the whole blob, ready to be
+    /// concatenated into a `data:` URL — see the command's doc for why base64.
+    Image {
+        path: String,
+        #[serde(rename = "mediaType")]
+        media_type: String,
+        /// Bytes of the image itself, not of the base64.
+        size: u64,
+        data: String,
+    },
+    /// Over `image::MAX_PREVIEW_BYTES`. The bytes were never read: this is
+    /// decided from the blob's declared size, so an enormous asset costs a
+    /// length comparison rather than a copy through IPC.
+    TooLarge { path: String, size: u64, limit: u64 },
+    Unsupported {
+        path: String,
+        size: u64,
+        reason: UnsupportedReason,
+    },
+    /// An LFS pointer whose object has not been fetched into `.git/lfs`.
+    /// Rendering the pointer would show three lines of text where an image
+    /// belongs, so the surfaces say the object is missing instead (#93, #224).
+    LfsMissing {
+        path: String,
+        oid: String,
+        /// The real object's size, from the pointer.
+        size: u64,
+    },
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitOptions {

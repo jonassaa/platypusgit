@@ -32,6 +32,8 @@ import { useDiffFind } from "./useDiffFind";
 import type { FileDiff } from "@/lib/types";
 import { isTextualDiff } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
+import { ImageDiffView } from "./ImageDiffView";
+import { diffImageSides } from "./useImagePreviews";
 
 /**
  * One diff row's text: syntax classes plus intra-line change marks, through the
@@ -519,12 +521,36 @@ export function CommitDiffPanel({
               <PGSkeleton count={14} height={10} gap={5} />
             </div>
           )}
-          {current?.binary && (
-            <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-12)" }}>
-              Binary file — no textual diff.
-            </div>
+          {/* The complement of `isTextualDiff`: everything the row model cannot
+              render. An IMAGE gets previewed here rather than dead-ending
+              (#224); the sentence stays as the fallback for everything else. */}
+          {current && !isTextualDiff(current) && (
+            <>
+              {current.lfs && <LfsDiffNotice diff={current} />}
+              <ImageDiffView
+                repoId={syntaxSides?.repoId ?? null}
+                path={current.path}
+                sides={
+                  syntaxSides
+                    ? diffImageSides({
+                        old: syntaxSides.old,
+                        new: syntaxSides.new,
+                        oldPath: current.oldPath,
+                      })
+                    : []
+                }
+                fallback={
+                  // The LFS notice above already said why there is no text, so
+                  // adding "Binary file" under it would say it twice.
+                  current.lfs ? null : (
+                    <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-12)" }}>
+                      Binary file — no textual diff.
+                    </div>
+                  )
+                }
+              />
+            </>
           )}
-          {current?.lfs && <LfsDiffNotice diff={current} />}
           {win.topPad > 0 && (
             <div data-pg-spacer="top" style={{ height: `${win.topPad}px` }} />
           )}

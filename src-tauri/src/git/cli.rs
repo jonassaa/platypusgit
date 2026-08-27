@@ -8,6 +8,7 @@ use super::{
         DeleteFailure, DiffKind, FileContent,
         BulkFastForward, FastForward,
         FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+        BlobSource, ImagePreview,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
         SubmoduleInfo, TagInfo,
         TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo,
@@ -142,6 +143,14 @@ impl GitBackend for CliBackend {
         _repo_id: &RepoId,
         _path: &Path,
     ) -> AppResult<Option<FileContent>> {
+        Err(AppError::NotImplemented)
+    }
+    fn read_image_preview(
+        &self,
+        _repo_id: &RepoId,
+        _source: &BlobSource,
+        _path: &Path,
+    ) -> AppResult<Option<ImagePreview>> {
         Err(AppError::NotImplemented)
     }
     fn diff_commits(
