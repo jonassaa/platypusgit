@@ -31,6 +31,7 @@ function reset() {
     capability: null,
     dismissedVersion: null,
     currentVersion: null,
+    lastCheckedAt: null,
     installing: false,
     progress: null,
     error: null,

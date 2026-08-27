@@ -243,6 +243,11 @@ export function AppShell() {
 
   // Check for a newer release shortly after launch — non-blocking, and silent
   // on failure (offline, rate-limited). Manual re-check lives in Settings.
+  //
+  // Deliberately NOT gated here: the "check for updates" preference (#237) is
+  // enforced inside check() itself, so this call site, Settings and the command
+  // palette cannot drift apart. `check(false)` says "automatic", which is the
+  // only thing the store needs to decide whether a request is allowed.
   React.useEffect(() => {
     const t = setTimeout(() => {
       void useUpdateStore.getState().check(false);

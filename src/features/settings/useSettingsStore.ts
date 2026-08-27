@@ -592,6 +592,35 @@ export function applyZoom(zoom: number): void {
   })();
 }
 
+// ─── Update checks (#237) ────────────────────────────────────────────────────
+
+/**
+ * When the app is allowed to ask GitHub whether a newer release exists.
+ *
+ * Three modes rather than a toggle, because "manual" and "never" are different
+ * promises and conflating them breaks one of them:
+ *
+ * - `auto`   — the startup check runs (today's behaviour, and the default:
+ *              shipping security fixes matters more than the request).
+ * - `manual` — no automatic request, ever; Settings → "Check for updates" still
+ *              works. For people who want to control the TIMING.
+ * - `never`  — no request from any path. The Settings button renders disabled,
+ *              so an accidental click cannot produce outbound traffic either.
+ *              For locked-down, offline or blocked-endpoint machines, and for
+ *              users who chose this app partly for "no telemetry, no account"
+ *              and want that to include the update endpoint.
+ *
+ * Orthogonal to the per-version snooze (`useUpdateStore.dismissedVersion`),
+ * which is about one release rather than about checking at all.
+ */
+export type UpdateCheckMode = "auto" | "manual" | "never";
+
+export const UPDATE_CHECK_MODES: readonly UpdateCheckMode[] = [
+  "auto",
+  "manual",
+  "never",
+];
+
 // ═════════════════════════════════════════════════════════════════════════════
 // STORE
 // ═════════════════════════════════════════════════════════════════════════════
@@ -651,6 +680,18 @@ interface PersistedState {
    */
   diffContextMode: "wholeFile" | "chunks";
   ignoreWhitespaceInDiff: boolean;
+  /**
+   * Whether the app checks for a newer release, and on whose initiative — see
+   * UpdateCheckMode. The gate itself lives in `useUpdateStore.check()`, not at
+   * the call sites, so no path can spend a request the user disabled.
+   *
+   * The last-checked TIMESTAMP deliberately does not live here: `PersistedState`
+   * is the portable-preferences bag (#254 exports it to a shareable file), and a
+   * per-machine "when did this install last look" is not a preference anyone
+   * would want to import. It lives beside `dismissedVersion` in the update
+   * store's own localStorage key.
+   */
+  updateCheckMode: UpdateCheckMode;
   /** Parent directory last used for Clone/Init, prefilled next time. */
   lastCreateDir: string;
 }
@@ -691,6 +732,7 @@ const DEFAULTS: PersistedState = {
   diffViewMode: "inline",
   diffContextMode: "wholeFile",
   ignoreWhitespaceInDiff: false,
+  updateCheckMode: "auto",
   lastCreateDir: "",
 };
 
@@ -739,6 +781,14 @@ function load(): PersistedState {
     }
     if (!["wholeFile", "chunks"].includes(out.diffContextMode as string)) {
       out.diffContextMode = DEFAULTS.diffContextMode;
+    }
+    // Same reasoning for the update-check mode, with a sharper failure: the gate
+    // in useUpdateStore only lets `auto` through automatically, so an unknown
+    // string (hand-edited file, a mode a newer build added) would silently mean
+    // "this install never checks for updates again" — the one outcome nobody
+    // asked for. Anything not one of the three modes falls back to "auto".
+    if (!UPDATE_CHECK_MODES.includes(out.updateCheckMode as UpdateCheckMode)) {
+      out.updateCheckMode = DEFAULTS.updateCheckMode;
     }
     // Backfill logo colors for custom themes saved before the slots existed,
     // so the theme editor and CSS vars always have a value.
@@ -791,6 +841,7 @@ function snapshot(s: SettingsState): PersistedState {
     diffViewMode: s.diffViewMode,
     diffContextMode: s.diffContextMode,
     ignoreWhitespaceInDiff: s.ignoreWhitespaceInDiff,
+    updateCheckMode: s.updateCheckMode,
     lastCreateDir: s.lastCreateDir,
   };
 }

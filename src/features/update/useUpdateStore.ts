@@ -1,11 +1,24 @@
 import { create } from "zustand";
 
+import {
+  useSettingsStore,
+  type UpdateCheckMode,
+} from "@/features/settings/useSettingsStore";
 import { appErrorMessage } from "@/lib/errors";
 import { checkForUpdate, getUpdateCapability, openUrl } from "@/lib/tauri";
 import type { UpdateCapability, UpdateInfo } from "@/lib/types";
 import { compareSemver } from "./semver";
 
 const DISMISS_KEY = "pg-update-dismissed";
+/**
+ * When this install last completed an update check.
+ *
+ * Stored here rather than in the settings store's `PersistedState` on purpose:
+ * that bag is the portable preferences payload (#254 exports it to a file people
+ * share), and a per-machine timestamp is state, not a preference — it must not
+ * travel in someone else's settings.
+ */
+const LAST_CHECKED_KEY = "pg-update-last-checked";
 
 export type UpdateStatus =
   | "idle"
@@ -21,6 +34,14 @@ export interface UpdateState {
   dismissedVersion: string | null;
   /** The running app's version — one source for every version readout. */
   currentVersion: string | null;
+  /**
+   * Epoch ms of the last COMPLETED check, or null if this install has never
+   * finished one. Only advanced on success: a timestamp that moved on an
+   * offline failure would read as "checked fine just now" on exactly the
+   * machine whose updater is stuck, which is what people open this panel to
+   * find out.
+   */
+  lastCheckedAt: number | null;
   /**
    * A self-update is downloading/installing. Deliberately NOT a `status` value:
    * `status` is owned by `check()`, so overloading it let any check (e.g.
@@ -50,6 +71,27 @@ function loadDismissed(): string | null {
   }
 }
 
+function loadLastChecked(): number | null {
+  try {
+    const raw = localStorage.getItem(LAST_CHECKED_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a check with this initiative is allowed to hit the network at all.
+ *
+ * PURE and exported so the rule can be read (and tested) without a store: an
+ * automatic check needs `auto`, a manual one needs anything but `never`.
+ */
+export function checkAllowed(mode: UpdateCheckMode, manual: boolean): boolean {
+  return manual ? mode !== "never" : mode === "auto";
+}
+
 /**
  * An update exists that the user hasn't already dismissed.
  *
@@ -73,6 +115,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   capability: null,
   dismissedVersion: loadDismissed(),
   currentVersion: null,
+  lastCheckedAt: loadLastChecked(),
   installing: false,
   progress: null,
   error: null,
@@ -82,6 +125,17 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   async check(manual) {
     // Never yank the Install button out from under an in-flight install.
     if (get().installing) return;
+    // The update-check preference is enforced HERE, before anything reaches the
+    // network — not only at the AppShell startup call site. check() is reachable
+    // from the startup timer and from Settings today, and from any palette or
+    // keymap entry someone adds tomorrow; a call-site-only gate would need
+    // remembering at each one, and the one that forgets spends a request the
+    // user switched off. Silent rather than an error: a check the user disabled
+    // is not a failure, and the Settings panel already says checks are off.
+    if (!checkAllowed(useSettingsStore.getState().updateCheckMode, manual)) {
+      set({ status: "idle" });
+      return;
+    }
     set({ status: "checking", error: null, message: null });
     try {
       // Capability is stable per install; fetch once.
@@ -90,7 +144,18 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         capability = await getUpdateCapability();
       }
       const info = await checkForUpdate();
-      set({ info, capability, currentVersion: info.currentVersion });
+      const lastCheckedAt = Date.now();
+      try {
+        localStorage.setItem(LAST_CHECKED_KEY, String(lastCheckedAt));
+      } catch {
+        // non-fatal — the in-memory value still serves this session
+      }
+      set({
+        info,
+        capability,
+        currentVersion: info.currentVersion,
+        lastCheckedAt,
+      });
       if (info.available) {
         set({ status: "available" });
         // Auto-open the panel only for a version the user hasn't dismissed.

@@ -163,6 +163,44 @@ describe("head marks migration", () => {
   });
 });
 
+describe("updateCheckMode (#237)", () => {
+  // The out-of-box behaviour must not change: an app that stops telling people
+  // about security fixes by default is worse than one that asks.
+  it("defaults to auto", async () => {
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().updateCheckMode).toBe("auto");
+  });
+
+  it("honors a persisted mode", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ updateCheckMode: "never" }));
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().updateCheckMode).toBe("never");
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ updateCheckMode: "manual" }));
+    const again = await freshStore();
+    expect(again.useSettingsStore.getState().updateCheckMode).toBe("manual");
+  });
+
+  // Same reasoning as the signCommits tri-state and the diff modes: the store
+  // and the gate branch on these exact strings, so an unknown value has to fall
+  // back rather than resolve to "neither" — which here would mean an app that
+  // silently never checks for updates again.
+  it("falls back to auto for an unknown or wrongly-typed persisted value", async () => {
+    for (const bad of ["weekly", "", true, 0, null] as unknown[]) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ updateCheckMode: bad }));
+      const { useSettingsStore } = await freshStore();
+      expect(useSettingsStore.getState().updateCheckMode, String(bad)).toBe("auto");
+    }
+  });
+
+  it("reset() returns to auto", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().set("updateCheckMode", "never");
+    expect(useSettingsStore.getState().updateCheckMode).toBe("never");
+    useSettingsStore.getState().reset();
+    expect(useSettingsStore.getState().updateCheckMode).toBe("auto");
+  });
+});
+
 describe("logo theme slots", () => {
   const BRAND_PRIMARY = "#3e9b91";
   const BRAND_SECONDARY = "#e6a95a";
