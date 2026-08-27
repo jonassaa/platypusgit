@@ -172,7 +172,7 @@ Two `bundle` fields in `tauri.conf.json` exist only to control what the `.msi`
 writes into the Windows registry. Both were added because the Windows Package
 Manager reads that registry entry back and refuses to guess.
 
-- **`bundle.publisher: "platypusgit"`.** Unset, the bundler does *not* fall back
+- **`bundle.publisher: "Jonas Aasberg"`.** Unset, the bundler does *not* fall back
   to the Cargo `authors` — it splits the bundle identifier and takes the second
   segment (`settings.rs`, `msi/mod.rs`):
 
@@ -189,10 +189,20 @@ Manager reads that registry entry back and refuses to guess.
   wrote, so the manifest would have had to claim `github` as the publisher —
   straight into a trademark/impersonation review.
 
-  Setting it moves the HKCU key to `Software\platypusgit\platypusgit`. That key
-  holds only shortcut flags and a `PrevInstallDir` search, and the default
+  Setting it moves the HKCU key to `Software\Jonas Aasberg\platypusgit`. That
+  key holds only shortcut flags and a `PrevInstallDir` search, and the default
   install location is unchanged, so an upgrade over an older MSI still lands in
   the same place. It does **not** touch the `UpgradeCode`.
+
+  **It is a person's name, not the brand, and that is the constraint talking.**
+  Tauri's Microsoft Store page states *"Your application publisher name cannot
+  match the application product name"* and points at `bundle.publisher` as the
+  fix. `productName` is `platypusgit`, so `"platypusgit"` — the obvious choice,
+  and the one the winget precedent (`GitButler.GitButler`) suggests — is exactly
+  the pair Tauri documents as invalid. It shipped that way for one commit (#278)
+  before `docs/superpowers/specs/2026-08-27-microsoft-store-research.md` caught
+  it, and the window to change it closes the moment a release carries it into
+  users' registries. `msi_identity.rs` now fails on the collision.
 
 - **`bundle.windows.wix.upgradeCode`.** Pinned to
   `8E03762C-0A45-5879-AB93-77EB9C468C68` — **the value the derivation was

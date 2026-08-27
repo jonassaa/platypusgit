@@ -41,7 +41,7 @@
     "createUpdaterArtifacts": true,
     "targets": ["msi", "dmg", "deb", "appimage"],
     "category": "DeveloperTool",
-    "publisher": "platypusgit",
+    "publisher": "Jonas Aasberg",
     "shortDescription": "A developer-focused git client",
     "longDescription": "PlatypusGit — a cross-platform, developer-focused git client.",
     "copyright": "Copyright (c) 2026 Jonas Aasberg",
