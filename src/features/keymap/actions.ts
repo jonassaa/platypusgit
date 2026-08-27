@@ -93,6 +93,8 @@ export type ActionId =
   | "diff.stageHunk"
   | "diff.discardHunk"
   | "diff.copy"
+  | "diff.find"
+  | "diff.closeFind"
   | "commit.commit"
   | "commit.commitAndPush"
   | "commit.toggleAmend"
@@ -353,6 +355,28 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   // ever offered while a diff pane holds focus; `suppressInInput` keeps it away
   // from the commit-message textarea, where Mod+C is the caret's.
   "diff.copy": { id: "diff.copy", title: "Copy selected diff lines", category: "Diff", scope: "pane", suppressInInput: true },
+  // Find in diff (#241). The webview's own ⌘F is useless here: the diff surfaces
+  // are windowed, so native find would search the screenful that happens to be
+  // mounted and answer "no results" for a match two thousand lines down. This
+  // action opens a find bar that searches the ROW MODEL instead — the same reason
+  // `diff.copy` exists one entry up.
+  //
+  // suppressInInput, and that is the whole answer to "⌘F must not steal the key
+  // from an input that already wants it": the dispatcher never resolves a
+  // suppressed action while focus sits in an INPUT/TEXTAREA/contentEditable, so
+  // the commit-message box, the file filter and the find bar's OWN input all keep
+  // whatever ⌘F means to them. Pane-scoped on top of that, so it is only ever
+  // offered while a diff pane holds focus.
+  "diff.find": { id: "diff.find", title: "Find in diff", category: "Diff", scope: "pane", suppressInInput: true },
+  // Escape closes the find bar. Pane-scoped, which is what makes sharing Escape
+  // with the GLOBAL app.closeOverlay legal (the same asymmetry as
+  // diff.viewCombined vs nav.diff) — and the handler DECLINES when the bar is
+  // shut, so Escape still reaches the overlay from a diff pane.
+  //
+  // allowInInput because the bar autofocuses its own input: a bare-key chord is
+  // suppressed inside a text field unless the action opts in, and an Escape that
+  // only worked after clicking away from the box would not close anything.
+  "diff.closeFind": { id: "diff.closeFind", title: "Close the diff find bar", category: "Diff", scope: "pane", allowInInput: true },
 
   "repo.open": { id: "repo.open", title: "Open repository…", category: "Repository", scope: "global", run: openRepoOp },
   "repo.clone": { id: "repo.clone", title: "Clone repository…", category: "Repository", scope: "global", run: cloneRepoOp },

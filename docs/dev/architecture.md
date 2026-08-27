@@ -319,7 +319,9 @@ features/            Components + Zustand store colocated per feature:
 │                    CompareSidePicker
 ├── diff/            CommitDiffPanel (shared commit-diff view), DiffMinimap,
 │                    useDiffGaps (+ useExpandedGaps, diffOpenReady),
-│                    WhitespaceToggle (+ useHunkActionsDisabledReason)
+│                    WhitespaceToggle (+ useHunkActionsDisabledReason),
+│                    useDiffFind + DiffFindBar (find in diff — ONE hook for all
+│                    four surfaces; searches the row model, scrolls by offset)
 ├── submodules/      useSubmodulesStore (persisted recursive toggle; update goes
 │                    through withAuthRetry)
 ├── worktrees/       useWorktreesStore + WorktreeAddDialog (store owns the
@@ -351,7 +353,9 @@ lib/                 tauri.ts (typed invoke wrappers — frontend NEVER calls
                      canvas can't take CSS vars), wordDiff.ts,
                      pairChangedLines.ts (which rem pairs with which add — one
                      definition, three surfaces), lineSpans.ts (syntax ×
-                     word-diff tiling), codeLines.ts (display-line split;
+                     word-diff tiling, plus find marks), diffFind.ts (find in
+                     diff, PURE: match/count/wrap over DiffRow[], never the
+                     rendered window), codeLines.ts (display-line split;
                      text.split("\n") gets two cases wrong), useViewportH.ts,
                      useElementSize.ts (both: measure WITHOUT depending on
                      ResizeObserver), useWindowedList.ts, useVariableWindow.ts

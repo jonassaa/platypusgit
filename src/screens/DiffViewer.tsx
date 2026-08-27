@@ -44,10 +44,18 @@ import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
 import { MinimapGutter } from "@/features/diff/DiffMinimap";
+import { DiffFindBar } from "@/features/diff/DiffFindBar";
+import { useDiffFind } from "@/features/diff/useDiffFind";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { useDensityStep } from "@/features/settings/useSettingsStore";
 import { pairChangedLines } from "@/lib/pairChangedLines";
-import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
+import {
+  PGPane,
+  FocusableScroll,
+  chordFor,
+  usePaneList,
+  useHunkNav,
+} from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
 export function DiffViewerScreen() {
@@ -67,12 +75,6 @@ export function DiffViewerScreen() {
   );
   const [wrap, setWrap] = React.useState(false);
   const [filter, setFilter] = React.useState("");
-  const [findQuery, setFindQuery] = React.useState("");
-  const [findOpen, setFindOpen] = React.useState(false);
-  const findInputRef = React.useRef<HTMLInputElement>(null);
-  React.useEffect(() => {
-    if (findOpen) findInputRef.current?.focus();
-  }, [findOpen]);
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
@@ -156,27 +158,12 @@ export function DiffViewerScreen() {
     new: { kind: "worktree" },
   });
 
-  const findFiltered = React.useMemo<FileDiff | null>(() => {
-    if (!diff || !findQuery.trim()) return diff;
-    const q = findQuery.toLowerCase();
-    const hunks = diff.hunks
-      .map((h) => ({
-        ...h,
-        lines: h.lines.filter((ln) => ln.content.toLowerCase().includes(q)),
-      }))
-      .filter((h) => h.lines.length > 0);
-    return { ...diff, hunks };
-  }, [diff, findQuery]);
-
   // Right-click to copy. A read-only surface, so there is no line selection to
   // offer — just the dragged text and the whole file, which is the part a
-  // windowed selection cannot reach. Built off `findFiltered` so Find narrowing
-  // the diff narrows what "copy the file" means, matching what is on screen.
-  const diffCopyMenu = useContextMenu<void>(() =>
-    diffCopyMenuItems({ diff: findFiltered }),
-  );
+  // windowed selection cannot reach.
+  const diffCopyMenu = useContextMenu<void>(() => diffCopyMenuItems({ diff }));
 
-  const split = React.useMemo(() => diffToSplit(findFiltered), [findFiltered]);
+  const split = React.useMemo(() => diffToSplit(diff), [diff]);
 
   // Same side rule as the unified path: the left column is the old file, the
   // right the new one, and a row resolves its tokens by its own line number.
@@ -216,15 +203,10 @@ export function DiffViewerScreen() {
   const foldH = 22 + useDensityStep();
   const { expanded: expandedGaps, expand: expandGap } = useExpandedGaps(selectedPath);
 
-  // A find query rewrites the hunks down to matching lines only, so the pane
-  // becomes a list of matches rather than a file. Filler rows are never matches,
-  // so whole-file mode is suppressed while a query is active.
-  const { gaps, text: diffText } = useDiffGaps(syntax, {
-    disabled: !!findQuery.trim(),
-  });
+  const { gaps, text: diffText } = useDiffGaps(syntax);
   const rows = React.useMemo(
     () =>
-      flattenDiffRows(findFiltered?.hunks ?? [], {
+      flattenDiffRows(isTextualDiff(diff) && diff ? diff.hunks : [], {
         foldH,
         rowH,
         syntax,
@@ -232,7 +214,7 @@ export function DiffViewerScreen() {
         gaps,
         expandedGaps,
       }),
-    [findFiltered, foldH, rowH, syntax, diffText, gaps, expandedGaps],
+    [diff, foldH, rowH, syntax, diffText, gaps, expandedGaps],
   );
   const heights = React.useMemo(() => rows.map((r) => r.h), [rows]);
 
@@ -264,6 +246,29 @@ export function DiffViewerScreen() {
   // breath — the window here, the minimap and `scrollToHunk` further down — so one
   // heights array stays the single source of truth for whoever is still reading it.
   const win = wrap ? undefined : varWin;
+
+  // Find in diff (#241) — over the ROW MODEL, not the rendered window, and
+  // reached by offset. It replaces the line FILTER this screen used to call
+  // "Find in diff": that rewrote the hunks down to matching lines, which meant
+  // whole-file mode had to be switched off, "copy the file" meant "copy the
+  // matches", and the one thing a reader actually wants - where in the file the
+  // match is - was the one thing it could not say.
+  //
+  // Not offered in split mode (a different renderer, `PGSideBySideDiff`) nor in
+  // WRAP mode: wrap makes `DiffRow.h` describe nothing, and a wrap caller drops
+  // windowing, the minimap and offset scrolling together. Find is an
+  // offset-scrolling consumer, so it drops with them — and `open && enabled`
+  // means turning Wrap on closes an open bar rather than leaving one that
+  // scrolls to the wrong line.
+  const find = useDiffFind({
+    paneIds: ["diff.files", "diff.view"],
+    rows,
+    heights,
+    scrollRef,
+    scrollTo: scrollDiffTo,
+    enabled: mode === "unified" && !wrap && isTextualDiff(diff) && !!diff,
+    resetKey: selectedPath,
+  });
 
   // F7/⇧F7 walk the viewed file's hunks from either pane. Scroll to the hunk's
   // ANCHOR row BY OFFSET (#157): a querySelector would find nothing whenever that
@@ -340,7 +345,7 @@ export function DiffViewerScreen() {
   );
   const hunkCursor = useHunkNav({
     paneIds: ["diff.files", "diff.view"],
-    count: findFiltered?.hunks.length ?? 0,
+    count: diff?.hunks.length ?? 0,
     resetKey: selectedPath,
     // Wrap mode measures the mounted rows instead of trusting `heights` — same
     // centring rule, different ruler.
@@ -439,52 +444,21 @@ export function DiffViewerScreen() {
               label="Wrap"
               testId="diff-wrap-toggle"
             />
-            <PGIconButton
-              icon="search"
-              size="md"
-              title="Find in diff"
-              active={findOpen}
-              onClick={() => {
-                setFindOpen((v) => {
-                  if (v) setFindQuery("");
-                  return !v;
-                });
-              }}
-            />
+            {/* Hidden rather than disabled when find cannot run (split, wrap,
+                binary): the chord declines there too, and a button that quietly
+                does nothing is worse than no button. */}
+            {find.available && (
+              <PGIconButton
+                icon="search"
+                size="md"
+                title={`Find in diff (${chordFor("diff.find")})`}
+                active={find.open}
+                onClick={() => (find.open ? find.close() : find.openBar())}
+              />
+            )}
           </>
         }
       />
-      {findOpen && (
-        <div
-          style={{
-            padding: "6px 10px",
-            borderBottom: "1px solid var(--border-0)",
-            background: "var(--bg-1)",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <PGSearchInput
-            value={findQuery}
-            onChange={setFindQuery}
-            placeholder="Find in diff…"
-            inputRef={findInputRef}
-            style={{ width: 320 }}
-          />
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--fs-11)",
-              color: "var(--fg-2)",
-            }}
-          >
-            {findQuery.trim()
-              ? `${findFiltered?.hunks.reduce((n, h) => n + h.lines.length, 0) ?? 0} matches`
-              : ""}
-          </span>
-        </div>
-      )}
       <div
         ref={layout.ref}
         style={{
@@ -588,7 +562,9 @@ export function DiffViewerScreen() {
               (#93). `isTextualDiff` is the shared gate; the notice is the shared
               replacement. */}
           {!diffLoading && diff?.lfs && <LfsDiffNotice diff={diff} />}
-          {!diffLoading && isTextualDiff(findFiltered) && findFiltered && mode === "unified" && (
+          {!diffLoading && isTextualDiff(diff) && diff && mode === "unified" && (
+            <>
+            <DiffFindBar find={find} />
             <div
               ref={diffBox.ref}
               style={{ flex: 1, minWidth: 0, display: "flex", minHeight: 0 }}
@@ -603,15 +579,13 @@ export function DiffViewerScreen() {
                 }}
                 onContextMenu={(e) => diffCopyMenu.onContextMenu(e, undefined)}
               >
-                {findFiltered.hunks.length === 0 && findQuery.trim() && (
-                  <PGEmpty icon="search" title="No matches" />
-                )}
                 <PGWindowedDiff
                   rows={rows}
                   window={win}
                   wrap={wrap}
                   activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
                   onExpandGap={expandGap}
+                  findMarks={find.marksFor}
                 />
               </FocusableScroll>
               {/* Wrap makes row heights genuinely unknown — the same reason
@@ -629,8 +603,9 @@ export function DiffViewerScreen() {
                 />
               )}
             </div>
+            </>
           )}
-          {!diffLoading && isTextualDiff(findFiltered) && findFiltered && mode === "split" && (
+          {!diffLoading && isTextualDiff(diff) && diff && mode === "split" && (
             <PGSideBySideDiff
               left={splitWithSyntax.left}
               right={splitWithSyntax.right}

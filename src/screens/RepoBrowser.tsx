@@ -64,6 +64,8 @@ import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
 import { MinimapGutter } from "@/features/diff/DiffMinimap";
+import { DiffFindBar } from "@/features/diff/DiffFindBar";
+import { useDiffFind } from "@/features/diff/useDiffFind";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
 import { splitCodeLines } from "@/lib/codeLines";
@@ -705,6 +707,19 @@ export function RepoBrowserScreen() {
     viewportH: diffViewportH,
     scrollRef: diffScrollRef,
   });
+  // Find in diff (#241) — over the ROW MODEL, not the rendered window. Answers
+  // from both panes, the way F7 does here: the reader arrows through the tree on
+  // the left while reading the diff on the right.
+  const find = useDiffFind({
+    paneIds: ["repo.tree", "repo.preview"],
+    rows: diffRows,
+    heights: diffHeights,
+    scrollRef: diffScrollRef,
+    scrollTo: scrollDiffTo,
+    enabled: isTextualDiff(diff) && !!diff,
+    resetKey: selectedFile?.path ?? null,
+  });
+
   // ── Hunk cursor + hunk-level chords (#157) ───────────────────────────────
   // This pane had no F7 either; the `@@` banner's Stage/Discard was mouse-only.
   // Scroll BY OFFSET — the anchor row is usually unmounted under windowing.
@@ -1144,6 +1159,7 @@ export function RepoBrowserScreen() {
               Blame
             </PGButton>
           </div>
+          <DiffFindBar find={find} />
           <div
             ref={diffBox.ref}
             style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}
@@ -1195,6 +1211,7 @@ export function RepoBrowserScreen() {
                 window={diffWin}
                 activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
                 onExpandGap={expandGap}
+                findMarks={find.marksFor}
                 hunkActions={(i) => ({
                   staged: false,
                   actionsDisabledReason: hunkActionsDisabled,
