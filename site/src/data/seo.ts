@@ -31,6 +31,9 @@ export const descriptions = {
   support:
     'Help platypusgit grow: star the repo, report bugs, request features, contribute code, ' +
     'sponsor development, or tell another developer about it.',
+  privacy:
+    'platypusgit collects nothing: no telemetry, no analytics, no account, no crash ' +
+    'reporting. What it does contact, why, and the tests that keep it that way.',
 } as const;
 
 const latestVersion = changelog[0]?.version;

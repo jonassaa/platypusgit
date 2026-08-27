@@ -486,12 +486,17 @@ export interface UpdateInfo {
  * Windows is `self-update` everywhere else, and this variant exists because
  * self-updating a Scoop install would run the per-machine `.msi` and leave the
  * machine with two copies of the app — see the Rust enum for the full story.
+ *
+ * `notify-store` is a Microsoft Store (MSIX) install. It is the only variant
+ * with no command to offer: the package is read-only, Windows refuses to launch
+ * a tampered one, and the Store does the upgrade unprompted.
  */
 export type UpdateCapability =
   | "self-update"
   | "notify"
   | "notify-apt"
-  | "notify-scoop";
+  | "notify-scoop"
+  | "notify-store";
 
 /**
  * "Commit as" identity. Mirrors Rust `AuthorOverride` (git/types.rs) — it sets

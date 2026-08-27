@@ -118,44 +118,51 @@ export function UpdatePanel() {
               nor copied: advice you had to retype by hand, character-exact,
               from a popover that closes on the next click outside it. Hence
               both routes: the copy button, and `pg-selectable` for a manual
-              drag-select of part of it. */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              background: "var(--bg-2)",
-              borderRadius: "var(--r-2)",
-              padding: "2px 2px 2px 8px",
-            }}
-          >
-            <code
-              data-testid="pg-update-pkg-hint"
-              className="mono pg-selectable"
+              drag-select of part of it.
+
+              GATED ON A NON-EMPTY COMMAND because `notify-store` has none: the
+              Store upgrades the package itself, so that arm is note-only. An
+              empty code box beside a copy button that copies "" reads as a
+              broken panel, and the hint it belongs to is not broken. */}
+          {hint.command !== "" && (
+            <div
               style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: "var(--fs-11)",
-                color: "var(--fg-1)",
-                whiteSpace: "pre",
-                overflowX: "auto",
-                cursor: "text",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                background: "var(--bg-2)",
+                borderRadius: "var(--r-2)",
+                padding: "2px 2px 2px 8px",
               }}
             >
-              {hint.command}
-            </code>
-            <PGIconButton
-              icon="copy"
-              size="sm"
-              title="Copy command"
-              onClick={() => {
-                void navigator.clipboard
-                  ?.writeText(hint.command)
-                  .then(() => pgFlash("copied command"))
-                  .catch(() => pgFlash("could not copy command"));
-              }}
-            />
-          </div>
+              <code
+                data-testid="pg-update-pkg-hint"
+                className="mono pg-selectable"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: "var(--fs-11)",
+                  color: "var(--fg-1)",
+                  whiteSpace: "pre",
+                  overflowX: "auto",
+                  cursor: "text",
+                }}
+              >
+                {hint.command}
+              </code>
+              <PGIconButton
+                icon="copy"
+                size="sm"
+                title="Copy command"
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.writeText(hint.command)
+                    .then(() => pgFlash("copied command"))
+                    .catch(() => pgFlash("could not copy command"));
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 

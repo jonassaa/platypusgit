@@ -51,6 +51,13 @@ pub struct UpdateInfo {
 /// copy in `C:\Program Files` AND Scoop's old one still on PATH and still behind
 /// the Start Menu shortcut, with `scoop list` reporting the old version forever.
 /// Silently two installs, from one click.
+///
+/// `NotifyStore` is a Microsoft Store (MSIX) install, and it is the one variant
+/// whose reason is not "better advice". An MSIX is read-only after deployment and
+/// Windows refuses to launch a package whose files were tampered with, so a
+/// self-update here does not fail — it leaves an app that will not start. The
+/// Store owns the upgrade; the panel says so and offers nothing to click, which
+/// is why it is also the only variant with no command to copy.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateCapability {
@@ -58,6 +65,7 @@ pub enum UpdateCapability {
     Notify,
     NotifyApt,
     NotifyScoop,
+    NotifyStore,
 }
 
 /// The deb822 sources file `scripts/install-platypusgit.sh` writes.
@@ -218,6 +226,8 @@ pub struct InstallEnv<'a> {
     pub apt_managed: bool,
     /// This executable lives inside a Scoop install. Windows only.
     pub scoop_managed: bool,
+    /// This process has package identity — an MSIX install. Windows only.
+    pub msix_packaged: bool,
 }
 
 impl<'a> InstallEnv<'a> {
@@ -228,8 +238,47 @@ impl<'a> InstallEnv<'a> {
             is_appimage: false,
             apt_managed: false,
             scoop_managed: false,
+            msix_packaged: false,
         }
     }
+}
+
+/// Does this process have package identity — i.e. did it come from an MSIX?
+///
+/// `GetCurrentPackageFamilyName` is the documented discriminator: for a packaged
+/// process it reports the family name (here only its length — the name itself is
+/// not the question, so the buffer is deliberately null), and for an unpackaged
+/// one it returns `APPMODEL_ERROR_NO_PACKAGE`. Anything that is *not* that error
+/// means "packaged", including the `ERROR_INSUFFICIENT_BUFFER` a null buffer is
+/// supposed to produce.
+///
+/// **Deliberately not a path test.** "Is the exe under `C:\Program
+/// Files\WindowsApps`" is the tempting one-liner and it is wrong: Microsoft
+/// documents that packages install to other PackageVolumes and other paths. Same
+/// trap as `$env:SCOOP`, rejected for the same reason — the question is "was
+/// THIS install packaged", and there is an API that answers exactly that.
+///
+/// No new dependency for one kernel32 function. The crate edition is 2021, so
+/// this is a plain `extern "system"` block, not the 2024 `unsafe extern`.
+#[cfg(windows)]
+pub fn is_msix_packaged() -> bool {
+    const APPMODEL_ERROR_NO_PACKAGE: u32 = 15700;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentPackageFamilyName(length: *mut u32, name: *mut u16) -> u32;
+    }
+
+    let mut length: u32 = 0;
+    let rc = unsafe { GetCurrentPackageFamilyName(&mut length, std::ptr::null_mut()) };
+    rc != APPMODEL_ERROR_NO_PACKAGE
+}
+
+/// Always false: only Windows has package identity, and `capability` must never
+/// be handed a `true` it would then have to interpret.
+#[cfg(not(windows))]
+pub fn is_msix_packaged() -> bool {
+    false
 }
 
 /// Per-platform self-update vs notify decision. See the plan's Global Constraints.
@@ -243,8 +292,15 @@ impl<'a> InstallEnv<'a> {
 /// Scoop is the one package manager that wins over `SelfUpdate` rather than
 /// losing to it, because the Windows self-update path does not *replace* a Scoop
 /// install — it adds a second one alongside. See `UpdateCapability::NotifyScoop`.
+///
+/// `msix_packaged` is checked BEFORE `scoop_managed`, and the order is load-
+/// bearing even though the two are mutually exclusive in practice (Scoop unpacks
+/// a zip; it does not register a package). If a future probe ever gets it wrong,
+/// this order fails toward the answer with a broken app behind it rather than
+/// toward `scoop update` on an install Scoop does not own.
 pub fn capability(env: InstallEnv<'_>) -> UpdateCapability {
     match env.os {
+        "windows" if env.msix_packaged => UpdateCapability::NotifyStore,
         "windows" if env.scoop_managed => UpdateCapability::NotifyScoop,
         "windows" => UpdateCapability::SelfUpdate,
         "linux" if env.is_appimage => UpdateCapability::SelfUpdate,

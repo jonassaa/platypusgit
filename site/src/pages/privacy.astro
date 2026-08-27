@@ -1,0 +1,124 @@
+---
+import Layout from '../layouts/Layout.astro';
+import CTAButton from '../components/CTAButton.astro';
+import { site } from '../data/site.ts';
+import { descriptions } from '../data/seo.ts';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<Layout title={'Privacy — ' + site.name} description={descriptions.privacy}>
+  <section class="container page-head">
+    <h1>Privacy</h1>
+    <p class="lead">
+      platypusgit collects nothing about you. There is no telemetry, no analytics, no
+      account, and no crash reporting. Nobody — including us — can tell that you use it.
+    </p>
+    <p class="updated">Last updated 27 August 2026</p>
+  </section>
+
+  <section class="container ways">
+    <div class="way">
+      <h2>What we collect</h2>
+      <p>
+        Nothing. The app has no analytics SDK, no usage pings, no unique identifier, and
+        no sign-in. We do not know who you are, how many people use it, or which features
+        get used.
+      </p>
+      <p>
+        Your repositories, file contents, diffs, commit messages and branch names never
+        leave your machine. The app reads them locally, and that is the whole of it.
+      </p>
+    </div>
+
+    <div class="way">
+      <h2>The only two things it contacts</h2>
+      <p>
+        The app makes exactly two kinds of outbound request, both of them visible in the
+        source and both of them for you rather than about you:
+      </p>
+      <p>
+        <strong>1. The update check.</strong> It asks GitHub for the latest release
+        version. That request tells GitHub your IP address, as any HTTPS request does. It
+        sends no identifier of any kind, and you can turn it off in
+        Settings → Updates.
+      </p>
+      <p>
+        <strong>2. Pull requests, if you set them up.</strong> If you add a GitHub or
+        GitLab token, the app talks to that forge's API on your behalf — the same API your
+        browser uses. If you never add a token, this never happens.
+      </p>
+    </div>
+
+    <div class="way">
+      <h2>Your tokens and passwords</h2>
+      <p>
+        Git credentials are handled by your operating system's credential helper, and
+        forge tokens are stored in your OS keychain. Neither is sent anywhere except to
+        the host it belongs to, and no part of the app's own interface can read a token
+        back out.
+      </p>
+      <p>
+        Secrets are passed to git through the environment, never as command-line
+        arguments — arguments are readable by any other process on the machine.
+      </p>
+    </div>
+
+    <div class="way">
+      <h2>Why you can check rather than trust</h2>
+      <p>
+        This page is not a promise, it is a description of something the build enforces.
+        The test suite fails if an analytics dependency appears in either dependency tree,
+        if the interface code makes any network call at all, or if a new hostname is
+        compiled in without a written justification.
+      </p>
+      <p>
+        That means the claims above cannot quietly stop being true: breaking one breaks
+        the build. The code is GPLv3, so you can also just read it.
+      </p>
+      <CTAButton href={site.repo + '/blob/main/test/privacy.test.ts'} variant="secondary" external>Read the privacy tests ↗</CTAButton>
+    </div>
+
+    <div class="way">
+      <h2>Where the app stores things</h2>
+      <p>
+        Settings, your open repositories and the app log live in the standard
+        per-user application data directory for your operating system. Nothing is written
+        outside your own user account, and uninstalling removes the app.
+      </p>
+    </div>
+
+    <div class="way">
+      <h2>Questions</h2>
+      <p>
+        If something here is unclear or looks wrong, open an issue — privacy questions are
+        answered in public, where the answer is useful to everyone.
+      </p>
+      <CTAButton href={site.repo + '/issues'} variant="secondary" external>Open an issue ↗</CTAButton>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .page-head { padding-top: var(--s-12); }
+  .page-head h1 { font-size: 38px; margin: 0 0 var(--s-4); }
+  .lead { color: var(--fg-2); font-size: 16px; max-width: 640px; margin: 0; line-height: 1.6; }
+  .updated { color: var(--fg-3); font-size: 13px; margin: var(--s-4) 0 0; }
+  .ways { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--s-8); margin-top: var(--s-11); }
+  .way { border: 1px solid var(--border-0); background: var(--bg-1); border-radius: var(--r-6);
+    padding: var(--s-7); display: flex; flex-direction: column; align-items: flex-start; }
+  .way h2 { font-size: 19px; margin: 0 0 var(--s-4); color: var(--accent); }
+  .way p { color: var(--fg-2); font-size: 15px; line-height: 1.6; margin: 0 0 var(--s-5); }
+  .way p:last-of-type { flex: 1; margin-bottom: var(--s-6); }
+  .way strong { color: var(--fg-1); font-weight: 600; }
+  @media (max-width: 720px) {
+    .ways { grid-template-columns: 1fr; gap: var(--s-6); margin-top: var(--s-10); }
+    .page-head { padding-top: var(--s-11); }
+    .page-head h1 { font-size: 30px; }
+  }
+  @media (max-width: 480px) {
+    .page-head h1 { font-size: 24px; }
+    .lead { font-size: 15px; }
+    .way { padding: var(--s-6); }
+    .way h2 { font-size: 17px; }
+    .way p { font-size: 14px; margin-bottom: var(--s-4); }
+  }
+</style>
