@@ -23,10 +23,21 @@ import {
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { ForgeSettings } from "@/features/forge/ForgeSettings";
-import { cliShimStatus, installCliShim, type PullMode } from "@/lib/tauri";
+import {
+  cliShimStatus,
+  diagnosticsReport,
+  installCliShim,
+  readLogTail,
+  revealLogFile,
+  type PullMode,
+} from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
-import type { CliPathState, CliShimStatus } from "@/lib/types";
+import type {
+  CliPathState,
+  CliShimStatus,
+  DiagnosticsReport,
+} from "@/lib/types";
 import { BUILTIN_PRESETS, useKeymapStore } from "@/features/keymap";
 
 export function SettingsScreen() {
@@ -272,6 +283,7 @@ export function SettingsScreen() {
         <KeyboardSection />
         <CliSection />
         <UpdatesSection />
+        <DiagnosticsSection />
       </div>
     </div>
   );
@@ -407,6 +419,107 @@ function CliSection() {
               {source === "app" ? "Reinstall pgit" : "Install pgit"}
             </PGButton>
           )
+        }
+      />
+    </Section>
+  );
+}
+
+/**
+ * Reaching the app's own log (#274).
+ *
+ * The log was always written and never reachable: diagnosing a report meant
+ * telling someone an undocumented per-platform path and hoping. That failure
+ * mode had a cost — a WSL repository that would not open produced four logged
+ * sessions nobody could interpret, because the log could neither say which
+ * machine wrote it nor that a call had been issued and never returned.
+ *
+ * So this panel does the three things a bug report needs: says where the log is,
+ * opens it, and copies its tail with the environment header on top.
+ */
+function DiagnosticsSection() {
+  const [report, setReport] = React.useState<DiagnosticsReport | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    diagnosticsReport()
+      .then(setReport)
+      .catch(() => setReport(null));
+  }, []);
+
+  const copy = async () => {
+    setBusy(true);
+    try {
+      const tail = await readLogTail();
+      // The header goes ON the clipboard, not just on screen. A pasted tail may
+      // not reach back far enough to include the startup `host …` line, and a
+      // log whose platform is unknown is what made #274 hard to read in the
+      // first place — so the copy carries its own provenance.
+      const header = report
+        ? `platypusgit ${report.version}\n${report.environment}\n${report.logPath}\n\n`
+        : "";
+      await navigator.clipboard?.writeText(`${header}${tail}`);
+      pgFlash("Log tail copied");
+    } catch (e) {
+      pgFlash(appErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reveal = async () => {
+    try {
+      await revealLogFile();
+    } catch (e) {
+      pgFlash(appErrorMessage(e));
+    }
+  };
+
+  return (
+    <Section
+      title="Diagnostics"
+      subtitle="The app's log — what to attach to a bug report."
+    >
+      <Row
+        label="Environment"
+        hint={
+          report ? (
+            <Mono selectable>{report.environment}</Mono>
+          ) : (
+            "Reading…"
+          )
+        }
+        control={<span />}
+      />
+      <Row
+        label="Log file"
+        hint={
+          report ? (
+            <>
+              <Mono selectable>{report.logPath}</Mono>
+              {!report.logExists && " — not written yet"}
+            </>
+          ) : (
+            "Reading…"
+          )
+        }
+        control={
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <PGButton
+              size="sm"
+              onClick={copy}
+              disabled={busy || !report?.logExists}
+            >
+              Copy last 500 lines
+            </PGButton>
+            <PGButton
+              size="sm"
+              onClick={reveal}
+              disabled={!report?.logExists}
+            >
+              Show file
+            </PGButton>
+          </div>
         }
       />
     </Section>

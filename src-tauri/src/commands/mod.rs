@@ -4,6 +4,7 @@ pub mod cli;
 pub mod commits;
 pub mod conflict;
 pub mod create;
+pub mod diagnostics;
 pub mod diff;
 pub mod forge;
 pub mod history;

@@ -382,6 +382,69 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
 - Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block
   the async runtime.
 
+## Reading the log (#274)
+
+Where it is — `tauri_plugin_log`'s `LogDir` target, i.e. Tauri's `app_log_dir`:
+
+| Platform | Path |
+| --- | --- |
+| macOS | `~/Library/Logs/io.github.jonassaa.platypusgit/platypusgit.log` |
+| Linux / WSL | `~/.local/share/io.github.jonassaa.platypusgit/logs/platypusgit.log` (`$XDG_DATA_HOME` if set) |
+| Windows | `%LOCALAPPDATA%\io.github.jonassaa.platypusgit\logs\platypusgit.log` |
+
+**Settings → Diagnostics shows this path and copies the tail** — ask a reporter
+for that rather than reciting a path, which is how a diagnosis once came down to
+comparing `resolved child PATH (N chars)` against a known log to work out which
+machine had written it.
+
+### What the levels mean for you
+
+`lib.rs` pins the file at `Info` and raises only `platypusgit_lib` to `Debug`.
+Webview `debug()` calls — **every successful invoke** — are therefore dropped.
+Consequences worth internalising before reasoning from a log:
+
+- **Absence of an invoke line proves nothing about whether it ran.** A fast,
+  successful call is invisible. Only `slow:` (≥250 ms), `failed:` and
+  `still pending` lines survive.
+- Timestamps are **UTC**. Compare against the file's mtime to find a session.
+- A duration far larger than any plausible operation (`slow: 1052465ms`) is a
+  **suspended machine**, not slow git — the promise resolved after wake.
+- A run of invokes with near-identical durations completing in the same second
+  is **one blocker draining a queue**, not N slow calls: same-repo ops serialize
+  on the inner mutex (see Async / threading). A monotonic ladder
+  (18s → 22s → 30s → …) is the same thing seen as it builds.
+
+### Triaging "it will not open my repository"
+
+`open_repo` logs on the way IN, so three previously identical silences now read
+differently:
+
+| Log shows | Means |
+| --- | --- |
+| no `open_repo` line at all | never reached the backend — folder picker returned nothing (on WSL usually no `xdg-desktop-portal`), or the frontend never dispatched |
+| `open_repo <path>` and nothing after | libgit2 still working, or wedged. The webview's `still pending after 10000ms` confirms it, and the path says which filesystem |
+| `open_repo <path>` then `open_repo failed for <path>: …` | an ordinary error with a reason — always the easy case |
+
+The webview's stall watchdog (`src/lib/tauri.ts`) is what makes the middle row
+readable: it is the only line either side logs **while** a call is outstanding.
+Every other line is written after the fact, which is precisely why a hang used
+to leave no trace at all.
+
+### Environment header
+
+One `host os=… arch=… kernel=… wsl=… git=…` INFO line per launch, from
+`diagnostics::environment_line`. Emitted on the PATH-probe thread *after* the
+probe, so `git=` names the git the app will actually spawn — read earlier, a
+user whose git lives only on the login `PATH` would be told `git=UNAVAILABLE` by
+an app that runs git perfectly well. `git=UNAVAILABLE` is spelled out rather
+than omitted (unlike the other fields) because it pre-explains every git failure
+below it.
+
+A repository under `/mnt/<drive>` on WSL also logs a WARN: it is a Windows
+filesystem over a VM boundary, every libgit2 `stat` crosses it, and a `/mnt/c`
+repo measured 9.8s on the startup fan-out. Not an error — the repo works — but
+an unexplained nine-second launch reads as a broken app.
+
 ## The hook chain
 
 Commit-side hooks run in `Libgit2Backend::commit`, one per name, through

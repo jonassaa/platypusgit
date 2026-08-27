@@ -442,6 +442,24 @@ export interface CliShimStatus {
   pathState: CliPathState;
 }
 
+/**
+ * Where the app's log lives and what machine wrote it (#274).
+ *
+ * 1:1 with `DiagnosticsReport` in `src-tauri/src/commands/diagnostics.rs`.
+ */
+export interface DiagnosticsReport {
+  /** Absolute path to the current log file. */
+  logPath: string;
+  /** Whether that file exists yet — a fresh install may not have flushed. */
+  logExists: boolean;
+  /** Size in bytes, `null` when the file is absent. */
+  logSizeBytes: number | null;
+  /** The `host os=… wsl=… git=…` line, so the panel can show it unread. */
+  environment: string;
+  /** The running version, so a pasted report identifies its build. */
+  version: string;
+}
+
 export interface CliInstallOutcome {
   installed: boolean;
   path: string;
