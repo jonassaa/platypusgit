@@ -354,6 +354,64 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   sets, so the opposite order wipes the banner. A failed git op must still
   refresh — the UI reflects disk truth even on error.
 
+### Settings: one validator, two untrusted sources (#254)
+
+`useSettingsStore` reads a payload it does not control from two places — the
+`pg-settings-v2` localStorage key on startup, and a settings file someone
+imports — and both go through ONE function, `coerceSettings(parsed, base)`.
+Its rules: a key absent from the payload keeps `base`'s value, a valid one is
+applied, an unusable one falls back to the DEFAULT (not to `base`) because the
+payload asked for a change and the documented safe value is the honest answer to
+garbage. `load()` calls it with `base = DEFAULTS`; `importSettings` calls it with
+the current state, so an older export cannot silently reset a preference it
+predates — an export written before `updateCheckMode` existed must not switch
+update checks back on for someone who turned them off.
+
+- **The export derives its key set from the schema minus a deny-list**
+  (`NON_PORTABLE_KEYS`, today just `lastCreateDir`), never a hand-written
+  allow-list, so a preference added tomorrow travels by default. #283 added
+  `updateCheckMode` days before the export landed and an allow-list would have
+  dropped it silently. **Import keeps the opposite asymmetry** — only keys still
+  in `DEFAULTS` are accepted, so an old or hostile file cannot poison the store.
+  `useSettingsStore.export.test.ts` snapshots the exported key list: adding a
+  `PersistedState` field fails that test until someone decides which side it
+  belongs on. **The deny-list holds in both directions** — `importSettings`
+  strips those keys from the payload and reports them, because "never in an
+  export" is only half a promise if a hand-edited file can still set
+  `lastCreateDir` on someone else's machine.
+- **Nothing secret is in `PersistedState`,** which is what makes the deny-list
+  safe: forge tokens and git credentials live in their own `Secret`-typed
+  storage and no command returns them. The same test asserts no
+  credential-shaped key or token-shaped value appears in a serialised export.
+  Any new persisted field has to keep that true.
+- **The payload's `version` is not `STORAGE_KEY`'s "-v2".** One versions the
+  interchange format, the other the localStorage slot this install reads. A
+  file from a newer build is accepted key by key and flagged
+  (`report.fromNewerVersion`) rather than rejected — rejecting would strand
+  anyone moving a machine back onto an older release, which is a case the export
+  exists for.
+- **The keymap crosses as a parameter, not an import.** `useKeymapStore`
+  persists the active preset under its own key, and `keymap/actions.ts` imports
+  the settings store — so the settings store cannot read it back without a
+  cycle. `screens/Settings.tsx` owns both stores and bridges them: it hands the
+  preset to `exportSettings({ keymapPresetId })` and applies the one
+  `importSettings` reports, ignoring an id no `BUILTIN_PRESETS` entry has
+  (`presetById` would silently resolve it to the default while the picker showed
+  the unknown name).
+- **One theme format.** `themePayload()` is the per-theme serialiser behind both
+  `exportTheme` and the settings bundle; the bundle adds only `id`, because
+  `activeThemeId` has to stay resolvable. `normalizeCustomThemes` is lenient in
+  the direction `validateTheme` already chose for the logo slots — a missing
+  colour is filled from the default theme rather than costing the user the
+  theme, one unusable entry costs only itself, every colour goes through
+  `sanitizeHex`, and `builtin` is never carried over (a custom theme claiming to
+  be built in renders read-only and cannot be deleted).
+- **Both file-import paths read `file.text()`,** which jsdom's Blob does not
+  implement; `Settings.export.test.tsx` bridges it to `FileReader` at the top of
+  the file. The hidden `<input type="file">` is also `display: none`, so
+  `userEvent.upload` (which clicks first) does not reach it — dispatch
+  `fireEvent.change` with `target: { files: [file] }` instead.
+
 ## Styling
 
 - Tailwind v4, CSS-first (no `tailwind.config.js`, no `@theme` block). Tokens

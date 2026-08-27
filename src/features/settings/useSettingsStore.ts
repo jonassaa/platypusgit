@@ -707,6 +707,23 @@ export interface SettingsState extends PersistedState {
   exportTheme: (id: string) => string;
   downloadTheme: (id: string) => void;
   importThemeJson: (json: string) => ThemeDef;
+  /**
+   * Serialise every portable setting to one versioned JSON string (#254).
+   * Custom themes travel in it, in the same per-theme shape `exportTheme`
+   * writes; machine-specific keys (`NON_PORTABLE_KEYS`) do not.
+   */
+  exportSettings: (opts?: SettingsExportOptions) => string;
+  /**
+   * `exportSettings` plus the download. Returns the filename, because "your
+   * settings were exported" is useless without saying to what.
+   */
+  downloadSettings: (opts?: SettingsExportOptions) => string;
+  /**
+   * Apply a settings file and report what it changed — an import that replaces
+   * every preference silently is indistinguishable from one that did nothing.
+   * Throws an `Error` with a user-facing message when the file cannot be read.
+   */
+  importSettings: (json: string) => SettingsImportReport;
   set: <K extends keyof PersistedState>(key: K, value: PersistedState[K]) => void;
   /** Nudge the zoom by whole steps; clamped at both ends. */
   stepZoom: (steps: number) => void;
@@ -736,78 +753,327 @@ const DEFAULTS: PersistedState = {
   lastCreateDir: "",
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+// PORTABLE SETTINGS — export / import the whole bag (#254)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Schema version of an exported settings FILE.
+ *
+ * A different notion from `STORAGE_KEY`'s "-v2": that versions the localStorage
+ * slot THIS install reads, and bumping it is a local migration. This versions
+ * the interchange format, and bumping it changes what other builds can read.
+ * Conflating them would let a localStorage migration silently invalidate every
+ * export anyone had already saved.
+ */
+export const SETTINGS_EXPORT_VERSION = 1;
+
+/** Marks a file as ours — a `.pgtheme.json` or a stray JSON is refused. */
+export const SETTINGS_EXPORT_KIND = "platypusgit-settings";
+
+// An identifier, not a fetch: nothing in the app dereferences it. Same
+// reasoning as the theme export's, and the same allow-list entry in
+// test/privacy.test.ts.
+const SETTINGS_SCHEMA_URL = "https://platypusgit.dev/settings.schema.json";
+
+/**
+ * Settings that describe THIS MACHINE and must not travel.
+ *
+ * A deny-list rather than an allow-list, and the asymmetry is the point: the
+ * export walks `DEFAULTS` and skips these, so a preference added tomorrow is
+ * exported by default instead of waiting for someone to remember a second
+ * list. #283 added `updateCheckMode` days before this export existed — a
+ * hand-written allow-list would have missed it and quietly dropped a real
+ * preference from every file people had already saved.
+ *
+ * Nothing secret needs denying, because nothing secret is in `PersistedState`:
+ * forge tokens and git credentials live in their own `Secret`-typed storage and
+ * no command returns them. `useSettingsStore.export.test.ts` asserts that
+ * against the serialised payload rather than leaving it to memory.
+ */
+export const NON_PORTABLE_KEYS: readonly (keyof PersistedState)[] = [
+  "lastCreateDir",
+];
+
+/** `DEFAULTS`' keys minus the deny-list — exactly what an export carries. */
+export const PORTABLE_KEYS: readonly (keyof PersistedState)[] = (
+  Object.keys(DEFAULTS) as (keyof PersistedState)[]
+).filter((k) => !NON_PORTABLE_KEYS.includes(k));
+
+export interface SettingsExportOptions {
+  /**
+   * The active keymap preset id, when the caller wants it in the file. The
+   * keymap is the setting people are most attached to, but it is persisted by
+   * `useKeymapStore` under its own localStorage key — and `keymap/actions.ts`
+   * imports THIS module, so reading it from here would be an import cycle.
+   * `screens/Settings.tsx` already owns both stores and bridges them.
+   */
+  keymapPresetId?: string | null;
+}
+
+export interface SettingsImportReport {
+  /** Settings whose value the file actually changed. */
+  changed: (keyof PersistedState)[];
+  /**
+   * Keys in the file this build has no setting for — removed since, or added by
+   * a newer build. Reported rather than swallowed so "why did my X not come
+   * across" has an answer on screen.
+   */
+  ignored: string[];
+  /** The preset the file asks for, for the caller to hand to the keymap store. */
+  keymapPresetId: string | null;
+  /** The file's declared schema version, or null when it declared none. */
+  version: number | null;
+  /** True when the file was written by a build newer than this one. */
+  fromNewerVersion: boolean;
+}
+
+// The three values the backend's PullMode accepts. A fourth string would reach
+// git as a mode nobody implements.
+const PULL_MODES: readonly PullMode[] = ["Rebase", "Merge", "FastForward"];
+
+const NOT_AN_EXPORT = "That file isn't a platypusgit settings export.";
+
+/**
+ * Read the envelope of a settings file, or throw a message a user can act on.
+ *
+ * Deliberately strict about the WRAPPER and lenient about the contents: the
+ * wrapper is how we know this file was meant for us at all, while every setting
+ * inside is validated one at a time by `coerceSettings`.
+ */
+function parseSettingsExport(json: string): {
+  settings: Record<string, unknown>;
+  keymapPresetId: string | null;
+  version: number | null;
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    // The failure people hit by accident (wrong file, truncated download), so
+    // it names which half went wrong instead of surfacing a parser message.
+    throw new Error("That file isn't valid JSON.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(NOT_AN_EXPORT);
+  }
+  const o = parsed as Record<string, unknown>;
+  if (o.kind !== undefined && o.kind !== SETTINGS_EXPORT_KIND) {
+    throw new Error(NOT_AN_EXPORT);
+  }
+  const settings = o.settings;
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    // A single-theme file is the near miss worth naming: it is the other file
+    // this app writes, and it has its own button three rows up.
+    if (o.colors && typeof o.colors === "object") {
+      throw new Error(
+        "That looks like a single theme file — import it under Appearance.",
+      );
+    }
+    throw new Error(NOT_AN_EXPORT);
+  }
+  const keymap = o.keymap as Record<string, unknown> | undefined;
+  const presetId =
+    keymap && typeof keymap === "object" && typeof keymap.presetId === "string"
+      ? keymap.presetId.trim()
+      : "";
+  return {
+    settings: settings as Record<string, unknown>,
+    keymapPresetId: presetId || null,
+    version:
+      typeof o.version === "number" && Number.isFinite(o.version) ? o.version : null,
+  };
+}
+
+/** Structural equality, enough for the two array-valued settings. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if ((a !== null && typeof a === "object") || (b !== null && typeof b === "object")) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  return false;
+}
+
+/**
+ * Coerce a persisted or imported theme list into usable `ThemeDef`s.
+ *
+ * Lenient in the direction `validateTheme` already chose for the logo slots: a
+ * missing colour is filled from the default theme rather than costing the user
+ * the whole theme, and one unusable entry costs only itself. Every colour goes
+ * through `sanitizeHex`, so neither a hand-edited localStorage payload nor a
+ * shared file can put an arbitrary string into a CSS var. `builtin` is never
+ * carried over — a custom theme that claims to be built in renders read-only in
+ * the editor and cannot be deleted.
+ */
+function normalizeCustomThemes(value: unknown, fallback: ThemeDef[]): ThemeDef[] {
+  if (!Array.isArray(value)) return fallback;
+  const out: ThemeDef[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const o = raw as Record<string, unknown>;
+    if (!o.colors || typeof o.colors !== "object") continue;
+    const src = o.colors as Record<string, unknown>;
+    const colors = {} as ThemeColors;
+    for (const f of THEME_COLOR_FIELDS) {
+      const v = src[f.key];
+      colors[f.key] =
+        typeof v === "string" ? sanitizeHex(v) : BUILTIN_THEMES[0].colors[f.key];
+    }
+    // The id has to survive, or `activeThemeId` dangles and the app silently
+    // falls back to the default theme.
+    const wanted =
+      typeof o.id === "string" && o.id.trim() ? o.id.trim() : uniqueId(out);
+    const id = seen.has(wanted) ? `${wanted}-${out.length}` : wanted;
+    seen.add(id);
+    out.push({
+      id,
+      name: typeof o.name === "string" && o.name.trim() ? o.name.trim() : "Imported theme",
+      mode: o.mode === "light" ? "light" : "dark",
+      colors,
+    });
+  }
+  return out;
+}
+
+interface CoercedSettings {
+  state: PersistedState;
+  /** Keys whose value ended up different from `base`. */
+  changed: (keyof PersistedState)[];
+  /** Keys in the payload this build has no setting for. */
+  ignored: string[];
+}
+
+/**
+ * Fold an arbitrary object into a complete, valid `PersistedState`.
+ *
+ * ONE validator for both untrusted sources — the localStorage payload `load()`
+ * reads on startup, and the file `importSettings` reads. They face the same
+ * problems (a hand-edited value, a setting this build removed, a value from a
+ * newer build), and a second copy of these guards would be a second copy to
+ * forget to update.
+ *
+ * The rules, in order:
+ *   absent from `parsed`  → keep `base`'s value. For `load()` that is DEFAULTS;
+ *                           for an import it means an older file cannot silently
+ *                           reset a preference it predates (an export without
+ *                           `updateCheckMode` must not switch update checks back
+ *                           on for someone who turned them off).
+ *   present and valid     → apply it.
+ *   present and unusable  → the DEFAULT, not `base`: the payload asked for a
+ *                           change, and the documented safe value is the honest
+ *                           answer to garbage.
+ */
+function coerceSettings(
+  parsed: Record<string, unknown>,
+  base: PersistedState,
+): CoercedSettings {
+  const known = new Set<string>(Object.keys(DEFAULTS));
+  const ignored = Object.keys(parsed).filter(
+    // `headIndicator` left the schema but the migration below still reads it,
+    // so it is honoured rather than ignored.
+    (k) => !known.has(k) && k !== "headIndicator",
+  );
+
+  // Only pick keys that still exist in the schema, so settings removed in
+  // newer versions (e.g. showWhitespaceInDiff) don't leak stale properties
+  // into the store state.
+  const out: PersistedState = { ...base };
+  for (const key of Object.keys(DEFAULTS) as (keyof PersistedState)[]) {
+    if (key in parsed) {
+      (out as unknown as Record<string, unknown>)[key] = parsed[key];
+    }
+  }
+
+  // Type-guard every scalar against the type of its default. A payload can hold
+  // a string where a toggle expects a boolean, and `checked={"no"}` is a toggle
+  // stuck ON — the user sees the opposite of what the file said. Deriving the
+  // expected type from DEFAULTS means a new scalar preference is guarded the day
+  // it is added, for the same reason the export derives its key set. The two
+  // object-valued settings (customThemes, headMarks) have their own normalizers
+  // below.
+  for (const key of Object.keys(DEFAULTS) as (keyof PersistedState)[]) {
+    const want = typeof DEFAULTS[key];
+    if (want !== "object" && typeof out[key] !== want) {
+      (out as unknown as Record<string, unknown>)[key] = DEFAULTS[key];
+    }
+  }
+
+  // `signCommits` was once a boolean no-op setting and is now a tri-state
+  // (#61 D6), so an old payload can carry `true`/`false` where a mode is
+  // expected. Anything that is not one of the three modes falls back to
+  // "config", which defers to the repository rather than forcing signing on.
+  if (!["config", "always", "never"].includes(out.signCommits as string)) {
+    out.signCommits = DEFAULTS.signCommits;
+  }
+  // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
+  // factor is rejected by the webview and would leave the UI unzoomable.
+  out.uiZoom = normalizeZoom(Number(out.uiZoom));
+  // An unrecognized density would emit `--row-step: undefinedpx`, and an
+  // invalid substitution makes every `calc(Npx + var(--row-step))` compute to
+  // `auto` — collapsing the height of every row in the app at once.
+  out.uiDensity = normalizeDensity(out.uiDensity);
+  // HEAD marks: prefer a stored list, else carry over the pre-#118 single
+  // `headIndicator` enum, else — if the payload spoke about marks at all but
+  // said something unusable — the default, and otherwise whatever `base` had.
+  // Migration reads `parsed`, not `out`: the old key is gone from the schema, so
+  // the copy loop above never picked it up. Landing an upgraded install on
+  // "strong" is deliberate: the same choice as before, at roughly twice the
+  // visibility.
+  const storedMarks =
+    normalizeHeadMarks(parsed.headMarks) ?? migrateHeadIndicator(parsed.headIndicator);
+  const mentionsMarks = "headMarks" in parsed || "headIndicator" in parsed;
+  out.headMarks = storedMarks ?? (mentionsMarks ? DEFAULTS.headMarks : base.headMarks);
+  // Same reasoning as the zoom clamp: an unknown weight would resolve every
+  // mark to NaN and silently draw nothing.
+  if (!HEAD_WEIGHTS.includes(out.headWeight as HeadWeight)) {
+    out.headWeight = DEFAULTS.headWeight;
+  }
+  // Same reasoning again for the two diff modes: the renderers branch on these
+  // exact strings, so an unknown value means "neither branch" — a blank pane.
+  if (!["inline", "split"].includes(out.diffViewMode as string)) {
+    out.diffViewMode = DEFAULTS.diffViewMode;
+  }
+  if (!["wholeFile", "chunks"].includes(out.diffContextMode as string)) {
+    out.diffContextMode = DEFAULTS.diffContextMode;
+  }
+  // Same reasoning for the update-check mode, with a sharper failure: the gate
+  // in useUpdateStore only lets `auto` through automatically, so an unknown
+  // string (hand-edited file, a mode a newer build added) would silently mean
+  // "this install never checks for updates again" — the one outcome nobody
+  // asked for. Anything not one of the three modes falls back to "auto".
+  if (!UPDATE_CHECK_MODES.includes(out.updateCheckMode as UpdateCheckMode)) {
+    out.updateCheckMode = DEFAULTS.updateCheckMode;
+  }
+  // A pull mode the backend has no arm for would fail every pull.
+  if (!PULL_MODES.includes(out.defaultPullMode)) {
+    out.defaultPullMode = DEFAULTS.defaultPullMode;
+  }
+  // The same bounds the Settings inputs enforce, applied to values that did not
+  // come through those inputs.
+  out.diffContextLines = clampInt(out.diffContextLines, 0, 20, DEFAULTS.diffContextLines);
+  out.autoFetchMinutes = clampInt(out.autoFetchMinutes, 1, 60, DEFAULTS.autoFetchMinutes);
+  // Backfill logo colors for custom themes saved before the slots existed, drop
+  // anything unusable, and keep the ids so `activeThemeId` still resolves.
+  out.customThemes = normalizeCustomThemes(out.customThemes, base.customThemes);
+
+  const changed = (Object.keys(DEFAULTS) as (keyof PersistedState)[]).filter(
+    (key) => !sameValue(out[key], base[key]),
+  );
+  return { state: out, changed, ignored };
+}
+
+function clampInt(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
 function load(): PersistedState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULTS };
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    // Only pick keys that still exist in the schema, so settings removed in
-    // newer versions (e.g. showWhitespaceInDiff) don't leak stale properties
-    // into the store state.
-    const out = { ...DEFAULTS };
-    for (const key of Object.keys(DEFAULTS) as (keyof PersistedState)[]) {
-      if (key in parsed) {
-        (out as Record<string, unknown>)[key] = parsed[key];
-      }
-    }
-    // `signCommits` was once a boolean no-op setting and is now a tri-state
-    // (#61 D6), so an old payload can carry `true`/`false` where a mode is
-    // expected. Anything that is not one of the three modes falls back to
-    // "config", which defers to the repository rather than forcing signing on.
-    if (!["config", "always", "never"].includes(out.signCommits as string)) {
-      out.signCommits = DEFAULTS.signCommits;
-    }
-    // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
-    // factor is rejected by the webview and would leave the UI unzoomable.
-    out.uiZoom = normalizeZoom(Number(out.uiZoom));
-    // HEAD marks: prefer a stored list, else carry over the pre-#118 single
-    // `headIndicator` enum, else the default. Migration reads `parsed`, not
-    // `out` — the old key is gone from the schema, so the copy loop above never
-    // picked it up. Landing an upgraded install on "strong" is deliberate: the
-    // same choice as before, just at roughly twice the visibility.
-    out.headMarks =
-      normalizeHeadMarks(parsed.headMarks) ??
-      migrateHeadIndicator(parsed.headIndicator) ??
-      DEFAULTS.headMarks;
-    // Same reasoning as the zoom clamp: an unknown weight would resolve every
-    // mark to NaN and silently draw nothing.
-    if (!HEAD_WEIGHTS.includes(out.headWeight as HeadWeight)) {
-      out.headWeight = DEFAULTS.headWeight;
-    }
-    // Same reasoning again for the two diff modes: the renderers branch on these
-    // exact strings, so an unknown value means "neither branch" — a blank pane.
-    if (!["inline", "split"].includes(out.diffViewMode as string)) {
-      out.diffViewMode = DEFAULTS.diffViewMode;
-    }
-    if (!["wholeFile", "chunks"].includes(out.diffContextMode as string)) {
-      out.diffContextMode = DEFAULTS.diffContextMode;
-    }
-    // Same reasoning for the update-check mode, with a sharper failure: the gate
-    // in useUpdateStore only lets `auto` through automatically, so an unknown
-    // string (hand-edited file, a mode a newer build added) would silently mean
-    // "this install never checks for updates again" — the one outcome nobody
-    // asked for. Anything not one of the three modes falls back to "auto".
-    if (!UPDATE_CHECK_MODES.includes(out.updateCheckMode as UpdateCheckMode)) {
-      out.updateCheckMode = DEFAULTS.updateCheckMode;
-    }
-    // Backfill logo colors for custom themes saved before the slots existed,
-    // so the theme editor and CSS vars always have a value.
-    out.customThemes = out.customThemes.map((t) => {
-      if (!t.colors) return t;
-      const needs =
-        t.colors.logo === undefined || t.colors.logo2 === undefined;
-      return needs
-        ? {
-            ...t,
-            colors: {
-              ...t.colors,
-              logo: t.colors.logo ?? LOGO_PRIMARY,
-              logo2: t.colors.logo2 ?? LOGO_SECONDARY,
-            },
-          }
-        : t;
-    });
-    return out;
+    return coerceSettings(parsed, DEFAULTS).state;
   } catch {
     return { ...DEFAULTS };
   }
@@ -821,29 +1087,19 @@ function persist(state: PersistedState) {
   }
 }
 
+/**
+ * The persisted slice of the store.
+ *
+ * Derived from `DEFAULTS` rather than hand-listed: the key set already lives in
+ * one place, and a third copy is a third thing to forget when a preference is
+ * added — which is the same reason the export derives its keys.
+ */
 function snapshot(s: SettingsState): PersistedState {
-  return {
-    activeThemeId: s.activeThemeId,
-    customThemes: s.customThemes,
-    uiDensity: s.uiDensity,
-    uiZoom: s.uiZoom,
-    headMarks: s.headMarks,
-    headWeight: s.headWeight,
-    defaultPullMode: s.defaultPullMode,
-    autoFetchEnabled: s.autoFetchEnabled,
-    autoFetchMinutes: s.autoFetchMinutes,
-    pruneOnFetch: s.pruneOnFetch,
-    confirmForcePush: s.confirmForcePush,
-    autoStashBeforePull: s.autoStashBeforePull,
-    addSignoff: s.addSignoff,
-    signCommits: s.signCommits,
-    diffContextLines: s.diffContextLines,
-    diffViewMode: s.diffViewMode,
-    diffContextMode: s.diffContextMode,
-    ignoreWhitespaceInDiff: s.ignoreWhitespaceInDiff,
-    updateCheckMode: s.updateCheckMode,
-    lastCreateDir: s.lastCreateDir,
-  };
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(DEFAULTS)) {
+    out[key] = (s as unknown as Record<string, unknown>)[key];
+  }
+  return out as unknown as PersistedState;
 }
 
 function findTheme(
@@ -876,6 +1132,15 @@ function sanitizeHex(value: string): string {
   if (body.length === 6) return `#${body}`;
   if (body.length === 8) return `#${body.slice(0, 6)}`;
   return "#000000";
+}
+
+/**
+ * The wire shape of ONE theme. Shared by the single-theme export and the
+ * settings bundle, so there is one theme format rather than two — a bundle adds
+ * `id` on top, because it has to keep `activeThemeId` resolvable.
+ */
+function themePayload(t: ThemeDef): Pick<ThemeDef, "name" | "mode" | "colors"> {
+  return { name: t.name, mode: t.mode, colors: t.colors };
 }
 
 function validateTheme(obj: unknown): ThemeDef {
@@ -1030,9 +1295,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const payload = {
       $schema: "https://platypusgit.dev/theme.schema.json",
       version: 1,
-      name: t.name,
-      mode: t.mode,
-      colors: t.colors,
+      ...themePayload(t),
     };
     return JSON.stringify(payload, null, 2);
   },
@@ -1068,6 +1331,91 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     persist(snapshot(get()));
     applyTheme(theme);
     return theme;
+  },
+
+  exportSettings(opts) {
+    const s = get();
+    const settings: Record<string, unknown> = {};
+    for (const key of PORTABLE_KEYS) {
+      settings[key] =
+        key === "customThemes"
+          ? s.customThemes.map((t) => ({ id: t.id, ...themePayload(t) }))
+          : s[key];
+    }
+    const presetId = opts?.keymapPresetId?.trim();
+    return JSON.stringify(
+      {
+        $schema: SETTINGS_SCHEMA_URL,
+        kind: SETTINGS_EXPORT_KIND,
+        version: SETTINGS_EXPORT_VERSION,
+        // File metadata, not a preference: the import path never reads it. It
+        // is here because "attach your settings export" is a support story, and
+        // the first question is always how old the file is.
+        exportedAt: new Date().toISOString(),
+        settings,
+        ...(presetId ? { keymap: { presetId } } : {}),
+      },
+      null,
+      2,
+    );
+  },
+
+  downloadSettings(opts) {
+    const json = get().exportSettings(opts);
+    // Date, not timestamp: this is a file people keep and re-read, so a name
+    // they can recognise beats a name that is unique.
+    const filename = `platypusgit-settings-${new Date()
+      .toISOString()
+      .slice(0, 10)}.json`;
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return filename;
+  },
+
+  importSettings(json) {
+    const file = parseSettingsExport(json);
+    // The deny-list works in BOTH directions. Export skipping a key is only
+    // half the promise: a hand-edited file, or one from a build that shortened
+    // its own deny-list, must not be able to set a preference that describes
+    // another machine either. Reported, not swallowed.
+    const portable: Record<string, unknown> = {};
+    const denied: string[] = [];
+    for (const [key, value] of Object.entries(file.settings)) {
+      if (NON_PORTABLE_KEYS.includes(key as keyof PersistedState)) {
+        denied.push(key);
+      } else {
+        portable[key] = value;
+      }
+    }
+    // Merge onto the CURRENT state, not onto DEFAULTS — see coerceSettings.
+    const { state, changed, ignored } = coerceSettings(portable, snapshot(get()));
+    set(state);
+    persist(state);
+    // Everything with an effect outside the store has to be re-applied, or the
+    // import lands in state and not on screen.
+    applyTheme(findTheme(state, state.activeThemeId) ?? BUILTIN_THEMES[0]);
+    applyDensity(state.uiDensity);
+    applyZoom(state.uiZoom);
+    return {
+      changed,
+      ignored: [...ignored, ...denied],
+      keymapPresetId: file.keymapPresetId,
+      version: file.version,
+      // Accepted, not rejected: every field is validated on its own and unknown
+      // keys are reported, so a file from a newer build degrades to "the
+      // settings this build understands". Rejecting it would strand anyone
+      // moving a machine back onto an older release — one of the cases the
+      // export exists for.
+      fromNewerVersion:
+        file.version !== null && file.version > SETTINGS_EXPORT_VERSION,
+    };
   },
 
   set(key, value) {
