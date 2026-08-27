@@ -130,6 +130,25 @@ pub struct AheadBehind {
     pub merge_base: Option<String>,
 }
 
+/// One path a delete could not remove (#245).
+///
+/// `delete_untracked` is BEST-EFFORT once it starts unlinking: three read-only
+/// files in a ten-file selection must not decide the fate of the other seven,
+/// and stopping at the first failure would delete an arbitrary prefix and then
+/// name only one of the causes. So every refusal that can be decided WITHOUT
+/// touching the disk (a tracked path, an escape, an embedded repo) is raised as
+/// an `AppError` before anything is deleted, and only genuine I/O failures land
+/// here, one per path, with the OS's own reason.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFailure {
+    /// The repo-relative path, exactly as the caller spelled it — never the
+    /// canonicalized absolute one, which is not what the file list shows.
+    pub path: String,
+    /// The OS's message. Never a path, so it stays readable next to `path`.
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {

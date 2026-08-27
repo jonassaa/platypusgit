@@ -12,7 +12,15 @@ error.rs         AppError enum (thiserror + serde-tagged) — ONLY error type cr
 state.rs         AppState { backend: Arc<dyn GitBackend> }
 opener.rs        URLs/paths → OS default handler. SECURITY-critical: safe_url
                  (https-only, rejects quotes/control chars), safe_workdir_path
-                 (no absolute/`..` escape), never spawns via a shell, child exit checked
+                 (no absolute/`..` escape), never spawns via a shell, child exit checked.
+                 THE home for "is this path inside the workdir", in two
+                 strengths: safe_workdir_path is LEXICAL (enough to hand a path
+                 to an app) and resolved_workdir_path CANONICALIZES both sides
+                 and re-checks with the pure contained_in — which is what
+                 anything that UNLINKS must use, because the lexical check
+                 cannot see a symlink or a path reached through one (#245).
+                 contained_in compares components, not string prefixes:
+                 /repository is not inside /repo
 update.rs        Update discovery: semver compare, dev-build (0.0.0) short-circuit
                  before any network call, GitHub release parsing, ureq w/ timeout +
                  https_only. Logic only — handlers live in commands/update.rs
@@ -31,6 +39,12 @@ reveal.rs        "Reveal in Finder/Explorer" + "Open in terminal" (#215).
                  HostPlatform decouples argv building from the actual host, so
                  reveal_plan/terminal_plan are PURE and unit-tested for all
                  three platforms from any host. Spawns via proc.rs only.
+                 reveal_target/terminal_target answer WHAT to open for a
+                 repo-relative path, reading is-it-a-directory off the
+                 filesystem rather than from a parameter — the filesystem is the
+                 only authority, and that is what makes a directory row open a
+                 window on the folder instead of selecting it in its parent
+                 (#245).
                  explorer.exe's exit-1-on-success is carried as a FLAG on the
                  plan (not a program-name compare — the program is an absolute
                  pinned path); Windows launchers are pinned to System32 /
@@ -147,7 +161,12 @@ commands/        Thin Tauri handlers, one file per area:
 │                append_gitignore, open_in_editor, reveal_in_file_manager,
 │                open_in_terminal (#215 — both take an optional relative_path;
 │                omitted/empty targets the repo ROOT instead, for the repo
-│                tab's menu), and THREE distinct file readers:
+│                tab's menu, and both ask reveal.rs whether the path is a
+│                directory rather than assuming a file),
+│                delete_untracked_files (#245 — the ONLY destructive worktree op
+│                here; thin over GitBackend::delete_untracked, which validates
+│                the whole batch before unlinking anything and then reports
+│                per-path failures), and THREE distinct file readers:
 │                read_file_content (working tree),
 │                read_file_content_at_rev + list_files_at_rev (a commit's tree),
 │                read_file_content_at_index (the STAGED blob)

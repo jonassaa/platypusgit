@@ -80,6 +80,101 @@ pub fn safe_workdir_path(workdir: &Path, relative: &str) -> AppResult<PathBuf> {
     Ok(workdir.join(rel))
 }
 
+/// Is `candidate` strictly inside `root`?
+///
+/// PURE — no filesystem access; both sides are compared as already-resolved
+/// paths. Component-wise, because a string `starts_with` reads `/repository` as
+/// a child of `/repo` and `/repo-backup` as a child of `/repo` too. "Strictly"
+/// means the root itself is NOT contained: a caller asking about "the workdir,
+/// relative to the workdir" is asking about the repository, not about something
+/// inside it, and a destructive caller must never resolve to it.
+///
+/// Case is compared exactly. Both sides reach here from `fs::canonicalize`,
+/// which returns the on-disk spelling, so a case-insensitive filesystem hands
+/// us matching prefixes anyway — folding here would instead make `/Repo` and
+/// `/repo` interchangeable on a case-SENSITIVE filesystem, where they are two
+/// different directories.
+pub fn contained_in(root: &Path, candidate: &Path) -> bool {
+    match candidate.strip_prefix(root) {
+        Ok(rest) => rest.components().next().is_some(),
+        Err(_) => false,
+    }
+}
+
+/// Resolve a repo-relative path against `workdir` and PROVE, against the real
+/// filesystem, that it lands inside it (#245).
+///
+/// [`safe_workdir_path`] is a LEXICAL check: it refuses `..`, absolute paths and
+/// Windows prefixes, which is enough for "hand this string to an application".
+/// It is not enough for a caller that will unlink the result, because it cannot
+/// see symlinks — `repo/out -> /etc` makes `out/passwd` an innocent-looking
+/// relative path with no `..` anywhere in it.
+///
+/// So this canonicalizes both sides and re-checks containment with
+/// [`contained_in`]:
+///
+/// - The **workdir** is canonicalized too, not just the candidate. On macOS a
+///   tempdir lives under `/var`, which is itself a symlink to `/private/var`,
+///   so comparing a raw workdir against a canonicalized candidate would refuse
+///   everything.
+/// - The candidate's **parent** is canonicalized and the final component
+///   re-joined, rather than canonicalizing the whole path: that resolves every
+///   intermediate symlink while leaving the entry itself unfollowed, so a
+///   missing file still resolves — its absence is the caller's business to
+///   report, and a delete that reported "escapes the worktree" for a file
+///   somebody else already removed would be a lie.
+/// - A **symlink** as the final component is refused unless its own target
+///   canonicalizes inside the workdir. Unlinking a symlink does not touch what
+///   it points at, so this is stricter than it has to be, and deliberately: a
+///   link is not the file the user is looking at in the list, and "refuse and
+///   say so" beats reasoning about link semantics per platform on a
+///   destructive path. A link we cannot resolve at all (a broken one) is
+///   refused for the same reason.
+pub fn resolved_workdir_path(workdir: &Path, relative: &str) -> AppResult<PathBuf> {
+    let joined = safe_workdir_path(workdir, relative)?;
+    let root = workdir.canonicalize().map_err(|e| {
+        AppError::InvalidPath(format!(
+            "cannot resolve the repository worktree {}: {e}",
+            workdir.display()
+        ))
+    })?;
+    let (parent, name) = match (joined.parent(), joined.file_name()) {
+        (Some(parent), Some(name)) => (parent, name),
+        // `safe_workdir_path` already refused the empty string and every root /
+        // prefix component, and a trailing `..` with it — so this is
+        // unreachable in practice. Still an error rather than a panic.
+        _ => {
+            return Err(AppError::InvalidPath(format!(
+                "path names no entry: {relative}"
+            )))
+        }
+    };
+    let parent = parent.canonicalize().map_err(|e| {
+        AppError::InvalidPath(format!(
+            "cannot resolve the directory holding {relative}: {e}"
+        ))
+    })?;
+    let resolved = parent.join(name);
+    if !contained_in(&root, &resolved) {
+        return Err(AppError::InvalidPath(format!(
+            "path escapes the repository worktree: {relative}"
+        )));
+    }
+    if std::fs::symlink_metadata(&resolved).is_ok_and(|m| m.is_symlink()) {
+        let target = resolved.canonicalize().map_err(|e| {
+            AppError::InvalidPath(format!(
+                "refusing to act on a symbolic link whose target cannot be resolved ({e}): {relative}"
+            ))
+        })?;
+        if !contained_in(&root, &target) {
+            return Err(AppError::InvalidPath(format!(
+                "refusing to act on a symbolic link that leaves the repository worktree: {relative}"
+            )));
+        }
+    }
+    Ok(resolved)
+}
+
 /// The launcher executable to spawn.
 ///
 /// SECURITY (Windows): `CreateProcess` searches the **current directory before

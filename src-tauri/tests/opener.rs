@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use platypusgit_lib::opener::{safe_url, safe_workdir_path};
+use platypusgit_lib::opener::{
+    contained_in, resolved_workdir_path, safe_url, safe_workdir_path,
+};
 
 #[test]
 fn safe_url_accepts_a_normal_github_release_url() {
@@ -74,4 +76,127 @@ fn safe_workdir_path_refuses_to_escape_the_worktree() {
     assert!(safe_workdir_path(wd, "../../etc/passwd").is_err());
     assert!(safe_workdir_path(wd, "src/../../etc/passwd").is_err());
     assert!(safe_workdir_path(wd, "").is_err());
+}
+
+// ─── Containment against the real filesystem (#245) ──────────────────────────
+//
+// `safe_workdir_path` above is lexical and cannot see symlinks. Anything that
+// UNLINKS the result goes through `resolved_workdir_path`, which canonicalizes
+// both sides. These are the inputs it has to refuse.
+
+#[test]
+fn contained_in_is_component_wise_not_a_string_prefix() {
+    let root = Path::new("/repo");
+    assert!(contained_in(root, Path::new("/repo/a.txt")));
+    assert!(contained_in(root, Path::new("/repo/src/a.txt")));
+    // The three ways a string `starts_with` gets this wrong.
+    assert!(!contained_in(root, Path::new("/repository/a.txt")));
+    assert!(!contained_in(root, Path::new("/repo-backup/a.txt")));
+    assert!(!contained_in(root, Path::new("/repoX")));
+    // Strictly inside: the root itself is the repository, not a thing in it.
+    assert!(!contained_in(root, Path::new("/repo")));
+    assert!(!contained_in(root, Path::new("/")));
+    assert!(!contained_in(root, Path::new("/elsewhere/a.txt")));
+}
+
+/// A repo dir plus a sibling directory outside it, both canonicalized-able.
+fn two_trees() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path().join("repo");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.txt"), "s").unwrap();
+    (dir, repo, outside)
+}
+
+#[test]
+fn resolved_workdir_path_resolves_a_file_inside_the_worktree() {
+    let (_dir, repo, _outside) = two_trees();
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(repo.join("src/a.txt"), "a").unwrap();
+
+    let resolved = resolved_workdir_path(&repo, "src/a.txt").expect("inside the worktree");
+
+    // Canonicalized on BOTH sides: on macOS the tempdir sits under /var, which
+    // is a symlink to /private/var, so a raw-workdir comparison refuses
+    // everything.
+    assert_eq!(resolved, repo.canonicalize().unwrap().join("src").join("a.txt"));
+}
+
+#[test]
+fn resolved_workdir_path_resolves_a_file_that_does_not_exist() {
+    // Only the PARENT is canonicalized, so a path whose entry is already gone
+    // still resolves — reporting its absence belongs to the caller, and a
+    // delete that answered "escapes the worktree" for a file somebody else
+    // removed would be a lie.
+    let (_dir, repo, _outside) = two_trees();
+    let resolved = resolved_workdir_path(&repo, "vanished.txt").expect("missing but contained");
+    assert_eq!(resolved, repo.canonicalize().unwrap().join("vanished.txt"));
+}
+
+#[test]
+fn resolved_workdir_path_refuses_a_parent_dir_escape() {
+    let (_dir, repo, _outside) = two_trees();
+    assert!(resolved_workdir_path(&repo, "../outside/secret.txt").is_err());
+    assert!(resolved_workdir_path(&repo, "../../../etc/passwd").is_err());
+    assert!(resolved_workdir_path(&repo, "src/../../outside/secret.txt").is_err());
+}
+
+#[test]
+fn resolved_workdir_path_refuses_an_absolute_path_outside_the_worktree() {
+    let (_dir, repo, outside) = two_trees();
+    let abs = outside.join("secret.txt").to_string_lossy().to_string();
+    assert!(resolved_workdir_path(&repo, &abs).is_err());
+    assert!(resolved_workdir_path(&repo, "/etc/passwd").is_err());
+    assert!(resolved_workdir_path(&repo, "").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn resolved_workdir_path_refuses_a_symlink_that_leaves_the_worktree() {
+    // The case the lexical check cannot see: no `..`, not absolute, and it
+    // still names a file outside the repository.
+    let (_dir, repo, outside) = two_trees();
+    std::os::unix::fs::symlink(outside.join("secret.txt"), repo.join("escape")).unwrap();
+
+    let err = resolved_workdir_path(&repo, "escape").expect_err("symlink out of the tree");
+
+    assert!(
+        format!("{err}").contains("symbolic link"),
+        "unexpected error: {err}"
+    );
+    assert!(repo.join("escape").symlink_metadata().is_ok(), "link removed");
+}
+
+#[cfg(unix)]
+#[test]
+fn resolved_workdir_path_refuses_a_path_through_a_symlinked_directory() {
+    // `out/secret.txt` has no `..` in it at all — the escape is one level up.
+    let (_dir, repo, outside) = two_trees();
+    std::os::unix::fs::symlink(&outside, repo.join("out")).unwrap();
+
+    assert!(resolved_workdir_path(&repo, "out/secret.txt").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn resolved_workdir_path_refuses_a_broken_symlink() {
+    let (_dir, repo, _outside) = two_trees();
+    std::os::unix::fs::symlink(repo.join("nothing-here"), repo.join("dangling")).unwrap();
+
+    assert!(resolved_workdir_path(&repo, "dangling").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn resolved_workdir_path_allows_a_symlink_that_stays_inside_the_worktree() {
+    let (_dir, repo, _outside) = two_trees();
+    std::fs::write(repo.join("real.txt"), "r").unwrap();
+    std::os::unix::fs::symlink(repo.join("real.txt"), repo.join("alias")).unwrap();
+
+    assert_eq!(
+        resolved_workdir_path(&repo, "alias").expect("contained link"),
+        repo.canonicalize().unwrap().join("alias")
+    );
 }

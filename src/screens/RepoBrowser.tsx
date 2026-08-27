@@ -598,11 +598,17 @@ export function RepoBrowserScreen() {
   const fileCtx = useContextMenu<{ key: string; node: PGFileTreeNode }>(
     ({ key, node }) => {
       if (sel.keys.length > 1 && sel.keys.includes(key)) {
-        return multiFileMenuItems(splitSelection(sel.keys));
+        return multiFileMenuItems(splitSelection(sel.keys), platform);
       }
       // Folder: act on every file beneath it — stage / unstage / discard all,
-      // the same batch menu a multi-row selection gets.
-      if (node.children?.length) return multiFileMenuItems(splitSelection([key]));
+      // the same batch menu a multi-row selection gets. `directoryPath` is the
+      // folder itself, which the split deliberately does not carry (it answers
+      // with the files beneath) and which the file-manager entry needs (#245).
+      if (node.children?.length)
+        return multiFileMenuItems(
+          { ...splitSelection([key]), directoryPath: treeKeyToPath(key) },
+          platform,
+        );
       const st = findStatusByTreeKey(key, status);
       // Act on the status entry's own path, not the key: an embedded repo's
       // path carries a trailing slash the key has already lost, and that slash

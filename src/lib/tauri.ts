@@ -10,6 +10,7 @@ import type {
   BranchInfo,
   CliInstallOutcome,
   ChecksSummary,
+  DeleteFailure,
   CliShimStatus,
   CommitInfo,
   CommitResult,
@@ -494,6 +495,25 @@ export async function verifyCommit(
 
 export async function discardPaths(repoId: string, paths: string[]): Promise<void> {
   return invoke<void>("discard_paths", { repoId, paths });
+}
+
+/**
+ * Delete UNTRACKED files from the working tree (#245).
+ *
+ * Not `discardPaths`: that restores a tracked path from the index and only
+ * deletes an untracked one, while this refuses a tracked path outright — the
+ * backend enforces untracked-only, inside-the-worktree, no directories and no
+ * embedded repositories, and none of those are the frontend's to decide.
+ *
+ * Rejects without deleting anything when a path fails one of those rules.
+ * Resolves with one entry per path the OS refused to unlink (an empty array
+ * means the whole selection is gone) — the delete is best-effort once it starts.
+ */
+export async function deleteUntrackedFiles(
+  repoId: string,
+  paths: string[],
+): Promise<DeleteFailure[]> {
+  return invoke<DeleteFailure[]>("delete_untracked_files", { repoId, paths });
 }
 
 // Hunk indices refer to the diff computed with `contextLines` — always pass

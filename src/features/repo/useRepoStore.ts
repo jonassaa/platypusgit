@@ -46,6 +46,7 @@ import {
   discardHunk,
   discardLines as discardLinesFn,
   discardPaths,
+  deleteUntrackedFiles as deleteUntrackedFilesFn,
   fetch as fetchRemote,
   fetchAll,
   getLogFilteredPage,
@@ -229,6 +230,15 @@ interface RepoStoreState extends RepoSlice {
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
   discard: (paths: string[]) => Promise<void>;
+  /**
+   * Delete untracked files outright (#245).
+   *
+   * A different op from `discard`, not a nicer name for it: discard restores a
+   * tracked path from the index, and this refuses one. Callers must therefore
+   * confirm first (`pgConfirm`) — the store does not, because it is also the
+   * layer a keyboard shortcut would reach.
+   */
+  deleteUntracked: (paths: string[]) => Promise<void>;
   stageHunk: (path: string, hunkIndex: number) => Promise<void>;
   unstageHunk: (path: string, hunkIndex: number) => Promise<void>;
   discardHunk: (path: string, hunkIndex: number) => Promise<void>;
@@ -795,6 +805,35 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await discardPaths(repo.id, paths);
       await get().refreshStatus();
     } catch (e) {
+      setErrorFor(repo.id, e);
+    }
+  },
+
+  async deleteUntracked(paths) {
+    const repo = get().current;
+    if (!repo || !paths.length) return;
+    try {
+      const failed = await deleteUntrackedFilesFn(repo.id, paths);
+      // Refresh BEFORE reporting, on the success path as much as in the catch
+      // arm: the delete is best-effort, so "some of these are gone" is a
+      // partial outcome and the list has to show which ones before the banner
+      // talks about the rest.
+      await get().refreshStatus();
+      if (failed.length) {
+        const detail = failed.map((f) => `${f.path} (${f.reason})`).join("; ");
+        setErrorFor(repo.id, {
+          kind: "Io",
+          message: `could not delete ${failed.length} file${
+            failed.length === 1 ? "" : "s"
+          }: ${detail}`,
+        });
+      }
+    } catch (e) {
+      // A danger op: refreshAll() FIRST, the error LAST. The backend refuses a
+      // batch before deleting anything, but a rejection can also come from a
+      // dropped IPC call mid-flight — the UI must show what is actually on disk
+      // before it explains itself.
+      await get().refreshAll();
       setErrorFor(repo.id, e);
     }
   },

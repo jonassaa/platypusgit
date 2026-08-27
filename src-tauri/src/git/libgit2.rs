@@ -11,12 +11,13 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::git::ownership;
-use crate::opener::safe_workdir_path;
+use crate::opener::{resolved_workdir_path, safe_workdir_path};
 
 use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus,
-        BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides, DiffHunk,
+        BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
+        DeleteFailure, DiffHunk,
         DiffKind,
         DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage,
         RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
@@ -3550,6 +3551,98 @@ impl GitBackend for Libgit2Backend {
                 repo.checkout_index(None, Some(&mut opts))?;
             }
             Ok(())
+        })
+    }
+
+    fn delete_untracked(
+        &self,
+        repo_id: &RepoId,
+        paths: &[PathBuf],
+    ) -> AppResult<Vec<DeleteFailure>> {
+        self.with_repo(repo_id, |repo| {
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::InvalidPath("bare repository has no workdir".into()))?
+                .to_path_buf();
+            let index = repo.index()?;
+
+            // ── Phase 1: validate everything, delete nothing ─────────────────
+            //
+            // All four refusals below are decidable without touching the disk,
+            // so a batch containing one leaves the worktree exactly as it was.
+            // That is the point: a crafted path, or a tracked file that slipped
+            // into the selection, must not be discoverable by noticing that the
+            // three files before it are already gone.
+            let mut targets: Vec<(String, PathBuf)> = Vec::with_capacity(paths.len());
+            for p in paths {
+                let rel = p.to_string_lossy().to_string();
+                // The security boundary, and it comes FIRST for two reasons.
+                //
+                // It is the check that must not be reachable around, and — less
+                // obviously — `git2::Index::get_path` PANICS on a path that is
+                // absolute or starts with `..` (it unwraps its own
+                // `path_to_repo_path`). So the tracked check below is only safe
+                // to run on a path already proven relative and contained;
+                // `discard` orders itself the same way for the same reason.
+                //
+                // `resolved_workdir_path` canonicalizes, so unlike the lexical
+                // `safe_workdir_path` this also refuses a symlink out of the
+                // tree and a path reached THROUGH one.
+                let abs = resolved_workdir_path(&workdir, &rel)?;
+                // An embedded repository is untracked, and removing one destroys
+                // commits git cannot recover. Same refusal `stage`/`discard`
+                // make, and it precedes both checks below so the message names
+                // the real reason rather than "is a directory".
+                reject_embedded_repo(repo, p)?;
+                // Any index stage counts as tracked, not just stage 0: a
+                // conflicted path lives at 1/2/3, and reading it as untracked
+                // would delete a merge in progress. An entry BENEATH the path
+                // counts too, so `src` is not "untracked" merely because `src`
+                // itself is not an index entry.
+                if index_tracks_path(&index, p) || index_has_entry_under(&index, p) {
+                    return Err(AppError::InvalidPath(format!(
+                        "{rel} is tracked by git — delete only removes untracked files, \
+                         and discarding it would restore it from the index instead"
+                    )));
+                }
+                // A real directory is refused: this is the file list's action for
+                // untracked FILES, and a recursive directory delete is a
+                // different and far more dangerous operation. libgit2 recurses
+                // untracked directories in `status()` anyway, so every untracked
+                // row the UI shows is a file. Symlinks are NOT caught here —
+                // `symlink_metadata` does not follow — and are unlinked as links
+                // below, which is what removing a link means.
+                if std::fs::symlink_metadata(&abs).is_ok_and(|m| m.is_dir()) {
+                    return Err(AppError::InvalidPath(format!(
+                        "{rel} is a directory — delete removes files, not directory trees"
+                    )));
+                }
+                targets.push((rel, abs));
+            }
+
+            // ── Phase 2: delete, best-effort ─────────────────────────────────
+            let mut failed = Vec::new();
+            for (rel, abs) in targets {
+                let is_link = std::fs::symlink_metadata(&abs).is_ok_and(|m| m.is_symlink());
+                let mut result = std::fs::remove_file(&abs);
+                // A Windows symlink to a DIRECTORY (or a junction) is a
+                // directory entry as far as the OS is concerned, so `unlink`
+                // refuses it and `remove_dir` is the call that removes the link
+                // without touching its target. Only ever attempted for something
+                // we already know is a link — phase 1 refused real directories.
+                if result.is_err() && is_link {
+                    result = std::fs::remove_dir(&abs);
+                }
+                if let Err(e) = result {
+                    failed.push(DeleteFailure {
+                        // The path the CALLER spelled, not the canonicalized
+                        // absolute one: the file list has no row for the latter.
+                        path: rel,
+                        reason: e.to_string(),
+                    });
+                }
+            }
+            Ok(failed)
         })
     }
 

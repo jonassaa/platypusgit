@@ -21,7 +21,7 @@ use crate::error::AppResult;
 use types::{
     AheadBehind,
     BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
-    DiffKind, FileContent,
+    DeleteFailure, DiffKind, FileContent,
     FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
     RemoteInfo,
     RepoHandle,
@@ -327,6 +327,42 @@ pub trait GitBackend: Send + Sync {
     fn stage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
     fn unstage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
     fn discard(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;
+
+    // === worktree writes that are not index writes ===
+    /// Delete UNTRACKED files from the working tree (#245).
+    ///
+    /// Not the same op as [`GitBackend::discard`], which restores a tracked path
+    /// from the index and deletes an untracked one — this only ever deletes, and
+    /// REFUSES a tracked path outright rather than quietly restoring it. "Delete"
+    /// has to mean delete, and a menu entry that sometimes reverted a file
+    /// instead would be the worst possible surprise on a destructive action.
+    ///
+    /// On the trait, despite being an unlink rather than a git call, because
+    /// every check it depends on is a git question: whether the index knows the
+    /// path (at ANY stage — a conflicted file lives at 1/2/3), and whether the
+    /// entry is an embedded repository. CLAUDE.md's rule is that a verify and
+    /// the mutation it guards happen under ONE lock acquisition, and only an
+    /// implementation holding the per-repo lock can do that; a command reading
+    /// `status()` and then unlinking is the TOCTOU the stash ops were fixed to
+    /// avoid.
+    ///
+    /// Two phases, deliberately:
+    ///
+    /// 1. **Validate every path, delete nothing.** A tracked path, a path that
+    ///    escapes the worktree, an embedded repository or a directory fails the
+    ///    WHOLE batch — a refusal must never leave a half-deleted selection, and
+    ///    all four are decidable without touching the disk.
+    /// 2. **Delete, best-effort**, collecting one [`DeleteFailure`] per path the
+    ///    OS refused. Three read-only files in a ten-file selection must not
+    ///    decide the fate of the other seven.
+    ///
+    /// `Ok(vec![])` therefore means every path is gone; `Ok(failures)` means the
+    /// rest are.
+    fn delete_untracked(
+        &self,
+        repo_id: &RepoId,
+        paths: &[PathBuf],
+    ) -> AppResult<Vec<DeleteFailure>>;
 
     // === hunk-level staging ===
     // Hunk indices are positions in the diff produced with `context_lines`.

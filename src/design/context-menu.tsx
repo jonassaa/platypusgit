@@ -1762,9 +1762,15 @@ export function fileMenuItems(
       },
     },
     { divider: true },
-    // An untracked file has no copy in the index or in history, so discarding
-    // it deletes it for good — say so, and never do it on a single click the
-    // way a recoverable "restore from index" can be.
+    // An untracked file has no copy in the index or in history, so deleting it
+    // is for good — say so, and never do it on a single click the way a
+    // recoverable "restore from index" can be.
+    //
+    // Wired to `deleteUntracked`, not `discard` (#245): discard would RESTORE
+    // this path the moment it became tracked between the right-click and the
+    // confirm, and an entry labelled "Delete file…" that reverted a file
+    // instead is the worst surprise available on a destructive action. The
+    // backend refuses a tracked path outright.
     untracked
       ? {
           icon: "trash",
@@ -1780,7 +1786,7 @@ export function fileMenuItems(
                 confirmLabel: "Delete file",
               })
             ) {
-              useRepoStore.getState().discard([path]);
+              useRepoStore.getState().deleteUntracked([path]);
             }
           },
         }
@@ -1823,9 +1829,22 @@ export interface MultiFileMenuSelection {
   /**
    * Subset of `unstagedPaths` that is untracked. Discarding those deletes them
    * outright — git has no copy — so the confirm has to name that separately
-   * from the recoverable "restore from index" case.
+   * from the recoverable "restore from index" case. Also the set "Delete N
+   * files…" acts on (#245).
    */
   untrackedPaths?: string[];
+  /**
+   * The DIRECTORY this menu was opened on, when it was opened on exactly one
+   * (#245).
+   *
+   * Both trees hand a folder key straight to `splitFileSelection`, which
+   * expands it to the files beneath — so this menu is also the folder row's
+   * menu, and until this field existed it had no idea which folder that was.
+   * Set only for a single folder row: entries that address one location (reveal,
+   * terminal) are meaningless for a multi-row selection, where the honest answer
+   * would be five windows.
+   */
+  directoryPath?: string;
 }
 
 /**
@@ -1903,6 +1922,7 @@ export async function promptStashPaths(
 
 export function multiFileMenuItems(
   sel: MultiFileMenuSelection | null,
+  platform?: Platform,
 ): ContextMenuItem[] {
   const stagedPaths = sel?.stagedPaths ?? [];
   const unstagedPaths = sel?.unstagedPaths ?? [];
@@ -1963,33 +1983,95 @@ export function multiFileMenuItems(
     });
   }
   items.push({ divider: true }, ...copyPathItems(all));
-  if (unstagedPaths.length) {
+  // The folder row's file-manager entries (#245). `reveal_in_file_manager` reads
+  // is-it-a-directory off the filesystem, so this opens a WINDOW on the folder
+  // rather than selecting it in its parent — and "Open containing folder" is
+  // what the file row's own entry has always been, on every platform, so there
+  // is deliberately no such synonym here either.
+  const directoryPath = sel?.directoryPath;
+  if (directoryPath) {
     items.push(
       { divider: true },
       {
-        icon: "undo",
-        label: `Discard changes in ${files(unstagedPaths.length)}…`,
-        danger: true,
-        onClick: async () => {
-          const untracked = sel?.untrackedPaths ?? [];
-          const deleted = untracked.length
-            ? ` ${files(untracked.length)} ${
-                untracked.length === 1 ? "is" : "are"
-              } untracked and will be deleted permanently.`
-            : "";
-          if (
-            await pgConfirm({
-              title: `Discard changes in ${files(unstagedPaths.length)}?`,
-              body: `The changes will be lost.${deleted}`,
-              danger: true,
-              confirmLabel: "Discard",
-            })
-          ) {
-            useRepoStore.getState().discard(unstagedPaths);
-          }
+        icon: "folder",
+        label: fileManagerLabel(platform),
+        onClick: () => {
+          useRepoStore.getState().revealInFileManager(directoryPath);
+        },
+      },
+      {
+        icon: "terminal",
+        label: "Open in terminal",
+        onClick: () => {
+          useRepoStore.getState().openInTerminal(directoryPath);
         },
       },
     );
+  }
+
+  // The untracked half of the selection, which is what Delete acts on. Filtered
+  // against the selection for the same reason `promptStashPaths` filters: the
+  // caller's bucket can be wider than what is actually selected.
+  const untracked = (sel?.untrackedPaths ?? []).filter((p) =>
+    unstagedPaths.includes(p),
+  );
+  // Discard RESTORES from the index; where every unstaged path is untracked
+  // there is nothing to restore and the op is a delete, so the Discard entry
+  // steps aside for the Delete one — exactly the swap `fileMenuItems` makes on a
+  // single untracked row (#67). A MIXED selection keeps both, because they
+  // genuinely differ there: Discard restores the tracked ones and deletes the
+  // untracked ones, Delete touches only the untracked ones.
+  const restorable = unstagedPaths.filter((p) => !untracked.includes(p));
+  if (restorable.length || untracked.length) items.push({ divider: true });
+  if (restorable.length) {
+    items.push({
+      icon: "undo",
+      label: `Discard changes in ${files(unstagedPaths.length)}…`,
+      danger: true,
+      onClick: async () => {
+        const deleted = untracked.length
+          ? ` ${files(untracked.length)} ${
+              untracked.length === 1 ? "is" : "are"
+            } untracked and will be deleted permanently.`
+          : "";
+        if (
+          await pgConfirm({
+            title: `Discard changes in ${files(unstagedPaths.length)}?`,
+            body: `The changes will be lost.${deleted}`,
+            danger: true,
+            confirmLabel: "Discard",
+          })
+        ) {
+          useRepoStore.getState().discard(unstagedPaths);
+        }
+      },
+    });
+  }
+  if (untracked.length) {
+    const n = untracked.length;
+    items.push({
+      icon: "trash",
+      label: `Delete ${files(n)}…`,
+      danger: true,
+      onClick: async () => {
+        if (
+          await pgConfirm({
+            title: `Delete ${files(n)}?`,
+            // The #67 wording, in the plural: an untracked file has no copy
+            // anywhere git can reach, and that is the whole reason this confirm
+            // exists.
+            body:
+              n === 1
+                ? "It is untracked — there is no copy in the index or in history, so this cannot be undone."
+                : "They are untracked — there is no copy in the index or in history, so this cannot be undone.",
+            danger: true,
+            confirmLabel: n === 1 ? "Delete file" : "Delete files",
+          })
+        ) {
+          useRepoStore.getState().deleteUntracked(untracked);
+        }
+      },
+    });
   }
   return items;
 }

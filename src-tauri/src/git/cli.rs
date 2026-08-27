@@ -5,7 +5,7 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
-        DiffKind, FileContent,
+        DeleteFailure, DiffKind, FileContent,
         FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
         SubmoduleInfo, TagInfo,
@@ -179,6 +179,13 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn discard(&self, _repo_id: &RepoId, _paths: &[PathBuf]) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn delete_untracked(
+        &self,
+        _repo_id: &RepoId,
+        _paths: &[PathBuf],
+    ) -> AppResult<Vec<DeleteFailure>> {
         Err(AppError::NotImplemented)
     }
     fn stage_hunk(
