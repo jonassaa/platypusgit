@@ -40,13 +40,19 @@ diagnostics.rs   What the log must say about the machine that wrote it (#274),
                  plus the log-file helpers Settings needs. is_wsl_kernel /
                  describe_wsl / parse_git_version / environment_line /
                  mount_warning / tail_lines are PURE and unit-tested from any
-                 host — read_host_facts (reads /proc, spawns `git --version`
-                 via proc.rs) is the only impure part, cached process-wide by
-                 host_facts(). environment_line writes the one `host os=… wsl=…
-                 git=…` INFO line at startup; before it, a WSL log and a native
-                 Linux log were indistinguishable. mount_warning explains a
-                 /mnt/<drive> repo's slowness in the log rather than leaving a
-                 nine-second launch looking like a broken app. Handlers live in
+                 host — no WSL box needed to test the WSL logic.
+                 TWO fact types, split by COST not topic: WslFacts (two file
+                 reads, no spawn) via wsl_facts(), and HostFacts (adds
+                 `git --version` through proc.rs) via host_facts(); both cached
+                 in a OnceLock. open_repo must use wsl_facts — it is a hot path
+                 and e2e opens a repo while the login-shell PATH probe still
+                 holds the startup thread, so host_facts there would lose the
+                 race and pay for the spawn on every cold open.
+                 environment_line writes the one `host os=… wsl=… git=…` INFO
+                 line at startup; before it, a WSL log and a native Linux log
+                 were indistinguishable. mount_warning explains a /mnt/<drive>
+                 repo's slowness in the log rather than leaving a nine-second
+                 launch looking like a broken app. Handlers live in
                  commands/diagnostics.rs
 forge/           GitHub/GitLab PR/MR integration (#92). Trait = URL builders +
                  response parsers, pure and testable against recorded JSON:

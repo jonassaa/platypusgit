@@ -17,10 +17,15 @@
 //! # Shape
 //!
 //! Everything that can be decided from data is a pure function over
-//! [`HostFacts`] — [`describe_wsl`], [`environment_line`], [`tail_lines`],
-//! [`mount_warning`] — and unit-tested as such. [`read_host_facts`] is the only
-//! part that touches the host, so the interesting logic is testable without a
-//! WSL machine to test it on.
+//! [`HostFacts`] or [`WslFacts`] — [`describe_wsl`], [`environment_line`],
+//! [`tail_lines`], [`mount_warning`] — and unit-tested as such.
+//! [`read_wsl_facts`] and [`read_host_facts`] are the only parts that touch the
+//! host, so the interesting logic is testable without a WSL machine to test it
+//! on.
+//!
+//! The two fact types are split by COST, not by topic: [`WslFacts`] is two file
+//! reads and is safe on the repository-open path, while [`HostFacts`] spawns
+//! `git --version` and belongs only where a subprocess is already acceptable.
 
 use std::path::Path;
 
@@ -43,17 +48,36 @@ pub struct HostFacts {
     pub os: String,
     /// `std::env::consts::ARCH` — `"x86_64"`, `"aarch64"`.
     pub arch: String,
-    /// Kernel release, Linux only (`/proc/sys/kernel/osrelease`).
-    pub kernel: Option<String>,
-    /// `$WSL_DISTRO_NAME`, when WSL set it.
-    pub wsl_distro: Option<String>,
+    /// The WSL signals, which cost no subprocess. See [`WslFacts`].
+    pub wsl: WslFacts,
     /// `git --version`'s version field, or `None` when git could not be run.
     ///
     /// `None` is itself a finding: the `.deb` depends on git, so a missing git
     /// on a packaged install means something is badly wrong with the
     /// environment — and every git operation would fail with a message that
     /// blames the repository rather than the missing binary.
+    ///
+    /// **This is the one field that costs a process spawn**, which is why it
+    /// lives behind [`host_facts`] and not [`wsl_facts`].
     pub git_version: Option<String>,
+}
+
+/// Just enough to answer "is this WSL, and is that path a Windows drive?".
+///
+/// Split out from [`HostFacts`] because it needs **no subprocess** — two reads,
+/// one of `/proc` and one of the environment. `open_repo` consults it on every
+/// call to decide whether to warn about a `/mnt/<drive>` path, and adding a
+/// `git --version` spawn to the repository-open path would be a real cost paid
+/// for a field that question does not use. It is also the path e2e exercises
+/// within a second of launch, while the login-shell PATH probe still holds the
+/// startup thread — so `open_repo` would lose that race and pay for the spawn
+/// itself rather than inheriting a warm cache.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WslFacts {
+    /// Kernel release, Linux only (`/proc/sys/kernel/osrelease`).
+    pub kernel: Option<String>,
+    /// `$WSL_DISTRO_NAME`, when WSL set it.
+    pub wsl_distro: Option<String>,
 }
 
 /// Whether a kernel release string is a WSL kernel.
@@ -75,7 +99,7 @@ pub fn is_wsl_kernel(kernel: &str) -> bool {
 /// The distro name is included when known because "WSL" alone does not say
 /// which userland — and a report against Ubuntu 24.04 and one against a
 /// hand-rolled Arch install are not the same report.
-pub fn describe_wsl(facts: &HostFacts) -> Option<String> {
+pub fn describe_wsl(facts: &WslFacts) -> Option<String> {
     let on_wsl = facts.kernel.as_deref().is_some_and(is_wsl_kernel);
     // The env var alone is enough to conclude WSL: nothing else sets it.
     let named = facts.wsl_distro.as_deref().filter(|d| !d.is_empty());
@@ -109,10 +133,10 @@ pub fn environment_line(facts: &HostFacts) -> String {
         format!("os={}", facts.os),
         format!("arch={}", facts.arch),
     ];
-    if let Some(kernel) = facts.kernel.as_deref().filter(|k| !k.is_empty()) {
+    if let Some(kernel) = facts.wsl.kernel.as_deref().filter(|k| !k.is_empty()) {
         parts.push(format!("kernel={kernel}"));
     }
-    if let Some(wsl) = describe_wsl(facts) {
+    if let Some(wsl) = describe_wsl(&facts.wsl) {
         parts.push(format!("wsl={wsl}"));
     }
     match facts.git_version.as_deref() {
@@ -137,7 +161,7 @@ pub fn environment_line(facts: &HostFacts) -> String {
 /// repository works, it is merely slow, and the user may have no choice about
 /// where it lives. But an unexplained nine-second launch reads as a broken app,
 /// and one line in the log turns it into a known cost with a known cause.
-pub fn mount_warning(path: &Path, facts: &HostFacts) -> Option<String> {
+pub fn mount_warning(path: &Path, facts: &WslFacts) -> Option<String> {
     if describe_wsl(facts).is_none() {
         return None;
     }
@@ -177,25 +201,42 @@ pub fn tail_lines(content: &str, n: usize, truncated: bool) -> String {
     lines[start..].join("\n")
 }
 
-/// The host's facts, read once per process.
+/// The WSL signals, read once per process. **Spawns nothing.**
 ///
-/// [`read_host_facts`] spawns `git --version`, so the callers that want these
-/// facts repeatedly — every `open_repo`, asking whether to warn about a `/mnt`
-/// path — must not each pay for a subprocess. The startup header populates this
-/// on a background thread; a caller that arrives first initialises it itself,
-/// which is why every call site is already inside `spawn_blocking`.
+/// This is what `open_repo` calls. Kept deliberately separate from
+/// [`host_facts`] so the repository-open path never waits on a process, and
+/// never blocks behind a [`host_facts`] initialisation that is mid-`git
+/// --version` on another thread.
+pub fn wsl_facts() -> &'static WslFacts {
+    static FACTS: std::sync::OnceLock<WslFacts> = std::sync::OnceLock::new();
+    FACTS.get_or_init(read_wsl_facts)
+}
+
+/// The full facts including git's version, read once per process.
+///
+/// [`read_host_facts`] spawns `git --version`, so this is for the two callers
+/// that actually want it — the startup header and the Settings report — both of
+/// which are already off the main thread and neither of which is on a hot path.
 pub fn host_facts() -> &'static HostFacts {
     static FACTS: std::sync::OnceLock<HostFacts> = std::sync::OnceLock::new();
     FACTS.get_or_init(read_host_facts)
 }
 
-/// Read the host's facts. The only function here that is not pure.
+/// Read the WSL signals: one `/proc` read and one environment read.
+pub fn read_wsl_facts() -> WslFacts {
+    WslFacts {
+        kernel: read_kernel(),
+        wsl_distro: std::env::var("WSL_DISTRO_NAME").ok(),
+    }
+}
+
+/// Read the host's facts. Spawns git; not pure.
 pub fn read_host_facts() -> HostFacts {
     HostFacts {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
-        kernel: read_kernel(),
-        wsl_distro: std::env::var("WSL_DISTRO_NAME").ok(),
+        // Reuses the cheap cache rather than re-reading /proc.
+        wsl: wsl_facts().clone(),
         git_version: read_git_version(),
     }
 }
@@ -236,10 +277,9 @@ mod tests {
 
     #[test]
     fn names_the_distro_when_wsl_exported_it() {
-        let facts = HostFacts {
+        let facts = WslFacts {
             kernel: Some("5.15.153.1-microsoft-standard-WSL2".into()),
             wsl_distro: Some("Ubuntu-24.04".into()),
-            ..Default::default()
         };
         assert_eq!(describe_wsl(&facts).as_deref(), Some("Ubuntu-24.04"));
     }
@@ -249,21 +289,21 @@ mod tests {
         // The case the env var alone would miss: a `.desktop` launch that did
         // not inherit WSL's environment. The kernel still gives it away, and
         // this is why `describe_wsl` consults it at all.
-        let facts = HostFacts {
+        let facts = WslFacts {
             kernel: Some("5.15.153.1-microsoft-standard-WSL2".into()),
             wsl_distro: None,
-            ..Default::default()
         };
         assert_eq!(describe_wsl(&facts).as_deref(), Some("yes"));
     }
 
     #[test]
     fn says_nothing_about_wsl_on_a_native_host() {
-        let facts = HostFacts {
+        let wsl = WslFacts {
             kernel: Some("6.8.0-45-generic".into()),
-            ..Default::default()
+            wsl_distro: None,
         };
-        assert_eq!(describe_wsl(&facts), None);
+        assert_eq!(describe_wsl(&wsl), None);
+        let facts = HostFacts { wsl, ..Default::default() };
         assert!(!environment_line(&facts).contains("wsl="));
     }
 
@@ -283,8 +323,10 @@ mod tests {
         let facts = HostFacts {
             os: "linux".into(),
             arch: "x86_64".into(),
-            kernel: Some("5.15.153.1-microsoft-standard-WSL2".into()),
-            wsl_distro: Some("Ubuntu-24.04".into()),
+            wsl: WslFacts {
+                kernel: Some("5.15.153.1-microsoft-standard-WSL2".into()),
+                wsl_distro: Some("Ubuntu-24.04".into()),
+            },
             git_version: Some("2.43.0".into()),
         };
         assert_eq!(
@@ -308,41 +350,41 @@ mod tests {
         assert!(environment_line(&facts).contains("git=UNAVAILABLE"));
     }
 
-    fn wsl_facts() -> HostFacts {
-        HostFacts {
+    fn on_wsl() -> WslFacts {
+        WslFacts {
             kernel: Some("5.15.153.1-microsoft-standard-WSL2".into()),
-            ..Default::default()
+            wsl_distro: None,
         }
     }
 
     #[test]
     fn warns_about_a_repository_on_a_windows_drive() {
-        let w = mount_warning(Path::new("/mnt/c/Users/jonas/dev/app"), &wsl_facts());
+        let w = mount_warning(Path::new("/mnt/c/Users/jonas/dev/app"), &on_wsl());
         assert!(w.is_some());
         assert!(w.unwrap().contains("Windows drive C:"));
     }
 
     #[test]
     fn says_nothing_about_a_repository_in_the_linux_filesystem() {
-        assert_eq!(mount_warning(Path::new("/home/jonas/dev/app"), &wsl_facts()), None);
+        assert_eq!(mount_warning(Path::new("/home/jonas/dev/app"), &on_wsl()), None);
     }
 
     #[test]
     fn does_not_mistake_an_ordinary_mount_for_a_windows_drive() {
         // A multi-character entry under /mnt is somebody's own mount, not a
         // drvfs drive letter. Warning about it would be confidently wrong.
-        assert_eq!(mount_warning(Path::new("/mnt/data/repos/app"), &wsl_facts()), None);
-        assert_eq!(mount_warning(Path::new("/mnt/backup"), &wsl_facts()), None);
+        assert_eq!(mount_warning(Path::new("/mnt/data/repos/app"), &on_wsl()), None);
+        assert_eq!(mount_warning(Path::new("/mnt/backup"), &on_wsl()), None);
         // The bare drive root is still a drive.
-        assert!(mount_warning(Path::new("/mnt/d"), &wsl_facts()).is_some());
+        assert!(mount_warning(Path::new("/mnt/d"), &on_wsl()).is_some());
     }
 
     #[test]
     fn never_warns_about_a_mount_path_off_wsl() {
         // `/mnt/c` on a native Linux box is just a directory.
-        let native = HostFacts {
+        let native = WslFacts {
             kernel: Some("6.8.0-45-generic".into()),
-            ..Default::default()
+            wsl_distro: None,
         };
         assert_eq!(mount_warning(Path::new("/mnt/c/repos/app"), &native), None);
     }

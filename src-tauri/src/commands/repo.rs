@@ -37,10 +37,14 @@ pub async fn open_repo(
         // Before the open, not after: the value of this line is that it is
         // written even when the call below never returns.
         log::info!("open_repo {}", path_buf.display());
-        if let Some(warning) = crate::diagnostics::mount_warning(
-            &path_buf,
-            crate::diagnostics::host_facts(),
-        ) {
+        // `wsl_facts`, NOT `host_facts`: this is the repository-open path, and
+        // the WSL question needs no `git --version`. e2e opens a repo about a
+        // second after launch, while the login-shell PATH probe still holds the
+        // startup thread — so a `host_facts` call here would lose that race and
+        // pay for the spawn itself on every cold open.
+        if let Some(warning) =
+            crate::diagnostics::mount_warning(&path_buf, crate::diagnostics::wsl_facts())
+        {
             log::warn!("{warning}");
         }
         let result = backend.open(&path_buf);
