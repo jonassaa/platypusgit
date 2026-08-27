@@ -264,6 +264,8 @@ pub fn run() {
             commands::branches::fetch,
             commands::branches::fetch_all,
             commands::branches::pull,
+            commands::branches::fast_forward_branch,
+            commands::branches::fast_forward_all_branches,
             commands::branches::push,
             commands::branches::add_remote,
             commands::branches::remove_remote,

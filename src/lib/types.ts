@@ -204,6 +204,38 @@ export interface BranchInfo {
   isDefault: boolean;
 }
 
+/**
+ * What advancing one local branch to its upstream did (#246).
+ *
+ * `moved` is false for the two harmless outcomes — already at the upstream tip,
+ * or strictly ahead of it — so a caller can say "already up to date" without
+ * re-deriving it. Anything that would NOT be a fast-forward comes back as a
+ * `NotFastForward` error instead, never as `moved: false`.
+ */
+export interface FastForward {
+  branch: string;
+  /** Upstream shorthand, e.g. `origin/main`. */
+  upstream: string;
+  /** FULL oids, like `BranchInfo.tip` — shorten at the display site. */
+  from: string;
+  to: string;
+  moved: boolean;
+}
+
+/**
+ * The outcome of fast-forwarding every eligible local branch at once (#246).
+ *
+ * The two lists that did NOT move are the half the user has to act on: a
+ * diverged branch needs a merge or a rebase, a checked-out one needs a pull.
+ * Branches that were already current, and branches with no upstream, are absent
+ * — neither is something to do anything about.
+ */
+export interface BulkFastForward {
+  advanced: FastForward[];
+  diverged: string[];
+  checkedOut: string[];
+}
+
 export interface TagInfo {
   name: string;
   shortOid: string;

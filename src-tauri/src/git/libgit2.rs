@@ -17,9 +17,10 @@ use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus,
         BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
-        DeleteFailure, DiffHunk,
+        BulkFastForward, DeleteFailure, DiffHunk,
         DiffKind,
-        DiffLine, DiffLineKind, FileContent, FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage,
+        DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileStatus, HeadInfo, LfsStatus,
+        LogFilter, LogPage,
         RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag,
         SubmoduleInfo, TagInfo, TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo, REFSPEC_ALL,
@@ -2262,6 +2263,156 @@ fn is_default_branch_name(name: &str, is_remote: bool, default: Option<&str>) ->
     }
 }
 
+// ─── Fast-forwarding a branch that is not checked out (#246) ─────────────────
+//
+// Every function here takes an ALREADY-BORROWED `&Repository`, exactly like the
+// `stash_pairs`/`stash_entry_at` pair above and for the same reason: the
+// ancestry check and the ref move have to happen under ONE acquisition of the
+// per-repo mutex, and std's `Mutex` is not reentrant, so a helper that took a
+// `&RepoId` and re-entered `with_repo` would deadlock — or, if it took the lock
+// separately, would be the stash TOCTOU with a different ref.
+
+/// What advancing one branch to its upstream would do.
+enum FastForwardKind {
+    /// The ref already points at the upstream tip, or past it. Nothing to do —
+    /// a state, not a failure, and what `git pull --ff-only` calls "Already up
+    /// to date" in both cases.
+    UpToDate,
+    /// The local tip is an ancestor of the upstream tip: move the ref here.
+    Advance(git2::Oid),
+    /// Both sides have commits the other lacks — or the histories are unrelated,
+    /// which is divergence in every sense that matters to a ref move.
+    Diverged,
+}
+
+/// The graph question and the reference to act on, from ONE ref lookup.
+///
+/// Holding the `Reference` rather than re-finding the branch to move it is what
+/// keeps "check" and "mutate" reading the same object; the lock makes that
+/// atomic against other commands, and one lookup makes it atomic against a
+/// `git` CLI writing the ref from outside in the same instant.
+struct FastForwardPlan<'r> {
+    /// Upstream shorthand, e.g. `origin/main`.
+    upstream: String,
+    from: git2::Oid,
+    kind: FastForwardKind,
+    reference: git2::Reference<'r>,
+}
+
+fn plan_fast_forward<'r>(repo: &'r Repository, branch: &str) -> AppResult<FastForwardPlan<'r>> {
+    let local = repo
+        .find_branch(branch, BranchType::Local)
+        .map_err(|_| AppError::InvalidRef(branch.to_string()))?;
+    let no_upstream =
+        || AppError::NoUpstream(format!("{branch} tracks no remote branch — set an upstream first"));
+    let upstream = local.upstream().map_err(|_| no_upstream())?;
+    let up_name = upstream
+        .name()
+        .ok()
+        .flatten()
+        .map(String::from)
+        .ok_or_else(no_upstream)?;
+    let up_oid = upstream
+        .get()
+        .target()
+        .ok_or_else(|| AppError::InvalidRef(up_name.clone()))?;
+
+    let reference = local.into_reference();
+    // A symbolic or unborn branch ref has no oid to compare, so there is no
+    // ancestry question to answer.
+    let from = reference.target().ok_or(AppError::Unborn)?;
+
+    let kind = if from == up_oid {
+        FastForwardKind::UpToDate
+    } else {
+        match repo.merge_base(from, up_oid) {
+            Ok(base) if base == from => FastForwardKind::Advance(up_oid),
+            // Strictly ahead: there is nothing to fast-forward TO.
+            Ok(base) if base == up_oid => FastForwardKind::UpToDate,
+            _ => FastForwardKind::Diverged,
+        }
+    };
+
+    Ok(FastForwardPlan {
+        upstream: up_name,
+        from,
+        kind,
+        reference,
+    })
+}
+
+/// Carry out a plan. `Diverged` is refused HERE, so no caller can move a ref by
+/// forgetting to look at the kind.
+fn apply_fast_forward(branch: &str, mut plan: FastForwardPlan<'_>) -> AppResult<FastForward> {
+    let done = |to: git2::Oid, moved: bool| FastForward {
+        branch: branch.to_string(),
+        upstream: plan.upstream.clone(),
+        from: plan.from.to_string(),
+        to: to.to_string(),
+        moved,
+    };
+    match plan.kind {
+        FastForwardKind::UpToDate => Ok(done(plan.from, false)),
+        FastForwardKind::Diverged => Err(AppError::NotFastForward(format!(
+            "{branch} has diverged from {} — check it out to merge or rebase",
+            plan.upstream
+        ))),
+        FastForwardKind::Advance(to) => {
+            // The reflog message is the undo: a ref that moved without one
+            // is a ref the user cannot walk back. It names the upstream, the way
+            // git's own ff messages do ("merge origin/main: Fast-forward"), so
+            // `git reflog main` reads as a history rather than a mystery.
+            let msg = format!("fast-forward: moved to {}", plan.upstream);
+            plan.reference.set_target(to, &msg)?;
+            Ok(done(to, true))
+        }
+    }
+}
+
+/// Where `branch` is checked out, if anywhere — this repository's HEAD or a
+/// linked worktree's.
+///
+/// `head` is `repo.head()`'s shorthand, passed in so a bulk sweep reads it once;
+/// `linked` is `worktree::linked_worktree_heads`, for the same reason.
+fn checked_out_at(branch: &str, head: Option<&str>, linked: &[(String, String)]) -> Option<String> {
+    if head == Some(branch) {
+        return Some("this worktree".to_string());
+    }
+    linked
+        .iter()
+        .find(|(_, on)| on == branch)
+        .map(|(wt, _)| format!("worktree {wt}"))
+}
+
+/// The refusal a checked-out branch gets: moving its ref without touching the
+/// index or the working tree would leave that checkout showing every incoming
+/// change as a deletion. The caller pulls instead, with the user's pull mode.
+fn reject_checked_out(repo: &Repository, branch: &str) -> AppResult<()> {
+    let head = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(String::from));
+    let linked = crate::git::worktree::linked_worktree_heads(repo);
+    match checked_out_at(branch, head.as_deref(), &linked) {
+        None => Ok(()),
+        Some(where_) => Err(AppError::InvalidArgument(format!(
+            "{branch} is checked out in {where_} — pull it there instead of moving its ref"
+        ))),
+    }
+}
+
+/// Local branch names, in listing order.
+fn local_branch_names(repo: &Repository) -> AppResult<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in repo.branches(Some(BranchType::Local))? {
+        let (branch, _) = entry?;
+        if let Ok(Some(name)) = branch.name() {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
 impl GitBackend for Libgit2Backend {
     fn open(&self, path: &Path) -> AppResult<RepoHandle> {
         if !path.exists() {
@@ -4282,6 +4433,95 @@ impl GitBackend for Libgit2Backend {
                 .map_err(|_| AppError::InvalidRef(branch.to_string()))?;
             local.set_upstream(upstream)?;
             Ok(())
+        })
+    }
+
+    fn fast_forward_remote(&self, repo_id: &RepoId, branch: &str) -> AppResult<String> {
+        self.with_repo(repo_id, |repo| {
+            // Both refusals happen before the caller spends a fetch. The
+            // upstream one goes FIRST: for a checked-out branch that also tracks
+            // nothing, "set an upstream" is the useful sentence and "pull it
+            // instead" is advice the user cannot act on.
+            let full = format!("refs/heads/{branch}");
+            // `branch.<name>.remote`, not `upstream.split('/')[0]`: a remote name
+            // may itself contain a slash, and `team/fork/main` would otherwise be
+            // fetched from a remote called `team`.
+            let remote = repo.branch_upstream_remote(&full).map_err(|_| {
+                // Either the branch does not exist or it tracks nothing. Tell
+                // those apart so a typo is not reported as a missing upstream.
+                match repo.find_branch(branch, BranchType::Local) {
+                    Ok(_) => AppError::NoUpstream(format!(
+                        "{branch} tracks no remote branch — set an upstream first"
+                    )),
+                    Err(_) => AppError::InvalidRef(branch.to_string()),
+                }
+            })?;
+            let name = remote.as_str().unwrap_or_default().to_string();
+            if name.is_empty() {
+                return Err(AppError::NoUpstream(format!(
+                    "{branch} tracks no remote branch — set an upstream first"
+                )));
+            }
+            reject_checked_out(repo, branch)?;
+            Ok(name)
+        })
+    }
+
+    fn fast_forward_branch(&self, repo_id: &RepoId, branch: &str) -> AppResult<FastForward> {
+        // ONE `with_repo`: the ancestry check and the ref move share a single
+        // acquisition of the per-repo mutex. See the trait doc.
+        self.with_repo(repo_id, |repo| {
+            // Plan first so an unknown branch or a missing upstream is reported
+            // as itself; `reject_checked_out` then stops the move. Nothing has
+            // been written at either point.
+            let plan = plan_fast_forward(repo, branch)?;
+            reject_checked_out(repo, branch)?;
+            apply_fast_forward(branch, plan)
+        })
+    }
+
+    fn fast_forward_all(&self, repo_id: &RepoId) -> AppResult<BulkFastForward> {
+        // ONE `with_repo` for the WHOLE sweep — the branch listing and every ref
+        // move it leads to are one atomic step as far as other commands go.
+        self.with_repo(repo_id, |repo| {
+            let head = repo
+                .head()
+                .ok()
+                .and_then(|h| h.shorthand().map(String::from));
+            // Walked once, not once per branch: each entry costs a repository
+            // open.
+            let linked = crate::git::worktree::linked_worktree_heads(repo);
+
+            let mut out = BulkFastForward {
+                advanced: Vec::new(),
+                diverged: Vec::new(),
+                checked_out: Vec::new(),
+            };
+            for name in local_branch_names(repo)? {
+                let plan = match plan_fast_forward(repo, &name) {
+                    Ok(p) => p,
+                    // Nothing to answer for, and nothing the user has to act on.
+                    Err(AppError::NoUpstream(_)) | Err(AppError::Unborn) => continue,
+                    Err(e) => return Err(e),
+                };
+                match plan.kind {
+                    FastForwardKind::UpToDate => {}
+                    // Diverged wins over checked-out: the remedy is a merge or a
+                    // rebase either way, and "pull it" would be wrong advice.
+                    FastForwardKind::Diverged => out.diverged.push(name),
+                    FastForwardKind::Advance(_) => {
+                        // Classified only for a branch that WOULD have moved, so
+                        // the branch you are standing on is named just when
+                        // there is actually something to pull.
+                        if checked_out_at(&name, head.as_deref(), &linked).is_some() {
+                            out.checked_out.push(name);
+                        } else {
+                            out.advanced.push(apply_fast_forward(&name, plan)?);
+                        }
+                    }
+                }
+            }
+            Ok(out)
         })
     }
     fn create_tag(&self, repo_id: &RepoId, name: &str, target: TagTarget) -> AppResult<()> {

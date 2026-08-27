@@ -72,6 +72,45 @@ pub fn info(repo: &Repository, name: &str, current: Option<&Path>) -> AppResult<
     })
 }
 
+/// Every LINKED worktree that is standing on a branch, as `(worktree, branch)`
+/// (#246).
+///
+/// Only linked worktrees: `git_worktree_list` never reports the main one, whose
+/// HEAD the caller already has from `repo.head()`.
+///
+/// libgit2 has `git_branch_is_checked_out`, but git2-rs 0.20 does not bind it —
+/// hence the walk. It costs one `Repository::open_from_worktree` per linked
+/// worktree, so only ref-MOVING ops pay it, never a listing; a bulk op walks
+/// once and looks branches up in the result.
+///
+/// A worktree whose directory has been deleted behind git's back cannot be
+/// opened. It is not standing on anything, so it is skipped rather than failing
+/// the caller — this project is developed through `.claude/worktrees/`, where a
+/// removed-but-unpruned entry is routine.
+pub fn linked_worktree_heads(repo: &Repository) -> Vec<(String, String)> {
+    let Ok(names) = repo.worktrees() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for name in names.iter().flatten() {
+        let Ok(wt) = repo.find_worktree(name) else {
+            continue;
+        };
+        let Ok(wrepo) = Repository::open_from_worktree(&wt) else {
+            continue;
+        };
+        let on = wrepo
+            .head()
+            .ok()
+            .filter(|h| h.is_branch())
+            .and_then(|h| h.shorthand().map(str::to_string));
+        if let Some(branch) = on {
+            out.push((name.to_string(), branch));
+        }
+    }
+    out
+}
+
 /// Path equality that survives the symlink indirection macOS puts on `/tmp`.
 ///
 /// git records the worktree path as given, while the app's open-repo path has been

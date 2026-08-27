@@ -196,6 +196,11 @@ commands/        Thin Tauri handlers, one file per area:
 ├── branches.rs  list_branches/tags/stashes/remotes,
 │                checkout/create/delete/rename_branch, set_upstream,
 │                fetch, fetch_all, pull, push,
+│                fast_forward_branch — fetch the branch's remote, then advance
+│                a NOT-checked-out branch to its upstream if that is a
+│                fast-forward (#246); fast_forward_all_branches does the sweep
+│                on one fetch. Both are thin: the ancestry check and the ref
+│                move are one backend call under one lock (see backend.md),
 │                add/remove/rename/prune_remote, set_remote_url,
 │                create/delete/push_tag, verify_tag, merge_branch, rebase_onto,
 │                checkout_ref, push_delete_branch

@@ -21,7 +21,7 @@ use crate::error::AppResult;
 use types::{
     AheadBehind,
     BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
-    DeleteFailure, DiffKind, FileContent,
+    BulkFastForward, DeleteFailure, DiffKind, FastForward, FileContent,
     FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
     RemoteInfo,
     RepoHandle,
@@ -457,6 +457,49 @@ pub trait GitBackend: Send + Sync {
         branch: &str,
         upstream: Option<&str>,
     ) -> AppResult<()>;
+    /// The remote that has to be fetched before `fast_forward_branch(branch)`
+    /// can decide anything (#246).
+    ///
+    /// Read from the branch's own `branch.<name>.remote`, NOT by splitting the
+    /// upstream shorthand on `/` — a remote name may itself contain a slash, and
+    /// `team/fork/main` would then be fetched from a remote called `team`.
+    ///
+    /// Refuses up front — `NoUpstream`, or `InvalidArgument` for a branch that
+    /// is checked out — so the network is never spent on a call that could not
+    /// have succeeded afterwards. Answering here rather than inside the
+    /// fast-forward is what lets the fetch sit BETWEEN the two: a network op
+    /// belongs in the command layer, where `run_git_authenticated` is.
+    fn fast_forward_remote(&self, repo_id: &RepoId, branch: &str) -> AppResult<String>;
+    /// Advance one local branch to its upstream, if and only if that is a
+    /// fast-forward (#246).
+    ///
+    /// The op `pull` cannot be: `git pull <remote> <branch>` merges the fetched
+    /// head into whatever HEAD is, so it never advanced the branch it named.
+    /// This moves the REF, which is why it refuses a branch that any working
+    /// tree is standing on — HEAD here, or a linked worktree's HEAD — rather
+    /// than leaving that checkout with a phantom reverse diff. The caller pulls
+    /// instead, with the user's own pull mode.
+    ///
+    /// **The ancestry check and the ref move happen under ONE lock
+    /// acquisition**, inside a single `with_repo` closure. Two hops would be the
+    /// stash TOCTOU again: the per-repo mutex serialises every backend op, so a
+    /// concurrent command is parked to run at exactly that boundary and the ref
+    /// verified as fast-forwardable is not the ref that gets moved.
+    ///
+    /// A branch that is already at (or ahead of) its upstream answers
+    /// `moved: false` — a state, not a failure. Divergence is `NotFastForward`
+    /// and moves nothing.
+    fn fast_forward_branch(&self, repo_id: &RepoId, branch: &str) -> AppResult<FastForward>;
+    /// `fast_forward_branch` for every local branch that has an upstream (#246).
+    ///
+    /// One `with_repo` closure for the WHOLE sweep, so no other command can
+    /// interleave between the branch listing and the last ref move. The
+    /// per-branch refusals become the report's `diverged` / `checked_out` lists
+    /// instead of an error: one diverged branch must not decide the fate of the
+    /// other five, which is the entire point of the bulk action.
+    ///
+    /// Assumes the caller has already fetched. It performs no network I/O.
+    fn fast_forward_all(&self, repo_id: &RepoId) -> AppResult<BulkFastForward>;
     /// Create a tag. `target.annotation` picks lightweight vs annotated and
     /// `target.sign` picks signed vs not, defaulting to `tag.gpgsign` (#132).
     ///
