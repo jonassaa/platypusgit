@@ -3,7 +3,10 @@ use tauri::State;
 use crate::{
     commands::net::Credentials,
     error::{AppError, AppResult},
-    git::types::{BranchInfo, PullMode, PushForce, RemoteInfo, RepoId, StashInfo, TagInfo, TagTarget},
+    git::types::{
+        BranchInfo, BulkFastForward, FastForward, PullMode, PushForce, RemoteInfo, RepoId,
+        StashInfo, TagInfo, TagTarget,
+    },
     state::AppState,
 };
 
@@ -151,14 +154,26 @@ async fn run_git_creds(
 }
 
 /// Build the argument list for `git fetch`. `remote = None` means all remotes.
+///
+/// The remote name lands strictly after `--`, for the reason spelled out on
+/// `push_tag_args` below: it is user-supplied (typed into the add-remote prompt,
+/// picked from the remote list) and `git fetch` has options that name a program
+/// to run for the transport (`--upload-pack=<program>`). `--all` is ours, so it
+/// stays where it is — there is no user value on that branch to separate.
+/// Verified against git 2.50: `git fetch --prune -- origin` fetches normally,
+/// and `-- --upload-pack=/bin/false` is refused as a strange pathname instead of
+/// being honoured as an option.
 fn fetch_args(remote: Option<&str>, prune: bool) -> Vec<&str> {
     let mut args = vec!["fetch"];
-    match remote {
-        Some(r) => args.push(r),
-        None => args.push("--all"),
+    if remote.is_none() {
+        args.push("--all");
     }
     if prune {
         args.push("--prune");
+    }
+    if let Some(r) = remote {
+        args.push("--");
+        args.push(r);
     }
     args
 }
@@ -215,6 +230,83 @@ pub async fn pull(
         credentials.as_ref(),
     )
     .await
+}
+
+/// Fetch a branch's remote, then advance the branch to its upstream (#246).
+///
+/// The op `pull` cannot be: `git pull <remote> <branch>` merges the fetched head
+/// into whatever HEAD is, so naming `main` while standing on `feat/x` merged
+/// `origin/main` into `feat/x`. This moves `main`'s ref and leaves HEAD alone.
+///
+/// **The network half and the ref half sit on opposite sides of the boundary on
+/// purpose.** A fetch is a subprocess with credentials, so it belongs here,
+/// where `run_git_authenticated` is the one credential path. The ancestry check
+/// and the ref move are libgit2 work that must not be split, so they are ONE
+/// backend call holding ONE lock — see `GitBackend::fast_forward_branch`. The
+/// remote lookup comes first and refuses a checked-out or untracked branch up
+/// front, so a call that could not have succeeded never spends a fetch.
+///
+/// A branch that IS `HEAD` is refused rather than silently fast-forwarded: it
+/// needs a working-tree update, and the user's `defaultPullMode` decides how.
+/// The frontend routes those to `pull` before calling this.
+#[tauri::command]
+pub async fn fast_forward_branch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    branch: String,
+    prune: bool,
+    // Optional so the first attempt is always prompt-less and only a retry
+    // carries a credential (#61 D5), exactly as fetch/pull/push do.
+    credentials: Option<Credentials>,
+) -> AppResult<FastForward> {
+    let repo_id = RepoId(repo_id);
+    let path = get_repo_path(&state, &repo_id).await?;
+
+    let remote = {
+        let backend = state.backend.clone();
+        let id = repo_id.clone();
+        let name = branch.clone();
+        tokio::task::spawn_blocking(move || backend.fast_forward_remote(&id, &name))
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))??
+    };
+
+    run_git_creds(
+        &path,
+        &fetch_args(Some(remote.as_str()), prune),
+        credentials.as_ref(),
+    )
+    .await?;
+
+    let backend = state.backend.clone();
+    tokio::task::spawn_blocking(move || backend.fast_forward_branch(&repo_id, &branch))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Fetch every remote, then fast-forward every local branch that can be (#246).
+///
+/// One fetch for the whole sweep — the reason this is a command of its own
+/// rather than the frontend looping the single-branch one, which would spend a
+/// network round trip per branch.
+///
+/// The per-branch refusals come back as a report, not an error: one diverged
+/// branch must not decide the fate of the other five.
+#[tauri::command]
+pub async fn fast_forward_all_branches(
+    state: State<'_, AppState>,
+    repo_id: String,
+    prune: bool,
+    credentials: Option<Credentials>,
+) -> AppResult<BulkFastForward> {
+    let repo_id = RepoId(repo_id);
+    let path = get_repo_path(&state, &repo_id).await?;
+    run_git_creds(&path, &fetch_args(None, prune), credentials.as_ref()).await?;
+
+    let backend = state.backend.clone();
+    tokio::task::spawn_blocking(move || backend.fast_forward_all(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 /// Build `git push` args. `set_upstream` adds `-u`, which the caller passes
@@ -548,14 +640,38 @@ mod tests {
 
     #[test]
     fn fetch_args_with_prune() {
-        assert_eq!(fetch_args(Some("origin"), true), ["fetch", "origin", "--prune"]);
+        assert_eq!(
+            fetch_args(Some("origin"), true),
+            ["fetch", "--prune", "--", "origin"]
+        );
         assert_eq!(fetch_args(None, true), ["fetch", "--all", "--prune"]);
     }
 
     #[test]
     fn fetch_args_without_prune() {
-        assert_eq!(fetch_args(Some("origin"), false), ["fetch", "origin"]);
+        assert_eq!(fetch_args(Some("origin"), false), ["fetch", "--", "origin"]);
         assert_eq!(fetch_args(None, false), ["fetch", "--all"]);
+    }
+
+    #[test]
+    fn fetch_args_keep_the_remote_name_after_the_separator() {
+        // `--upload-pack=<program>` names a program git runs for the transport,
+        // so a remote name read as an option is argument injection, not just a
+        // confusing error. Same class of finding as push_tag_args guards.
+        for args in [
+            fetch_args(Some("--upload-pack=/bin/false"), true),
+            fetch_args(Some("--upload-pack=/bin/false"), false),
+        ] {
+            let sep = args
+                .iter()
+                .position(|a| *a == "--")
+                .expect("named-remote fetch must emit an end-of-options separator");
+            let hostile = args
+                .iter()
+                .position(|a| a.starts_with("--upload-pack"))
+                .expect("test value present");
+            assert!(hostile > sep, "{args:?}");
+        }
     }
 
     #[test]

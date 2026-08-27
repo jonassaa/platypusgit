@@ -226,6 +226,45 @@ pub struct BranchInfo {
     pub is_default: bool,
 }
 
+/// What advancing one local branch to its upstream did (#246).
+///
+/// `moved` is FALSE for the two harmless outcomes — the ref already pointed at
+/// the upstream tip, or it is strictly ahead of it — so a caller can say
+/// "already up to date" without re-deriving it from the oids. Anything that
+/// would NOT be a fast-forward is an error, never a `moved: false`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FastForward {
+    pub branch: String,
+    /// Shorthand of the upstream that was used, e.g. `origin/main`.
+    pub upstream: String,
+    /// FULL oids, the same spelling `BranchInfo.tip` uses — consumers compare
+    /// them against `CommitInfo.oid`, which a 7-char prefix silently never
+    /// matches.
+    pub from: String,
+    pub to: String,
+    pub moved: bool,
+}
+
+/// The outcome of fast-forwarding every eligible local branch at once (#246).
+///
+/// Three lists rather than a count, because the two that did NOT move are the
+/// half a user has to act on: a diverged branch needs a merge or a rebase, and a
+/// checked-out one needs a pull (which is a working-tree operation, so this op
+/// refuses it rather than moving a ref out from under it).
+///
+/// Branches that are already current, and branches with no upstream, are simply
+/// absent: neither is something the user has to do anything about.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkFastForward {
+    pub advanced: Vec<FastForward>,
+    /// Behind, but the local tip is not an ancestor of the upstream tip.
+    pub diverged: Vec<String>,
+    /// Behind, but checked out — in this worktree or a linked one.
+    pub checked_out: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TagInfo {

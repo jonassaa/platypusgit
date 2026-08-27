@@ -1,5 +1,5 @@
 // src/features/palette/commands.ts
-import { pgConfirm } from "@/design";
+import { pgConfirm, pgFlash } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useLfsStore } from "@/features/lfs/useLfsStore";
@@ -13,6 +13,7 @@ import { useTabsStore } from "@/features/repo/useTabsStore";
 import { openCompare } from "@/features/compare/useCompareStore";
 import { WORKDIR } from "@/features/compare/compareSides";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
+import { summarizeFastForward } from "@/features/branches/fastForward";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
@@ -286,6 +287,20 @@ export function buildCommands(): PaletteItem[] {
       type: "command", id: "action:fetch-all", search: "Fetch all remotes",
       label: "Fetch all remotes", icon: "fetch", actionId: "repo.fetch",
       run: direct(() => void repo.fetchAll()),
+    },
+    {
+      // The Monday-morning command: every stale local branch caught up in one
+      // fetch, without a single checkout. The branch you are ON is reported,
+      // not pulled — see `fastForwardAllBranches` (#246).
+      type: "command", id: "action:fast-forward-all",
+      search: "Fast-forward all branches behind upstream pull",
+      label: "Fast-forward all branches", icon: "pull",
+      run: direct(() => {
+        void (async () => {
+          const report = await repo.fastForwardAllBranches();
+          if (report) pgFlash(summarizeFastForward(report));
+        })();
+      }),
     },
     {
       type: "command", id: "action:refresh", search: "Refresh repository",

@@ -2,7 +2,9 @@ import { create } from "zustand";
 import type {
   AuthorOverride,
   BisectMark,
+  BulkFastForward,
   CommitResult,
+  FastForward,
   FileContent,
   FileStatus,
   LogFilter,
@@ -47,6 +49,8 @@ import {
   discardLines as discardLinesFn,
   discardPaths,
   deleteUntrackedFiles as deleteUntrackedFilesFn,
+  fastForwardAllBranches as fastForwardAllBranchesFn,
+  fastForwardBranch as fastForwardBranchFn,
   fetch as fetchRemote,
   fetchAll,
   getLogFilteredPage,
@@ -109,6 +113,7 @@ import {
   type TagTarget,
 } from "@/lib/tauri";
 import { isFilterEmpty } from "@/features/commits/logFilter";
+import { remoteOfUpstream } from "@/features/branches/fastForward";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useRecentsStore } from "./useRecentsStore";
 import {
@@ -311,6 +316,31 @@ interface RepoStoreState extends RepoSlice {
   fetch: (remote: string) => Promise<void>;
   fetchAll: () => Promise<void>;
   pull: (remote: string, branch: string, mode?: PullMode) => Promise<void>;
+  /**
+   * Fetch a branch's remote and advance the branch to its upstream (#246).
+   *
+   * The op `pull` cannot be: `git pull <remote> <branch>` merges the fetched
+   * head into whatever HEAD is, so it never advanced the branch it named.
+   *
+   * **The branch that IS HEAD is routed to `pull` with the user's own
+   * `defaultPullMode`** — it needs a working-tree update, and a user who chose
+   * Rebase must not be quietly given `--ff-only`. Every other branch has its ref
+   * moved, and a divergence comes back as a `NotFastForward` banner rather than
+   * a surprise merge.
+   *
+   * Answers the outcome so a caller can say what happened (the ref moved, or it
+   * was already current); `null` when it routed to pull or failed.
+   */
+  fastForwardBranch: (name: string) => Promise<FastForward | null>;
+  /**
+   * `fastForwardBranch` for every local branch that can be, on one fetch (#246).
+   *
+   * Answers the report — advanced, diverged, checked-out — so the caller can
+   * summarize it; `null` when it failed (the banner already says why). The
+   * checked-out branch is REPORTED, never pulled: a bulk button must not rewrite
+   * the working tree.
+   */
+  fastForwardAllBranches: () => Promise<BulkFastForward | null>;
   push: (
     remote: string,
     branch: string,
@@ -1394,6 +1424,82 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         setErrorFor(repo.id, e);
       },
     );
+  },
+
+  async fastForwardBranch(name) {
+    const repo = get().current;
+    if (!repo) return null;
+
+    // HEAD's ref cannot just be moved: the index and worktree would still be at
+    // the old tip, so every incoming change would render as a deletion. Route to
+    // the real pull — which carries the auto-stash and the user's own mode.
+    const branch = get().branches.find((b) => !b.isRemote && b.name === name);
+    if (branch?.isHead) {
+      const remote = remoteOfUpstream(branch.upstream, get().remotes);
+      // No resolvable remote means no upstream to pull from; let the backend
+      // say so rather than guessing "origin".
+      if (remote) {
+        await get().pull(
+          remote,
+          name,
+          useSettingsStore.getState().defaultPullMode,
+        );
+        return null;
+      }
+    }
+
+    let out: FastForward | null = null;
+    setActivity("fetch", `Fast-forwarding ${name}…`);
+    try {
+      await withAuthRetry(
+        repo.id,
+        async (creds) => {
+          out = await fastForwardBranchFn(
+            repo.id,
+            name,
+            useSettingsStore.getState().pruneOnFetch,
+            creds,
+          );
+          await get().refreshAll();
+        },
+        async (e) => {
+          // Refresh first, error last — refreshAll clears `error` as its first
+          // act, so the other order loses the banner (see mergeBranch).
+          await get().refreshAll();
+          setErrorFor(repo.id, e);
+        },
+      );
+    } finally {
+      setActivity("fetch", null);
+    }
+    return out;
+  },
+
+  async fastForwardAllBranches() {
+    const repo = get().current;
+    if (!repo) return null;
+    let out: BulkFastForward | null = null;
+    setActivity("fetch", "Fast-forwarding branches…");
+    try {
+      await withAuthRetry(
+        repo.id,
+        async (creds) => {
+          out = await fastForwardAllBranchesFn(
+            repo.id,
+            useSettingsStore.getState().pruneOnFetch,
+            creds,
+          );
+          await get().refreshAll();
+        },
+        async (e) => {
+          await get().refreshAll();
+          setErrorFor(repo.id, e);
+        },
+      );
+    } finally {
+      setActivity("fetch", null);
+    }
+    return out;
   },
 
   async push(remote, branch, force = "None", noVerify = false) {

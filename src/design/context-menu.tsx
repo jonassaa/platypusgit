@@ -30,6 +30,7 @@ import { absoluteInWorkdir, relativeToWorkdir } from "@/lib/paths";
 // keeping it out of this module is what lets features/keymap import it without
 // closing a cycle back through this file (which imports chordFor from there).
 import { pgFlash } from "./ui-helpers";
+import { describeFastForward } from "@/features/branches/fastForward";
 
 export interface ContextMenuItem {
   label?: ReactNode;
@@ -1231,6 +1232,23 @@ export function branchMenuItems(
       shortcut: chordFor("repo.pull"),
       disabled: !isCurrent || !upstream,
       onClick: () => useRepoStore.getState().pull(remote, name),
+    },
+    {
+      icon: "pull",
+      // Enabled for ANY tracking branch, current included — the row you are on
+      // routes to a real pull inside the store, and every other row has its ref
+      // moved without a checkout. Deliberately NOT gated on `behind`: that count
+      // is only as fresh as the last fetch, and this op fetches, so gating would
+      // hide the action exactly when it is most needed.
+      label: "Fast-forward to upstream",
+      disabled: !name || !upstream,
+      onClick: async () => {
+        if (!name) return;
+        const out = await useRepoStore.getState().fastForwardBranch(name);
+        // `null` means it routed to pull (which reports itself) or failed (the
+        // banner already says why) — nothing to flash either way.
+        if (out) pgFlash(describeFastForward(out));
+      },
     },
     {
       icon: "push",

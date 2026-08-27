@@ -403,6 +403,21 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `refreshAll` starts with `set({ error: null })` and React batches same-tick
   sets, so the opposite order wipes the banner. A failed git op must still
   refresh — the UI reflects disk truth even on error.
+- **`fastForwardBranch` routes HEAD to `pull`, and only HEAD** (#246). The
+  backend op moves a REF, which is wrong for the branch the working tree is
+  standing on — so the store checks `isHead` from `s.branches` and delegates to
+  its own `pull` with `useSettingsStore`'s `defaultPullMode`, keeping the
+  auto-stash and the user's chosen mode. Never `--ff-only` behind their back.
+  The bulk action (`fastForwardAllBranches`) does NOT route: it reports the
+  checked-out branch and leaves it, because a "fast-forward all" button must not
+  rewrite the working tree. Both return their outcome so the caller can flash a
+  summary (`features/branches/fastForward.ts`); the store never imports
+  `@/design`.
+- **The remote a branch tracks is not `upstream.split("/")[0]`** — a remote name
+  may contain a slash. `remoteOfUpstream(upstream, s.remotes)` resolves it
+  against the repository's own remote list, longest match first. The older
+  `branchMenuItems` Pull/Push entries still use the split; they predate the
+  helper and were left alone rather than changed under this feature's tests.
 
 ### Settings: one validator, two untrusted sources (#254)
 

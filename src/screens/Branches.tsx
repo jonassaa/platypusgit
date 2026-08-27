@@ -12,6 +12,7 @@ import {
   KV,
   branchMenuItems,
   pgConfirm,
+  pgFlash,
   pgPrompt,
   remoteBranchMenuItems,
   stashMenuItems,
@@ -26,6 +27,7 @@ import {
 import { useElementSize } from "@/lib/useElementSize";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { orderBranches } from "@/features/branches/orderBranches";
+import { summarizeFastForward } from "@/features/branches/fastForward";
 import { TagSignatureBadge } from "@/features/signing/TagSignatureBadge";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { BranchInfo, StashInfo, TagInfo } from "@/lib/types";
@@ -52,12 +54,21 @@ export function BranchesScreen() {
   const stashes = useRepoStore((s) => s.stashes);
   const activity = useRepoStore((s) => s.activity);
   const fetchAllOp = useRepoStore((s) => s.fetchAll);
+  const fastForwardAll = useRepoStore((s) => s.fastForwardAllBranches);
   const createAndSwitchBranch = useRepoStore((s) => s.createAndSwitchBranch);
   const [selection, setSelection] = React.useState<Selection | null>(null);
   const [filter, setFilter] = React.useState("");
   const [view, setView] = React.useState<
     "all" | "local" | "remote" | "tags" | "stashes"
   >("all");
+
+  // No confirm: a fast-forward only ever moves a ref forward, and every move
+  // leaves a reflog entry. The branch you are STANDING on is reported, never
+  // pulled — a bulk button must not rewrite the working tree (#246).
+  const startFastForwardAll = async () => {
+    const report = await fastForwardAll();
+    if (report) pgFlash(summarizeFastForward(report));
+  };
 
   const startCreate = async () => {
     const raw = await pgPrompt({
@@ -251,6 +262,7 @@ export function BranchesScreen() {
           onView={setView}
           onNew={startCreate}
           onFetchAll={fetchAllOp}
+          onFastForwardAll={startFastForwardAll}
           fetching={!!activity.fetch}
         />
         <PGEmpty icon="branch" title="No branches, tags, or stashes">
@@ -269,6 +281,7 @@ export function BranchesScreen() {
         onView={setView}
         onNew={startCreate}
         onFetchAll={fetchAllOp}
+        onFastForwardAll={startFastForwardAll}
         fetching={!!activity.fetch}
       />
       <div ref={layout.ref} style={{ flex: 1, minHeight: 0, display: "flex" }}>
@@ -701,6 +714,7 @@ function BranchesToolbar({
   onView,
   onNew,
   onFetchAll,
+  onFastForwardAll,
   fetching,
 }: {
   filter: string;
@@ -709,6 +723,7 @@ function BranchesToolbar({
   onView: (v: "all" | "local" | "remote" | "tags" | "stashes") => void;
   onNew: () => void;
   onFetchAll: () => void;
+  onFastForwardAll: () => void;
   fetching: boolean;
 }) {
   return (
@@ -744,6 +759,16 @@ function BranchesToolbar({
             onClick={onFetchAll}
           >
             Fetch all
+          </PGButton>
+          <PGButton
+            size="sm"
+            variant="outline"
+            icon="pull"
+            loading={fetching}
+            title="Fetch, then advance every local branch that can fast-forward"
+            onClick={onFastForwardAll}
+          >
+            Fast-forward all
           </PGButton>
           <PGButton
             size="sm"

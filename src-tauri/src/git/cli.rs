@@ -5,7 +5,7 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
-        DeleteFailure, DiffKind, FileContent,
+        BulkFastForward, DeleteFailure, DiffKind, FastForward, FileContent,
         FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
         SubmoduleInfo, TagInfo,
@@ -278,6 +278,15 @@ impl GitBackend for CliBackend {
         _branch: &str,
         _upstream: Option<&str>,
     ) -> AppResult<()> {
+        Err(AppError::NotImplemented)
+    }
+    fn fast_forward_remote(&self, _repo_id: &RepoId, _branch: &str) -> AppResult<String> {
+        Err(AppError::NotImplemented)
+    }
+    fn fast_forward_branch(&self, _repo_id: &RepoId, _branch: &str) -> AppResult<FastForward> {
+        Err(AppError::NotImplemented)
+    }
+    fn fast_forward_all(&self, _repo_id: &RepoId) -> AppResult<BulkFastForward> {
         Err(AppError::NotImplemented)
     }
     fn create_tag(&self, _repo_id: &RepoId, _name: &str, _target: TagTarget) -> AppResult<()> {

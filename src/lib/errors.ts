@@ -11,6 +11,18 @@ export type AppError =
   | { kind: "InvalidArgument"; message: string }
   | { kind: "DirtyWorktree"; message: string }
   | { kind: "NotMerged"; message: string }
+  /**
+   * A local branch tracks nothing, so there is no upstream to fast-forward it
+   * to (#246). Distinct from `InvalidRef` — the branch is fine, it just has no
+   * upstream — and the remedy is one menu item away: set one.
+   */
+  | { kind: "NoUpstream"; message: string }
+  /**
+   * The branch tip is not an ancestor of its upstream tip, so its ref cannot be
+   * advanced without a merge or a rebase (#246). The one refusal the
+   * fast-forward op exists to make; the message names both refs.
+   */
+  | { kind: "NotFastForward"; message: string }
   | { kind: "ConflictsDetected"; message: string }
   | { kind: "NoSignature"; message?: string }
   | { kind: "Internal"; message: string }

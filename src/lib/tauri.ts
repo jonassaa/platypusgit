@@ -8,6 +8,7 @@ import type {
   BisectStatus,
   BlameLine,
   BranchInfo,
+  BulkFastForward,
   CliInstallOutcome,
   ChecksSummary,
   DeleteFailure,
@@ -17,6 +18,7 @@ import type {
   ConflictSides,
   DiagnosticsReport,
   DiffKind,
+  FastForward,
   FileContent,
   FileDiff,
   FileStatus,
@@ -927,6 +929,51 @@ export async function pull(
   credentials?: Credentials,
 ): Promise<void> {
   return invoke<void>("pull", { repoId, remote, branch, mode, credentials });
+}
+
+/**
+ * Fetch a branch's remote, then advance the branch to its upstream (#246).
+ *
+ * The op `pull` cannot be: `git pull <remote> <branch>` merges the fetched head
+ * into whatever HEAD is, so it never advanced the branch it named. This moves
+ * that branch's REF and leaves HEAD alone — and therefore REFUSES a branch that
+ * is checked out here or in a linked worktree. Route those to `pull` with the
+ * user's own `defaultPullMode`; `useRepoStore.fastForwardBranch` does.
+ *
+ * Rejects with `NotFastForward` when the branch has diverged. Never merges,
+ * never rebases, never silently does nothing.
+ */
+export async function fastForwardBranch(
+  repoId: string,
+  branch: string,
+  prune = true,
+  credentials?: Credentials,
+): Promise<FastForward> {
+  return invoke<FastForward>("fast_forward_branch", {
+    repoId,
+    branch,
+    prune,
+    credentials,
+  });
+}
+
+/**
+ * Fetch every remote, then fast-forward every local branch that can be (#246).
+ *
+ * One fetch for the whole sweep, which is why it is a command rather than a
+ * loop over `fastForwardBranch` — that would cost a network round trip per
+ * branch. Per-branch refusals come back in the report, not as a rejection.
+ */
+export async function fastForwardAllBranches(
+  repoId: string,
+  prune = true,
+  credentials?: Credentials,
+): Promise<BulkFastForward> {
+  return invoke<BulkFastForward>("fast_forward_all_branches", {
+    repoId,
+    prune,
+    credentials,
+  });
 }
 
 /**

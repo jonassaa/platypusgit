@@ -130,7 +130,8 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
 - **One runner.** Every network shell-out goes through
   `commands::net::run_git_authenticated` (clone uses its primitives
   `apply_auth_env` + `map_git_failure` for a streamed stderr): fetch, fetch_all,
-  pull, push, push_tag, push_delete_branch, clone_repo,
+  pull, push, push_tag, push_delete_branch, fast_forward_branch,
+  fast_forward_all_branches, clone_repo,
   forge_checkout_pull_request's fetch (its second git call passes `None` — the
   tip is already local), submodule_update, lfs_fetch/lfs_pull.
   `grep -rn 'run_git_authenticated\|run_git_creds\|apply_auth_env' src-tauri/src/`
@@ -317,6 +318,49 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   interruption silently reduces the index to the selection — staged work has no
   other copy anywhere. Crash-safety needs a journal and its own spec; do not
   stub an affordance meanwhile.
+
+## Fast-forwarding a branch you are not on (#246)
+
+`pull <remote> <branch>` never could do this: the branch argument is a
+*refspec*, so `git pull origin main` while HEAD is `feat/x` merges `origin/main`
+into `feat/x`. `GitBackend::fast_forward_branch` moves the branch's REF instead,
+and `fast_forward_all` sweeps every local branch that can.
+
+- **The network half and the ref half sit on opposite sides of the command
+  boundary, on purpose.** The fetch is a credentialed subprocess, so it stays in
+  `commands/branches.rs` on the one runner (`run_git_authenticated`). The
+  ancestry check and the ref move are libgit2 work that must not be split, so
+  they are ONE backend call. `fast_forward_remote` runs FIRST and refuses a
+  checked-out or untracked branch, so a call that cannot succeed never spends a
+  fetch.
+- **Verify and mutate under ONE lock acquisition** — the stash TOCTOU again, with
+  a ref instead of a reflog slot. `fast_forward_branch` is a single `with_repo`
+  closure, and `fast_forward_all` is a single closure for the WHOLE sweep
+  (listing included). `plan_fast_forward` hands the caller the `Reference` it
+  read, so the object that was checked is the object that moves — one ref lookup,
+  not two.
+- **A branch any working tree is standing on is refused**, HEAD here or a linked
+  worktree's HEAD: moving the ref without touching the index and worktree leaves
+  that checkout rendering every incoming change as a deletion. The frontend
+  routes HEAD to `pull` with the user's `defaultPullMode` instead. git2-rs 0.20
+  does not bind `git_branch_is_checked_out`, so `worktree::linked_worktree_heads`
+  walks the linked worktrees — one repository open each, which is why only
+  ref-moving ops pay it and a bulk sweep walks once.
+- **Already-current and strictly-ahead are `moved: false`, not errors**; only
+  real divergence is, as `NotFastForward` naming both refs. `NoUpstream` is its
+  own variant because the remedy is specific. A bulk run COLLECTS those refusals
+  into `diverged` / `checked_out` rather than aborting — one diverged branch must
+  not decide the fate of the other five.
+- **The remote comes from `branch.<name>.remote`, never `upstream.split('/')[0]`**
+  — a remote name may contain a slash, and `team/fork/main` would otherwise be
+  fetched from a remote called `team`. The frontend has the same rule in
+  `features/branches/fastForward.ts::remoteOfUpstream`, resolved against the
+  repository's own remote list.
+- **`fetch_args` ends option parsing before the remote name** (`git fetch
+  --prune -- origin`). Same finding class as `push_tag_args`: the remote is
+  user-supplied and `--upload-pack=<program>` names a program git runs for the
+  transport. Verified against git 2.50 — the fetch works normally, and a
+  dash-leading value is refused as a strange pathname instead of honoured.
 
 ## Deleting an untracked file (#245)
 

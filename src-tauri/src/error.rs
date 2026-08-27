@@ -39,6 +39,23 @@ pub enum AppError {
     #[error("branch not fully merged: {0}")]
     NotMerged(String),
 
+    /// A local branch has no upstream, so there is nothing to fast-forward it
+    /// to (#246). Distinct from `InvalidRef` — the branch is perfectly valid,
+    /// it just tracks nothing — and distinct from `Git` because the remedy is
+    /// specific and one click away: set an upstream.
+    #[error("no upstream: {0}")]
+    NoUpstream(String),
+
+    /// The branch's tip is not an ancestor of its upstream's tip, so the ref
+    /// cannot be advanced without a merge or a rebase (#246).
+    ///
+    /// Its own variant rather than `Git` or `NotMerged`: it is the ONE refusal
+    /// the fast-forward op exists to make, the message names both refs, and a
+    /// bulk run collects these instead of aborting on the first one. `NotMerged`
+    /// means the opposite question — "would deleting this lose commits?".
+    #[error("not a fast-forward: {0}")]
+    NotFastForward(String),
+
     #[error("operation produced conflicts: {0}")]
     ConflictsDetected(String),
 
