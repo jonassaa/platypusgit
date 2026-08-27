@@ -40,11 +40,11 @@ set -eu
 SUITE=stable
 COMPONENT=main
 ARCH=amd64
-PKG=platypus-git
+PKG=platypusgit
 
 ORIGIN=platypusgit
 LABEL=platypusgit
-DESCRIPTION="PlatypusGit APT repository"
+DESCRIPTION="platypusgit APT repository"
 
 # How many .deb files stay in the pool. Every GitHub Pages deploy re-uploads the
 # whole tree, so the pool's size is paid on every publish, not once; and the

@@ -89,15 +89,15 @@ Components: main
 Architectures: amd64
 Signed-By: /etc/apt/keyrings/platypusgit.gpg
 EOF
-sudo apt update &amp;&amp; sudo apt install platypus-git</pre>
+sudo apt update &amp;&amp; sudo apt install platypusgit</pre>
 
   <h2>Update</h2>
-  <pre>sudo apt update &amp;&amp; sudo apt upgrade platypus-git</pre>
+  <pre>sudo apt update &amp;&amp; sudo apt upgrade platypusgit</pre>
   <p>
-    The package is <code>platypus-git</code> — the name <code>apt search</code>,
-    <code>apt remove</code> and <code>dpkg -l</code> use.
-    <code>apt install platypusgit</code> also resolves, because the package
-    declares that name too.
+    The package is <code>platypusgit</code> — the name <code>apt search</code>,
+    <code>apt remove</code> and <code>dpkg -l</code> use. The former
+    <code>platypus-git</code> still resolves, so an older command line keeps
+    working.
   </p>
 
   <h2>Signing key</h2>
@@ -117,7 +117,7 @@ sudo apt update &amp;&amp; sudo apt install platypus-git</pre>
   <h2>What is in here</h2>
   <pre>dists/stable/InRelease                      signed index
 dists/stable/main/binary-amd64/Packages     the package list
-pool/main/p/platypus-git/                   the .deb files</pre>
+pool/main/p/platypusgit/                   the .deb files</pre>
   <p>
     The pool keeps the ten most recent releases. Older versions stay available
     as

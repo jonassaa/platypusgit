@@ -31,7 +31,7 @@
 # Spec: docs/superpowers/specs/2026-08-26-apt-repository-spec.md
 set -eu
 
-PKG=platypus-git
+PKG=platypusgit
 SUITE=stable
 PORT=8000
 
@@ -86,7 +86,7 @@ Options:
   --installer PATH   install by running this script (the real one-liner) instead
                      of a hand-written sources file
   --expect-git       also assert Depends: git resolved, and that Section: vcs and
-                     Provides: platypusgit are in the control data. Only true of a
+                     Provides/Replaces/Conflicts are in the control data. Only true of a
                      .deb built after that config change, so it is opt-in.
   --client-image IMG default debian:bookworm
   --serve-image IMG  default python:3-slim
@@ -299,9 +299,16 @@ if [ "$PG_EXPECT_GIT" = yes ]; then
     ok "git was pulled in as a dependency"
     grep -q '^Section: vcs' /tmp/status || fail "Section: vcs missing from the control data"
     ok "Section: vcs present"
-    grep -q '^Provides:.*platypusgit' /tmp/status \
-        || fail "Provides: platypusgit missing from the control data"
-    ok "Provides: platypusgit present"
+    # The migration trio, all naming the OLD package. `productName` became
+    # lowercase (#187) so the package is `platypusgit`; both packages own
+    # /usr/bin/platypusgit, so a sideloaded older .deb would upgrade into a hard
+    # dpkg file conflict without Replaces + Conflicts. Provides keeps an older
+    # `apt install platypus-git` resolving.
+    for field in Provides Replaces Conflicts; do
+        grep -q "^$field:.*platypus-git" /tmp/status \
+            || fail "$field: platypus-git missing from the control data"
+    done
+    ok "Provides/Replaces/Conflicts all name the former platypus-git"
 else
     printf 'SMOKE skip: Depends/Section/Provides assertions (--expect-git not set)\n'
 fi

@@ -5,16 +5,20 @@ import { packageHint } from "./packageHint";
 describe("packageHint", () => {
   it("tells an apt-managed install to run apt upgrade", () => {
     const hint = packageHint("notify-apt", "linux");
-    expect(hint?.command).toBe("sudo apt update && sudo apt upgrade platypus-git");
+    expect(hint?.command).toBe("sudo apt update && sudo apt upgrade platypusgit");
     expect(hint?.note).toMatch(/apt/i);
   });
 
-  it("names the canonical package, not the guessable one", () => {
-    // `platypus-git` is the real Package field (Tauri kebab-cases productName).
-    // `platypusgit` only works because the .deb declares Provides:, and telling
-    // people the virtual name would make `apt remove` and `dpkg -l` disagree
-    // with what they were shown.
-    expect(packageHint("notify-apt", "linux")?.command).toContain(
+  it("names the package apt actually reports", () => {
+    // `platypusgit` is the real Package field. Tauri derives it from
+    // `productName` with heck::AsKebabCase, so the lowercase productName maps
+    // straight through with no hyphen inserted.
+    //
+    // The old `platypus-git` still resolves, via the .deb's Provides:, but a
+    // virtual name installs without reporting — `apt policy` shows it as having
+    // no candidate — so the hint must name the real one.
+    expect(packageHint("notify-apt", "linux")?.command).toContain("platypusgit");
+    expect(packageHint("notify-apt", "linux")?.command).not.toContain(
       "platypus-git",
     );
   });
@@ -37,7 +41,7 @@ describe("packageHint", () => {
     // macOS never gets the apt variant, but if the backend ever sent it the
     // command must not become a macOS user's problem.
     expect(packageHint("notify-apt", "macos")?.command).toBe(
-      "sudo apt update && sudo apt upgrade platypus-git",
+      "sudo apt update && sudo apt upgrade platypusgit",
     );
   });
 
