@@ -8,6 +8,11 @@ import {
   type HeadMark,
   type HeadWeight,
 } from "./headMarks";
+import {
+  getSystemAppearance,
+  watchSystemAppearance,
+  type Appearance,
+} from "./systemAppearance";
 
 const STORAGE_KEY = "pg-settings-v2";
 
@@ -508,6 +513,121 @@ export function applyTheme(theme: ThemeDef) {
   root.dataset.themeMode = theme.mode;
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// THEME PREFERENCE — following the system appearance (#236)
+// ═════════════════════════════════════════════════════════════════════════════
+
+export type ThemeFollowMode = "system" | "fixed";
+
+export const THEME_FOLLOW_MODES: readonly ThemeFollowMode[] = ["fixed", "system"];
+
+/**
+ * Which theme to apply, and on whose say-so.
+ *
+ * A PAIR plus a mode, rather than a third magic value in `activeThemeId`. A
+ * theme is intrinsically one mode (`ThemeDef.mode`), so "follow the system"
+ * cannot be a theme — it is a rule for choosing between two of them, and the
+ * person gets to say WHICH light and WHICH dark, not just "the light one".
+ *
+ * `activeThemeId` stays the single answer to "what is on screen":
+ *
+ *   fixed  — `activeThemeId` is the user's choice and nothing moves it.
+ *   system — `activeThemeId` is DERIVED from this pair and the observed OS
+ *            appearance, and is rewritten every time the OS switches.
+ *
+ * Keeping it derived rather than adding a second "resolved id" field is what
+ * makes the feature invisible downstream: `getActiveTheme`, the theme editor
+ * and `DiffMinimap`'s repaint subscription all keep working unchanged, and the
+ * minimap repaints on an OS switch for free.
+ */
+export interface ThemePreference {
+  mode: ThemeFollowMode;
+  /** Theme id used while the OS is light. Must name a `mode: "light"` theme. */
+  lightId: string;
+  /** Theme id used while the OS is dark. Must name a `mode: "dark"` theme. */
+  darkId: string;
+}
+
+/**
+ * The built-in pairing, so "Follow system" works the instant it is chosen with
+ * nothing else configured.
+ *
+ * The default MODE is `fixed`, not `system`: every install before #236 was
+ * effectively fixed, and a fresh install that suddenly renders light on a light
+ * Mac is a different product decision from the one this feature asked for.
+ * Following the system is one click away and needs no further setup.
+ */
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = {
+  mode: "fixed",
+  lightId: "light",
+  darkId: "dark-cool",
+};
+
+/**
+ * The id one half of the pairing names, validated.
+ *
+ * Validated on every read rather than only at load, because the pairing can be
+ * broken from behind: the theme editor lets a custom theme be flipped from dark
+ * to light (and writes `customThemes` directly), which would otherwise leave
+ * `darkId` naming a light theme and the app resolving to the same half twice —
+ * i.e. not switching at all, the exact bug this feature exists to fix.
+ */
+function pairedThemeId(
+  pref: ThemePreference,
+  appearance: Appearance,
+  customThemes: ThemeDef[],
+): string {
+  const wanted = appearance === "light" ? pref.lightId : pref.darkId;
+  const found = findTheme({ customThemes }, wanted);
+  if (found && found.mode === appearance) return wanted;
+  return appearance === "light"
+    ? DEFAULT_THEME_PREFERENCE.lightId
+    : DEFAULT_THEME_PREFERENCE.darkId;
+}
+
+/** What `activeThemeId` should be, for a given state and OS appearance. */
+function resolveActiveThemeId(
+  s: Pick<PersistedState, "themePreference" | "customThemes" | "activeThemeId">,
+  appearance: Appearance,
+): string {
+  return s.themePreference.mode === "system"
+    ? pairedThemeId(s.themePreference, appearance, s.customThemes)
+    : s.activeThemeId;
+}
+
+/**
+ * The `{ activeThemeId, themePreference }` patch that makes `theme` the user's
+ * choice.
+ *
+ * In system mode "which theme is active" is not a free choice, so every path
+ * that used to just assign `activeThemeId` (pick, fork, duplicate, import)
+ * routes through here instead: the id goes into the half matching the theme's
+ * OWN mode, and what ends up on screen is still whatever the OS asked for.
+ * Without this, a fork made while following the system is thrown away by the
+ * next re-resolve.
+ *
+ * `customThemes` is a parameter because three callers create the theme in the
+ * same breath — it is not in the store's list yet.
+ */
+function activationPatch(
+  s: Pick<PersistedState, "themePreference">,
+  theme: ThemeDef,
+  appearance: Appearance,
+  customThemes: ThemeDef[],
+): Pick<PersistedState, "activeThemeId" | "themePreference"> {
+  if (s.themePreference.mode !== "system") {
+    return { activeThemeId: theme.id, themePreference: s.themePreference };
+  }
+  const themePreference: ThemePreference = {
+    ...s.themePreference,
+    ...(theme.mode === "light" ? { lightId: theme.id } : { darkId: theme.id }),
+  };
+  return {
+    themePreference,
+    activeThemeId: pairedThemeId(themePreference, appearance, customThemes),
+  };
+}
+
 /**
  * Extra vertical pixels each row-ish surface adds for a given density.
  *
@@ -638,7 +758,15 @@ export const UPDATE_CHECK_MODES: readonly UpdateCheckMode[] = [
 // flag reaches the diff READ paths only, and every surface disables its
 // hunk-level stage/discard while it is on.
 interface PersistedState {
+  /**
+   * The theme on screen. In `themePreference.mode === "system"` this is
+   * DERIVED — recomputed from the pairing every time the OS appearance
+   * changes — and it is still persisted, as the cache that lets the next
+   * launch paint before the async window-theme query answers.
+   */
   activeThemeId: string;
+  /** Which theme to apply and on whose say-so (#236). See ThemePreference. */
+  themePreference: ThemePreference;
   customThemes: ThemeDef[];
   uiDensity: "compact" | "comfortable";
   /** Webview zoom factor — 1 is 100%. See applyZoom. */
@@ -697,8 +825,34 @@ interface PersistedState {
 }
 
 export interface SettingsState extends PersistedState {
+  /**
+   * The OS appearance this window last observed.
+   *
+   * NOT in `PersistedState`, and that is the whole point: it is observed state
+   * about this machine right now, so it is neither written to localStorage nor
+   * carried by a settings export. `snapshot()` and `PORTABLE_KEYS` both derive
+   * from `DEFAULTS`, so staying out of the schema keeps it out of both by
+   * construction. Same call #283 made for `useUpdateStore.lastCheckedAt`.
+   *
+   * It lives on the store rather than only in the `systemAppearance` module so
+   * the Settings screen re-renders when it flips.
+   */
+  systemAppearance: Appearance;
   getActiveTheme: () => ThemeDef;
   setActiveThemeId: (id: string) => void;
+  /** Switch between following the OS and one fixed theme. */
+  setThemeFollowMode: (mode: ThemeFollowMode) => void;
+  /**
+   * Choose the theme for one half of the pairing. A theme whose own mode is
+   * not `appearance` is refused — the pairing would resolve to the same half
+   * twice and stop switching.
+   */
+  setPairedThemeId: (appearance: Appearance, id: string) => void;
+  /**
+   * Record a new OS appearance and re-resolve. Called by the watcher started
+   * in `main.tsx`; exported so a test can flip the OS without one.
+   */
+  syncSystemAppearance: (appearance: Appearance) => void;
   updateActiveColors: (patch: Partial<ThemeColors>) => void;
   saveAsNewTheme: (name: string) => ThemeDef;
   renameTheme: (id: string, name: string) => void;
@@ -732,6 +886,7 @@ export interface SettingsState extends PersistedState {
 
 const DEFAULTS: PersistedState = {
   activeThemeId: "dark-cool",
+  themePreference: { ...DEFAULT_THEME_PREFERENCE },
   customThemes: [],
   uiDensity: "compact",
   uiZoom: 1,
@@ -936,6 +1091,55 @@ function normalizeCustomThemes(value: unknown, fallback: ThemeDef[]): ThemeDef[]
   return out;
 }
 
+/**
+ * Coerce a persisted or imported value into a usable `ThemePreference`.
+ *
+ * Its own normalizer for the same reason `customThemes` and `headMarks` have
+ * one: the scalar type-guard in `coerceSettings` compares against
+ * `typeof DEFAULTS[key]`, and every object-valued setting is `"object"` — so a
+ * hand-edited `{ mode: "auto" }`, a `lightId` of `7`, or a bare string would
+ * all sail through it.
+ *
+ * An unknown mode reads as `fixed`, never `system`: fixed falls back on
+ * `activeThemeId`, which always resolves (`getActiveTheme` ends at
+ * `BUILTIN_THEMES[0]`), so the worst case is the theme the person already had
+ * rather than an app with no theme at all.
+ */
+function normalizeThemePreference(value: unknown): ThemePreference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...DEFAULT_THEME_PREFERENCE };
+  }
+  const o = value as Record<string, unknown>;
+  const id = (raw: unknown, fallback: string) =>
+    typeof raw === "string" && raw.trim() ? raw.trim() : fallback;
+  return {
+    mode: o.mode === "system" ? "system" : "fixed",
+    lightId: id(o.lightId, DEFAULT_THEME_PREFERENCE.lightId),
+    darkId: id(o.darkId, DEFAULT_THEME_PREFERENCE.darkId),
+  };
+}
+
+/**
+ * Point the half matching `activeThemeId`'s own mode at it.
+ *
+ * The migration for every install that predates #236: they hold an
+ * `activeThemeId` and no `themePreference`, and they land on `fixed` — so
+ * nothing changes appearance on upgrade. But the day they DO switch to
+ * "Follow system", handing them the built-in pairing would take away the theme
+ * they had been using for years. Seeding costs one lookup and keeps it.
+ */
+function seedPairingFrom(
+  pref: ThemePreference,
+  activeThemeId: string,
+  customThemes: ThemeDef[],
+): ThemePreference {
+  const active = findTheme({ customThemes }, activeThemeId);
+  if (!active) return pref;
+  return active.mode === "light"
+    ? { ...pref, lightId: active.id }
+    : { ...pref, darkId: active.id };
+}
+
 interface CoercedSettings {
   state: PersistedState;
   /** Keys whose value ended up different from `base`. */
@@ -1057,6 +1261,44 @@ function coerceSettings(
   // anything unusable, and keep the ids so `activeThemeId` still resolves.
   out.customThemes = normalizeCustomThemes(out.customThemes, base.customThemes);
 
+  // THEME PREFERENCE (#236). Runs after `customThemes` so both the repair and
+  // the seed can see the theme list this payload actually brings.
+  //
+  // Absent means an install from before the feature existed: it keeps `base`'s
+  // preference — DEFAULTS for `load()`, so `fixed`, so nothing on screen moves
+  // on upgrade — and the half matching the theme they were already on is
+  // seeded from it. Seeded only when the preference is still untouched, or an
+  // import of an OLD file would silently overwrite a pairing this install has
+  // since configured.
+  if ("themePreference" in parsed) {
+    out.themePreference = normalizeThemePreference(parsed.themePreference);
+  } else if (sameValue(base.themePreference, DEFAULTS.themePreference)) {
+    out.themePreference = seedPairingFrom(
+      base.themePreference,
+      out.activeThemeId,
+      out.customThemes,
+    );
+  }
+  // Repair a half naming a theme this machine does not have, or one whose mode
+  // no longer matches. Written BACK rather than only resolved around, so the
+  // Settings pickers show the theme the app will actually use.
+  out.themePreference = {
+    ...out.themePreference,
+    lightId: pairedThemeId(out.themePreference, "light", out.customThemes),
+    darkId: pairedThemeId(out.themePreference, "dark", out.customThemes),
+  };
+  // In system mode `activeThemeId` is derived, so it is re-derived here rather
+  // than trusted: the persisted value is only a cache of the last resolution,
+  // and an imported one records whichever half was on screen on someone else's
+  // machine. This machine's own appearance is the only correct answer.
+  if (out.themePreference.mode === "system") {
+    out.activeThemeId = pairedThemeId(
+      out.themePreference,
+      getSystemAppearance(),
+      out.customThemes,
+    );
+  }
+
   const changed = (Object.keys(DEFAULTS) as (keyof PersistedState)[]).filter(
     (key) => !sameValue(out[key], base[key]),
   );
@@ -1110,6 +1352,11 @@ function findTheme(
     BUILTIN_THEMES.find((t) => t.id === id) ??
     state.customThemes.find((t) => t.id === id)
   );
+}
+
+/** Re-apply whatever the state now resolves to. */
+function applyResolved(s: SettingsState): void {
+  applyTheme(findTheme(s, s.activeThemeId) ?? BUILTIN_THEMES[0]);
 }
 
 function uniqueId(existing: ThemeDef[]): string {
@@ -1175,6 +1422,10 @@ const initial = load();
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...initial,
+  // Read synchronously from `prefers-color-scheme` at module load; the Tauri
+  // window theme refines it a tick later (see startSystemAppearanceWatch), so
+  // the first paint is already right instead of flashing the other half.
+  systemAppearance: getSystemAppearance(),
 
   getActiveTheme() {
     const s = get();
@@ -1188,9 +1439,54 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const s = get();
     const theme = findTheme(s, id);
     if (!theme) return;
-    set({ activeThemeId: id });
+    set(activationPatch(s, theme, s.systemAppearance, s.customThemes));
     persist(snapshot(get()));
-    applyTheme(theme);
+    applyResolved(get());
+  },
+
+  setThemeFollowMode(mode) {
+    const s = get();
+    if (s.themePreference.mode === mode) return;
+    const themePreference: ThemePreference = { ...s.themePreference, mode };
+    // Going system → fixed keeps whatever is on screen: `activeThemeId` is
+    // already the resolved half, so "fixed" means "stop here", which is the
+    // only reading that does not surprise the person who just clicked it.
+    set({
+      themePreference,
+      activeThemeId: resolveActiveThemeId({ ...s, themePreference }, s.systemAppearance),
+    });
+    persist(snapshot(get()));
+    applyResolved(get());
+  },
+
+  setPairedThemeId(appearance, id) {
+    const s = get();
+    const theme = findTheme(s, id);
+    if (!theme || theme.mode !== appearance) return;
+    const themePreference: ThemePreference = {
+      ...s.themePreference,
+      ...(appearance === "light" ? { lightId: id } : { darkId: id }),
+    };
+    set({
+      themePreference,
+      activeThemeId: resolveActiveThemeId({ ...s, themePreference }, s.systemAppearance),
+    });
+    persist(snapshot(get()));
+    applyResolved(get());
+  },
+
+  syncSystemAppearance(appearance) {
+    const s = get();
+    if (s.systemAppearance === appearance) return;
+    set({ systemAppearance: appearance });
+    // A fixed install records the observation (Settings shows it) and stops
+    // there — nothing on screen moves, and nothing is written.
+    if (s.themePreference.mode !== "system") return;
+    const activeThemeId = resolveActiveThemeId(s, appearance);
+    if (activeThemeId === s.activeThemeId) return;
+    set({ activeThemeId });
+    persist(snapshot(get()));
+    applyResolved(get());
   },
 
   updateActiveColors(patch) {
@@ -1206,12 +1502,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         mode: active.mode,
         colors: { ...active.colors, ...patch },
       };
+      const customThemes = [...s.customThemes, dup];
       set({
-        customThemes: [...s.customThemes, dup],
-        activeThemeId: dup.id,
+        customThemes,
+        ...activationPatch(s, dup, s.systemAppearance, customThemes),
       });
       persist(snapshot(get()));
-      applyTheme(dup);
+      applyResolved(get());
       return;
     }
 
@@ -1235,12 +1532,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       mode: active.mode,
       colors: { ...active.colors },
     };
+    const customThemes = [...s.customThemes, dup];
     set({
-      customThemes: [...s.customThemes, dup],
-      activeThemeId: dup.id,
+      customThemes,
+      ...activationPatch(s, dup, s.systemAppearance, customThemes),
     });
     persist(snapshot(get()));
-    applyTheme(dup);
+    applyResolved(get());
     return dup;
   },
 
@@ -1254,12 +1552,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       mode: src.mode,
       colors: { ...src.colors },
     };
+    const customThemes = [...s.customThemes, dup];
     set({
-      customThemes: [...s.customThemes, dup],
-      activeThemeId: dup.id,
+      customThemes,
+      ...activationPatch(s, dup, s.systemAppearance, customThemes),
     });
     persist(snapshot(get()));
-    applyTheme(dup);
+    applyResolved(get());
     return dup;
   },
 
@@ -1279,13 +1578,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const s = get();
     if (!s.customThemes.some((t) => t.id === id)) return;
     const next = s.customThemes.filter((t) => t.id !== id);
-    const nextActive =
-      s.activeThemeId === id ? "dark-cool" : s.activeThemeId;
-    set({ customThemes: next, activeThemeId: nextActive });
+    // The pairing can name the theme being deleted, in either half. Repair
+    // both against the surviving list rather than only the active one: a
+    // dangling `lightId` is invisible until sunrise, which is the worst time
+    // to discover it.
+    const themePreference: ThemePreference = {
+      ...s.themePreference,
+      lightId: pairedThemeId(s.themePreference, "light", next),
+      darkId: pairedThemeId(s.themePreference, "dark", next),
+    };
+    const activeThemeId =
+      themePreference.mode === "system"
+        ? pairedThemeId(themePreference, s.systemAppearance, next)
+        : s.activeThemeId === id
+          ? DEFAULT_THEME_PREFERENCE.darkId
+          : s.activeThemeId;
+    set({ customThemes: next, themePreference, activeThemeId });
     persist(snapshot(get()));
-    if (s.activeThemeId === id) {
-      applyTheme(BUILTIN_THEMES[0]);
-    }
+    if (activeThemeId !== s.activeThemeId) applyResolved(get());
   },
 
   exportTheme(id) {
@@ -1324,12 +1634,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const s = get();
     // Ensure id is unique among customs.
     theme.id = uniqueId(s.customThemes);
+    const customThemes = [...s.customThemes, theme];
     set({
-      customThemes: [...s.customThemes, theme],
-      activeThemeId: theme.id,
+      customThemes,
+      ...activationPatch(s, theme, s.systemAppearance, customThemes),
     });
     persist(snapshot(get()));
-    applyTheme(theme);
+    applyResolved(get());
     return theme;
   },
 
@@ -1420,6 +1731,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   set(key, value) {
     set({ [key]: value } as Partial<SettingsState>);
+    if (key === "themePreference") {
+      // The generic setter is public API, so it must not be a back door around
+      // the resolve: assigning a preference without re-deriving `activeThemeId`
+      // would leave "follow the system" set and the wrong half on screen.
+      const s = get();
+      set({ activeThemeId: resolveActiveThemeId(s, s.systemAppearance) });
+      applyResolved(get());
+    }
     persist(snapshot(get()));
     if (key === "uiDensity") {
       applyDensity(get().uiDensity);
@@ -1451,6 +1770,27 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   applyDensity(s.uiDensity);
   applyZoom(s.uiZoom);
 }
+
+/**
+ * Follow the OS light/dark appearance for as long as this window lives (#236).
+ *
+ * Called from `main.tsx` — which BOTH windows run, before it branches on the
+ * `window=merge` query param, so the merge resolver subscribes for itself.
+ * A resolver left in last night's theme while the main window switched is
+ * exactly the bug this feature exists to fix, and the two windows do not
+ * depend on each other being open.
+ *
+ * Not a module-load side effect: an async subscription firing in every test
+ * that so much as imports a setting is noise, and the caller is the one that
+ * knows the window's lifetime.
+ */
+export function startSystemAppearanceWatch(): () => void {
+  return watchSystemAppearance((appearance) => {
+    useSettingsStore.getState().syncSystemAppearance(appearance);
+  });
+}
+
+export type { Appearance } from "./systemAppearance";
 
 /**
  * The active density's pixel step, for surfaces that need the NUMBER rather
