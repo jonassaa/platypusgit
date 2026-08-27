@@ -3,6 +3,7 @@ pub mod bisect;
 pub mod blame;
 pub mod cli;
 pub mod hooks;
+pub mod image;
 pub mod libgit2;
 pub mod lfs;
 pub mod notes;
@@ -26,6 +27,7 @@ use types::{
     DeleteFailure, DiffKind, FileContent,
     BulkFastForward, FastForward,
     FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+    BlobSource, ImagePreview,
     RemoteInfo,
     RepoHandle,
     RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, SubmoduleInfo, TagInfo, TagTarget,
@@ -289,6 +291,36 @@ pub trait GitBackend: Send + Sync {
         repo_id: &RepoId,
         path: &Path,
     ) -> AppResult<Option<FileContent>>;
+    /// The raw BYTES of `path` at `source`, sniffed, for the image preview
+    /// surfaces (#224).
+    ///
+    /// The fourth file reader, and the only one that can answer with bytes:
+    /// `FileContent.text` is `None` for a binary blob by contract, so none of
+    /// the other three can feed an `<img>`.
+    ///
+    /// The FORMAT is decided by the bytes, never by the extension — a
+    /// repository is untrusted input, and `logo.png` holding a PDF has to reach
+    /// the same honest empty state as any other binary. The size ceiling is
+    /// applied to the DECLARED size before anything is read, so an oversized
+    /// blob is never loaded and never encoded.
+    ///
+    /// An LFS pointer resolves to its object in `.git/lfs` when that object is
+    /// present locally, and answers `LfsMissing` when it is not — matching the
+    /// pointer-aware treatment every other surface already gives one, and never
+    /// rendering the pointer text as if it were the asset.
+    ///
+    /// `Ok(None)` — NOT an error — when there is no blob at that path on that
+    /// side. Same contract as the other three readers (#146): every caller is a
+    /// preview asking for one side of a file it is already rendering, so an
+    /// added file having no old side is the expected answer, and a directory or
+    /// a `160000` gitlink answers the same way. A genuine failure — unknown
+    /// repository, unresolvable revspec, an unreadable file — still errors.
+    fn read_image_preview(
+        &self,
+        repo_id: &RepoId,
+        source: &BlobSource,
+        path: &Path,
+    ) -> AppResult<Option<ImagePreview>>;
     fn diff_commits(
         &self,
         repo_id: &RepoId,

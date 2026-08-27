@@ -3221,6 +3221,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 name = "platypusgit"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "git2",
  "libc",
  "log",

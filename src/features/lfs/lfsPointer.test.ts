@@ -5,7 +5,8 @@
 // wrong or unreadable number there is the only content the panel has.
 
 import { describe, it, expect } from "vitest";
-import { formatBytes, lfsCounts, lfsDisabledReason } from "./useLfsStore";
+import { formatBytes } from "@/lib/bytes";
+import { lfsCounts, lfsDisabledReason } from "./useLfsStore";
 import { lfsSizeSummary } from "./LfsDiffNotice";
 import type { FileDiff, LfsStatus } from "@/lib/types";
 

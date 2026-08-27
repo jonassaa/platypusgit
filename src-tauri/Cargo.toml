@@ -49,6 +49,11 @@ url = "2"
 semver = "1"
 # Content log search (#61 D10) compiles the user's pattern once per walk.
 regex = "1"
+# Image-preview blobs cross IPC as base64 inside the ordinary JSON payload
+# (#224) — a `Vec<u8>` serialises as a JSON array of numbers, which is ~5x
+# the bytes. Already in the tree transitively, so this declares it rather
+# than adding it.
+base64 = "0.22"
 
 # `setsid()` between fork and exec, for the detached `pgit` launch (#163) —
 # nothing in std reaches it (`Command::process_group` only makes a new process

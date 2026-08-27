@@ -30,6 +30,8 @@ import type {
   ForgeRepo,
   ForgeTokenStatus,
   HeadInfo,
+  ImagePreview,
+  ImageSource,
   LaunchIntent,
   LfsStatus,
   LogFilter,
@@ -224,6 +226,34 @@ export async function readFileContentAtRev(
   return invoke<FileContent | null>("read_file_content_at_rev", {
     repoId,
     revspec,
+    path,
+  });
+}
+
+/**
+ * The BYTES of an image at `path` on one side, sniffed (#224).
+ *
+ * The only reader that can feed an `<img>`: the other three carry
+ * `FileContent.text`, which is `null` for a binary blob by contract.
+ *
+ * Resolves to `null` — it does NOT reject — when there is no blob at all on that
+ * side, which is routine for a preview pair (an added file has no old side).
+ * Everything else is a state ON the payload: `tooLarge`, `unsupported`,
+ * `lfsMissing`. A genuine failure (unknown repository, unresolvable revspec)
+ * still rejects.
+ *
+ * `data` is base64 of the whole blob, ready to be concatenated into a `data:`
+ * URL — nothing decodes it on this side. **Image bytes reach the `<img>`
+ * locally and only locally**; a preview never makes a request (#226).
+ */
+export async function readImagePreview(
+  repoId: string,
+  source: ImageSource,
+  path: string,
+): Promise<ImagePreview | null> {
+  return invoke<ImagePreview | null>("read_image_preview", {
+    repoId,
+    source,
     path,
   });
 }

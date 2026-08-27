@@ -341,6 +341,51 @@ export interface FileContent {
   size: number;
 }
 
+/**
+ * Which copy of a path an image preview reads (#224).
+ *
+ * Mirrors Rust's `BlobSource`. Deliberately NOT `syntax`'s `SideSource`: that
+ * one feeds a text tokenizer, where a conflict stage has nothing to say, and
+ * overloading it would add a kind to `useDiffSyntax`'s read path that can never
+ * produce text.
+ */
+export type ImageSource =
+  | { kind: "worktree" }
+  | { kind: "index" }
+  | { kind: "rev"; revspec: string }
+  /** A conflict stage: 1 base, 2 ours, 3 theirs. */
+  | { kind: "stage"; stage: number };
+
+/**
+ * One side of an image preview (#224). Mirrors Rust's `ImagePreview`.
+ *
+ * `null` from `readImagePreview` is a FIFTH state and means something else
+ * again: there is no blob at all on that side — an added file's old side, a
+ * deleted file's new one — which the surfaces render as "one side only".
+ */
+export type ImagePreview =
+  | {
+      kind: "image";
+      path: string;
+      /** Sniffed from the bytes, never from the extension. */
+      mediaType: string;
+      /** Bytes of the image, not of the base64. */
+      size: number;
+      /** Standard base64, ready to concatenate into a `data:` URL. */
+      data: string;
+    }
+  /** Over the backend's ceiling. The bytes were never read. */
+  | { kind: "tooLarge"; path: string; size: number; limit: number }
+  | {
+      kind: "unsupported";
+      path: string;
+      size: number;
+      /** `svg` is a deliberate refusal, not a gap — see `git/image.rs`. */
+      reason: "notAnImage" | "svg";
+    }
+  /** An LFS pointer whose object has not been fetched into `.git/lfs`. */
+  | { kind: "lfsMissing"; path: string; oid: string; size: number };
+
 export type RepoState =
   | "Clean"
   | "Merge"

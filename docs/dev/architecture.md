@@ -104,7 +104,9 @@ git/
 │                RebaseStep, RepoState, ConflictSides, CommitOptions,
 │                StashSaveOptions, TagTarget, ResetMode, SubmoduleInfo/State,
 │                WorktreeInfo/WorktreeBranch, LfsStatus/LfsFile/LfsPointer/
-│                LfsDiff, BisectStatus/BisectMark, etc.
+│                LfsDiff, BisectStatus/BisectMark, BlobSource/ImagePreview
+│                (#224 — which SIDE a preview reads, and the four answers:
+│                image / tooLarge / unsupported / lfsMissing), etc.
 ├── libgit2.rs   Libgit2Backend — active impl. merge_branch and rebase_onto
 │                shell out to real git, so a conflicted rebase is git's on-disk
 │                state; continue/abort_operation detect that
@@ -118,6 +120,13 @@ git/
 ├── lfs.rs       Pointer parsing + lfs_diff_of are PURE (a pointer fits in the
 │                diff's own lines). "Repo uses LFS" answered from .gitattributes
 │                via the INDEX — must work with the lfs binary missing
+├── image.rs     Image-preview sniffing (#224). PURE, table-tested: magic bytes
+│                → media type for PNG/JPEG/GIF/WebP/BMP/ICO, the size ceiling
+│                (MAX_PREVIEW_BYTES), and git-lfs's objects/aa/bb/<oid> fan-out.
+│                The EXTENSION never decides — a repository is untrusted input.
+│                SVG is recognised and REFUSED by name (script + remote refs,
+│                and the app ships no CSP behind the <img>); the module doc
+│                argues it
 ├── stash.rs     Repo-less stash helpers (#133): push/store argv builders
 │                (`--` placement, GIT_LITERAL_PATHSPECS), validate_message,
 │                rename_store_landed. Unit-tested with no temp repo
@@ -182,7 +191,12 @@ commands/        Thin Tauri handlers, one file per area:
 │                per-path failures), and THREE distinct file readers:
 │                read_file_content (working tree),
 │                read_file_content_at_rev + list_files_at_rev (a commit's tree),
-│                read_file_content_at_index (the STAGED blob)
+│                read_file_content_at_index (the STAGED blob) — plus a FOURTH
+│                reader that answers with BYTES, read_image_preview (#224:
+│                worktree / index / rev / conflict stage → base64 + the sniffed
+│                media type, so an <img> can be fed without guessing from the
+│                extension; the other three carry text, which is None for a
+│                binary blob by contract)
 ├── cli.rs       take_launch_intent, cli_shim_status, install_cli_shim
 ├── diagnostics.rs
 │                Reaching the app's own log from Settings (#274):
@@ -345,7 +359,11 @@ features/            Components + Zustand store colocated per feature:
 │                    useDiffGaps (+ useExpandedGaps, diffOpenReady),
 │                    WhitespaceToggle (+ useHunkActionsDisabledReason),
 │                    useDiffFind + DiffFindBar (find in diff — ONE hook for all
-│                    four surfaces; searches the row model, scrolls by offset)
+│                    four surfaces; searches the row model, scrolls by offset),
+│                    useImagePreviews + ImageDiffView (image previews — the same
+│                    ONE-component rule, for the complement of isTextualDiff:
+│                    old beside new with dimensions, bytes and both deltas, and
+│                    the honest empty state for everything that is not an image)
 ├── submodules/      useSubmodulesStore (persisted recursive toggle; update goes
 │                    through withAuthRetry)
 ├── worktrees/       useWorktreesStore + WorktreeAddDialog (store owns the

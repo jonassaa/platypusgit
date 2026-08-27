@@ -4,7 +4,10 @@ use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{DeleteFailure, FileContent, FileStatus, HeadInfo, RepoHandle, RepoId},
+    git::types::{
+        BlobSource, DeleteFailure, FileContent, FileStatus, HeadInfo, ImagePreview, RepoHandle,
+        RepoId,
+    },
     state::AppState,
 };
 
@@ -176,6 +179,42 @@ pub async fn read_file_content_at_index(
     let repo_id = RepoId(repo_id);
     let path_buf = PathBuf::from(path);
     tokio::task::spawn_blocking(move || backend.read_file_content_at_index(&repo_id, &path_buf))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Bytes of an image at `path` on one side, for the preview surfaces (#224).
+///
+/// The fourth file reader, and the only one that can answer with BYTES — the
+/// other three carry `FileContent.text`, which is `None` for a binary blob by
+/// contract, so none of them can feed an `<img>`.
+///
+/// **Why base64 in the ordinary JSON payload.** Tauri's IPC serialises a
+/// `Vec<u8>` as a JSON array of decimal numbers — roughly five bytes on the wire
+/// per byte of image — so raw bytes were never the cheap option they look like.
+/// The two alternatives were a raw `tauri::ipc::Response`, which cannot also
+/// carry the sniffed media type and steps outside the `AppResult<T>` contract
+/// every other command keeps, and a custom URI scheme, which would need a
+/// protocol registration, a scope and a CSP the app deliberately does not have —
+/// for bytes that are capped at a few MB anyway. Base64 costs ~1.33x, keeps the
+/// one error type crossing IPC, and lands as the exact string a `data:` URL
+/// wants, so the frontend concatenates it into an `src` with no decode.
+///
+/// The cap (`git::image::MAX_PREVIEW_BYTES`) is applied to the blob's DECLARED
+/// size inside the backend, so an oversized asset is never read, never encoded
+/// and never crosses IPC — it comes back as `TooLarge` instead. And nothing here
+/// runs speculatively: the frontend asks only for the file the user selected.
+#[tauri::command]
+pub async fn read_image_preview(
+    state: State<'_, AppState>,
+    repo_id: String,
+    source: BlobSource,
+    path: String,
+) -> AppResult<Option<ImagePreview>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let path_buf = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || backend.read_image_preview(&repo_id, &source, &path_buf))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

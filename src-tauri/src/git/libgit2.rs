@@ -10,7 +10,10 @@ use git2::{
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+use crate::git::image;
 use crate::git::ownership;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use crate::opener::{resolved_workdir_path, safe_workdir_path};
 
 use super::{
@@ -20,12 +23,15 @@ use super::{
         ConflictSides,
         DeleteFailure, DiffHunk,
         BulkFastForward,
+        BlobSource,
         DiffKind,
-        DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileStatus, HeadInfo, LfsStatus,
+        DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileStatus, HeadInfo, ImagePreview,
+        LfsStatus,
         LogFilter, LogPage,
         RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag,
-        SubmoduleInfo, TagInfo, TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo, REFSPEC_ALL,
+        SubmoduleInfo, TagInfo, TagTarget, UnsupportedReason, WorkdirDiff, WorktreeBranch, WorktreeInfo,
+        REFSPEC_ALL,
     },
     GitBackend,
 };
@@ -1885,6 +1891,121 @@ fn stash_entry_at(repo: &mut Repository, index: usize) -> AppResult<(String, Str
 /// Resolve a revspec (branch, tag, short/full oid, `HEAD~2`, `tag^{}`, …) to
 /// its tree, mapping any resolution failure to `InvalidRef` so the UI gets a
 /// clean "unknown revision" error rather than a stringified internal one.
+/// One side of an image preview, before it has been sniffed (#224).
+///
+/// `TooLarge` exists as its own arm so the ceiling is applied to the DECLARED
+/// size — `metadata().len()` for the worktree, `Blob::size()` for a blob —
+/// before any bytes are copied. Reading first and measuring after would defeat
+/// the point of having a ceiling.
+enum BlobSide {
+    /// No blob at this path on this side. An added file's old side.
+    Absent,
+    TooLarge(u64),
+    Bytes(Vec<u8>),
+}
+
+/// The worktree copy, with NO fallback to HEAD.
+///
+/// `read_file_content`'s fallback is right for a single-file view and wrong
+/// here: a preview PAIR asks for each side by name, so recovering the HEAD blob
+/// would paint the deleted image into the "new" slot and claim nothing changed.
+fn read_worktree_side(abs: &Path) -> AppResult<BlobSide> {
+    let meta = match std::fs::metadata(abs) {
+        Ok(m) => m,
+        // Absent, or unreachable through a broken symlink — a state every diff
+        // surface already renders as "one side only", not a failure (#146).
+        Err(_) => return Ok(BlobSide::Absent),
+    };
+    if !meta.is_file() {
+        return Ok(BlobSide::Absent);
+    }
+    if meta.len() > image::MAX_PREVIEW_BYTES {
+        return Ok(BlobSide::TooLarge(meta.len()));
+    }
+    Ok(BlobSide::Bytes(std::fs::read(abs)?))
+}
+
+/// A blob from the object database, measured before it is copied.
+fn read_blob_side(repo: &Repository, oid: git2::Oid) -> AppResult<BlobSide> {
+    let Ok(blob) = repo.find_blob(oid) else {
+        return Ok(BlobSide::Absent);
+    };
+    if blob.size() as u64 > image::MAX_PREVIEW_BYTES {
+        return Ok(BlobSide::TooLarge(blob.size() as u64));
+    }
+    Ok(BlobSide::Bytes(blob.content().to_vec()))
+}
+
+/// Sniff bytes we already hold and turn them into the answer.
+fn describe_bytes(path: String, bytes: &[u8]) -> ImagePreview {
+    let size = bytes.len() as u64;
+    match image::sniff(bytes) {
+        image::Sniffed::Image(media_type) => ImagePreview::Image {
+            path,
+            media_type: media_type.to_string(),
+            size,
+            // Base64 HERE rather than in the frontend: it is what a `data:` URL
+            // takes, so the string crosses IPC once and is concatenated into an
+            // `src` with no decode and no second copy on the other side.
+            data: BASE64.encode(bytes),
+        },
+        image::Sniffed::Svg => ImagePreview::Unsupported {
+            path,
+            size,
+            reason: UnsupportedReason::Svg,
+        },
+        image::Sniffed::NotAnImage => ImagePreview::Unsupported {
+            path,
+            size,
+            reason: UnsupportedReason::NotAnImage,
+        },
+    }
+}
+
+/// Preview the OBJECT an LFS pointer names, when it is present locally (#224).
+///
+/// Reads `.git/lfs/objects/aa/bb/<oid>` directly instead of asking the `git lfs`
+/// binary: the answer we want is "is this object on this disk", and shelling out
+/// would refuse a perfectly readable object on a machine where git-lfs is not
+/// installed. It also keeps this reader off `proc.rs` entirely, so a preview
+/// never spawns anything.
+///
+/// `lfs.storage` is honoured because git-lfs honours it; a relative value is
+/// relative to the `.git` directory, as git-lfs resolves it.
+fn resolve_lfs_object(
+    repo: &Repository,
+    path: String,
+    pointer: &crate::git::types::LfsPointer,
+) -> AppResult<ImagePreview> {
+    let git_dir = repo.path().to_path_buf();
+    let storage = repo
+        .config()
+        .ok()
+        .and_then(|c| c.get_path("lfs.storage").ok())
+        .map(|p| if p.is_absolute() { p } else { git_dir.join(p) })
+        .unwrap_or_else(|| git_dir.join("lfs"));
+
+    let missing = || ImagePreview::LfsMissing {
+        path: path.clone(),
+        oid: pointer.oid.clone(),
+        size: pointer.size,
+    };
+    // `lfs_object_path` refuses an oid that is not plain lowercase hex — it came
+    // from a pointer file in an untrusted repository.
+    let Some(object) = image::lfs_object_path(&storage, &pointer.oid) else {
+        return Ok(missing());
+    };
+    match read_worktree_side(&object)? {
+        BlobSide::Absent => Ok(missing()),
+        BlobSide::TooLarge(size) => Ok(ImagePreview::TooLarge {
+            path,
+            size,
+            limit: image::MAX_PREVIEW_BYTES,
+        }),
+        BlobSide::Bytes(bytes) => Ok(describe_bytes(path, &bytes)),
+    }
+}
+
 fn resolve_tree<'a>(repo: &'a Repository, revspec: &str) -> AppResult<git2::Tree<'a>> {
     repo.revparse_single(revspec)
         .and_then(|obj| obj.peel_to_tree())
@@ -3496,6 +3617,86 @@ impl GitBackend for Libgit2Backend {
                     size,
                 },
             }))
+        })
+    }
+
+    fn read_image_preview(
+        &self,
+        repo_id: &RepoId,
+        source: &BlobSource,
+        path: &Path,
+    ) -> AppResult<Option<ImagePreview>> {
+        let rel = path.to_path_buf();
+        let path_str = rel.to_string_lossy().into_owned();
+        // ONE lock acquisition for the whole answer, including the LFS hop:
+        // resolving a pointer needs `repo.path()` and `lfs.storage`, and taking
+        // a second acquisition to get them would let the worktree move between
+        // the blob we sniffed and the object we opened.
+        self.with_repo(repo_id, |repo| {
+            let side = match source {
+                BlobSource::Worktree => {
+                    let workdir = repo.workdir().ok_or_else(|| {
+                        AppError::InvalidPath("bare repository has no workdir".into())
+                    })?;
+                    read_worktree_side(&workdir.join(&rel))?
+                }
+                BlobSource::Index => {
+                    let index = repo.index()?;
+                    match index.get_path(&rel, 0) {
+                        // A `160000` gitlink HAS a stage-0 entry and its oid is
+                        // a commit in the submodule's object database, so
+                        // `find_blob` would error — the same guard the other
+                        // three readers carry, for the same reason (#151).
+                        Some(e) if e.mode != u32::from(git2::FileMode::Commit) => {
+                            read_blob_side(repo, e.id)?
+                        }
+                        _ => BlobSide::Absent,
+                    }
+                }
+                BlobSource::Stage { stage } => {
+                    let index = repo.index()?;
+                    match index.get_path(&rel, i32::from(*stage)) {
+                        Some(e) if e.mode != u32::from(git2::FileMode::Commit) => {
+                            read_blob_side(repo, e.id)?
+                        }
+                        _ => BlobSide::Absent,
+                    }
+                }
+                BlobSource::Rev { revspec } => {
+                    let tree = resolve_tree(repo, revspec)?;
+                    match tree.get_path(&rel) {
+                        // KIND before lookup: a gitlink's oid names a commit
+                        // this repository does not hold.
+                        Ok(entry) if entry.kind() == Some(git2::ObjectType::Blob) => {
+                            read_blob_side(repo, entry.id())?
+                        }
+                        _ => BlobSide::Absent,
+                    }
+                }
+            };
+
+            let bytes = match side {
+                BlobSide::Absent => return Ok(None),
+                BlobSide::TooLarge(size) => {
+                    return Ok(Some(ImagePreview::TooLarge {
+                        path: path_str,
+                        size,
+                        limit: image::MAX_PREVIEW_BYTES,
+                    }))
+                }
+                BlobSide::Bytes(b) => b,
+            };
+
+            // An LFS pointer is a ≤3-line text file, so this costs one length
+            // comparison for every real image (#93's reasoning, in bytes).
+            if bytes.len() as u64 <= image::MAX_POINTER_BYTES {
+                if let Some(pointer) =
+                    std::str::from_utf8(&bytes).ok().and_then(crate::git::lfs::parse_pointer)
+                {
+                    return Ok(Some(resolve_lfs_object(repo, path_str, &pointer)?));
+                }
+            }
+            Ok(Some(describe_bytes(path_str, &bytes)))
         })
     }
 
