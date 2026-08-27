@@ -24,17 +24,21 @@ opener.rs        URLs/paths → OS default handler. SECURITY-critical: safe_url
 update.rs        Update discovery: semver compare, dev-build (0.0.0) short-circuit
                  before any network call, GitHub release parsing, ureq w/ timeout +
                  https_only. Logic only — handlers live in commands/update.rs
-cancel.rs        Cancelling an in-flight network git subprocess (#234). A
+cancel.rs        Cancelling an in-flight network git subprocess (#234, #263). A
                  process-wide registry keyed by SCOPE (the clone / one
                  repository), not by op id — the auto-fetch pile has no id a
                  user could point at. Registered at the two choke points every
                  network op already goes through (create::run_clone,
                  net::run_git_authenticated), so a new network op inherits
-                 cancellation with nothing to remember. See backend.md
+                 cancellation with nothing to remember. cancel() kills the
+                 child directly by pid — SIGTERM to its whole process group
+                 first (kill_tree), escalating to SIGKILL on a second cancel
+                 of the same op. See backend.md
 proc.rs          THE only sanctioned child-process spawner (issue 172):
                  git / git_async / git_async_in (CREATE_NO_WINDOW,
-                 GIT_TERMINAL_PROMPT=0, stdin closed), program / program_async,
-                 and the two *_keeping_console exceptions. See backend.md
+                 GIT_TERMINAL_PROMPT=0, stdin closed, own process group),
+                 program / program_async, and the two *_keeping_console
+                 exceptions. See backend.md
 progress.rs      Reading git's own `--progress` sideband off a child's stderr
                  (#296). parse_progress turns "Receiving objects:  62%
                  (620/1000)" into a CloneProgress; ProgressReader splits a byte
@@ -43,8 +47,9 @@ progress.rs      Reading git's own `--progress` sideband off a child's stderr
                  instead of streaming), bounds an undelimited line, and keeps
                  the non-progress lines as the failure-message tail. Clone had
                  all of this privately; fetch/pull/push use the same code now,
-                 so the two cannot drift. Both callers keep their own select!
-                 loop — the cancel arms differ. See backend.md
+                 so the two cannot drift. Neither caller selects on anything:
+                 the cancel kills the child by pid (#263), and the read loop
+                 just notices the pipe close. See backend.md
 reveal.rs        "Reveal in Finder/Explorer" + "Open in terminal" (#215).
                  HostPlatform decouples argv building from the actual host, so
                  reveal_plan/terminal_plan are PURE and unit-tested for all
