@@ -4,7 +4,9 @@
 // can fall through cleanly.
 
 import { open } from "@tauri-apps/plugin-dialog";
+import { error as logError } from "@tauri-apps/plugin-log";
 import { pgFlash } from "@/design";
+import { describeError } from "@/lib/errors";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
@@ -24,14 +26,48 @@ export function headUpstream(
   return [upstream.slice(0, idx), upstream.slice(idx + 1)];
 }
 
-/** Show the native folder picker and open the chosen repository. Shared by the
- *  titlebar/Welcome buttons and the ⌘O keymap action so all three agree. */
+/**
+ * Show the native folder picker and open the chosen repository. Shared by the
+ * titlebar/Welcome buttons and the ⌘O keymap action so all three agree.
+ *
+ * # Why the picker gets its own try/catch
+ *
+ * Every caller invokes this as `void openRepoDialog()` — the keymap runner must
+ * return a boolean synchronously, and the three buttons are click handlers. So a
+ * rejection here is an UNHANDLED one: no flash, no log, no change on screen.
+ * Clicking "Open repository" simply did nothing, forever, leaving no trace
+ * anywhere (#274).
+ *
+ * And the picker is the one step in the whole path that cannot be seen from the
+ * log: `open` is `@tauri-apps/plugin-dialog`'s own IPC call, not one of
+ * `lib/tauri.ts`'s, so neither the invoke logging nor the stall watchdog covers
+ * it. On Linux it reaches the XDG desktop portal, which is genuinely absent on
+ * some systems — a stock WSL install typically has no `xdg-desktop-portal` — and
+ * "the portal is missing" is a diagnosable environment problem the moment
+ * anybody is told about it.
+ *
+ * A cancel is NOT reported: `open` resolves to `null` for it, which is the user
+ * getting what they asked for.
+ */
 export async function openRepoDialog(): Promise<void> {
-  const selected = await open({
-    directory: true,
-    multiple: false,
-    title: "Open repository",
-  });
+  let selected: string | string[] | null;
+  try {
+    selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Open repository",
+    });
+  } catch (e) {
+    logError(`folder picker failed: ${describeError(e)}`);
+    // Names the likely cause rather than echoing a D-Bus error nobody can act
+    // on. If the picker cannot open, the path typed into a terminal still works
+    // — `pgit <path>` does not need a portal.
+    pgFlash(
+      "Could not open the folder picker. On Linux this usually means no " +
+        "desktop portal is installed — try `pgit <path>` from a terminal.",
+    );
+    return;
+  }
   if (typeof selected === "string") {
     await useTabsStore.getState().openRepo(selected);
   }

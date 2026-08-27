@@ -421,7 +421,8 @@ differently:
 
 | Log shows | Means |
 | --- | --- |
-| no `open_repo` line at all | never reached the backend — folder picker returned nothing (on WSL usually no `xdg-desktop-portal`), or the frontend never dispatched |
+| `folder picker failed: …` | the native picker itself would not open — on Linux usually no `xdg-desktop-portal`. `open` is plugin-dialog's own IPC call, so it is invisible to the invoke wrapper AND the stall watchdog; `features/repo/ops.ts` catches it explicitly because every caller is a `void openRepoDialog()` whose rejection would otherwise be unhandled and leave no trace at all |
+| no `open_repo` line and no picker line | the user cancelled the picker (a `null` resolve, deliberately not logged), or the frontend never dispatched |
 | `open_repo <path>` and nothing after | libgit2 still working, or wedged. The webview's `still pending after 10000ms` confirms it, and the path says which filesystem |
 | `open_repo <path>` then `open_repo failed for <path>: …` | an ordinary error with a reason — always the easy case |
 
