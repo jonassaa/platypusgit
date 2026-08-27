@@ -74,6 +74,32 @@ fn the_publisher_is_not_the_identifier_fallback() {
 }
 
 #[test]
+fn the_publisher_is_not_the_product_name() {
+    let conf = conf();
+    let product = conf["productName"].as_str().expect("productName is a string");
+    let publisher = conf["bundle"]["publisher"]
+        .as_str()
+        .expect("bundle.publisher is a string");
+
+    // A THIRD wrong value for this field, and the only one that looks right.
+    // Tauri's Microsoft Store guidance: "Your application publisher name cannot
+    // match the application product name." `productName` is lowercase and
+    // load-bearing for the Debian package name, so the field that has to move is
+    // this one. See `docs/superpowers/specs/2026-08-27-msix-store-spec.md` §F.
+    //
+    // Not a style preference: it is a submission blocker for the Store channel,
+    // and once winget has published a manifest whose
+    // `AppsAndFeaturesEntries.Publisher` matches what the installer wrote,
+    // changing it means a second registry-identity change for every install.
+    assert_ne!(
+        publisher, product,
+        "bundle.publisher equals productName (`{product}`). The Microsoft Store \
+         rejects that pairing, so this blocks the MSIX channel. Use a person or \
+         entity name — the publisher is who ships it, not what is shipped."
+    );
+}
+
+#[test]
 fn the_wix_upgrade_code_is_pinned() {
     let conf = conf();
     let code = conf["bundle"]["windows"]["wix"]["upgradeCode"].as_str();
