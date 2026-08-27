@@ -33,7 +33,7 @@ New:
 - `scripts/scoop-manifest.sh` — renders `bucket/platypusgit.json`.
 - `scripts/scoop-bucket-wizard.sh` — the one-time human-only steps.
 - `scripts/scoop-bucket-seed/README.md` — the bucket repo's landing text.
-- `scripts/scoop-bucket-seed/bucket/.gitkeep` — so the seed pushes the
+- `scripts/scoop-bucket-seed/bucket/.gitkeep` — so the seed creates the
   directory the first `bump-scoop` writes into.
 - `src-tauri/windows/pgit-portable.cmd` — the relative-path `pgit.cmd` that
   ships inside the zip.
@@ -126,8 +126,10 @@ its own commit; the branch is squashed before merge.
 1. `scripts/scoop-bucket-seed/` — README naming the bucket, the package, and
    the fact that CI owns `bucket/platypusgit.json`; `bucket/.gitkeep`.
 2. `scripts/scoop-bucket-wizard.sh` — idempotent, `--dry-run`, interactive:
-   create the repo, push the seed, install the App on it, verify the App can
-   push, and (last) verify the first `bump-scoop` populated the manifest.
+   create the repo, seed it **through `gh api`** (never a `git push` — the repo
+   has no local clone, so a git remote would fall through to the user's own
+   credential setup), install the App on it, and verify the first `bump-scoop`
+   populated the manifest.
 
 ### Phase 6 — the site and the README
 

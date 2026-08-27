@@ -133,7 +133,7 @@ fi
 
 # ─── 2. the seed ─────────────────────────────────────────────────────────────
 
-step "2/4  Push the seed (README + an empty bucket/)"
+step "2/4  Seed the repository (README + an empty bucket/)"
 
 seeded=no
 if gh api "repos/$OWNER/$REPO/contents/README.md" > /dev/null 2>&1; then
@@ -142,32 +142,51 @@ if gh api "repos/$OWNER/$REPO/contents/README.md" > /dev/null 2>&1; then
 fi
 
 if [ "$seeded" = no ]; then
-    say "Pushes $SEED_DIR as the initial commit:"
+    say "Creates these in $OWNER/$REPO, from $SEED_DIR:"
     say ""
-    (cd "$SEED_DIR" && find . -type f | sed 's|^\./|  |')
+    (cd "$SEED_DIR" && find . -type f ! -name '.DS_Store' | sed 's|^\./|  |')
     say ""
     say "bucket/ ships EMPTY of manifests on purpose. The first bump-scoop run"
     say "writes $MANIFEST; a hand-made manifest here would carry a hash for an"
     say "asset that does not exist yet, and a bucket whose only manifest fails"
     say "to install is worse than a bucket with none."
-    if confirm "Push it?"; then
-        if would "git init + commit + push $SEED_DIR to $OWNER/$REPO"; then
-            tmp="$(mktemp -d)"
-            # A plain copy into a scratch clone, so this never touches the
-            # working tree the wizard is being run from.
-            cp -R "$SEED_DIR/." "$tmp/"
+    if confirm "Create them?"; then
+        if would "create each seed file in $OWNER/$REPO via the GitHub API"; then
+            # UPLOADED WITH `gh api`, NOT `git push`, and that is the fix for a
+            # real failure rather than a preference. `gh` is already
+            # authenticated (the preflight checked) and its token is what every
+            # other step here uses. A `git push` instead goes through git's own
+            # credential system for a repository the user has never cloned — so
+            # the first version of this step, which added an `https://` remote,
+            # prompted for a GitHub *password* that has not been accepted for git
+            # operations for years, and failed. Hardcoding SSH would only move
+            # the assumption; the Contents API needs no remote, no protocol
+            # choice and no credential helper.
+            #
+            # It also handles the empty-repository case for free: the first PUT
+            # creates the default branch, so nothing here has to know or guess
+            # what that branch is called.
+            #
+            # One commit per file. That is fine for a seed, and it keeps this a
+            # loop over the directory rather than a tree-API special case, so
+            # adding a seed file later needs no code change here.
             (
-                cd "$tmp"
-                git init -q -b main
-                git add -A
-                git -c user.name="$(git config user.name || echo platypusgit)" \
-                    -c user.email="$(git config user.email || echo noreply@platypusgit.com)" \
-                    commit -q -m "chore: seed the bucket"
-                git remote add origin "https://github.com/$OWNER/$REPO.git"
-                git push -q -u origin main
+                cd "$SEED_DIR"
+                find . -type f ! -name '.DS_Store' | sed 's|^\./||' | while read -r rel; do
+                    if gh api "repos/$OWNER/$REPO/contents/$rel" > /dev/null 2>&1; then
+                        say "  $rel already there — skipping."
+                        continue
+                    fi
+                    # `tr -d` because base64 line-wraps on some platforms and
+                    # not others, and the API wants one string either way.
+                    content="$(base64 < "$rel" | tr -d '\n')"
+                    gh api --method PUT "repos/$OWNER/$REPO/contents/$rel" \
+                        -f message="chore: seed the bucket ($rel)" \
+                        -f content="$content" > /dev/null
+                    say "  $rel created."
+                done
             )
-            rm -rf "$tmp"
-            say "Pushed."
+            say "Seeded."
         fi
     fi
 fi
