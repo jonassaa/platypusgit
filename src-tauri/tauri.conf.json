@@ -41,6 +41,7 @@
     "createUpdaterArtifacts": true,
     "targets": ["msi", "dmg", "deb", "appimage"],
     "category": "DeveloperTool",
+    "publisher": "platypusgit",
     "shortDescription": "A developer-focused git client",
     "longDescription": "PlatypusGit — a cross-platform, developer-focused git client.",
     "copyright": "Copyright (c) 2026 Jonas Aasberg",
@@ -64,6 +65,7 @@
     "windows": {
       "wix": {
         "language": ["en-US"],
+        "upgradeCode": "8E03762C-0A45-5879-AB93-77EB9C468C68",
         "fragmentPaths": ["wix/pgit-cli.wxs"],
         "componentRefs": ["PgitCli"]
       }

@@ -166,6 +166,51 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   — `iconutil -c iconset` unpacks the former, the latter is a container of
   PNGs.
 
+## The MSI's registry identity — pinned for winget
+
+Two `bundle` fields in `tauri.conf.json` exist only to control what the `.msi`
+writes into the Windows registry. Both were added because the Windows Package
+Manager reads that registry entry back and refuses to guess.
+
+- **`bundle.publisher: "platypusgit"`.** Unset, the bundler does *not* fall back
+  to the Cargo `authors` — it splits the bundle identifier and takes the second
+  segment (`settings.rs`, `msi/mod.rs`):
+
+  ```rust
+  let manufacturer = settings.publisher()
+    .unwrap_or_else(|| bundle_id.split('.').nth(1).unwrap_or(bundle_id));
+  ```
+
+  `io.github.jonassaa.platypusgit` → **`github`**. Every `.msi` up to and
+  including v0.1.1 therefore shipped with `Publisher: github` in Add/Remove
+  Programs and its shortcut bookkeeping under `HKCU\Software\github\platypusgit`.
+  That is wrong on its own, and it is disqualifying for winget: a manifest's
+  `AppsAndFeaturesEntries.Publisher` must match what the installer actually
+  wrote, so the manifest would have had to claim `github` as the publisher —
+  straight into a trademark/impersonation review.
+
+  Setting it moves the HKCU key to `Software\platypusgit\platypusgit`. That key
+  holds only shortcut flags and a `PrevInstallDir` search, and the default
+  install location is unchanged, so an upgrade over an older MSI still lands in
+  the same place. It does **not** touch the `UpgradeCode`.
+
+- **`bundle.windows.wix.upgradeCode`.** Pinned to
+  `8E03762C-0A45-5879-AB93-77EB9C468C68` — **the value the derivation was
+  already producing**, confirmed with `pnpm tauri inspect wix-upgrade-code`
+  before and after (it prints both the derived default and the override, so the
+  no-op is visible in one line). Pinning is therefore invisible to anyone who
+  already installed v0.1.x, and from here a `productName` change can no longer
+  orphan their install.
+
+**The `ProductCode` is not pinnable and must not be** — Tauri's `main.wxs` uses
+`<Product Id="*">`, so it regenerates on every build. Anything that needs it
+(a winget manifest does) has to read it out of the released `.msi`, never
+predict it.
+
+The MSI is **`InstallScope="perMachine"`**, hardcoded in the bundler's
+`main.wxs` — not configurable. That is why `wix/pgit-cli.wxs` can write the
+machine PATH, and why a winget manifest for this app is `Scope: machine`.
+
 ## The APT repository — one-line Linux install (#187)
 
 Spec: `docs/superpowers/specs/2026-08-26-apt-repository-spec.md`. Read that for
@@ -258,7 +303,7 @@ reporting**: `apt policy platypus-git` shows no candidate, which is why
 | macOS `platypusgit.app` | The **Homebrew cask must change in the same release** — its `app`, `binary` and `postflight` stanzas all name the bundle, and `bump-cask` only rewrites version + sha256. That job now cross-checks the cask's `app` stanza against `productName` and **fails the release** on a mismatch, because the alternative is discovering it when `brew install` breaks for every macOS user. |
 | `scripts/install-pgit.sh` | Searches BOTH `platypusgit.app` and `PlatypusGit.app`. It exists to serve an already-installed app, so dropping the old name would break the `pgit` one-liner for existing users. |
 | `.desktop` file | `platypusgit.desktop`. No consumer in this repo. |
-| Windows `UpgradeCode` | Derived as `Uuid::new_v5(NAMESPACE_DNS, "<productName>.exe.app.x64")` (`bundle/windows/msi/mod.rs`), so a rename **breaks in-place MSI upgrades** — the new installer lands alongside the old. Harmless this time (no `.msi` installs existed), but before there are real Windows users, pin `bundle.windows.wix.upgradeCode` so `productName` stops being load-bearing for upgrades. `pnpm tauri inspect wix-upgrade-code` prints the current value. |
+| Windows `UpgradeCode` | **No longer** — it is now pinned in `tauri.conf.json` (see below), so `productName` has stopped being load-bearing for MSI upgrades. It *was* derived as `Uuid::new_v5(NAMESPACE_DNS, "<productName>.exe.app.x64")` (`bundle/windows/msi/mod.rs`), which meant a rename **broke in-place MSI upgrades** — the new installer landed alongside the old. |
 
 **Not** renamed, deliberately: the release assets (`PlatypusGit_amd64.deb` and
 friends) are stable names the cask and `latest.json` track, decoupled from the
