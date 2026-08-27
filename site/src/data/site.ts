@@ -37,9 +37,10 @@ export const apt = {
   // Kept in sync with scripts/install-platypusgit.sh's DEFAULT_APT_URL and
   // scripts/apt-repo-seed/CNAME.
   url: 'https://apt.platypusgit.com',
-  // The canonical package name. `platypusgit` also resolves, via the .deb's
-  // `Provides:`, but this is the name apt search / apt remove / dpkg -l use.
-  pkg: 'platypus-git',
+  // The Debian package name — derived by Tauri from `productName` via
+  // heck::AsKebabCase, so a lowercase productName maps straight through.
+  // The former `platypus-git` still resolves via the .deb's `Provides:`.
+  pkg: 'platypusgit',
   // Fingerprint of the repository signing key, printed on the download page so
   // it is verifiable against something other than the script that installed it.
   // Empty until the key exists — scripts/apt-repo-wizard.sh prints it and says

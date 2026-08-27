@@ -90,7 +90,15 @@ done
 candidate_apps() {
     case "$UNAME_S" in
         Darwin)
+            # BOTH bundle names, new one first. `productName` became lowercase
+            # (#187), so the bundle is `platypusgit.app` from that release on —
+            # but anyone who installed an earlier build still has
+            # `PlatypusGit.app`, and this script exists precisely to serve an app
+            # that is already installed. Dropping the old name would break the
+            # `pgit` one-liner for every existing macOS user.
             printf '%s\n' \
+                "$SEARCH_ROOT/Applications/platypusgit.app/Contents/MacOS/$BINARY_NAME" \
+                "${HOME:-}/Applications/platypusgit.app/Contents/MacOS/$BINARY_NAME" \
                 "$SEARCH_ROOT/Applications/PlatypusGit.app/Contents/MacOS/$BINARY_NAME" \
                 "${HOME:-}/Applications/PlatypusGit.app/Contents/MacOS/$BINARY_NAME"
             ;;

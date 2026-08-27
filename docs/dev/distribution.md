@@ -227,12 +227,49 @@ one. Two files, two languages, one string. A Rust test pins the constant and the
 smoke gate asserts the path exists after a real install, so a drift fails CI
 rather than silently telling every apt user to go download a file by hand.
 
-### Package naming
+### Package naming, and what `productName` actually controls
 
-The Debian package is **`platypus-git`** — Tauri kebab-cases `productName` and
-`DebConfig` has no override. `provides: ["platypusgit"]` makes the obvious guess
-resolve too, but `platypus-git` is canonical everywhere we print it, because that
-is what `apt search`, `apt remove` and `dpkg -l` use.
+The Debian package is **`platypusgit`**.
+
+**`productName` is lowercase on purpose, and it is load-bearing.** Tauri derives
+the Debian `Package:` field from it — `tauri-bundler/src/bundle/linux/debian.rs`:
+
+```rust
+let package = heck::AsKebabCase(settings.product_name());
+```
+
+`DebConfig` has no name override, so the *only* lever is `productName`. It was
+`"PlatypusGit"`, whose internal capital is a word boundary, so kebab-casing
+produced `platypus-git`. Lowercase maps straight through — and it matches how the
+project brands itself everywhere else (`site/src/data/site.ts` has
+`name: 'platypusgit'`).
+
+`provides` + `replaces` + `conflicts` all name the **old** `platypus-git`, so a
+sideloaded install of an older `.deb` upgrades cleanly instead of hitting a dpkg
+file conflict — both packages own `/usr/bin/platypusgit`. `provides` also keeps an
+older `apt install platypus-git` working. Note a virtual name **installs without
+reporting**: `apt policy platypus-git` shows no candidate, which is why
+`platypusgit` is the name the page and the app print.
+
+**Everything else `productName` renames, and who has to follow:**
+
+| Renamed | Consequence |
+| --- | --- |
+| macOS `platypusgit.app` | The **Homebrew cask must change in the same release** — its `app`, `binary` and `postflight` stanzas all name the bundle, and `bump-cask` only rewrites version + sha256. That job now cross-checks the cask's `app` stanza against `productName` and **fails the release** on a mismatch, because the alternative is discovering it when `brew install` breaks for every macOS user. |
+| `scripts/install-pgit.sh` | Searches BOTH `platypusgit.app` and `PlatypusGit.app`. It exists to serve an already-installed app, so dropping the old name would break the `pgit` one-liner for existing users. |
+| `.desktop` file | `platypusgit.desktop`. No consumer in this repo. |
+| Windows `UpgradeCode` | Derived as `Uuid::new_v5(NAMESPACE_DNS, "<productName>.exe.app.x64")` (`bundle/windows/msi/mod.rs`), so a rename **breaks in-place MSI upgrades** — the new installer lands alongside the old. Harmless this time (no `.msi` installs existed), but before there are real Windows users, pin `bundle.windows.wix.upgradeCode` so `productName` stops being load-bearing for upgrades. `pnpm tauri inspect wix-upgrade-code` prints the current value. |
+
+**Not** renamed, deliberately: the release assets (`PlatypusGit_amd64.deb` and
+friends) are stable names the cask and `latest.json` track, decoupled from the
+bundler's output by a `cp` in `release.yml`; the Windows shim directory
+`%LOCALAPPDATA%\PlatypusGit\bin` (`cli.rs`), because renaming it orphans an
+existing PATH entry; and the in-app display strings (window title, Welcome hero,
+logo label), which are a separate branding decision.
+
+The binary is `platypusgit` either way — it comes from the Cargo package name,
+not `productName`, so `/usr/bin/platypusgit`, `platypusgit.exe` and the e2e
+snapshot are all unaffected.
 
 `depends` in `tauri.conf.json` **appends to** the bundler's auto-detected libs —
 the merge is in `tauri-cli` (`interface/rust.rs`, `depends_deb` is seeded from

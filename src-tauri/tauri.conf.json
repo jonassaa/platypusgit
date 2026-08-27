@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PlatypusGit",
+  "productName": "platypusgit",
   "version": "0.0.0",
   "identifier": "io.github.jonassaa.platypusgit",
   "build": {
@@ -71,7 +71,9 @@
     "linux": {
       "deb": {
         "depends": ["git"],
-        "provides": ["platypusgit"],
+        "provides": ["platypus-git"],
+        "replaces": ["platypus-git"],
+        "conflicts": ["platypus-git"],
         "section": "vcs",
         "files": { "/usr/bin/pgit": "deb/pgit" },
         "postInstallScript": "deb/postinst"

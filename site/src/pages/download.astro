@@ -216,7 +216,7 @@ const platforms = [
                 <CTAButton href={assets.macosDmg} external>Download .dmg</CTAButton>
                 <p class="filename mono">PlatypusGit_universal.dmg</p>
                 <p class="card-note">
-                  Drag <code>PlatypusGit.app</code> into <code>/Applications</code>. Updates are then
+                  Drag <code>platypusgit.app</code> into <code>/Applications</code>. Updates are then
                   manual — repeat the download for every release — and because a drag-install runs no
                   code, the <a href="#cli"><code>pgit</code></a> command is a separate one-liner.
                 </p>
@@ -226,7 +226,7 @@ const platforms = [
                     The <code>.dmg</code> isn’t notarized, so macOS may say the app is damaged or from an
                     unidentified developer. Clear the quarantine flag — Homebrew installs never hit this:
                   </p>
-                  <CodeBlock code={'xattr -cr /Applications/PlatypusGit.app'} lang="bash" />
+                  <CodeBlock code={'xattr -cr /Applications/platypusgit.app'} lang="bash" />
                   <p class="card-note">
                     Or: <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>.
                   </p>

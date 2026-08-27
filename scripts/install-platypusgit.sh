@@ -23,7 +23,7 @@
 # Spec: docs/superpowers/specs/2026-08-26-apt-repository-spec.md
 set -eu
 
-PKG=platypus-git
+PKG=platypusgit
 APPIMAGE_URL=https://www.platypusgit.com/download/#linux
 DEFAULT_APT_URL=https://apt.platypusgit.com
 
@@ -59,7 +59,7 @@ Usage: install-platypusgit.sh [options]
 Adds the platypusgit APT repository and installs the app. Updates then come
 from your package manager:
 
-  sudo apt update && sudo apt upgrade platypus-git
+  sudo apt update && sudo apt upgrade platypusgit
 
 Options:
   --apt-url URL    repository base URL (default https://apt.platypusgit.com)

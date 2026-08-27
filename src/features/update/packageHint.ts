@@ -42,7 +42,7 @@ export function packageHint(
       // Character-for-character the command on the download page. Two places
       // telling one user two different upgrade commands is worse than either.
       note: "Updates come from apt on this install:",
-      command: "sudo apt update && sudo apt upgrade platypus-git",
+      command: "sudo apt update && sudo apt upgrade platypusgit",
     };
   }
   if (capability !== "notify") return null;

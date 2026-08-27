@@ -107,7 +107,7 @@ describe("UpdatePanel — capability + platform arms", () => {
       /view release/i,
     );
     expect(screen.getByTestId("pg-update-pkg-hint")).toHaveTextContent(
-      "sudo apt update && sudo apt upgrade platypus-git",
+      "sudo apt update && sudo apt upgrade platypusgit",
     );
   });
 
@@ -241,7 +241,7 @@ describe("UpdatePanel — the package-manager command is copyable", () => {
     render(<UpdatePanel />);
     await userEvent.click(screen.getByTitle(/copy command/i));
     expect(writeText).toHaveBeenCalledWith(
-      "sudo apt update && sudo apt upgrade platypus-git",
+      "sudo apt update && sudo apt upgrade platypusgit",
     );
   });
 

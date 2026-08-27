@@ -24,10 +24,13 @@ has to. Linux has neither half.
 Two facts from the shipped artifacts, both of which contradict the issue text and
 change the design:
 
-- **The Debian package is `platypus-git`, not `platypusgit`.** Read from the
+- **The Debian package was `platypus-git`, not `platypusgit`.** Read from the
   v0.0.17 `.deb`'s control file — Tauri kebab-cases `productName`, and
-  `DebConfig` exposes no override. The issue's proposed `sudo apt install
-  platypusgit` would fail as written.
+  `DebConfig` exposes no override, so the issue's proposed `sudo apt install
+  platypusgit` would have failed as written. **Resolved during implementation by
+  renaming `productName` to `platypusgit`** (see §D), which was the right call
+  and had to happen *before* the first apt publish — afterwards every apt user
+  would have needed a `Replaces`/`Conflicts` migration.
 - **`apt.platypusgit.com` does not exist.** DNS is at `datacenter.no`, `www`
   CNAMEs to `jonassaa.github.io`, and there is no wildcard record.
 
@@ -106,11 +109,11 @@ Multi-arch from day one, amd64-only in practice (§J).
 └── pool/
     └── main/
         └── p/
-            └── platypus-git/
-                └── platypus-git_0.0.17_amd64.deb
+            └── platypusgit/
+                └── platypusgit_0.0.18_amd64.deb
 ```
 
-`pool/main/p/platypus-git/` is the Debian pool convention
+`pool/main/p/platypusgit/` is the Debian pool convention
 (`pool/<component>/<first letter>/<source package>/`). The suite name lives in
 the path, so adding a `beta` suite later is a new directory rather than a
 migration — but §E ships **one suite**, gated exactly like `bump-cask`, so a
@@ -176,20 +179,33 @@ something other than the script that installed it.
 
 ### D. `.deb` metadata
 
-Three additive keys in `tauri.conf.json` under `bundle.linux.deb`:
+**`productName` becomes `platypusgit`**, and that is what makes the package name
+`platypusgit`. Tauri derives the Debian `Package:` field from it and nothing else
+(`debian.rs`: `heck::AsKebabCase(settings.product_name())`); `DebConfig` has no
+name override. `"PlatypusGit"` kebab-cased to `platypus-git` because the internal
+capital is a word boundary.
+
+This spec originally **rejected** the rename as cosmetic. That was wrong on two
+counts: lowercase is already how the project brands itself
+(`site/src/data/site.ts`, `name: 'platypusgit'`), so `productName` was the
+outlier; and the rename is only cheap *before the first apt publish* — afterwards
+every apt-managed install needs a migration. `docs/dev/distribution.md` carries
+the table of what else the rename drags along (the Homebrew cask above all) and
+who has to follow.
+
+Keys in `tauri.conf.json` under `bundle.linux.deb`:
 
 | Key | Value | Why |
 | --- | --- | --- |
 | `depends` | `["git"]` | A git GUI without git is not degraded, it is broken. `Depends` is what makes "one command and it works" survive a container or a minimal cloud image. |
-| `provides` | `["platypusgit"]` | apt resolves a single-provider virtual package, so `apt install platypusgit` — the obvious guess — works. |
 | `section` | `"vcs"` | Missing today; `apt-ftparchive` wants it, and generating the index with a hole in it is a needless first impression. |
+| `provides` | `["platypus-git"]` | An older `apt install platypus-git` keeps resolving. |
+| `replaces` + `conflicts` | `["platypus-git"]` | Both packages own `/usr/bin/platypusgit`, so without these a sideloaded older `.deb` upgrades into a hard dpkg file conflict. |
 
-`platypus-git` stays **canonical everywhere the page or the app names it**, so
-`apt search`, `apt remove` and `dpkg -l` all agree with what the user was told.
-`provides` exists to catch the wrong guess, not to replace the right name.
-Renaming `productName` to close the gap is rejected: it would change the `.app`
-bundle name, the binary, the desktop file, and the Homebrew cask for a cosmetic
-win.
+`platypusgit` is **canonical everywhere the page or the app names it**, because a
+virtual name installs without reporting — `apt policy platypus-git` shows no
+candidate. Verified: `apt-get install` by the virtual name succeeds and installs
+the real package.
 
 **`depends` is additive — and this was checked, because getting it wrong ships an
 uninstallable package.** `tauri-bundler`'s `debian.rs` writes `Depends:` from
@@ -209,7 +225,7 @@ The config list is the **seed**; the detected libs are appended. So `["git"]`
 yields `Depends: git, libwebkit2gtk-4.1-0, libgtk-3-0` — consistent with the
 shipped v0.0.17 control file, which carries both libs while its config said
 `[]`. That the fields reach the *built* control file is additionally asserted by
-the publish gate (§H) via `dpkg -s platypus-git`, on a runner that can actually
+the publish gate (§H) via `dpkg -s platypusgit`, on a runner that can actually
 produce a `.deb`.
 
 ### E. The publish job
@@ -278,7 +294,7 @@ from the pool.
    re-signing precisely because §C sets no `Valid-Until`.)
 
 The `.deb` is copied into the pool under a **versioned** name
-(`platypus-git_<version>_amd64.deb`); release assets stay stable-named
+(`platypusgit_<version>_amd64.deb`); release assets stay stable-named
 (`PlatypusGit_amd64.deb`) so the Homebrew cask and `latest.json` keep tracking
 `releases/latest/download`. A copy, never a link.
 
@@ -334,7 +350,7 @@ changes nothing.
 | --- | --- |
 | No `apt-get` on `PATH` | Print the AppImage instructions, exit non-zero. |
 | `dpkg --print-architecture` is not `amd64` | Print "not built for this architecture yet" plus the AppImage route, exit non-zero. |
-| Otherwise | Add the keyring, write the sources file, `apt update`, install `platypus-git`. |
+| Otherwise | Add the keyring, write the sources file, `apt update`, install `platypusgit`. |
 
 Detect-then-refuse, never substitute. Piping a script that installs a *different
 format than the one it advertises* is the kind of surprise that costs trust, and
@@ -362,7 +378,7 @@ Components: main
 Architectures: amd64
 Signed-By: /etc/apt/keyrings/platypusgit.gpg
 EOF
-sudo apt update && sudo apt install platypus-git
+sudo apt update && sudo apt install platypusgit
 ```
 
 **deb822 `.sources`, not a one-line `.list`.** deb822 has been supported since
@@ -399,7 +415,7 @@ The publish job is **hard-gated on a real install**, before the push:
 4. Assert: the client image has no `gnupg` before *or after* (proving the
    dearmored-key claim); `/etc/apt/sources.list.d/platypusgit.sources` exists
    (the §I contract); a scoped `apt-get update` against only our sources file
-   accepts the signature; `dpkg -s platypus-git` reports the expected version,
+   accepts the signature; `dpkg -s platypusgit` reports the expected version,
    with `Depends: git` resolved and `Provides:`/`Section:` present; and
    **`pgit --help` exits 0 and prints usage.**
 5. Only then push.
@@ -462,7 +478,7 @@ That guard is the one place a missed branch would silently render nothing.
 
 | Capability | Platform | Note | Command |
 | --- | --- | --- | --- |
-| `notify-apt` | linux | Updates come from apt on this install. | `sudo apt update && sudo apt upgrade platypus-git` |
+| `notify-apt` | linux | Updates come from apt on this install. | `sudo apt update && sudo apt upgrade platypusgit` |
 | `notify` | linux | This `.deb` was not installed from the platypusgit apt repository. Switch to apt and updates come from your package manager: | `curl -fsSL https://www.platypusgit.com/install-platypusgit.sh \| sh` |
 | `notify` | macos | unchanged | `brew upgrade platypusgit` |
 
@@ -500,7 +516,7 @@ disclosures. The Linux panel becomes:
 
 1. **One-line install** — primary card, `Recommended` pill, the `curl … | sh`.
    Its `<details>`: *Updating and removing* (`sudo apt update && sudo apt upgrade
-   platypus-git`, the macOS card's "Homebrew owns updates" paragraph in apt
+   platypusgit`, the macOS card's "Homebrew owns updates" paragraph in apt
    form), *The same thing, spelled out* (the expanded commands from §G plus the
    key fingerprint), and *Read the installer first, or dry-run it* — retitled so
    it does not collide with the identically-named disclosure the CLI section
@@ -522,7 +538,7 @@ today, and it is the honest answer to a Fedora user who reads the apt one-liner
 and wonders what they get instead. It also sets the `.rpm`/AUR follow-ups up as
 additions rather than corrections.
 
-The `.deb` download button stays. `platypus-git` is named as canonical
+The `.deb` download button stays. `platypusgit` is named as canonical
 throughout.
 
 ### L. State that lives outside the repository
@@ -570,8 +586,14 @@ nothing in CI needs them again.
   the pool.
 - **Key expiry, and `Valid-Until`.** §C — both are scheduled global `apt update`
   outages with no upgrade path.
-- **Renaming `productName` to `platypusgit`.** §D — changes the `.app` bundle
-  name, the binary, the desktop file and the Homebrew cask, for cosmetics.
+- ~~**Renaming `productName` to `platypusgit`.**~~ **Reversed — this was done.**
+  It was rejected here as cosmetic, on the grounds that it changes the `.app`
+  bundle name, the desktop file and the Homebrew cask. Those consequences are
+  real (and the cask now has a release-time guard because of them), but the
+  reasoning was wrong twice over: lowercase is already the project's brand
+  everywhere else, so `productName` was the outlier rather than the fix; and the
+  cost only stays low *before the first apt publish*. It also does not change the
+  binary — that comes from the Cargo package name. See §D.
 - **A one-line `.list` sources file, or `apt-key`.** §G — deb822 is universally
   supported and readable; `apt-key` is deprecated and removed.
 - **A new `is_apt_managed` IPC command.** §I — same information, five
