@@ -1,0 +1,7 @@
+Scoop reads manifests from this directory. It is empty on purpose until the
+first release: `release.yml`'s `bump-scoop` job writes `platypusgit.json` here.
+
+Seeding a hand-made manifest would mean publishing a `hash` for a release asset
+that does not exist yet (`PlatypusGit_x64_portable.zip` first appears in the
+release after #187's Windows half landed), and a bucket whose only manifest
+fails to install is worse than a bucket with none.

@@ -16,7 +16,7 @@ export const site = {
 // builds via the release workflow.
 export const downloads = [
   { key: 'macos', label: 'macOS', anchor: '/download/#macos', note: 'Apple Silicon & Intel · .dmg', available: true },
-  { key: 'windows', label: 'Windows', anchor: '/download/#windows', note: 'Windows 10 & 11 · .msi', available: true },
+  { key: 'windows', label: 'Windows', anchor: '/download/#windows', note: 'Windows 10 & 11 · .msi or Scoop', available: true },
   { key: 'linux', label: 'Linux', anchor: '/download/#linux', note: '.deb & AppImage', available: true },
 ] as const;
 
@@ -28,6 +28,24 @@ export const assets = {
   windowsMsi: releaseAsset('PlatypusGit_x64.msi'),
   linuxDeb: releaseAsset('PlatypusGit_amd64.deb'),
   linuxAppImage: releaseAsset('PlatypusGit_amd64.AppImage'),
+};
+
+// The Scoop bucket (#187, Windows half). Its own repo, like the Homebrew tap and
+// the apt repo — but unlike the apt repo it needs no host of its own, because
+// `scoop bucket add` clones a git repository rather than fetching an index.
+//
+// Deliberately NOT offering `assets.windowsPortableZip` here: the zip exists so
+// Scoop has something to install, and advertising it as its own download route
+// would create a class of user with no package manager AND no installer, whose
+// in-app update would land a second copy in Program Files. The page offers the
+// .msi and Scoop.
+export const scoop = {
+  bucket: 'https://github.com/jonassaa/scoop-platypusgit',
+  // The name `scoop bucket add` registers it under, and the manifest's own
+  // basename — which is also the directory Scoop installs into, and therefore
+  // what `update::is_scoop_layout` matches on. Three things, one string.
+  bucketName: 'platypusgit',
+  pkg: 'platypusgit',
 };
 
 // The APT repository (#187). Its own repo + GitHub Pages host, NOT this site:

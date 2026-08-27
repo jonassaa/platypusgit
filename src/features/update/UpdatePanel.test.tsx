@@ -111,7 +111,37 @@ describe("UpdatePanel — capability + platform arms", () => {
     );
   });
 
+  it("notify-scoop on Windows offers 'View release' AND scoop update", () => {
+    // The fourth capability, and the only one that takes a platform OFF the
+    // self-update path: an in-app install here would run the per-machine .msi
+    // and leave the machine with two copies, Scoop's still on PATH. So the
+    // panel must show no Install button, and must name Scoop's command.
+    platformMock.value = "windows";
+    seed({ capability: "notify-scoop" });
+    render(<UpdatePanel />);
+    expect(screen.getByTestId("pg-update-action")).toHaveTextContent(
+      /view release/i,
+    );
+    expect(screen.getByTestId("pg-update-action")).not.toHaveTextContent(
+      /install/i,
+    );
+    expect(screen.getByTestId("pg-update-pkg-hint")).toHaveTextContent(
+      "scoop update platypusgit",
+    );
+  });
+
   it("self-update offers 'Install' and never a package-manager hint", () => {
+    seed({ capability: "self-update" });
+    render(<UpdatePanel />);
+    expect(screen.getByTestId("pg-update-action")).toHaveTextContent(/install/i);
+    expect(screen.queryByTestId("pg-update-pkg-hint")).toBeNull();
+  });
+
+  it("keeps the Windows .msi install self-updating", () => {
+    // The other side of the Scoop case: the .msi is the one Windows install that
+    // SHOULD swap its own binary, so the new variant must not have made every
+    // Windows user click through to a browser.
+    platformMock.value = "windows";
     seed({ capability: "self-update" });
     render(<UpdatePanel />);
     expect(screen.getByTestId("pg-update-action")).toHaveTextContent(/install/i);
@@ -243,6 +273,14 @@ describe("UpdatePanel — the package-manager command is copyable", () => {
     expect(writeText).toHaveBeenCalledWith(
       "sudo apt update && sudo apt upgrade platypusgit",
     );
+  });
+
+  it("copies the scoop update command for a Scoop install", async () => {
+    platformMock.value = "windows";
+    seed({ capability: "notify-scoop" });
+    render(<UpdatePanel />);
+    await userEvent.click(screen.getByTitle(/copy command/i));
+    expect(writeText).toHaveBeenCalledWith("scoop update platypusgit");
   });
 
   it("keeps the command selectable by hand as well", () => {

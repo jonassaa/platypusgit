@@ -323,3 +323,72 @@ fail, corrupt a byte of `InRelease` and re-run — expect `BADSIG` and exit 100.
 never piped into a shell. `--dry-run` prints the walk and changes nothing. It is
 run **by the user**: it creates a public repository, edits DNS, and installs a
 GitHub App.
+
+## The Scoop bucket — one-line Windows install (#187)
+
+Spec: `docs/superpowers/specs/2026-08-27-scoop-bucket-spec.md`. The apt
+section's Windows twin, and much smaller: **no new secret, no host, no signing
+key, no DNS.** One repository plus the App the Homebrew tap already uses.
+
+- **Where it lives.** `jonassaa/scoop-platypusgit`, holding only
+  `bucket/platypusgit.json` and a README. `scoop bucket add` clones a git repo,
+  so unlike apt there is nothing to serve.
+- **Scoop installs a portable `.zip`, never the `.msi`.** Scoop's msi handling
+  is a deprecated path, and an `msiexec` install is per-machine and elevated —
+  which destroys the three properties Scoop was chosen for (per-user, no admin
+  prompt, clean uninstall). `release.yml`'s `windows` job therefore builds
+  `PlatypusGit_x64_portable.zip` (`platypusgit.exe` + `pgit.cmd` + `LICENSE`, at
+  the zip **root**) and exports its `sha256`.
+- **`scripts/scoop-manifest.sh` renders the manifest**, the way
+  `apt-repo-publish.sh` builds the index: the artifact users install from is
+  reviewable here and runs on a laptop. `bump-scoop` calls it; nothing patches
+  a committed manifest in place.
+- **The manifest URL is the release *tag* URL**, not
+  `releases/latest/download/…` like every other channel. A Scoop `hash` pins one
+  specific build, and the stable path moves on the next release — pointing there
+  would hash-mismatch every install between a release and its bump.
+
+### Three traps, and why each is load-bearing
+
+1. **`pgit.cmd` ships inside the zip and is named in `bin`.** Not a convenience:
+   `cli.rs::shim_status` probes `exe_dir/pgit.cmd` before it scans PATH, and
+   finding it is what classifies a Scoop install as `CliShimSource::Package`.
+   Without it the user gets no `pgit` **and** Settings offers to write a
+   competing shim into `%LOCALAPPDATA%` that Scoop neither knows about nor
+   removes. Its body is **relative** (`%~dp0platypusgit.exe`) where
+   `shim_cmd_body`'s is absolute, because Scoop re-points the `current` junction
+   on every update. `cli.rs::PORTABLE_SHIM_CMD` includes the shipped bytes and a
+   test pins the classification.
+2. **A Scoop install must NOT self-update.** `update::capability` returned
+   `SelfUpdate` for Windows unconditionally; self-updating here runs the
+   per-machine `.msi`, so the box ends up with the new copy in Program Files
+   **and** Scoop's old one still on PATH and still behind the Start Menu
+   shortcut, with `scoop list` wrong forever. Hence `NotifyScoop`, detected by
+   `update::is_scoop_layout` (the exe sits in `apps/<CARGO_PKG_NAME>/<version>`)
+   **plus** one `Path::exists` for Scoop's own `manifest.json` beside it. Never
+   `$env:SCOOP`: it is relocatable, wrong for `SCOOP_GLOBAL`, and set for anyone
+   who uses Scoop *at all* — so an `.msi` install on a Scoop user's machine would
+   be told to `scoop update` a package Scoop does not have.
+3. **`scoop-verify-live` needs `-RunAsAdmin`.** GitHub's `windows-latest` user is
+   in the Administrators group and Scoop's installer refuses to run elevated by
+   default, so without the flag the gate fails on every release. It is a CI-only
+   flag — never advice to pass on to users, who are not elevated. Scoop's PATH
+   edit also has to be re-exported through `$GITHUB_PATH` to reach later steps.
+
+### Verification, honestly
+
+`cargo test`/`pnpm test` cover the pure parts (`is_scoop_layout`, the shim
+classification, the panel's hint). The manifest and the install itself are
+proven only by CI, in two places: the `windows` job expands the zip it just
+built and asserts its shape, and **`scoop-verify-live` does a real
+`scoop install` on a clean Windows runner** — asserting the payload,
+`manifest.json` (the `update.rs` contract), the `pgit` shim, and the version.
+That job is the first thing that has ever run this on Windows.
+
+### The manual setup
+
+`scripts/scoop-bucket-wizard.sh` walks the four steps outside this repo (create,
+seed, App install, verify the first publish). Interactive, `--dry-run`-able, run
+**by the user** — it creates a public repository. The bucket is seeded **empty of
+manifests** on purpose: the first `bump-scoop` writes one, and a hand-seeded
+manifest would carry a hash for an asset that did not exist yet.

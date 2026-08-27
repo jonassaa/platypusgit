@@ -521,6 +521,21 @@ pub fn shim_cmd_body(exe: &Path) -> String {
     format!("@echo off\r\n\"{}\" %*\r\n", exe.display())
 }
 
+/// The OTHER `pgit.cmd`: the one that ships inside
+/// `PlatypusGit_x64_portable.zip`, which is what the Scoop bucket installs
+/// (#187, Windows half).
+///
+/// Included rather than re-declared so the test that pins "a Scoop install
+/// classifies as `Package`" runs against the bytes we actually ship. That
+/// classification is what stops Settings writing a second `pgit` beside the one
+/// Scoop manages; the file's own header explains why its path is relative where
+/// `shim_cmd_body`'s is absolute.
+///
+/// Not `cfg(windows)`-gated, for the same reason `shim_cmd_body` is not: two of
+/// the three platforms' shim behaviour would otherwise be untestable from the
+/// machine most of this repo is written on.
+pub const PORTABLE_SHIM_CMD: &str = include_str!("../windows/pgit-portable.cmd");
+
 #[cfg(windows)]
 pub fn install_shim_at(dir: &Path, exe: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
@@ -1211,6 +1226,70 @@ mod tests {
             ),
             CliShimSource::Package
         );
+    }
+
+    #[test]
+    fn the_scoop_portable_shim_is_package_managed() {
+        // The bytes actually shipped inside PlatypusGit_x64_portable.zip, at the
+        // path Scoop extracts them to (#187).
+        //
+        // This is what stops Settings offering "Install pgit" on a Scoop install
+        // and writing a SECOND shim into %LOCALAPPDATA% — one Scoop does not
+        // know about and will not remove on uninstall. `shim_status` probes
+        // `exe_dir/pgit.cmd` before it scans PATH, so this file is the sighting
+        // that decides it, and its relative `%~dp0` form is still enough for
+        // `references_app` to recognise the binary by name.
+        let app = dirs(&["C:\\Users\\ada\\AppData\\Local\\PlatypusGit\\bin"]);
+        let install = "C:\\Users\\ada\\scoop\\apps\\platypusgit\\current";
+        assert_eq!(
+            classify_sighting(
+                Path::new(&format!("{install}\\pgit.cmd")),
+                &app,
+                None,
+                Some(PORTABLE_SHIM_CMD),
+                Path::new(&format!("{install}\\platypusgit.exe")),
+                "platypusgit"
+            ),
+            CliShimSource::Package
+        );
+    }
+
+    #[test]
+    fn the_scoop_generated_shim_is_package_managed_too() {
+        // Belt and braces: Scoop also writes its own wrapper into <root>\shims,
+        // which is the entry that is really on PATH. `shim_status` reaches
+        // `exe_dir` first so this one normally never decides anything — but if
+        // the app is launched some other way (the Start Menu shortcut resolving
+        // through the junction, say) this is the sighting that classifies, and it
+        // must not come back `Foreign` and offer to install over Scoop.
+        let body = "@rem C:\\Users\\ada\\scoop\\apps\\platypusgit\\current\\pgit.cmd\r\n\
+                    @\"%~dp0..\\apps\\platypusgit\\current\\pgit.cmd\"  %*\r\n";
+        let app = dirs(&["C:\\Users\\ada\\AppData\\Local\\PlatypusGit\\bin"]);
+        assert_eq!(
+            classify_sighting(
+                Path::new("C:\\Users\\ada\\scoop\\shims\\pgit.cmd"),
+                &app,
+                None,
+                Some(body),
+                Path::new("C:\\Users\\ada\\scoop\\apps\\platypusgit\\current\\platypusgit.exe"),
+                "platypusgit"
+            ),
+            CliShimSource::Package
+        );
+    }
+
+    #[test]
+    fn the_portable_shim_names_the_binary_relatively() {
+        // Two properties the zip's shim must keep, both invisible until Windows:
+        // it must name the exe (or `references_app` stops recognising it, and
+        // Settings starts writing a competing shim), and it must stay RELATIVE —
+        // Scoop re-points `current` at a new version directory on every update,
+        // so an absolute path would break at the first `scoop update`.
+        assert!(PORTABLE_SHIM_CMD.contains("platypusgit.exe"));
+        assert!(PORTABLE_SHIM_CMD.contains("%~dp0"));
+        assert!(!PORTABLE_SHIM_CMD.contains("C:\\"));
+        // CRLF, like every other .cmd we emit.
+        assert!(PORTABLE_SHIM_CMD.contains("\r\n"));
     }
 
     #[test]

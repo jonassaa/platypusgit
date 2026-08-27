@@ -35,7 +35,22 @@ quarantine flag on install, so it launches with no "unidentified developer"
 prompt. No Homebrew? Take the `.dmg` below — a drag-install needs the quarantine
 flag cleared by hand, and is told about new versions rather than fetching them.
 
-**Windows** — [`PlatypusGit_x64.msi`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_x64.msi). Installs `pgit` and puts it on your PATH. Not code-signed, so SmartScreen will warn on first run. The first install is a manual download ([#187](https://github.com/jonassaa/platypusgit/issues/187)); after that the app updates itself in place.
+**Windows** — [`PlatypusGit_x64.msi`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_x64.msi). Installs `pgit` and puts it on your PATH. Not code-signed, so SmartScreen will warn on first run; after that the app updates itself in place.
+
+Or with [Scoop](https://scoop.sh) — per-user, no admin prompt, and `scoop` owns
+updates from then on.
+
+```powershell
+scoop bucket add platypusgit https://github.com/jonassaa/scoop-platypusgit
+scoop install platypusgit    # install
+scoop update platypusgit     # update
+```
+
+Scoop installs a portable build and shims `pgit` itself, so the in-app updater
+stands down — the two can never disagree about which copy you are running.
+There is still no `winget` package
+([#187](https://github.com/jonassaa/platypusgit/issues/187)): it needs a
+code-signing certificate more than it needs code.
 
 **Linux (Debian · Ubuntu)** — one line to install, and `apt` owns updates from
 then on.
@@ -168,14 +183,14 @@ another instance — it forwards the request to the running window, focuses it,
 and navigates there.
 
 **Most installs already have it.** The Homebrew cask, the `.deb` (via apt or by
-hand) and the `.msi` install `pgit` alongside the app and remove it on
-uninstall. Only the macOS `.dmg` and the Linux AppImage run no install code, so
-those two need
+hand), the `.msi` and Scoop all install `pgit` alongside the app and remove it
+on uninstall. Only the macOS `.dmg` and the Linux AppImage run no install code,
+so those two need
 **Settings → Command line → Install** in the app, or:
 
 ```bash
 curl -fsSL https://www.platypusgit.com/install-pgit.sh | sh    # macOS .dmg / Linux AppImage
-irm https://www.platypusgit.com/install-pgit.ps1 | iex         # Windows, outside the .msi
+irm https://www.platypusgit.com/install-pgit.ps1 | iex         # Windows, outside .msi/Scoop
 ```
 
 Both scripts are meant to be read before they are run — they are a build-time
@@ -189,9 +204,9 @@ edges. Most core git operations work end to end (the feature list above is what
 is implemented, not a roadmap). Known gaps, stated plainly:
 
 - macOS builds are ad-hoc signed and not notarized; the Windows `.msi` is not code-signed.
-- No `winget` or `scoop` yet — both wait on that code signing — so the first Windows install is a manual download ([#187](https://github.com/jonassaa/platypusgit/issues/187)). The app self-updates from then on, as does the Linux AppImage.
+- No `winget` package yet — that one really does wait on the code signing above, which is what separates it from Scoop ([#187](https://github.com/jonassaa/platypusgit/issues/187)). Windows installs from the `.msi` or in one line from Scoop; the `.msi` self-updates from then on, Scoop owns updates on its own installs, and so does the Linux AppImage.
 - No in-app update on macOS: Homebrew owns upgrades there, and a `.dmg` drag-install is told a new version exists rather than fetching it.
-- The APT repository is amd64 only ([#266](https://github.com/jonassaa/platypusgit/issues/266)), and there is no `.rpm` or AUR package, so every other Linux takes the AppImage.
+- The APT repository is amd64 only ([#266](https://github.com/jonassaa/platypusgit/issues/266)), and there is no `.rpm` or AUR package, so every other Linux takes the AppImage. Scoop is x64 only for the same reason.
 - Changed images are reported as binary rather than previewed side by side ([#224](https://github.com/jonassaa/platypusgit/issues/224)).
 - Standalone GUI only: no icon overlays or context menus inside Finder and Explorer themselves, which is a different thing from the app's own reveal-in-file-manager action. Mercurial is out of scope too.
 

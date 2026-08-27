@@ -3,6 +3,7 @@
 //! fetch and Tauri commands live in `commands/update.rs`.
 
 use std::cmp::Ordering;
+use std::path::Path;
 use std::time::Duration;
 
 use semver::Version;
@@ -35,19 +36,28 @@ pub struct UpdateInfo {
 }
 
 /// Whether this install can swap its own binary or should defer to a package
-/// manager. Serializes to `"self-update"` / `"notify"` / `"notify-apt"`.
+/// manager. Serializes to `"self-update"` / `"notify"` / `"notify-apt"` /
+/// `"notify-scoop"`.
 ///
 /// `NotifyApt` exists because after #187 there are TWO kinds of `.deb` install
 /// and they need different advice. On an apt-managed one, `apt upgrade` is the
 /// answer. On a sideloaded `.deb` the same command reports "already the newest
 /// version" while the panel says a new version exists — a dead end, which is
 /// the exact failure `packageHint` was written to remove.
+///
+/// `NotifyScoop` is the same lesson on Windows, where getting it wrong is worse
+/// than a dead end. Windows was `SelfUpdate` unconditionally, and self-updating
+/// a Scoop install runs the per-machine `.msi`: the machine ends up with the new
+/// copy in `C:\Program Files` AND Scoop's old one still on PATH and still behind
+/// the Start Menu shortcut, with `scoop list` reporting the old version forever.
+/// Silently two installs, from one click.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateCapability {
     SelfUpdate,
     Notify,
     NotifyApt,
+    NotifyScoop,
 }
 
 /// The deb822 sources file `scripts/install-platypusgit.sh` writes.
@@ -59,6 +69,51 @@ pub enum UpdateCapability {
 /// `scripts/apt-repo-smoke.sh` asserts the path exists after a real install, so
 /// a drift fails the release gate rather than shipping quietly.
 pub const APT_SOURCES_PATH: &str = "/etc/apt/sources.list.d/platypusgit.sources";
+
+/// The metadata file Scoop writes into an installed app's version directory.
+///
+/// The Windows counterpart of `APT_SOURCES_PATH`, and a CONTRACT in the same
+/// sense — except this one is with Scoop's installer rather than with a script
+/// of ours, so we cannot fix it if it moves. It is held up by `release.yml`'s
+/// `scoop-verify-live`, which asserts this file exists beside the exe after a
+/// real `scoop install`: if a future Scoop stops writing it, the
+/// release gate fails instead of quietly handing every Scoop user the `.msi`
+/// self-updater and the two-installs outcome described on `NotifyScoop`.
+pub const SCOOP_MANIFEST_FILE: &str = "manifest.json";
+
+/// Does this executable live inside a Scoop install?
+///
+/// Scoop's layout is `<root>/apps/<name>/<version>/…`, with the live version
+/// junctioned at `<root>/apps/<name>/current`. Both shapes put the exe exactly
+/// three directories below the root, so the whole test is: the third ancestor is
+/// named `apps`, and the directory under it is named after this package.
+///
+/// The app-directory name is `CARGO_PKG_NAME` rather than a literal, which makes
+/// it a contract with the bucket: the manifest is `platypusgit.json`, so Scoop
+/// names the directory `platypusgit`. Read from Cargo for the same reason
+/// `cli.rs::MAIN_BINARY` is — a rename must not silently stop matching.
+///
+/// **Deliberately not `$env:SCOOP`.** That variable is relocatable, is a
+/// different variable for a global install (`SCOOP_GLOBAL`), and above all is
+/// set for anyone who uses Scoop *at all* — so an `.msi` install on a Scoop
+/// user's machine would be told to `scoop update` a package Scoop does not have.
+/// The question is "was THIS install made by Scoop", and the exe's own path is
+/// the only thing that answers it.
+///
+/// Pure and path-only, so it is testable from macOS and Linux. The filesystem
+/// half (the `SCOOP_MANIFEST_FILE` probe) lives in `commands::update`.
+pub fn is_scoop_layout(exe: &Path) -> bool {
+    let named = |dir: Option<&Path>, want: &str| {
+        dir.and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            // Windows paths are case-insensitive; so is this.
+            .is_some_and(|name| name.eq_ignore_ascii_case(want))
+    };
+    let version_dir = exe.parent();
+    let app_dir = version_dir.and_then(Path::parent);
+    let apps_dir = app_dir.and_then(Path::parent);
+    named(apps_dir, "apps") && named(app_dir, env!("CARGO_PKG_NAME"))
+}
 
 /// Subset of a GitHub release we care about.
 #[derive(Debug, Clone, PartialEq)]
@@ -142,17 +197,58 @@ pub fn discover(
     })
 }
 
+/// How this particular install reached the machine — everything `capability`
+/// decides from.
+///
+/// A struct rather than a fourth positional `bool`. `capability("linux", false,
+/// true, false)` is unreadable at the call site and the compiler cannot catch a
+/// swapped pair; with `InstallEnv::new` supplying the all-false baseline, every
+/// caller and every test names only the thing it is actually asserting:
+///
+/// ```ignore
+/// capability(InstallEnv { scoop_managed: true, ..InstallEnv::new("windows") })
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstallEnv<'a> {
+    /// `std::env::consts::OS` in production; a literal in tests.
+    pub os: &'a str,
+    /// Running from an AppImage — `APPIMAGE` set and non-empty. Linux only.
+    pub is_appimage: bool,
+    /// The platypusgit apt repository is configured on this machine. Linux only.
+    pub apt_managed: bool,
+    /// This executable lives inside a Scoop install. Windows only.
+    pub scoop_managed: bool,
+}
+
+impl<'a> InstallEnv<'a> {
+    /// The baseline: a plain install on `os`, managed by nothing.
+    pub fn new(os: &'a str) -> Self {
+        Self {
+            os,
+            is_appimage: false,
+            apt_managed: false,
+            scoop_managed: false,
+        }
+    }
+}
+
 /// Per-platform self-update vs notify decision. See the plan's Global Constraints.
 ///
-/// `apt_managed` is only ever true on Linux (the caller does not look for a
-/// sources file anywhere else), and the AppImage arm deliberately wins over it:
-/// an AppImage can replace itself, so it should, even on a machine that also has
-/// the apt repository configured for a different install.
-pub fn capability(os: &str, is_appimage: bool, apt_managed: bool) -> UpdateCapability {
-    match os {
+/// `apt_managed` is only ever true on Linux and `scoop_managed` only ever on
+/// Windows (the caller does not probe for either off its own platform), and the
+/// AppImage arm deliberately wins over apt: an AppImage can replace itself, so
+/// it should, even on a machine that also has the apt repository configured for
+/// a different install.
+///
+/// Scoop is the one package manager that wins over `SelfUpdate` rather than
+/// losing to it, because the Windows self-update path does not *replace* a Scoop
+/// install — it adds a second one alongside. See `UpdateCapability::NotifyScoop`.
+pub fn capability(env: InstallEnv<'_>) -> UpdateCapability {
+    match env.os {
+        "windows" if env.scoop_managed => UpdateCapability::NotifyScoop,
         "windows" => UpdateCapability::SelfUpdate,
-        "linux" if is_appimage => UpdateCapability::SelfUpdate,
-        "linux" if apt_managed => UpdateCapability::NotifyApt,
+        "linux" if env.is_appimage => UpdateCapability::SelfUpdate,
+        "linux" if env.apt_managed => UpdateCapability::NotifyApt,
         _ => UpdateCapability::Notify,
     }
 }

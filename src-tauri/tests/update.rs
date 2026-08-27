@@ -2,7 +2,8 @@ use std::cell::Cell;
 
 use platypusgit_lib::error::AppError;
 use platypusgit_lib::update::{
-    capability, compute_available, discover, is_newer, parse_release, ReleaseMeta, UpdateCapability,
+    capability, compute_available, discover, is_newer, is_scoop_layout, parse_release, InstallEnv,
+    ReleaseMeta, UpdateCapability,
 };
 
 #[test]
@@ -120,16 +121,31 @@ fn discover_propagates_fetch_errors() {
 #[test]
 fn capability_matches_platform_rule() {
     assert_eq!(
-        capability("windows", false, false),
+        capability(InstallEnv::new("windows")),
         UpdateCapability::SelfUpdate
     );
     assert_eq!(
-        capability("linux", true, false),
+        capability(InstallEnv {
+            is_appimage: true,
+            ..InstallEnv::new("linux")
+        }),
         UpdateCapability::SelfUpdate
     );
-    assert_eq!(capability("linux", false, false), UpdateCapability::Notify);
-    assert_eq!(capability("macos", false, false), UpdateCapability::Notify);
-    assert_eq!(capability("macos", true, false), UpdateCapability::Notify);
+    assert_eq!(
+        capability(InstallEnv::new("linux")),
+        UpdateCapability::Notify
+    );
+    assert_eq!(
+        capability(InstallEnv::new("macos")),
+        UpdateCapability::Notify
+    );
+    assert_eq!(
+        capability(InstallEnv {
+            is_appimage: true,
+            ..InstallEnv::new("macos")
+        }),
+        UpdateCapability::Notify
+    );
 }
 
 #[test]
@@ -137,10 +153,16 @@ fn capability_reports_apt_managed_linux_separately() {
     // The whole point of the third variant: an apt-managed .deb is told to run
     // `apt upgrade`, a sideloaded one is not.
     assert_eq!(
-        capability("linux", false, true),
+        capability(InstallEnv {
+            apt_managed: true,
+            ..InstallEnv::new("linux")
+        }),
         UpdateCapability::NotifyApt
     );
-    assert_eq!(capability("linux", false, false), UpdateCapability::Notify);
+    assert_eq!(
+        capability(InstallEnv::new("linux")),
+        UpdateCapability::Notify
+    );
 }
 
 #[test]
@@ -148,7 +170,11 @@ fn capability_prefers_appimage_self_update_over_apt() {
     // An AppImage can replace itself, so it should — even on a box that also has
     // the apt repository configured for some other install.
     assert_eq!(
-        capability("linux", true, true),
+        capability(InstallEnv {
+            is_appimage: true,
+            apt_managed: true,
+            ..InstallEnv::new("linux")
+        }),
         UpdateCapability::SelfUpdate
     );
 }
@@ -157,11 +183,139 @@ fn capability_prefers_appimage_self_update_over_apt() {
 fn capability_ignores_apt_off_linux() {
     // The caller never probes for a sources file off Linux; pin that a stray
     // `true` cannot invent an apt install on macOS or Windows.
-    assert_eq!(capability("macos", false, true), UpdateCapability::Notify);
     assert_eq!(
-        capability("windows", false, true),
+        capability(InstallEnv {
+            apt_managed: true,
+            ..InstallEnv::new("macos")
+        }),
+        UpdateCapability::Notify
+    );
+    assert_eq!(
+        capability(InstallEnv {
+            apt_managed: true,
+            ..InstallEnv::new("windows")
+        }),
         UpdateCapability::SelfUpdate
     );
+}
+
+#[test]
+fn capability_takes_scoop_off_the_self_update_path() {
+    // Windows was SelfUpdate unconditionally, and that is exactly wrong for a
+    // Scoop install: the updater runs the per-machine .msi, so the box ends up
+    // with the new copy in Program Files AND Scoop's old one still on PATH.
+    assert_eq!(
+        capability(InstallEnv {
+            scoop_managed: true,
+            ..InstallEnv::new("windows")
+        }),
+        UpdateCapability::NotifyScoop
+    );
+    // ...and the .msi install it is distinguished FROM keeps self-updating.
+    assert_eq!(
+        capability(InstallEnv::new("windows")),
+        UpdateCapability::SelfUpdate
+    );
+}
+
+#[test]
+fn capability_ignores_scoop_off_windows() {
+    // Mirror of the apt case: the caller never probes for Scoop off Windows, so
+    // pin that a stray `true` cannot invent a Scoop install elsewhere — an
+    // AppImage told to run `scoop update` would be actively wrong.
+    assert_eq!(
+        capability(InstallEnv {
+            scoop_managed: true,
+            ..InstallEnv::new("macos")
+        }),
+        UpdateCapability::Notify
+    );
+    assert_eq!(
+        capability(InstallEnv {
+            scoop_managed: true,
+            is_appimage: true,
+            ..InstallEnv::new("linux")
+        }),
+        UpdateCapability::SelfUpdate
+    );
+    assert_eq!(
+        capability(InstallEnv {
+            scoop_managed: true,
+            apt_managed: true,
+            ..InstallEnv::new("linux")
+        }),
+        UpdateCapability::NotifyApt
+    );
+}
+
+// FORWARD SLASHES IN WINDOWS PATHS, ON PURPOSE. `std::path`'s separator set is
+// per-target: on a Unix host a backslash is an ordinary character, so
+// `C:\scoop\apps\…` is ONE path component and every ancestor walk below would
+// vacuously pass. `/` is a separator on both, and Windows accepts it in real
+// paths too, so these cases exercise the same code the shipped Windows build
+// runs — on the machine the suite actually runs on.
+#[test]
+fn scoop_layout_recognises_both_shapes_scoop_installs_into() {
+    use std::path::Path;
+
+    // A version directory, and the `current` junction the shims point through.
+    // Both put the exe three deep under the root, which is the whole test.
+    assert!(is_scoop_layout(Path::new(
+        "C:/Users/dev/scoop/apps/platypusgit/0.1.0/platypusgit.exe"
+    )));
+    assert!(is_scoop_layout(Path::new(
+        "C:/Users/dev/scoop/apps/platypusgit/current/platypusgit.exe"
+    )));
+    // A relocated root ($env:SCOOP) and a global one ($env:SCOOP_GLOBAL) differ
+    // only ABOVE `apps` — which is why the probe reads neither variable.
+    assert!(is_scoop_layout(Path::new(
+        "D:/tools/apps/platypusgit/current/platypusgit.exe"
+    )));
+    assert!(is_scoop_layout(Path::new(
+        "C:/ProgramData/scoop/apps/platypusgit/current/platypusgit.exe"
+    )));
+    // Windows paths are case-insensitive; so is the probe.
+    assert!(is_scoop_layout(Path::new(
+        "C:/Users/dev/scoop/Apps/PlatypusGit/current/platypusgit.exe"
+    )));
+}
+
+#[test]
+fn scoop_layout_rejects_everything_else() {
+    use std::path::Path;
+
+    // The .msi install — the one that MUST keep self-updating.
+    assert!(!is_scoop_layout(Path::new(
+        "C:/Program Files/platypusgit/platypusgit.exe"
+    )));
+    // Another app's Scoop directory. Requiring the app-dir name is what stops a
+    // Scoop user's unrelated install from reading as ours.
+    assert!(!is_scoop_layout(Path::new(
+        "C:/Users/dev/scoop/apps/ripgrep/current/rg.exe"
+    )));
+    // Right name, wrong grandparent: a hand-made tree that only rhymes.
+    assert!(!is_scoop_layout(Path::new(
+        "C:/src/bin/platypusgit/current/platypusgit.exe"
+    )));
+    // Too shallow to have the three ancestors, and a bare filename.
+    assert!(!is_scoop_layout(Path::new(
+        "C:/apps/platypusgit/platypusgit.exe"
+    )));
+    assert!(!is_scoop_layout(Path::new("platypusgit.exe")));
+    // The dev build, which reports version 0.0.0 and never asks anyway.
+    assert!(!is_scoop_layout(Path::new(
+        "/Users/dev/platypusgit/src-tauri/target/debug/platypusgit"
+    )));
+}
+
+#[test]
+fn scoop_manifest_file_is_the_documented_contract() {
+    // Pinned for the same reason APT_SOURCES_PATH is, with one difference that
+    // matters: this contract is with SCOOP's installer, not with a script of
+    // ours. release.yml's scoop-verify-live asserts the file is really there
+    // after a real `scoop install`, so a Scoop change fails the release rather
+    // than silently putting every Scoop user back on the .msi self-updater.
+    assert_eq!(platypusgit_lib::update::SCOOP_MANIFEST_FILE, "manifest.json");
 }
 
 #[test]

@@ -3,7 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 import OsIcon from '../components/OsIcon.astro';
-import { site, assets, apt } from '../data/site.ts';
+import { site, assets, apt, scoop } from '../data/site.ts';
 import { descriptions, softwareApplicationSchema, ORIGIN } from '../data/seo.ts';
 
 // The two installer URLs. Built from `site` in astro.config.mjs rather than
@@ -39,6 +39,13 @@ const aptAudit = `curl -fsSL ${installAppUrl} -o install-platypusgit.sh
 less install-platypusgit.sh   # read it, then run it
 sh install-platypusgit.sh`;
 
+// Windows' package-manager route (#187). Built from `scoop` in data/site.ts so
+// the page, the manifest generator and release.yml's bump-scoop cannot drift
+// apart on the bucket name.
+const scoopInstall = `scoop bucket add ${scoop.bucketName} ${scoop.bucket}
+scoop install ${scoop.pkg}`;
+const scoopUpgrade = `scoop update ${scoop.pkg}`;
+
 const cliUnix = `curl -fsSL ${installShUrl} | sh`;
 const cliWindows = `irm ${installPs1Url} | iex`;
 const cliUnixAudit = `curl -fsSL ${installShUrl} -o install-pgit.sh
@@ -65,6 +72,7 @@ const pgitMatrix = [
   { os: 'macos', channel: 'Homebrew cask', ships: true, note: 'Removed again on uninstall' },
   { os: 'macos', channel: 'Disk image (.dmg)', ships: false, note: 'A drag-install runs no code' },
   { os: 'windows', channel: 'Installer (.msi)', ships: true, note: 'Added to your PATH' },
+  { os: 'windows', channel: 'Scoop', ships: true, note: 'Scoop shims it for you' },
   { os: 'linux', channel: 'APT repository', ships: true, note: 'Ships /usr/bin/pgit' },
   { os: 'linux', channel: 'Debian package (.deb)', ships: true, note: 'Same package, same shim' },
   { os: 'linux', channel: 'AppImage', ships: false, note: 'Portable, executes no hook' },
@@ -83,7 +91,7 @@ const platforms = [
     key: 'windows',
     label: 'Windows',
     iconSize: 18,
-    blurb: 'Windows 10 and 11, 64-bit.',
+    blurb: 'An installer, or one line with Scoop.',
     specs: ['Windows 10 or 11, x64', 'WebView2 — preinstalled on 11', 'Ships the pgit command'],
   },
   {
@@ -247,7 +255,8 @@ const platforms = [
                 <p class="card-note">
                   Installs the app and the <a href="#cli"><code>pgit</code></a> command together, and puts
                   <code>pgit</code> on your PATH. WebView2 is already present on Windows 11; on Windows 10
-                  the installer pulls it in if it is missing.
+                  the installer pulls it in if it is missing. This is the route that updates itself —
+                  platypusgit offers the new version in-app and installs it for you.
                 </p>
                 <details>
                   <summary>First launch warning</summary>
@@ -258,13 +267,50 @@ const platforms = [
                 </details>
               </article>
 
+              <article class="card card-wide">
+                <h3>Scoop</h3>
+                <p class="card-lead">Already using Scoop? Two lines, no admin prompt, and <code>scoop update</code> for every release after.</p>
+                <CodeBlock code={scoopInstall} lang="powershell" />
+                <p class="card-note">
+                  Installs per-user, so nothing asks for elevation and
+                  <code>scoop uninstall {scoop.pkg}</code> removes every trace. You get the app with a
+                  Start Menu shortcut, and <a href="#cli"><code>pgit</code></a> shimmed onto your PATH by
+                  Scoop itself. Needs <a href="https://scoop.sh" target="_blank" rel="noopener">Scoop</a>
+                  first — if you don’t have it, take the installer above instead.
+                </p>
+                <details>
+                  <summary>Updating and removing</summary>
+                  <p class="card-note">
+                    Scoop owns updates on this install, and the app knows it — the in-app updater is
+                    switched off here, so the two can never disagree about which copy you are running.
+                    Upgrading is:
+                  </p>
+                  <CodeBlock code={scoopUpgrade} lang="powershell" />
+                  <p class="card-note">
+                    Quit platypusgit first so the running app isn’t swapped underneath it.
+                  </p>
+                </details>
+                <details>
+                  <summary>WebView2, and what this package cannot do for you</summary>
+                  <p class="card-note">
+                    Scoop installs a portable build rather than running the <code>.msi</code>, which is
+                    what makes it per-user and cleanly removable — but it also means it cannot install the
+                    WebView2 runtime the way the installer can. Windows 11 ships WebView2 and Windows 10
+                    gets it with Edge, so it is almost certainly already there; if no window appears,
+                    install the Evergreen WebView2 Runtime from Microsoft.
+                  </p>
+                </details>
+              </article>
+
               <article class="card">
                 <h3>Other routes</h3>
-                <p class="card-lead">No packaged alternative yet.</p>
+                <p class="card-lead">No winget or Chocolatey package yet.</p>
                 <p class="card-note">
-                  There is no winget or Chocolatey package today. If you would rather not run the
-                  installer, <a href="#build">build from source</a> — the standard Tauri toolchain
-                  produces the same <code>.msi</code>.
+                  <code>winget</code> is waiting on code signing — an unsigned installer means SmartScreen
+                  warnings and a harder time through winget’s review, so it is a certificate away rather
+                  than a build away. Chocolatey isn’t planned. If you would rather not run the installer
+                  at all, <a href="#build">build from source</a> — the standard Tauri toolchain produces
+                  the same <code>.msi</code>.
                 </p>
               </article>
             </>

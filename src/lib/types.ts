@@ -463,8 +463,17 @@ export interface UpdateInfo {
  * that came from the platypusgit apt repository, so `apt upgrade` is the right
  * advice; plain `notify` on Linux is a sideloaded `.deb`, where that command
  * would report "already the newest version" and dead-end the user.
+ *
+ * `notify-scoop` is a Windows install that came from the Scoop bucket (#187).
+ * Windows is `self-update` everywhere else, and this variant exists because
+ * self-updating a Scoop install would run the per-machine `.msi` and leave the
+ * machine with two copies of the app — see the Rust enum for the full story.
  */
-export type UpdateCapability = "self-update" | "notify" | "notify-apt";
+export type UpdateCapability =
+  | "self-update"
+  | "notify"
+  | "notify-apt"
+  | "notify-scoop";
 
 /**
  * "Commit as" identity. Mirrors Rust `AuthorOverride` (git/types.rs) — it sets

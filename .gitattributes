@@ -1,0 +1,15 @@
+# Line-ending policy — deliberately one line long.
+#
+# Only ONE file in the tree needs its endings pinned:
+# `src-tauri/windows/pgit-portable.cmd` ships inside
+# `PlatypusGit_x64_portable.zip`, is executed by cmd.exe, and a Rust test
+# asserts it is CRLF (`cli.rs::PORTABLE_SHIM_CMD` is an `include_str!` of those
+# exact bytes, and `shim_cmd_body` emits CRLF for the same reason). Without this
+# rule, a clone with `core.autocrlf=input` — the common setting on macOS and
+# Linux, and what this repo is developed on — stores and restores it as LF, and
+# that test fails on Linux CI while the file still looks right on Windows.
+#
+# Everything else is left to git's defaults ON PURPOSE. This repo had no
+# .gitattributes at all, so a blanket `* text=auto` would renormalise the whole
+# tree in one commit and bury the change that needed it.
+src-tauri/windows/pgit-portable.cmd text eol=crlf
