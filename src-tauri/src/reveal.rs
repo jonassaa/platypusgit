@@ -260,6 +260,49 @@ pub fn terminal_plan(platform: HostPlatform, dir: &Path, env: &HostEnv) -> Vec<S
     }
 }
 
+/// What a reveal of `relative` inside `workdir` should actually target:
+/// `(path, is_dir)` for [`reveal_plan`].
+///
+/// `None` or `""` means the repository itself — the repo tab's menu, which has
+/// no entry to select.
+///
+/// **`is_dir` is read from the filesystem, not passed in.** A directory row and
+/// a file row want the two different jobs `reveal_plan` describes, and the
+/// filesystem is the only authority on which one a path is: a caller-supplied
+/// flag is a second source of truth that can disagree (libgit2 spells an
+/// embedded repository with a trailing slash, a folder row in the tree carries
+/// no status entry at all), and being wrong means selecting a directory in its
+/// parent instead of opening it. Reading it here also means every existing call
+/// site got directory rows right the moment this landed, with no signature
+/// change (#245).
+pub fn reveal_target(workdir: &Path, relative: Option<&str>) -> AppResult<(PathBuf, bool)> {
+    match relative {
+        Some(rel) if !rel.is_empty() => {
+            let abs = crate::opener::safe_workdir_path(workdir, rel)?;
+            let is_dir = abs.is_dir();
+            Ok((abs, is_dir))
+        }
+        _ => Ok((workdir.to_path_buf(), true)),
+    }
+}
+
+/// Which directory a terminal for `relative` should open in.
+///
+/// A FILE reveals where it lives, so its containing directory is the answer; a
+/// DIRECTORY is already the answer and must not be replaced by its parent —
+/// same filesystem-is-the-authority reasoning as [`reveal_target`], and the same
+/// bug if it is skipped (a terminal for `src/` landing in the repo root).
+pub fn terminal_target(workdir: &Path, relative: Option<&str>) -> AppResult<PathBuf> {
+    let (abs, is_dir) = reveal_target(workdir, relative)?;
+    if is_dir {
+        return Ok(abs);
+    }
+    Ok(abs
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| workdir.to_path_buf()))
+}
+
 /// Reveal `path` in the platform's file manager (`is_dir`: see
 /// [`reveal_plan`]).
 pub async fn reveal(path: &Path, is_dir: bool) -> AppResult<()> {
@@ -540,5 +583,90 @@ mod tests {
     fn terminal_linux_ignores_an_empty_env_terminal() {
         let plans = terminal_plan(HostPlatform::Linux, Path::new("/tmp/repo"), &linux_env(Some("")));
         assert_eq!(plans[0].program, "x-terminal-emulator");
+    }
+
+    // ── reveal_target / terminal_target (#245) ───────────────────────────────
+    //
+    // These DO touch the filesystem (that is the whole point — the filesystem
+    // decides whether a path is a directory), so they run against a tempdir
+    // rather than being pure like the planners above.
+
+    fn tree() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.txt"), "a").unwrap();
+        std::fs::write(dir.path().join("top.txt"), "t").unwrap();
+        dir
+    }
+
+    #[test]
+    fn reveal_target_treats_a_file_as_a_file() {
+        let dir = tree();
+        let (path, is_dir) = reveal_target(dir.path(), Some("src/a.txt")).unwrap();
+        assert_eq!(path, dir.path().join("src/a.txt"));
+        assert!(!is_dir, "a file must be SELECTED in its parent, not opened");
+    }
+
+    #[test]
+    fn reveal_target_treats_a_directory_as_a_directory() {
+        // The bug this fixes: the command hard-coded `is_dir: false`, so a
+        // folder row ran `open -R src` and selected the folder in the repo root
+        // instead of opening a window on it.
+        let dir = tree();
+        let (path, is_dir) = reveal_target(dir.path(), Some("src")).unwrap();
+        assert_eq!(path, dir.path().join("src"));
+        assert!(is_dir);
+    }
+
+    #[test]
+    fn reveal_target_falls_back_to_the_repo_root() {
+        let dir = tree();
+        for rel in [None, Some("")] {
+            let (path, is_dir) = reveal_target(dir.path(), rel).unwrap();
+            assert_eq!(path, dir.path());
+            assert!(is_dir, "the repo root is a directory target");
+        }
+    }
+
+    #[test]
+    fn reveal_target_treats_a_path_that_does_not_exist_as_a_file() {
+        // `is_dir()` answers false for a missing path, which is the right guess:
+        // a file target degrades to "open the parent" on Linux and to a failed
+        // selection elsewhere, where a directory target would open a window on
+        // nothing.
+        let dir = tree();
+        let (_, is_dir) = reveal_target(dir.path(), Some("gone.txt")).unwrap();
+        assert!(!is_dir);
+    }
+
+    #[test]
+    fn reveal_target_refuses_a_path_outside_the_worktree() {
+        let dir = tree();
+        assert!(reveal_target(dir.path(), Some("../../etc/passwd")).is_err());
+        assert!(reveal_target(dir.path(), Some("/etc/passwd")).is_err());
+    }
+
+    #[test]
+    fn terminal_target_opens_a_files_parent_but_a_directory_itself() {
+        let dir = tree();
+        assert_eq!(
+            terminal_target(dir.path(), Some("src/a.txt")).unwrap(),
+            dir.path().join("src")
+        );
+        // Not the parent: a terminal asked for `src/` must land in `src/`.
+        assert_eq!(
+            terminal_target(dir.path(), Some("src")).unwrap(),
+            dir.path().join("src")
+        );
+        assert_eq!(terminal_target(dir.path(), None).unwrap(), dir.path());
+    }
+
+    #[test]
+    fn terminal_target_for_a_top_level_file_is_the_repo_root() {
+        let dir = tree();
+        assert_eq!(
+            terminal_target(dir.path(), Some("top.txt")).unwrap(),
+            dir.path()
+        );
     }
 }

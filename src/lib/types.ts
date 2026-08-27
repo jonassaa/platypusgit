@@ -13,6 +13,23 @@ export interface RepoHandle {
   head: string | null;
 }
 
+/**
+ * One path `deleteUntrackedFiles` could not remove (#245). 1:1 with
+ * `DeleteFailure` in `src-tauri/src/git/types.rs`.
+ *
+ * The delete is best-effort once it starts unlinking — three read-only files in
+ * a ten-file selection must not decide the fate of the other seven — so a
+ * resolved call can still carry failures. Refusals decidable *before* anything
+ * is deleted (a tracked path, an escape, an embedded repo, a directory) arrive
+ * as a thrown `AppError` instead, and nothing was deleted.
+ */
+export interface DeleteFailure {
+  /** The repo-relative path, as the caller spelled it — a row in the file list. */
+  path: string;
+  /** The OS's own message. */
+  reason: string;
+}
+
 export type StatusFlag =
   | { kind: "Unmodified" }
   | { kind: "Modified" }

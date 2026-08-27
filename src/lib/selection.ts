@@ -217,6 +217,18 @@ export function sidedFolderKey(side: FileSide, dirPath: string): string {
 }
 
 /**
+ * The directory path inside a `side:dir:path` key, or `null` for a file key.
+ *
+ * The inverse of {@link sidedFolderKey}, and the reason it exists: a folder
+ * row's context menu needs the folder ITSELF (to reveal it, #245), while
+ * `splitFileSelection` deliberately answers only with the files beneath it.
+ */
+export function sidedFolderPath(key: string): string | null {
+  const m = SIDED_FOLDER_KEY.exec(key);
+  return m ? m[2] : null;
+}
+
+/**
  * Source for the `side:path` / `side:dir:path` key space — two pre-split row
  * lists, one per section. A folder key only ever expands within its own
  * section, so staging a folder in CHANGES cannot reach the STAGED rows below.

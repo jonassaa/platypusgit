@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent, within } from "@testing-library/rea
 
 import { RepoBrowserScreen } from "./RepoBrowser";
 import { useRepoStore } from "@/features/repo/useRepoStore";
-import { mockInvoke } from "@/test/invokeMock";
+import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
 import {
   WithDialogs,
   acceptDialog,
@@ -234,12 +234,16 @@ describe("RepoBrowser embedded git repositories", () => {
 });
 
 /**
- * Discarding an untracked file DELETES it — git holds no copy to restore from,
- * so unlike "restore this modified file from the index" there is no way back.
- * The menu says so and never fires on a single click.
+ * Deleting an untracked file is final — git holds no copy to restore from, so
+ * unlike "restore this modified file from the index" there is no way back. The
+ * menu says so, never fires on a single click, and goes to `deleteUntracked`
+ * rather than `discard` (#245): discard would RESTORE the path if it had become
+ * tracked since the right-click, which is the last thing an entry labelled
+ * "Delete file…" may do.
  */
 describe("RepoBrowser discarding untracked files", () => {
   const discardCalls: string[][] = [];
+  const deleteCalls: string[][] = [];
 
   function untracked(path: string): FileStatus {
     return {
@@ -254,11 +258,15 @@ describe("RepoBrowser discarding untracked files", () => {
 
   beforeEach(() => {
     discardCalls.length = 0;
+    deleteCalls.length = 0;
     resetDialogs();
     resetStore({
       status: [modified("a.txt"), untracked("loose.txt")],
       discard: async (paths: string[]) => {
         discardCalls.push(paths);
+      },
+      deleteUntracked: async (paths: string[]) => {
+        deleteCalls.push(paths);
       },
     } as never);
     wireMocks();
@@ -295,14 +303,16 @@ describe("RepoBrowser discarding untracked files", () => {
       "cannot be undone",
     );
     await dismissDialog();
-    expect(discardCalls).toEqual([]);
+    expect(deleteCalls).toEqual([]);
 
     fireEvent.contextMenu(treeRow("loose.txt"));
     fireEvent.click(within(await waitFor(contextMenu)).getByText("Delete file…"));
     await waitFor(() => expect(dialogTitle()).toBe("Delete loose.txt?"));
     await acceptDialog();
 
-    await waitFor(() => expect(discardCalls).toEqual([["loose.txt"]]));
+    await waitFor(() => expect(deleteCalls).toEqual([["loose.txt"]]));
+    // Never the restoring op, whatever the row's state turned out to be.
+    expect(discardCalls).toEqual([]);
   });
 
   it("keeps Discard changes for a tracked modification", async () => {
@@ -382,5 +392,57 @@ describe("RepoBrowser conflicted files", () => {
     expect(within(menu).getByText("Accept ours")).toBeInTheDocument();
     expect(within(menu).getByText("Accept theirs")).toBeInTheDocument();
     expect(within(menu).queryByText("Stage")).toBeNull();
+  });
+});
+
+/**
+ * A DIRECTORY row (#245). The issue asked for reveal "on a file row, a directory
+ * row, and the repository itself", and the folder row was the one that had no
+ * file-manager entry at all: it goes to `multiFileMenuItems`, which is handed
+ * the files BENEATH the folder and, until `directoryPath`, had no idea which
+ * folder it was looking at.
+ */
+describe("RepoBrowser folder rows", () => {
+  beforeEach(() => {
+    resetStore({ status: [modified("src/nested/a.txt")] });
+    wireMocks();
+    mockInvoke("reveal_in_file_manager", () => null);
+    mockInvoke("open_in_terminal", () => null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reveals the FOLDER itself, not the files inside it", async () => {
+    render(<RepoBrowserScreen />);
+    const row = await waitFor(() => treeRow("src/nested"));
+
+    fireEvent.contextMenu(row);
+    const menu = await waitFor(contextMenu);
+    // The label is platform-dependent (`fileManagerLabel`); the entry is not.
+    fireEvent.click(within(menu).getByText(/Finder|Explorer|file manager/));
+
+    await waitFor(() => {
+      const call = getInvokeCalls().find((c) => c.cmd === "reveal_in_file_manager");
+      expect(call).toBeDefined();
+      // The backend reads is-it-a-directory off the filesystem, so this opens a
+      // window ON the folder rather than selecting it in its parent.
+      expect(call!.args).toEqual({ repoId: "repo-1", relativePath: "src/nested" });
+    });
+  });
+
+  it("opens a terminal in the folder", async () => {
+    render(<RepoBrowserScreen />);
+    const row = await waitFor(() => treeRow("src/nested"));
+
+    fireEvent.contextMenu(row);
+    fireEvent.click(within(await waitFor(contextMenu)).getByText("Open in terminal"));
+
+    await waitFor(() => {
+      const call = getInvokeCalls().find((c) => c.cmd === "open_in_terminal");
+      expect(call).toBeDefined();
+      expect(call!.args).toEqual({ repoId: "repo-1", relativePath: "src/nested" });
+    });
   });
 });

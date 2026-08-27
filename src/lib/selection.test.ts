@@ -6,6 +6,7 @@ import {
   pruneSelection,
   sidedFileKey,
   sidedFolderKey,
+  sidedFolderPath,
   sidedSelectionSource,
   splitFileSelection,
   treeSelectionSource,
@@ -322,5 +323,31 @@ describe("splitFileSelection over the sided key space", () => {
 
   it("yields nothing for a key outside the space", () => {
     expect(splitFileSelection(["/src/a.ts"], source).paths).toEqual([]);
+  });
+});
+
+describe("sidedFolderPath", () => {
+  it("recovers the directory a folder key stands for", () => {
+    // What the folder row's context menu needs: `splitFileSelection` answers
+    // with the files BENEATH a folder key, so revealing the folder itself (#245)
+    // has to read the path back out of the key.
+    expect(sidedFolderPath(sidedFolderKey("unstaged", "src/features"))).toBe(
+      "src/features",
+    );
+    expect(sidedFolderPath(sidedFolderKey("staged", "src"))).toBe("src");
+  });
+
+  it("answers null for a file key, so nothing mistakes one for a folder", () => {
+    expect(sidedFolderPath(sidedFileKey("unstaged", "src/a.txt"))).toBeNull();
+    // A file whose own path starts with `dir:` is still a file — the `side:`
+    // prefix is what the marker sits behind.
+    expect(sidedFolderPath("unstaged:dir-ish/a.txt")).toBeNull();
+    expect(sidedFolderPath("")).toBeNull();
+  });
+
+  it("round-trips a directory whose name contains a colon", () => {
+    expect(sidedFolderPath(sidedFolderKey("unstaged", "odd:name/sub"))).toBe(
+      "odd:name/sub",
+    );
   });
 });

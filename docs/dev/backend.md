@@ -318,6 +318,45 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   other copy anywhere. Crash-safety needs a journal and its own spec; do not
   stub an affordance meanwhile.
 
+## Deleting an untracked file (#245)
+
+`GitBackend::delete_untracked` is on the trait despite being an unlink rather
+than a git call, because every check it depends on is a git question — does the
+index know this path (at ANY stage: a conflicted file lives at 1/2/3), is the
+entry an embedded repository — and the verify has to happen under the SAME lock
+acquisition as the mutation. Only an implementation holding the per-repo lock can
+do that; a command reading `status()` and then unlinking is the stash TOCTOU
+again. `commands/repo.rs::delete_untracked_files` is therefore thin.
+
+- **It is not `discard` with a nicer name.** Discard RESTORES a tracked path from
+  the index and only deletes an untracked one. Delete refuses a tracked path
+  outright, because a menu entry labelled "Delete file…" that reverted a file
+  instead is the worst surprise available on a destructive action.
+- **Containment is proven against the filesystem, not the string.**
+  `opener::resolved_workdir_path` canonicalizes BOTH sides (the workdir too — on
+  macOS a tempdir lives under `/var`, itself a symlink) and re-checks with the
+  pure component-wise `contained_in`. The lexical `safe_workdir_path` cannot see
+  a symlink: `repo/out -> /etc` makes `out/passwd` an innocent-looking relative
+  path with no `..` in it. Only the PARENT is canonicalized and the last
+  component re-joined, so a file that is already gone still resolves — its
+  absence is the caller's to report. A symlink whose target leaves the worktree
+  is refused, and so is one that cannot be resolved at all.
+- **Containment runs BEFORE the index is touched**, and not only for tidiness:
+  `git2::Index::get_path` PANICS on a path that is absolute or starts with `..`
+  (it unwraps its own `path_to_repo_path`). `discard` orders itself the same way.
+- **Two phases.** Everything decidable without touching the disk (tracked,
+  escape, embedded repo, directory) is validated for the WHOLE batch first and
+  fails all of it — a refusal must never leave a half-deleted selection, or a
+  crafted path becomes discoverable by noticing the three files before it are
+  gone. Then the unlinks run BEST-EFFORT, one `DeleteFailure` per path the OS
+  refused: three read-only files in a ten-file selection must not decide the fate
+  of the other seven.
+- **Files, not trees.** A real directory is refused; a recursive delete is a
+  different and far more dangerous op, and libgit2 recurses untracked directories
+  in `status()` anyway, so every untracked row the UI shows is a file. Symlinks
+  are unlinked as links (with a `remove_dir` fallback for the Windows
+  directory-symlink case), never followed.
+
 ## Spawning processes (issue 172)
 
 - **Never write `Command::new` outside `src-tauri/src/proc.rs`** —

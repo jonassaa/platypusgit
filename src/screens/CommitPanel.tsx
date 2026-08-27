@@ -64,6 +64,7 @@ import {
   pruneSelection,
   sidedFileKey,
   sidedFolderKey,
+  sidedFolderPath,
   sidedSelectionSource,
   splitFileSelection,
   type Selection,
@@ -206,14 +207,24 @@ export function CommitPanelScreen() {
   const { onContextMenu: onFolderCtx, menu: folderMenu } = useContextMenu<string>(
     (navKey) =>
       multiFileMenuItems(
-        splitFileSelection(navKey ? [navKey] : [], selectionSource),
+        {
+          ...splitFileSelection(navKey ? [navKey] : [], selectionSource),
+          // The folder itself. `splitFileSelection` answers with the files
+          // BENEATH a folder key, so the path has to come back out of the key
+          // for the file-manager entry to have a target (#245).
+          directoryPath: (navKey && sidedFolderPath(navKey)) || undefined,
+        },
+        platform,
       ),
   );
 
   const { onContextMenu: onFileCtx, menu: fileMenu } = useContextMenu<FileSlot>(
     (f) => {
       if (f && sel.keys.length > 1 && sel.keys.includes(keyOf(f))) {
-        return multiFileMenuItems(splitFileSelection(sel.keys, selectionSource));
+        return multiFileMenuItems(
+          splitFileSelection(sel.keys, selectionSource),
+          platform,
+        );
       }
       return fileMenuItems(
         {

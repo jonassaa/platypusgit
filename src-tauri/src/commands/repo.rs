@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tauri::State;
 
 use crate::{
     error::{AppError, AppResult},
-    git::types::{FileContent, FileStatus, HeadInfo, RepoHandle, RepoId},
+    git::types::{DeleteFailure, FileContent, FileStatus, HeadInfo, RepoHandle, RepoId},
     state::AppState,
 };
 
@@ -193,6 +193,31 @@ pub async fn append_gitignore(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Delete untracked files from the working tree (#245).
+///
+/// Thin, like every handler here: every rule — untracked-only, inside the
+/// worktree, no directories, no embedded repositories — is enforced by
+/// `GitBackend::delete_untracked` under the per-repo lock, because each of them
+/// is a question only the repository can answer and a check taken in a
+/// different lock acquisition than the unlink is a TOCTOU.
+///
+/// Returns one entry per path the OS refused to remove; an empty vector means
+/// the whole selection is gone. A refusal on validation grounds is an `Err` and
+/// deletes NOTHING — see the trait doc for why the two are split.
+#[tauri::command]
+pub async fn delete_untracked_files(
+    state: State<'_, AppState>,
+    repo_id: String,
+    paths: Vec<String>,
+) -> AppResult<Vec<DeleteFailure>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    tokio::task::spawn_blocking(move || backend.delete_untracked(&repo_id, &paths))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 /// Open `relative_path` (relative to the repo's worktree) in the user's editor.
 /// Resolution order: $VISUAL, $EDITOR, then the platform default opener.
 #[tauri::command]
@@ -254,8 +279,17 @@ async fn repo_workdir(state: &State<'_, AppState>, repo_id: String) -> AppResult
 /// Reveal `relative_path` (relative to the repo's worktree) in the OS file
 /// manager, with the entry selected where the platform allows it. `None` (or
 /// an empty string — the repo tab's menu has no relative path to give)
-/// reveals the repo's ROOT directory instead, which is a directory target
-/// rather than a file one (see `reveal::reveal_plan`'s `is_dir`).
+/// reveals the repo's ROOT directory instead.
+///
+/// Which of `reveal_plan`'s two jobs this is — select a FILE in its parent, or
+/// open a window ON a directory — is decided by `reveal::reveal_target` from
+/// the filesystem, not by a parameter. That is what makes a directory row
+/// reveal the folder rather than selecting it in its parent (#245).
+///
+/// Note there is deliberately no separate "open containing folder" command:
+/// on all three platforms revealing a FILE already opens its containing folder
+/// (`open -R`, `explorer /select,`, and xdg-open on the parent). See
+/// `docs/dev/frontend.md`.
 #[tauri::command]
 pub async fn reveal_in_file_manager(
     state: State<'_, AppState>,
@@ -263,18 +297,14 @@ pub async fn reveal_in_file_manager(
     relative_path: Option<String>,
 ) -> AppResult<()> {
     let workdir = repo_workdir(&state, repo_id).await?;
-    match relative_path {
-        Some(rel) if !rel.is_empty() => {
-            let abs = crate::opener::safe_workdir_path(&workdir, &rel)?;
-            crate::reveal::reveal(&abs, false).await
-        }
-        _ => crate::reveal::reveal(&workdir, true).await,
-    }
+    let (target, is_dir) = crate::reveal::reveal_target(&workdir, relative_path.as_deref())?;
+    crate::reveal::reveal(&target, is_dir).await
 }
 
 /// Open a terminal at `relative_path`'s CONTAINING directory (a file reveals
-/// where it lives, not itself), or at the repo's root when `relative_path` is
-/// `None`/empty — the repo tab's case.
+/// where it lives, not itself) — or IN it when `relative_path` is itself a
+/// directory, or at the repo's root when it is `None`/empty (the repo tab's
+/// case). See `reveal::terminal_target`.
 #[tauri::command]
 pub async fn open_in_terminal(
     state: State<'_, AppState>,
@@ -282,12 +312,6 @@ pub async fn open_in_terminal(
     relative_path: Option<String>,
 ) -> AppResult<()> {
     let workdir = repo_workdir(&state, repo_id).await?;
-    let dir = match relative_path {
-        Some(rel) if !rel.is_empty() => {
-            let abs = crate::opener::safe_workdir_path(&workdir, &rel)?;
-            abs.parent().map(Path::to_path_buf).unwrap_or(workdir)
-        }
-        _ => workdir,
-    };
+    let dir = crate::reveal::terminal_target(&workdir, relative_path.as_deref())?;
     crate::reveal::open_terminal(&dir).await
 }

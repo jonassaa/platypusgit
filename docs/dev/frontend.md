@@ -577,13 +577,46 @@ update checks back on for someone who turned them off.
   `RepoTabs.tsx`'s `tabMenuItems`. Their target is a repository root, whose path
   relative to itself is `""`.
 - **"Open containing folder" is the reveal entry** — there is no second menu
-  item, on any platform. `reveal_in_file_manager` passes `is_dir: false` for a
-  relative path, and `reveal.rs` then runs `open -R` / `explorer /select,` (the
-  parent window, file selected) or xdg-opens the parent on Linux. The only
-  variant that would differ is a folder window with no selection, which needs
-  `reveal(parent, is_dir: true)` — a backend change, not a frontend one.
-  `context-menu.copyPath.test.tsx` pins the single entry so the synonym does not
-  get added.
+  item, on any platform, and this is settled rather than pending. On a FILE row
+  `open -R` / `explorer /select,` open the containing folder with the file
+  selected, and Linux xdg-opens the parent, so the existing entry already *is*
+  "open containing folder" everywhere. The only variant that differs is a folder
+  window with NO selection: identical to reveal on Linux, and the same window
+  minus the selection on macOS/Windows — strictly less information for a second
+  entry that looks like a different action. `context-menu.copyPath.test.tsx` and
+  `context-menu.deleteUntracked.test.tsx` each pin the single entry, on the file
+  row and the folder row, so the synonym does not get added.
+- **Directory rows reveal too, and it took a backend change** (#245).
+  `reveal_in_file_manager` used to pass a hard-coded `is_dir: false`, which for a
+  folder means "select it in its parent" — so `reveal.rs::reveal_target` now
+  reads is-it-a-directory off the FILESYSTEM instead. No parameter: a
+  caller-supplied flag is a second source of truth that can disagree (libgit2
+  spells an embedded repo with a trailing slash; a folder row has no status entry
+  at all), and every existing call site got directory rows right the moment it
+  landed. `terminal_target` is the same fix for "Open in terminal", which would
+  otherwise open a folder's PARENT.
+- **The folder row's menu is `multiFileMenuItems`** — both trees hand a folder
+  key straight to `splitFileSelection`, which expands it to the files BENEATH it.
+  So the menu never knew which folder it was on; `MultiFileMenuSelection.directoryPath`
+  is that missing piece, set only for a single folder row (`sidedFolderPath`
+  recovers it from the commit panel's `side:dir:path` key). Entries that address
+  ONE location — reveal, terminal — appear only when it is set: for a multi-row
+  selection the honest answer would be five windows.
+- **Delete an untracked file** (#245) is `deleteUntracked` in `useRepoStore`, over
+  `delete_untracked_files` — NOT `discard`. Discard restores a tracked path from
+  the index and only deletes an untracked one; an entry labelled "Delete file…"
+  that restored a file instead (because the path became tracked between the
+  right-click and the confirm) is the worst surprise available on a destructive
+  action, so the backend refuses a tracked path outright. Behind `pgConfirm`,
+  with the #67 wording ("there is no copy in the index or in history"). In the
+  multi-select menu, Delete acts on the untracked subset and **Discard steps
+  aside when the whole unstaged selection is untracked** — the same swap
+  `fileMenuItems` makes on a single row, because "discard changes" is then a lie
+  about what happens. Mixed selections keep both, and they differ there: Discard
+  restores the tracked ones, Delete touches only the untracked ones. The delete
+  is best-effort once it starts unlinking, so a RESOLVED call can still carry
+  `DeleteFailure[]`; the store refreshes the file list before it reports them,
+  and `refreshAll()` first / error last in the catch arm.
 
 ## Drag and drop
 
