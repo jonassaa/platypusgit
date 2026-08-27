@@ -1,6 +1,7 @@
 import React, { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { WordSpan } from "@/lib/wordDiff";
 import { buildLineSpans } from "@/lib/lineSpans";
+import type { FindMark } from "@/lib/diffFind";
 import type { SyntaxToken } from "@/lib/syntax";
 import { PGIcon, type IconName } from "./icons";
 import {
@@ -665,20 +666,28 @@ function DiffText({
   spans,
   syntax,
   kind,
+  marks,
 }: {
   text: string;
   spans?: WordSpan[];
   syntax?: SyntaxToken[];
   kind: DiffLineKind;
+  /** Find-in-diff hits on this line (`lib/diffFind.ts`). */
+  marks?: readonly FindMark[];
 }) {
   const rendered = React.useMemo(
-    () => buildLineSpans(text, syntax ?? null, spans),
-    [text, syntax, spans],
+    () => buildLineSpans(text, syntax ?? null, spans, marks),
+    [text, syntax, spans, marks],
   );
   // Nothing to mark: emit the bare string so the DOM stays as light as it was
   // before highlighting existed.
   if (rendered.length === 0) return <>{text}</>;
-  if (rendered.length === 1 && !rendered[0].cls && !rendered[0].changed) {
+  if (
+    rendered.length === 1 &&
+    !rendered[0].cls &&
+    !rendered[0].changed &&
+    !rendered[0].mark
+  ) {
     return <>{text}</>;
   }
   const tint =
@@ -689,14 +698,50 @@ function DiffText({
         <span
           key={i}
           className={s.cls}
-          data-testid={s.changed ? "word-change" : undefined}
-          style={s.changed ? { background: tint, borderRadius: 2 } : undefined}
+          data-testid={
+            s.mark ? "diff-find-match" : s.changed ? "word-change" : undefined
+          }
+          data-find-active={s.mark === "active" ? "" : undefined}
+          style={
+            findMarkStyle(s.mark) ??
+            (s.changed ? { background: tint, borderRadius: 2 } : undefined)
+          }
         >
           {text.slice(s.start, s.end)}
         </span>
       ))}
     </>
   );
+}
+
+/**
+ * Paint for a find hit — derived from `--accent` rather than a new semantic
+ * token, so it themes with everything else and hardcodes no hue.
+ *
+ * The ACTIVE match is a filled accent chip rather than a stronger tint of the
+ * same wash: "which one is Enter on" has to survive a line that is already
+ * tinted green or red and already carries a word-diff highlight, and only a
+ * change of foreground does that reliably. `--accent-ink` is the token for text
+ * sitting ON the accent, so this stays readable in every theme.
+ *
+ * It deliberately WINS over the word-diff tint on the same span: while find is
+ * open, the reader is looking for the query, not for the intra-line change.
+ */
+function findMarkStyle(
+  mark: "match" | "active" | undefined,
+): React.CSSProperties | undefined {
+  if (!mark) return undefined;
+  if (mark === "active") {
+    return {
+      background: "var(--accent)",
+      color: "var(--accent-ink)",
+      borderRadius: 2,
+    };
+  }
+  return {
+    background: "oklch(from var(--accent) l c h / 0.3)",
+    borderRadius: 2,
+  };
 }
 
 /**
@@ -741,10 +786,21 @@ export const PGDiffRow = React.memo(function PGDiffRow({
   selected,
   focused,
   wrap,
+  marks,
   onLineClick,
 }: {
   line: DiffLineData;
   selected?: boolean;
+  /**
+   * Find-in-diff hits on this row, or undefined for a row with none.
+   *
+   * UNDEFINED, not an empty array, for a row that does not match: this component
+   * is `React.memo`'d and a windowed diff re-renders its whole slice on every
+   * keystroke in the find box, so a fresh `[]` per row per render would defeat
+   * the memo for the entire window. `findMarksByRow` returns a Map for exactly
+   * that reason.
+   */
+  marks?: readonly FindMark[];
   /**
    * The keyboard line cursor sits here (#61 D7 step 5). Distinct from
    * `selected`: selection is a set the hunk's Stage button acts on, focus is the
@@ -901,6 +957,7 @@ export const PGDiffRow = React.memo(function PGDiffRow({
               spans={ln.spans}
               syntax={ln.syntax}
               kind={kind}
+              marks={marks}
             />
           </span>
         </div>

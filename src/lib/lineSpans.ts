@@ -7,6 +7,7 @@
 // it once syntax joins in.
 import type { SyntaxToken } from "./syntax";
 import type { WordSpan } from "./wordDiff";
+import type { FindMark } from "./diffFind";
 
 export interface RenderSpan {
   start: number;
@@ -15,6 +16,16 @@ export interface RenderSpan {
   cls?: string;
   /** True when the word diff marked this range as changed. */
   changed: boolean;
+  /**
+   * Set when find-in-diff matched this range: `"active"` for the ONE match the
+   * find cursor sits on, `"match"` for the rest.
+   *
+   * A third independent range set over the same line, reconciled here for the
+   * same reason the other two are — a renderer that wrapped matches in its own
+   * elements after the fact would have to reason about overlaps with syntax and
+   * word spans, and would break the tiling contract this module exists to keep.
+   */
+  mark?: "match" | "active";
 }
 
 interface Range {
@@ -54,6 +65,8 @@ export function buildLineSpans(
   text: string,
   syntax: SyntaxToken[] | null,
   words: WordSpan[] | undefined,
+  /** Find-in-diff hits on this line, sorted and non-overlapping (`diffFind.ts`). */
+  marks?: readonly FindMark[],
 ): RenderSpan[] {
   const len = text.length;
   if (len === 0) return [];
@@ -64,6 +77,7 @@ export function buildLineSpans(
   // this is a public helper and a `.find` scan per segment was the alternative.
   const syn = normalized(syntax, len);
   const wrd = normalized(words, len);
+  const mks = normalized(marks, len);
 
   // Boundaries: line ends plus every edge of either input.
   const cuts = new Set<number>([0, len]);
@@ -75,11 +89,16 @@ export function buildLineSpans(
     cuts.add(w.start);
     cuts.add(w.end);
   }
+  for (const m of mks) {
+    cuts.add(m.start);
+    cuts.add(m.end);
+  }
   const edges = [...cuts].sort((a, b) => a - b);
 
   const out: RenderSpan[] = [];
   let si = 0;
   let wi = 0;
+  let mi = 0;
   for (let i = 0; i + 1 < edges.length; i++) {
     const start = edges[i];
     const end = edges[i + 1];
@@ -89,9 +108,19 @@ export function buildLineSpans(
     const mid = (start + end) / 2;
     while (si < syn.length && syn[si].end <= mid) si++;
     while (wi < wrd.length && wrd[wi].end <= mid) wi++;
+    while (mi < mks.length && mks[mi].end <= mid) mi++;
     const tok = si < syn.length && syn[si].start <= mid ? syn[si] : undefined;
     const w = wi < wrd.length && wrd[wi].start <= mid ? wrd[wi] : undefined;
-    out.push({ start, end, cls: tok?.cls, changed: w?.changed ?? false });
+    const m = mi < mks.length && mks[mi].start <= mid ? mks[mi] : undefined;
+    out.push({
+      start,
+      end,
+      cls: tok?.cls,
+      changed: w?.changed ?? false,
+      // Only when there IS one: an always-present `mark: undefined` would be a
+      // fourth key on every span of every row in every window.
+      ...(m ? { mark: m.active ? ("active" as const) : ("match" as const) } : {}),
+    });
   }
   return out;
 }

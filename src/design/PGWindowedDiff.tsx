@@ -13,6 +13,7 @@
 // Stage/Discard cluster is pinned to that same row.
 import React from "react";
 import type { DiffRow } from "@/lib/diffRows";
+import type { FindMark } from "@/lib/diffFind";
 import type { WindowRange } from "@/lib/useWindowedList";
 import { PGDiffRow, PGFoldSeparator, PGHunkActions } from "./git-components";
 
@@ -46,6 +47,17 @@ export interface PGWindowedDiffProps {
    */
   focusedRow?: number | null;
   /**
+   * Find-in-diff hits for a row, by ABSOLUTE row index — the flat model's index
+   * space, not the window's.
+   *
+   * A lookup rather than an array prop because find searches the whole row model
+   * (`lib/diffFind.ts`) while this renders a screenful: passing every row's marks
+   * would mean building an array as long as the file on every keystroke. Callers
+   * hand over `findMarksByRow(...).get`, which returns `undefined` for a row with
+   * no match — the value `PGDiffRow`'s memo needs it to return.
+   */
+  findMarks?: (rowIndex: number) => readonly FindMark[] | undefined;
+  /**
    * Soft-wrap long code lines. Forwarded to every `PGDiffRow`, which then renders
    * an ELASTIC row — so a caller passing this must also omit `window` and switch
    * off every other heights consumer it owns (minimap, hunk scroll), because
@@ -64,6 +76,7 @@ export function PGWindowedDiff({
   onLineClick,
   onExpandGap,
   focusedRow,
+  findMarks,
   wrap,
 }: PGWindowedDiffProps) {
   const start = win?.start ?? 0;
@@ -100,7 +113,17 @@ export function PGWindowedDiff({
         // no hunk, so it gets no selection and no click target — there is no hunk
         // index it could stage.
         if (row.kind === "fill") {
-          return <PGDiffRow key={`f${start + i}`} line={row.line} wrap={wrap} />;
+          return (
+            <PGDiffRow
+              key={`f${start + i}`}
+              line={row.line}
+              wrap={wrap}
+              // Whole-file filler is ordinary file text and the most likely place
+              // for a match to hide, so it is searched and highlighted like any
+              // other row — it simply has no hunk to stage.
+              marks={findMarks?.(start + i)}
+            />
+          );
         }
         if (row.kind === "fold") {
           return (
@@ -129,6 +152,7 @@ export function PGWindowedDiff({
             }
             focused={focusedRow === start + i}
             wrap={wrap}
+            marks={findMarks?.(start + i)}
             onLineClick={
               onLineClick && !disabled ? clickHandlerFor(row.hunkIndex) : undefined
             }

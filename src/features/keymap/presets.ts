@@ -42,6 +42,11 @@ const COMMON = {
   // NOT Mod+Alt+N — AltGr on Windows (see the no-new-Mod+Alt+letter rule in
   // presets.test.ts and the two specs it cites).
   "repo.init": ["Mod+Shift+N"],
+  // ORDER IS LOAD-BEARING, the same way diff.viewCombined sits before nav.diff
+  // below: buildReverseMap walks Object.entries, so the PANE action must be
+  // offered before the global one, or app.closeOverlay (which is global with a
+  // default runner) would answer Escape first everywhere. #241.
+  "diff.closeFind": ["Escape"],
   "app.closeOverlay": ["Escape"],
   // Editor-style zoom. Two chords each: "Mod+=" is the unshifted key, "Mod++"
   // is what Shift+= (and the numpad plus) produce — eventToChord bakes the
@@ -83,6 +88,11 @@ const COMMON = {
   // which leaves the chord unhandled and the webview's native copy in charge, so
   // this binding never takes Mod+C away from anything.
   "diff.copy": ["Mod+C"],
+  // The find key every editor has, unshifted — ⌘⇧F is already tree.find (the
+  // Files tree's filter), and the two are different questions asked of different
+  // panes. Free in both presets. Pane-scoped and suppressInInput (see actions.ts),
+  // so it never reaches a text field that wants ⌘F for itself. #241.
+  "diff.find": ["Mod+F"],
   // The History selection's diff, on the same Mod+D as nav.diff (#158). Legal
   // because this one is pane-scoped: the dispatcher tries each id bound to a
   // chord in turn, and the pane handler declines unless the commit list has focus

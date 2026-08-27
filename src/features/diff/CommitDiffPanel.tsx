@@ -26,6 +26,9 @@ import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import { buildLineSpans } from "@/lib/lineSpans";
+import type { FindMark } from "@/lib/diffFind";
+import { DiffFindBar } from "./DiffFindBar";
+import { useDiffFind } from "./useDiffFind";
 import type { FileDiff } from "@/lib/types";
 import { isTextualDiff } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
@@ -40,33 +43,62 @@ import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
  */
 const CommitDiffRowText = React.memo(function CommitDiffRowText({
   line,
+  marks,
 }: {
   line: DiffLineData;
+  /**
+   * Find-in-diff hits on this row, or undefined for a row with none (#241).
+   *
+   * Undefined rather than an empty array, for the same reason `PGDiffRow` takes
+   * it that way: this component is memoized and the panel re-renders its whole
+   * window on every keystroke in the find box.
+   */
+  marks?: readonly FindMark[];
 }) {
   const text = line.text ?? "";
   // Memoized (and the component memo'd on the row's stable identity): this
   // panel renders a window of rows per frame and the span tiling is the only
   // non-trivial work per row.
   const rendered = React.useMemo(
-    () => buildLineSpans(text, line.syntax ?? null, line.spans),
-    [text, line.syntax, line.spans],
+    () => buildLineSpans(text, line.syntax ?? null, line.spans, marks),
+    [text, line.syntax, line.spans, marks],
   );
   if (rendered.length === 0) return <>{text}</>;
-  if (rendered.length === 1 && !rendered[0].cls && !rendered[0].changed) {
+  if (
+    rendered.length === 1 &&
+    !rendered[0].cls &&
+    !rendered[0].changed &&
+    !rendered[0].mark
+  ) {
     return <>{text}</>;
   }
   const tint =
     line.kind === "rem"
       ? "oklch(from var(--git-removed) l c h / 0.28)"
       : "oklch(from var(--git-added) l c h / 0.28)";
+  // Find paint, derived from --accent so it themes and hardcodes no hue. The
+  // ACTIVE match flips the foreground too: "which one is Enter on" has to survive
+  // a line that is already tinted red or green.
+  const markStyle = (mark: "match" | "active" | undefined) =>
+    mark === "active"
+      ? { background: "var(--accent)", color: "var(--accent-ink)", borderRadius: 2 }
+      : mark
+        ? { background: "oklch(from var(--accent) l c h / 0.3)", borderRadius: 2 }
+        : undefined;
   return (
     <>
       {rendered.map((s, k) => (
         <span
           key={k}
           className={s.cls}
-          data-testid={s.changed ? "word-change" : undefined}
-          style={s.changed ? { background: tint, borderRadius: 2 } : undefined}
+          data-testid={
+            s.mark ? "diff-find-match" : s.changed ? "word-change" : undefined
+          }
+          data-find-active={s.mark === "active" ? "" : undefined}
+          style={
+            markStyle(s.mark) ??
+            (s.changed ? { background: tint, borderRadius: 2 } : undefined)
+          }
         >
           {text.slice(s.start, s.end)}
         </span>
@@ -238,6 +270,20 @@ export function CommitDiffPanel({
     heights,
     viewportH,
     scrollRef,
+  });
+
+  // Find in diff (#241) — the same hook the windowed-diff surfaces use, over the
+  // same row model. This panel keeps its own lighter markup, so the MARKS are
+  // rendered by hand above; everything about matching, counting, wrapping and the
+  // by-offset scroll is shared.
+  const find = useDiffFind({
+    paneIds: [filesPaneId, viewPaneId],
+    rows,
+    heights,
+    scrollRef,
+    scrollTo: scrollDiffTo,
+    enabled: isTextualDiff(current) && !!current,
+    resetKey: selected,
   });
 
   // F7/⇧F7. The cursor lands on each hunk's ANCHOR row — its first changed line —
@@ -448,6 +494,7 @@ export function CommitDiffPanel({
         id={viewPaneId}
         style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}
       >
+        <DiffFindBar find={find} />
         <div
           ref={diffBox.ref}
           style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}
@@ -537,7 +584,10 @@ export function CommitDiffPanel({
                   {kind === "add" ? "+" : kind === "rem" ? "-" : " "}
                 </span>
                 <span className="pg-selectable">
-                  <CommitDiffRowText line={row.line} />
+                  <CommitDiffRowText
+                    line={row.line}
+                    marks={find.marksFor(win.start + k)}
+                  />
                 </span>
               </div>
             );

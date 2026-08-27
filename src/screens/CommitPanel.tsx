@@ -84,6 +84,8 @@ import { usePlatform } from "@/lib/platform";
 import { useViewportH } from "@/lib/useViewportH";
 import { useElementSize } from "@/lib/useElementSize";
 import { MinimapGutter } from "@/features/diff/DiffMinimap";
+import { DiffFindBar } from "@/features/diff/DiffFindBar";
+import { useDiffFind } from "@/features/diff/useDiffFind";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
 import {
   WhitespaceToggle,
@@ -762,6 +764,19 @@ export function CommitPanelScreen() {
     [heights, rowH, scrollDiffTo],
   );
 
+  // Find in diff (#241) — over the ROW MODEL, so a match below the rendered
+  // window is found and reached by offset. Unified only: split mode renders
+  // `PGSideBySideDiff`, which is a different renderer with no marks to give.
+  const find = useDiffFind({
+    paneIds: "commit.diff",
+    rows,
+    heights,
+    scrollRef: diffScrollRef,
+    scrollTo: scrollDiffTo,
+    enabled: diffMode === "unified" && isTextualDiff(diff) && !!diff,
+    resetKey: diff,
+  });
+
   /**
    * Space on the focused line, staging on the unstaged side and unstaging on the
    * staged side — the same direction rule the hunk header's button uses.
@@ -1410,6 +1425,7 @@ export function CommitPanelScreen() {
             }}
           />
         </div>
+        <DiffFindBar find={find} />
         <div
           ref={diffBox.ref}
           style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}
@@ -1469,6 +1485,7 @@ export function CommitPanelScreen() {
                 selectedLines={(i) => lineSel[i] ?? []}
                 onLineClick={onLineClick}
                 focusedRow={lineFocus.focused?.rowIndex ?? null}
+                findMarks={find.marksFor}
                 hunkActions={(i) => ({
                   staged: selected?.side === "staged",
                   actionsDisabledReason: hunkActionsDisabled,

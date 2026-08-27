@@ -79,3 +79,46 @@ describe("buildLineSpans", () => {
     expect(tiles("abc", out)).toBe("abc");
   });
 });
+
+describe("buildLineSpans — find marks", () => {
+  const mark = (start: number, end: number, active?: boolean) => ({ start, end, active });
+
+  it("cuts a match out of the line and labels it", () => {
+    const out = buildLineSpans("a needle b", null, undefined, [mark(2, 8)]);
+    expect(out).toEqual([
+      { start: 0, end: 2, cls: undefined, changed: false },
+      { start: 2, end: 8, cls: undefined, changed: false, mark: "match" },
+      { start: 8, end: 10, cls: undefined, changed: false },
+    ]);
+    expect(tiles("a needle b", out)).toBe("a needle b");
+  });
+
+  it("labels the ACTIVE match differently — Enter has to be visible", () => {
+    const out = buildLineSpans("aa bb", null, undefined, [
+      mark(0, 2),
+      mark(3, 5, true),
+    ]);
+    expect(out.map((s) => s.mark)).toEqual(["match", undefined, "active"]);
+  });
+
+  it("keeps syntax and word-diff spans through a match", () => {
+    // A match lands on a keyword that is also part of a changed word: the tiling
+    // must carry all three, or highlighting find would erase the diff's own.
+    const out = buildLineSpans("let x", [syn(0, 3, "syn-keyword")], [word(0, 5, true)], [
+      mark(1, 2),
+    ]);
+    expect(out).toEqual([
+      { start: 0, end: 1, cls: "syn-keyword", changed: true },
+      { start: 1, end: 2, cls: "syn-keyword", changed: true, mark: "match" },
+      { start: 2, end: 3, cls: "syn-keyword", changed: true },
+      { start: 3, end: 5, cls: undefined, changed: true },
+    ]);
+    expect(tiles("let x", out)).toBe("let x");
+  });
+
+  it("is inert when no marks are passed", () => {
+    expect(buildLineSpans("abc", null, undefined, [])).toEqual([
+      { start: 0, end: 3, cls: undefined, changed: false },
+    ]);
+  });
+});

@@ -192,6 +192,31 @@ describe("Mod+D is shared between a pane action and a global one (#158)", () => 
   });
 });
 
+// Same asymmetry on Escape (#241): the diff find bar's close is pane-scoped and
+// DECLINES when the bar is shut, so app.closeOverlay — global, with a default
+// runner that never declines — must be offered second or it would swallow every
+// Escape in the app.
+describe("Escape is shared between the find bar and the overlay closer (#241)", () => {
+  for (const preset of BUILTIN_PRESETS) {
+    it(`${preset.id}: offers diff.closeFind before app.closeOverlay`, () => {
+      const ids = buildReverseMap(preset).get("Escape") ?? [];
+      expect(ids).toEqual(["diff.closeFind", "app.closeOverlay"]);
+      expect(ACTIONS["diff.closeFind"].scope).toBe("pane");
+      // A bare key inside the find bar's own input only dispatches for an action
+      // that opted in — and the bar autofocuses that input.
+      expect(ACTIONS["diff.closeFind"].allowInInput).toBe(true);
+    });
+
+    it(`${preset.id}: binds find-in-diff to the unshifted find key`, () => {
+      // ⌘⇧F stays the Files tree's filter — a different question, a different pane.
+      expect(preset.bindings["diff.find"]).toEqual(["Mod+F"]);
+      expect(preset.bindings["tree.find"]).toEqual(["Mod+Shift+F"]);
+      // The one rule that keeps ⌘F out of a text field that wants it.
+      expect(ACTIONS["diff.find"].suppressInInput).toBe(true);
+    });
+  }
+});
+
 describe("repository tabs (#90)", () => {
   // Every preset binds them (the catalog-coverage test above enforces that);
   // these pin the SHAPE of the chords, which is what makes them work on every

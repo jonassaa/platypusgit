@@ -92,6 +92,56 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
     which walks the tree the way an engine serialises a copy) and, because the
     granting rule lives in a stylesheet and gutter exclusion is an engine
     behaviour, by `e2e/specs/diff-selection.e2e.ts` in the real webview.
+- **Find in diff searches the ROW MODEL** (#241) — `lib/diffFind.ts` (pure) +
+  `features/diff/useDiffFind.ts` (state, chords, scrolling) +
+  `features/diff/DiffFindBar.tsx` (the bar). All four surfaces mount it;
+  `test/diffFindSurfaces.test.ts` fails the build for a fifth that forgets to,
+  exactly as `diffCopyMenu.test.ts` does for the copy menu. Same reason
+  `diffCopy.ts` exists: the surfaces are windowed, so the webview's own find
+  would search the mounted screenful and answer "no results" for a match two
+  thousand lines down — a wrong answer, not a degraded one. Six rules:
+  - **`Mod+F` is `diff.find`, pane-scoped and `suppressInInput`.** That flag IS
+    the answer to "the find key must not be stolen from an input that wants it":
+    the dispatcher never resolves a suppressed action inside a text field, so the
+    commit-message box, the file filter and the bar's OWN input keep it. Escape
+    is `diff.closeFind` — pane-scoped, `allowInInput` (the bar autofocuses its
+    input), bound BEFORE the global `app.closeOverlay` in `presets.ts` and
+    DECLINING when the bar is shut. Same ordering asymmetry as
+    `diff.viewCombined` vs `nav.diff`, pinned in `presets.test.ts`. Enter /
+    ⇧Enter are handled on the input itself: the caret is in it, bare-key chords
+    are suppressed there anyway, and "Enter submits the box you are typing in" is
+    the one chord a form owns rather than the app.
+  - **Jumping to a match is `scrollTopForRow`** written through
+    `useVariableWindow.scrollTo` — never `scrollIntoView` (the row is unmounted;
+    #68 G10) and never `scrollTopForHunk`'s CENTRING, which would yank the pane
+    on every Enter. Reveal semantics, the line cursor's, for the same reason.
+  - **Highlighting is a THIRD range set in `buildLineSpans`**, not markup wrapped
+    around matched text afterwards. The tiling keeps syntax classes and word-diff
+    spans intact through a match, and the code cell's `.pg-selectable` split is
+    untouched because the marks are spans INSIDE that cell — pinned by
+    `src/design/diffFindHighlight.test.tsx`, which re-runs the selection walk.
+    Paint derives from `--accent` rather than a new semantic token (those are
+    duplicated per theme mode in `SEMANTIC_TOKENS` and drift); the CURRENT match
+    flips the foreground to `--accent-ink`, the only thing that stays legible on
+    an already-tinted add/rem line.
+  - **A row with no match gets `undefined`, not `[]`** — `findMarksByRow` returns
+    a Map for exactly that. `PGDiffRow` is memoized and the whole window
+    re-renders per keystroke in the find box, so a fresh empty array per row
+    would defeat the memo for the entire slice.
+  - **Gated on `isTextualDiff`**, and additionally OFF in split mode (a different
+    renderer, `PGSideBySideDiff`) and in the DiffViewer's WRAP mode — heights
+    describe nothing there, and a wrap caller drops windowing, the minimap and
+    offset scrolling together, so an offset-scrolling consumer drops with them
+    (turning Wrap on closes an open bar rather than leaving one that scrolls
+    wrong). The merge window is out of scope on purpose: CodeMirror, no `DiffRow`.
+  - The match count is capped at `MAX_FIND_MATCHES` and reported as a floor
+    ("5000+"). Scanning a whole-file diff per keystroke is cheap; allocating
+    half a million match objects is not.
+- **The DiffViewer's old "Find in diff" was a line FILTER**, not a find: it
+  rewrote the hunks down to matching lines, which forced whole-file mode off,
+  made "copy the file" mean "copy the matches", and could not say WHERE in the
+  file a match was. #241 replaced it with the shared bar above. Don't bring it
+  back as a second control on that screen.
 - **Tokenization runs in a module worker** (Shiki's `codeToTokens` is sync CPU);
   tokens return as transferable `Int32Array`s. `vite.config.ts` sets
   `worker: { format: "es" }` — the grammars are dynamic imports and the default
