@@ -286,6 +286,37 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `MAX_BARREN_PAGES`, or it walks the whole repository. New client-side log
   filters inherit that trap.
 
+## `git notes` in the commit detail panel (#253)
+
+- **Notes hang off the SELECTED commit, never the log page.** `CommitNotes`
+  lives inside the message scroll region (a long note scrolls with the body
+  rather than pushing the action row out of the panel) and reads debounced, like
+  `SignatureBadge` — the log walk is the hot path, and rows arrowed past cost
+  nothing.
+- **No note renders `null`, and so does a failed read.** Most commits in most
+  repositories have no notes, so an "empty" affordance would be permanent
+  furniture; a banner beside a perfectly viewable commit is noise.
+- Each note is badged with its ref, because a note on `refs/notes/review` and
+  one on `refs/notes/commits` are different claims about the commit.
+
+## Blame and `blame.ignoreRevsFile` (#253)
+
+- **The ignore-revs toggle exists only where an ignore-revs file does.**
+  `BlameResult.ignoreRevsFile === null` means the repository configured none, so
+  there is no control to show — the backend's answer, not a guess from the
+  frontend. `PGToggle`, not a native control.
+- **The toggle is NOT persisted, deliberately.** git's own behaviour (honour the
+  config) is the right default every time a file is opened; a remembered "off"
+  would silently contradict the repository's `.git-blame-ignore-revs` in some
+  later session with nothing on screen explaining why the formatter owns every
+  line. It is view state in the screen, so it also stays out of
+  `PersistedState` and out of the settings export key set.
+- **git's `?` / `*` marks are rendered only when the repo asked for them**
+  (`blame.markIgnoredLines` / `blame.markUnblamableLines`). git only marks when
+  asked; a mark nobody configured reads as a defect in the line.
+- An unusable ignore-revs file is a WARNING strip above a working blame, never
+  an error screen — the backend already degraded to a plain blame.
+
 ## Navigation model
 
 - Activity bar = primary switcher, History first. **Launch always lands on

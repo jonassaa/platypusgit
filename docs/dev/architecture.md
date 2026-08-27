@@ -121,6 +121,19 @@ git/
 ├── stash.rs     Repo-less stash helpers (#133): push/store argv builders
 │                (`--` placement, GIT_LITERAL_PATHSPECS), validate_message,
 │                rename_store_landed. Unit-tested with no temp repo
+├── blame.rs     `blame.ignoreRevsFile` — the PURE half (#253): read_settings,
+│                resolve_ignore_revs_path, blame_args, parse_porcelain. libgit2
+│                has NO ignore-revs support at all, so a repo that configures a
+│                file gets `git blame --line-porcelain`; a repo that does not
+│                keeps the in-process libgit2 blame. The configured path never
+│                enters argv — git reads its own config, and the un-ignored view
+│                passes the fixed literal `--ignore-revs-file=` (git's "clear
+│                the list"). See backend.md
+├── notes.rs     Reading `refs/notes/*` (#253), read-only: label_for,
+│                is_notes_ref, sort_refs (all PURE) + read(). EVERY notes ref is
+│                shown, labelled — `core.notesRef`/`notes.displayRef` are
+│                deliberately not consulted. Absence is a state at three levels.
+│                See backend.md
 ├── bisect.rs    Reads git's own BISECT_* + refs/bisect/* — deliberately NO
 │                parallel state file (see backend.md); progress via
 │                `git rev-list --bisect-vars`
@@ -182,7 +195,10 @@ commands/        Thin Tauri handlers, one file per area:
 │                track the file_name configured in lib.rs — the plugin does not
 │                report what it picked. Thin over src-tauri/src/diagnostics.rs
 ├── commits.rs   get_log, commit, file_history, verify_commit (SELECTED commit
-│                only, never per row). REFSPEC_ALL sentinel = walk all refs, so
+│                only, never per row) and commit_notes, which is lazy for the
+│                same reason (#253 — the log walk is the hot path, so notes are
+│                read for the selected commit and cost the page nothing).
+│                REFSPEC_ALL sentinel = walk all refs, so
 │                the loaded log is NOT HEAD ancestry — rebase input must go
 │                through headAncestryOf. Paged (see frontend.md): get_log_page /
 │                get_log_filtered_page / get_log_filtered. Also commits_since
@@ -190,7 +206,8 @@ commands/        Thin Tauri handlers, one file per area:
 │                (base..tip, no ancestry requirement) and ahead_behind (counts
 │                a→b + merge base; unrelated histories → mergeBase: null)
 ├── diff.rs      get_diff, stage/unstage/discard_paths, stage/unstage/discard_hunk,
-│                stage/unstage/discard_lines, diff_ref_to_workdir, blame_file,
+│                stage/unstage/discard_lines, diff_ref_to_workdir, blame_file
+│                (takes ignoreRevs — the Blame screen's toggle; see git/blame.rs),
 │                and two commit diffs ONE character apart: diff_commit (one oid
 │                vs its first parent) and diff_commits (rev↔rev) — check arity
 ├── branches.rs  list_branches/tags/stashes/remotes,
@@ -283,6 +300,8 @@ features/            Components + Zustand store colocated per feature:
 │                    graphAncestry, rowIdentity, buildRebasePlan /
 │                    buildPreservePlan / withPlanBase / runRebasePlan /
 │                    planCommitSelection / squashMessage, headAncestry, logFilter
+│                    — plus CommitNotes, the one component here: `git notes` for
+│                    the SELECTED commit, debounced like SignatureBadge (#253)
 ├── rebase/          RebaseBasePicker + useRebaseMergeMode (flatten ⇄ preserve)
 ├── dnd/             ALL drag-and-drop (#91): useDragSource / useDropZone over
 │                    dragController.ts, resolveDrop.ts (pure drop tables),

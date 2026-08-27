@@ -401,6 +401,77 @@ again. `commands/repo.rs::delete_untracked_files` is therefore thin.
   are unlinked as links (with a `remove_dir` fallback for the Windows
   directory-symlink case), never followed.
 
+## `blame.ignoreRevsFile` — where libgit2 cannot follow (#253)
+
+- **libgit2's blame has no ignore-revs support of any kind.**
+  `git_blame_options` carries whitespace, first-parent and range flags and
+  nothing that takes a list of revisions to pass through, so there is no
+  in-process answer to give. `.git-blame-ignore-revs` is committed in a great
+  many repositories, and blame that names whoever ran the formatter is worse
+  than no blame — it looks authoritative and is wrong. So blame joins
+  `merge_branch`, `rebase_onto` and `worktree remove` in shelling out.
+- **The shell-out is opt-in by the repository, not global.** No
+  `blame.ignoreRevsFile` → the in-process libgit2 blame, exactly as before: no
+  subprocess, no parsing, no behaviour change for the common case. A repo that
+  configured one gets `git blame` for **both** toggle states — comparing a
+  libgit2 blame against a git blame would let unrelated engine differences
+  masquerade as the effect of the toggle.
+- **The configured path never reaches argv.** `git blame` reads
+  `blame.ignoreRevsFile` from the repository's own config, so the ignore-revs
+  view passes no `--ignore-revs-file=<path>` at all: the user-supplied path is
+  never assembled into a command line and can never be read as an option. The
+  un-ignored view passes the fixed literal `--ignore-revs-file=`, whose empty
+  value is git's documented "clear the list of revs from previously processed
+  files" — including the entries the config contributed. The only user-supplied
+  argv value left is the blamed path, and it goes after `--`. The resolved path
+  is used for one thing only: deciding whether the file is there.
+- **`HEAD` is passed explicitly**, so both engines answer the same question:
+  the file as of HEAD, not the working tree. Without it git would blame the
+  worktree and attribute uncommitted lines to the all-zero oid, and the line
+  COUNT would change depending on whether the repository happens to have an
+  ignore-revs file — the toggle would appear to add and remove lines.
+- **A configured file that cannot be used degrades, it does not fail.** git
+  DIES on a missing one (`fatal: could not open object name list`) and on a
+  malformed one (an oid it cannot peel to a commit), and a missing file is an
+  ordinary state — a config that arrived through an include, a template, or a
+  branch where the file does not exist yet. Both cases fall back to the libgit2
+  blame with `BlameResult.ignore_revs_error` set; the screen shows a warning
+  beside a working blame. `--ignore-revs-file=` cannot rescue it, because git
+  processes the config entries first and dies before reaching the clear.
+- **`--line-porcelain`, not the default format.** The default packs author,
+  date and line number into a column-aligned parenthesised field around content
+  that may contain any of those characters. Porcelain is the stable documented
+  form — and it carries the `ignored` / `unblamable` keys, so
+  `blame.markIgnoredLines` needs no second run to observe. Those keys are
+  **gated on the config** (measured, git 2.50.1): git only marks when asked, and
+  so do we. Parsing keys on the TAB prefix is what makes blaming a file that
+  itself contains blame output unambiguous.
+
+## `git notes` — read-only, and lazy on purpose (#253)
+
+- **Per SELECTED commit, never per log row.** `commit_notes` has the same shape
+  as `verify_commit` beside it, for the same reason: the paged log walk is the
+  hot path, and a note lookup is a fanout-tree descent per notes ref. Batching
+  the page would still put that work on every page fetch, for a feature most
+  repositories never use — so the log page's cost is **zero**, and the read
+  happens once the selection settles (`CommitNotes`, debounced 100 ms, so
+  arrowing through the log reads nothing for the rows passed over).
+- **Absence is a state at THREE levels** and none of them may error: no
+  `refs/notes/*` in the repository, no note for this commit on a ref that has
+  others, and a note whose message is blank. All three are `Ok(vec![])`, and the
+  component renders `null` — a "no notes" placeholder would be permanent
+  furniture in a panel most commits never fill. An unresolvable OID is still an
+  error: that is a caller bug, and reporting it as "no notes" hides it forever.
+- **Every `refs/notes/*` ref is shown, labelled with the ref**, and
+  `core.notesRef` / `notes.displayRef` are deliberately NOT consulted. The
+  asymmetry decides it: showing a note the display config would have hidden
+  costs one labelled block, and the ref name is on screen so nothing is
+  ambiguous; hiding a note somebody deliberately attached, in a GUI with no
+  "show all notes" affordance, is a fact the user cannot discover at all. The
+  default ref sorts first.
+- **Read-only.** Writing needs a ref to pick, a merge strategy for the notes
+  tree, and a push story; it is a separate feature, not a missing button.
+
 ## Spawning processes (issue 172)
 
 - **Never write `Command::new` outside `src-tauri/src/proc.rs`** —

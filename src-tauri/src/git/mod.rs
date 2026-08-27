@@ -1,9 +1,11 @@
 pub mod auth;
 pub mod bisect;
+pub mod blame;
 pub mod cli;
 pub mod hooks;
 pub mod libgit2;
 pub mod lfs;
+pub mod notes;
 pub mod ownership;
 pub mod rebase_plan;
 pub mod rebase_state;
@@ -20,8 +22,9 @@ use std::path::{Path, PathBuf};
 use crate::error::AppResult;
 use types::{
     AheadBehind,
-    BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
-    BulkFastForward, DeleteFailure, DiffKind, FastForward, FileContent,
+    BisectMark, BisectStatus, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult, ConflictSides,
+    DeleteFailure, DiffKind, FileContent,
+    BulkFastForward, FastForward,
     FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
     RemoteInfo,
     RepoHandle,
@@ -172,7 +175,31 @@ pub trait GitBackend: Send + Sync {
         path: &Path,
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>>;
-    fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>>;
+    /// Blame `path` as of HEAD (#253).
+    ///
+    /// `ignore_revs` selects between the two views a repository with a
+    /// `blame.ignoreRevsFile` has: git's own behaviour (`true` — the listed
+    /// revisions are passed through to whoever last really touched the line)
+    /// and the un-ignored truth (`false`). It is meaningless, and ignored,
+    /// when no ignore-revs file is configured; `BlameResult::ignore_revs_file`
+    /// is what tells a caller whether the toggle is worth offering.
+    ///
+    /// A configured file that cannot be used is a WARNING carried on the
+    /// result, never an error: the blame beside it is still correct.
+    fn blame_file(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        ignore_revs: bool,
+    ) -> AppResult<BlameResult>;
+    /// Every `refs/notes/*` note attached to ONE commit (#253). Read-only.
+    ///
+    /// Deliberately per-commit and called lazily for the SELECTED commit, the
+    /// same shape `verify_commit` has and for the same reason: the log walk is
+    /// the hot path, and a notes lookup per walked row would put a fanout-tree
+    /// descent on every page fetch for a feature most repositories never use.
+    /// No note is `Ok(vec![])`, at every level of absence.
+    fn commit_notes(&self, repo_id: &RepoId, oid: &str) -> AppResult<Vec<CommitNote>>;
     fn read_reflog(&self, repo_id: &RepoId) -> AppResult<Vec<ReflogEntry>>;
     /// Signature status of ONE commit (#61 D6).
     ///

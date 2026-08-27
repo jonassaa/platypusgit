@@ -520,6 +520,53 @@ pub struct BlameLine {
     pub timestamp: i64,
     pub summary: String,
     pub content: String,
+    /// git's `?` mark: the line was changed by an ignored revision and git
+    /// could only guess which earlier commit to hand it to (#253). Only ever
+    /// true when `blame.markIgnoredLines` is on — git gates the porcelain key
+    /// on the config, and so, faithfully, do we.
+    pub ignored: bool,
+    /// git's `*` mark: the ignored revision ADDED this line, so there is no
+    /// earlier commit to fall back to. Gated on `blame.markUnblamableLines`.
+    pub unblamable: bool,
+}
+
+/// One blame run's lines plus everything the UI needs to explain them (#253).
+///
+/// The three ignore-revs fields are what let the Blame screen offer a toggle
+/// only where one is meaningful, say which view is on screen, and report a
+/// broken configuration WITHOUT losing the blame itself — a repo whose
+/// `blame.ignoreRevsFile` points at a file that is not there still gets its
+/// lines, with a warning beside them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameResult {
+    pub lines: Vec<BlameLine>,
+    /// `blame.ignoreRevsFile` verbatim, or `None` when unset. `None` is what
+    /// tells the UI there is no toggle worth showing.
+    pub ignore_revs_file: Option<String>,
+    /// Whether THIS result actually had the ignore list applied. False when
+    /// the caller asked for the un-ignored view, and false when the file could
+    /// not be used — the two are told apart by `ignore_revs_error`.
+    pub ignore_revs_applied: bool,
+    /// `blame.markIgnoredLines` — see `BlameLine::ignored`.
+    pub mark_ignored_lines: bool,
+    /// `blame.markUnblamableLines` — see `BlameLine::unblamable`.
+    pub mark_unblamable_lines: bool,
+    /// Why a configured ignore-revs file was not applied. A STATE, not an
+    /// `AppError`: the blame beside it is perfectly good, and a repository
+    /// whose ignore-revs file is missing must not lose the whole screen.
+    pub ignore_revs_error: Option<String>,
+}
+
+/// One `git notes` entry attached to a commit (#253). Read-only.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitNote {
+    /// Full ref the note lives on, e.g. `refs/notes/commits`.
+    pub ref_name: String,
+    /// `ref_name` with `refs/notes/` stripped — what goes on the badge.
+    pub label: String,
+    pub message: String,
 }
 
 /// Content of the three index stages for a conflicted file.

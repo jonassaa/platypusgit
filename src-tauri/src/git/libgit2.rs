@@ -16,8 +16,10 @@ use crate::opener::{resolved_workdir_path, safe_workdir_path};
 use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus,
-        BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
-        BulkFastForward, DeleteFailure, DiffHunk,
+        BlameLine, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult,
+        ConflictSides,
+        DeleteFailure, DiffHunk,
+        BulkFastForward,
         DiffKind,
         DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileStatus, HeadInfo, LfsStatus,
         LogFilter, LogPage,
@@ -116,6 +118,73 @@ impl Libgit2Backend {
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
         f(&mut repo)
+    }
+
+    /// The in-process blame: libgit2, HEAD, no subprocess.
+    ///
+    /// This is what a repository with no `blame.ignoreRevsFile` gets, and what
+    /// a repository whose ignore-revs file is broken falls back to — so a
+    /// misconfigured file costs a warning, never the screen. libgit2 has no
+    /// ignore-revs support of any kind, which is the whole reason
+    /// `git/blame.rs` exists.
+    fn blame_with_libgit2(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>> {
+        self.with_repo(repo_id, |repo| {
+            let mut opts = git2::BlameOptions::new();
+            let blame = repo.blame_file(path, Some(&mut opts))?;
+
+            let workdir = repo
+                .workdir()
+                .ok_or_else(|| AppError::Git("bare repo has no worktree".into()))?;
+            let content = std::fs::read_to_string(workdir.join(path))?;
+            let content_lines: Vec<&str> = content.lines().collect();
+
+            let mut out = Vec::new();
+            for hunk in blame.iter() {
+                let oid = hunk.final_commit_id();
+                let commit = repo.find_commit(oid).ok();
+                let author = commit
+                    .as_ref()
+                    .map(|c| c.author().name().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                let email = commit
+                    .as_ref()
+                    .map(|c| c.author().email().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                let timestamp = commit
+                    .as_ref()
+                    .map(|c| c.time().seconds())
+                    .unwrap_or(0);
+                let summary = commit
+                    .as_ref()
+                    .and_then(|c| c.summary().map(String::from))
+                    .unwrap_or_default();
+                let short = oid.to_string()[..7].to_string();
+                let start = hunk.final_start_line();
+                for i in 0..hunk.lines_in_hunk() {
+                    let line_no = (start + i) as u32;
+                    let content_str = content_lines
+                        .get((line_no - 1) as usize)
+                        .copied()
+                        .unwrap_or("")
+                        .to_string();
+                    out.push(BlameLine {
+                        line_no,
+                        oid: oid.to_string(),
+                        short_oid: short.clone(),
+                        author: author.clone(),
+                        email: email.clone(),
+                        timestamp,
+                        summary: summary.clone(),
+                        content: content_str,
+                        // libgit2 ignores nothing, so it can mark nothing.
+                        ignored: false,
+                        unblamable: false,
+                    });
+                }
+            }
+            out.sort_by_key(|l| l.line_no);
+            Ok(out)
+        })
     }
 
     /// Drop the entry at `index`, but only if it is still the one the caller
@@ -5696,63 +5765,89 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn blame_file(&self, repo_id: &RepoId, path: &Path) -> AppResult<Vec<BlameLine>> {
-        self.with_repo(repo_id, |repo| {
+    /// See the trait docs and `git/blame.rs`: libgit2 in the common case, real
+    /// git the moment the repository configures an ignore-revs file.
+    fn blame_file(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        ignore_revs: bool,
+    ) -> AppResult<BlameResult> {
+        let settings = self.with_repo(repo_id, |repo| {
             // Without this libgit2 answers with a cryptic
             // "path 'vendor' does not exist in the given tree".
             reject_embedded_repo(repo, path)?;
-            let mut opts = git2::BlameOptions::new();
-            let blame = repo.blame_file(path, Some(&mut opts))?;
+            Ok(crate::git::blame::read_settings(repo))
+        })?;
 
-            let workdir = repo
-                .workdir()
-                .ok_or_else(|| AppError::Git("bare repo has no worktree".into()))?;
-            let content = std::fs::read_to_string(workdir.join(path))?;
-            let content_lines: Vec<&str> = content.lines().collect();
+        let mut result = BlameResult {
+            lines: Vec::new(),
+            ignore_revs_file: settings.ignore_revs_file.clone(),
+            ignore_revs_applied: false,
+            mark_ignored_lines: settings.mark_ignored_lines,
+            mark_unblamable_lines: settings.mark_unblamable_lines,
+            ignore_revs_error: None,
+        };
 
-            let mut out = Vec::new();
-            for hunk in blame.iter() {
-                let oid = hunk.final_commit_id();
-                let commit = repo.find_commit(oid).ok();
-                let author = commit
-                    .as_ref()
-                    .map(|c| c.author().name().unwrap_or("").to_string())
-                    .unwrap_or_default();
-                let email = commit
-                    .as_ref()
-                    .map(|c| c.author().email().unwrap_or("").to_string())
-                    .unwrap_or_default();
-                let timestamp = commit
-                    .as_ref()
-                    .map(|c| c.time().seconds())
-                    .unwrap_or(0);
-                let summary = commit
-                    .as_ref()
-                    .and_then(|c| c.summary().map(String::from))
-                    .unwrap_or_default();
-                let short = oid.to_string()[..7].to_string();
-                let start = hunk.final_start_line();
-                for i in 0..hunk.lines_in_hunk() {
-                    let line_no = (start + i) as u32;
-                    let content_str = content_lines
-                        .get((line_no - 1) as usize)
-                        .copied()
-                        .unwrap_or("")
-                        .to_string();
-                    out.push(BlameLine {
-                        line_no,
-                        oid: oid.to_string(),
-                        short_oid: short.clone(),
-                        author: author.clone(),
-                        email: email.clone(),
-                        timestamp,
-                        summary: summary.clone(),
-                        content: content_str,
-                    });
-                }
+        // No ignore-revs file: nothing to ignore, nothing to shell out for.
+        // This is the overwhelmingly common case and it must stay in-process.
+        let Some(raw) = settings.ignore_revs_file.as_deref() else {
+            result.lines = self.blame_with_libgit2(repo_id, path)?;
+            return Ok(result);
+        };
+
+        let workdir = self.repo_path(repo_id)?;
+        let resolved = crate::git::blame::resolve_ignore_revs_path(
+            &workdir,
+            crate::git::blame::home_dir().as_deref(),
+            raw,
+        );
+        if !resolved.is_file() {
+            // `git blame` DIES here ("could not open object name list"), and a
+            // missing file is an ordinary state — a config that arrived through
+            // an include, a template, or a branch where the file does not exist
+            // yet. Losing the whole Blame screen over it would be absurd, so
+            // this degrades to the plain blame with the reason attached.
+            result.ignore_revs_error = Some(format!(
+                "blame.ignoreRevsFile points at {raw}, which is not a readable file —                  ignoring it and blaming normally"
+            ));
+            result.lines = self.blame_with_libgit2(repo_id, path)?;
+            return Ok(result);
+        }
+
+        let mut args: Vec<String> = crate::git::blame::blame_args(ignore_revs)
+            .into_iter()
+            .map(String::from)
+            .collect();
+        // The one user-supplied value in this argv, and it goes after `--`.
+        args.push(path.to_string_lossy().to_string());
+
+        match run_git_capture(&workdir, &args) {
+            Ok(stdout) => {
+                result.lines = crate::git::blame::parse_porcelain(&stdout);
+                result.ignore_revs_applied = ignore_revs;
+                Ok(result)
             }
-            out.sort_by_key(|l| l.line_no);
-            Ok(out)
+            Err(detail) => {
+                // git refuses the whole run for a malformed ignore list or an
+                // object name it cannot peel to a commit. Same contract as the
+                // missing file: a warning beside a working blame.
+                result.ignore_revs_error = Some(detail);
+                result.lines = self.blame_with_libgit2(repo_id, path)?;
+                Ok(result)
+            }
+        }
+    }
+
+    fn commit_notes(&self, repo_id: &RepoId, oid: &str) -> AppResult<Vec<CommitNote>> {
+        self.with_repo(repo_id, |repo| {
+            let id = repo
+                .revparse_single(oid)
+                .map_err(|_| AppError::InvalidRef(oid.to_string()))?
+                .peel_to_commit()
+                .map_err(|_| AppError::InvalidRef(oid.to_string()))?
+                .id();
+            crate::git::notes::read(repo, id)
         })
     }
 

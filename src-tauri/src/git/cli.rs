@@ -4,8 +4,9 @@ use crate::error::{AppError, AppResult};
 
 use super::{
     types::{
-        AheadBehind, BisectMark, BisectStatus, BlameLine, BranchInfo, CommitInfo, CommitOptions, CommitResult, ConflictSides,
-        BulkFastForward, DeleteFailure, DiffKind, FastForward, FileContent,
+        AheadBehind, BisectMark, BisectStatus, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult, ConflictSides,
+        DeleteFailure, DiffKind, FileContent,
+        BulkFastForward, FastForward,
         FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
         SubmoduleInfo, TagInfo,
@@ -429,7 +430,15 @@ impl GitBackend for CliBackend {
     fn append_gitignore(&self, _repo_id: &RepoId, _pattern: &str) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn blame_file(&self, _repo_id: &RepoId, _path: &Path) -> AppResult<Vec<BlameLine>> {
+    fn blame_file(
+        &self,
+        _repo_id: &RepoId,
+        _path: &Path,
+        _ignore_revs: bool,
+    ) -> AppResult<BlameResult> {
+        Err(AppError::NotImplemented)
+    }
+    fn commit_notes(&self, _repo_id: &RepoId, _oid: &str) -> AppResult<Vec<CommitNote>> {
         Err(AppError::NotImplemented)
     }
 

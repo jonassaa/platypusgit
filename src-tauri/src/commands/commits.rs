@@ -3,7 +3,8 @@ use tauri::State;
 use crate::{
     error::{AppError, AppResult},
     git::types::{
-        AheadBehind, AuthorOverride, CommitInfo, CommitOptions, CommitResult, LogFilter, LogPage, RepoId,
+        AheadBehind, AuthorOverride, CommitInfo, CommitNote, CommitOptions, CommitResult, LogFilter,
+        LogPage, RepoId,
     },
     state::AppState,
 };
@@ -180,6 +181,24 @@ pub async fn verify_commit(
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     tokio::task::spawn_blocking(move || backend.verify_commit(&repo_id, &oid))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Every `refs/notes/*` note on ONE commit (#253).
+///
+/// Read-only, and lazy for the SELECTED commit — the same shape (and the same
+/// reason) as `verify_commit` beside it: the paged log walk is the hot path,
+/// and a per-row notes lookup would put a fanout-tree descent on every page.
+#[tauri::command]
+pub async fn commit_notes(
+    state: State<'_, AppState>,
+    repo_id: String,
+    oid: String,
+) -> AppResult<Vec<CommitNote>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.commit_notes(&repo_id, &oid))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

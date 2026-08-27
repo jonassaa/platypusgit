@@ -235,7 +235,7 @@ fn blame_rejects_the_embedded_repo() {
     make_embedded_repo(&tr);
 
     for path in ["vendor/lib/", "vendor/lib"] {
-        let err = backend.blame_file(&handle.id, &PathBuf::from(path)).unwrap_err();
+        let err = backend.blame_file(&handle.id, &PathBuf::from(path), true).unwrap_err();
         assert!(matches!(err, AppError::EmbeddedRepo(p) if p == path));
     }
 }
@@ -265,7 +265,7 @@ fn guards_leave_ordinary_paths_alone() {
     assert!(backend
         .diff(&handle.id, &readme, DiffKind::WorktreeToHead, 3, false)
         .is_ok());
-    assert!(backend.blame_file(&handle.id, &readme).is_ok());
+    assert!(backend.blame_file(&handle.id, &readme, true).is_ok());
     assert_eq!(
         backend.file_history(&handle.id, &readme, 50).unwrap().len(),
         1
