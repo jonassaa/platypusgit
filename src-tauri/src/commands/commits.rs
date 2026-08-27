@@ -170,6 +170,24 @@ pub async fn commit(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// The repository's `commit.template` + comment prefix (#252).
+///
+/// Called once per commit-screen visit. A configured template that cannot be
+/// read comes back FLAGGED, not as an error: a stale `commit.template` line
+/// must not stop the commit screen from opening, and the composer names the
+/// path on screen instead of failing silently.
+#[tauri::command]
+pub async fn get_commit_template(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> AppResult<crate::git::commit_template::CommitTemplate> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.commit_template(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 /// Signature status of one commit (#61 D6). Called lazily for the selected
 /// commit, never per log row.
 #[tauri::command]

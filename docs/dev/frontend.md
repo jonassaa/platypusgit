@@ -295,6 +295,64 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `useHunkActionsDisabledReason` — the keyboard must never reach what the mouse
   cannot (#61 D2).
 
+## The commit-message composer (#252)
+
+`src/features/commits/message/` is **THE** commit-message composition surface —
+one hook plus one bar, used by `screens/CommitPanel.tsx`:
+
+```
+const composer = useCommitComposer({ repoId, branch, ticketPattern, message, setMessage, amend });
+<CommitMessageBar composer={composer} extra={…} />
+```
+
+- **A new way to compose commit-message text joins this surface** — a field on
+  `CommitComposer` and an affordance in the bar's `extra` slot — rather than
+  becoming a fifth widget in `CommitPanel.tsx` or a parallel surface beside it.
+  #250 (assisted drafts) is the one queued behind #252, and the two must not
+  grow side by side.
+- **The textarea is the single source of truth.** The type picker PARSES the
+  subject on every render and rewrites it on change; nothing keeps a structured
+  draft on the side. Typing `feat: x` by hand selects `feat` in the picker,
+  clearing the picker hands the typed text back. Free typing has to keep
+  working — the issue is explicit that a mandatory form would be worse than
+  nothing, so there is deliberately no subject/body split, no `BREAKING CHANGE`
+  toggle and no modal.
+- **Nothing overwrites text the user typed.** `commit.template` pre-fills only
+  an EMPTY box, and never while amending (amend's prefill from HEAD wins). The
+  template goes back in after a commit, because `git commit` re-applies it every
+  time — `reseed()`, which the screen calls having just cleared the box.
+- **`cleanupCommitMessage` is git's `strbuf_stripspace` — in the mode git would
+  use** (`cleanup.ts`). git's `default` cleanup is context-sensitive: `strip` if
+  the message is to be EDITED, `whitespace` otherwise. `git commit -m "#123 fix
+  the thing"` commits `#123 fix the thing`, and **so must we** — that is an
+  ordinary subject and a forge renders it as an issue link.
+  - **`fromTemplate` is the stand-in for "is the message to be edited".** It is
+    true only once `commit.template` has seeded the box, which is the one way
+    `#` lines arrive without the user typing them. It drives both halves of
+    git's context-sensitivity: what `default` means, and whether `scissors`
+    cuts (verified: `--cleanup=scissors -m …` does not cut).
+  - The **whitespace half is unconditional** (every mode but `verbatim`):
+    trailing whitespace, blank-run collapsing, leading/trailing blanks.
+  - An explicit **`commit.cleanup`** (`verbatim`/`whitespace`/`strip`/
+    `scissors`/`default`) overrides the context in both directions. Unknown
+    values degrade to `default`.
+  - A comment is a line whose FIRST character begins the prefix — `  # indented`
+    is committed, and so is `refs #12`. The prefix comes from the backend
+    (`core.commentChar`, `auto` resolved), never assumed to be `#`.
+  - It decides what is sent AND whether Commit is enabled: a **template** whose
+    comment lines are all that survive is an EMPTY commit message. A hand-typed
+    `#123 fix` is not, and stays committable.
+  - The one deviation from git: no trailing newline, in any mode, because the
+    backend stores the message verbatim and `buildMessage` trims the end
+    regardless.
+  - Pinned by 134 differential cases against real `git commit` (all five modes,
+    `-m` and a scripted editor) — re-run that comparison before changing
+    anything here rather than reasoning from the docs.
+- **The length readout is advisory and stays advisory** — amber past 50, red
+  past 72, `canCommit` untouched.
+- Composes with what was already there: sign-off, co-author / author-override
+  and recent-message recall all still read and write the same box.
+
 ## The log is paged (#68 G11)
 
 - **`s.commits` is a PREFIX of history** (`PAGE_SIZE = 500`, appended;

@@ -16,6 +16,7 @@ import type {
   CommitInfo,
   CommitNote,
   CommitResult,
+  CommitTemplate,
   ConflictSides,
   DiagnosticsReport,
   DiffKind,
@@ -524,6 +525,17 @@ export async function verifyCommit(
   oid: string,
 ): Promise<SignatureStatus> {
   return invoke<SignatureStatus>("verify_commit", { repoId, oid });
+}
+
+/**
+ * The repository's `commit.template` and comment prefix (#252).
+ *
+ * Resolves even when `commit.template` names a file that is not there: the
+ * result carries `unreadable`, and the composer says so on screen. A stale
+ * config line must not stop the commit screen from opening.
+ */
+export async function getCommitTemplate(repoId: string): Promise<CommitTemplate> {
+  return invoke<CommitTemplate>("get_commit_template", { repoId });
 }
 
 export async function discardPaths(repoId: string, paths: string[]): Promise<void> {

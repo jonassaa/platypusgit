@@ -258,6 +258,13 @@ impl GitBackend for CliBackend {
     fn commit(&self, _repo_id: &RepoId, _opts: CommitOptions) -> AppResult<CommitResult> {
         Err(AppError::NotImplemented)
     }
+
+    fn commit_template(
+        &self,
+        _repo_id: &RepoId,
+    ) -> AppResult<super::commit_template::CommitTemplate> {
+        Err(AppError::NotImplemented)
+    }
     fn branches(&self, _repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
         Err(AppError::NotImplemented)
     }

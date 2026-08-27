@@ -235,6 +235,7 @@ pub fn run() {
             commands::commits::file_history,
             commands::commits::verify_commit,
             commands::commits::commit_notes,
+            commands::commits::get_commit_template,
             commands::create::init_repo,
             commands::create::default_init_branch,
             commands::create::clone_repo,

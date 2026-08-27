@@ -2,6 +2,7 @@ pub mod auth;
 pub mod bisect;
 pub mod blame;
 pub mod cli;
+pub mod commit_template;
 pub mod hooks;
 pub mod image;
 pub mod libgit2;
@@ -497,6 +498,14 @@ pub trait GitBackend: Send + Sync {
 
     // === commit ===
     fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<CommitResult>;
+
+    /// The repository's `commit.template` and comment prefix (#252).
+    ///
+    /// A read, not a commit step: the composer asks once per repository and
+    /// pre-fills an EMPTY message box with it. A configured template that could
+    /// not be read comes back flagged rather than as an error — see
+    /// `git/commit_template.rs`.
+    fn commit_template(&self, repo_id: &RepoId) -> AppResult<commit_template::CommitTemplate>;
 
     // === refs ===
     fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
