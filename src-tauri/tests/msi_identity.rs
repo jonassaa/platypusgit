@@ -73,38 +73,23 @@ fn the_publisher_is_not_the_identifier_fallback() {
     );
 }
 
+/// A THIRD wrong value for this field, and the only one that looks right.
+///
 /// Tauri's own Microsoft Store page: *"Your application publisher name cannot
 /// match the application product name"*, and it names `bundle.publisher` as the
-/// way to resolve the clash. Nothing in the `.msi` path enforces this — a
-/// matching pair builds and installs fine — so the cost lands later, at a Store
-/// submission, by which point the publisher is already written into every
-/// installed machine's registry and into the winget `PackageIdentifier`.
+/// way to resolve the clash. `productName` is lowercase and load-bearing for the
+/// Debian package name, so the field that has to move is this one. See
+/// `docs/superpowers/specs/2026-08-27-msix-store-spec.md` §F.
 ///
-/// This was not hypothetical: `publisher` first landed as `platypusgit`, which
-/// is exactly `productName`, and the clash was caught by reading
-/// `docs/superpowers/specs/2026-08-27-microsoft-store-research.md` rather than
-/// by any test. Hence this one.
-#[test]
-fn the_publisher_does_not_collide_with_the_product_name() {
-    let conf = conf();
-    let product = conf["productName"].as_str().expect("productName is a string");
-    let publisher = conf["bundle"]["publisher"]
-        .as_str()
-        .expect("bundle.publisher is a string");
-
-    // Case-insensitive: the constraint is about the displayed names being the
-    // same name, not the same bytes.
-    assert_ne!(
-        publisher.to_lowercase(),
-        product.to_lowercase(),
-        "bundle.publisher and productName are both `{product}`. Tauri documents \
-         this pair as invalid for the Microsoft Store — the publisher name may \
-         not match the product name — and fixing it after a release rewrites \
-         the publisher in every installed machine's Add/Remove Programs entry. \
-         See `docs/dev/distribution.md`."
-    );
-}
-
+/// Not a style preference: it is a submission blocker for the Store channel, and
+/// once winget has published a manifest whose `AppsAndFeaturesEntries.Publisher`
+/// matches what the installer wrote, changing it means a SECOND registry-identity
+/// change for every install.
+///
+/// This was not hypothetical — `publisher` first landed as `platypusgit`, which
+/// is exactly `productName` (#278), and nothing but a spec read caught it.
+/// #279 and #280 then fixed it twice, independently, within the hour; this test
+/// is the two of them folded together, keeping the stricter comparison.
 #[test]
 fn the_publisher_is_not_the_product_name() {
     let conf = conf();
@@ -113,21 +98,17 @@ fn the_publisher_is_not_the_product_name() {
         .as_str()
         .expect("bundle.publisher is a string");
 
-    // A THIRD wrong value for this field, and the only one that looks right.
-    // Tauri's Microsoft Store guidance: "Your application publisher name cannot
-    // match the application product name." `productName` is lowercase and
-    // load-bearing for the Debian package name, so the field that has to move is
-    // this one. See `docs/superpowers/specs/2026-08-27-msix-store-spec.md` §F.
-    //
-    // Not a style preference: it is a submission blocker for the Store channel,
-    // and once winget has published a manifest whose
-    // `AppsAndFeaturesEntries.Publisher` matches what the installer wrote,
-    // changing it means a second registry-identity change for every install.
+    // Case-insensitive on purpose: `PlatypusGit` vs `platypusgit` is the variant
+    // someone reaches for the moment this test fails, and the constraint is
+    // about the displayed names being the same name, not the same bytes.
     assert_ne!(
-        publisher, product,
+        publisher.to_lowercase(),
+        product.to_lowercase(),
         "bundle.publisher equals productName (`{product}`). The Microsoft Store \
-         rejects that pairing, so this blocks the MSIX channel. Use a person or \
-         entity name — the publisher is who ships it, not what is shipped."
+         rejects that pairing, so this blocks the MSIX channel, and fixing it \
+         after a release rewrites the publisher in every installed machine's \
+         Add/Remove Programs entry. Use a person or entity name — the publisher \
+         is who ships it, not what is shipped. See `docs/dev/distribution.md`."
     );
 }
 

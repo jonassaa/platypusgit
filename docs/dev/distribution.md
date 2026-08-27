@@ -257,6 +257,52 @@ The MSI is **`InstallScope="perMachine"`**, hardcoded in the bundler's
 `main.wxs` — not configurable. That is why `wix/pgit-cli.wxs` can write the
 machine PATH, and why a winget manifest for this app is `Scope: machine`.
 
+## The winget package
+
+`JonasAasberg.PlatypusGit` in `microsoft/winget-pkgs`, built from the same
+`.msi` the download page serves. The identity above is a hard prerequisite: a
+manifest's `AppsAndFeaturesEntries.Publisher` must equal what the installer
+writes, so `bundle.publisher` and the manifest are two halves of one contract —
+the same shape as `APT_SOURCES_PATH`, and it drifts just as silently.
+
+- **The first submission is manual, every later one is not.**
+  `scripts/winget-wizard.sh` walks the six steps outside this repo (CLA, fork,
+  Komac, submission, classic PAT, repo secret). `release.yml`'s `winget-publish`
+  job handles the rest, gated exactly like `bump-cask` / `bump-scoop` /
+  `apt-publish` — **copied, not retyped**, so a prerelease never reaches a
+  catalogue every winget user sees.
+- **The job self-disables until the package exists.** `winget-releaser` reads
+  the existing manifest as its template and fails outright if there is none, so
+  the job checks for `WINGET_TOKEN` and no-ops while it is unset. The wizard's
+  last step stores that secret, which makes "the secret exists" mean "the manual
+  submission happened". The check is a **step**, not the job's `if:` — the
+  `secrets` context is not available in a job-level condition, so gating there
+  would be false forever and the job would never run at all.
+- **`WINGET_TOKEN` is a classic PAT with `public_repo`, and it is NOT the
+  GitHub App** that `bump-cask` and `apt-publish` mint from. Those push to repos
+  we own; this opens a pull request from a personal fork of a Microsoft repo.
+  Fine-grained tokens cannot open that PR, and the failure reads as a
+  permissions error rather than a wrong-token-type one. The **first** submission
+  needs no PAT at all: the wizard borrows `gh auth token`, whose `repo` scope is
+  a superset of `public_repo`.
+- **`installers-regex` is pinned to the `.msi`.** The action's default also
+  matches `.exe`/`.msix`/`.appx`, and the release attaches a portable `.zip`;
+  pointing winget at the unpackaged build would install nothing, register no ARP
+  entry, and leave a package that can never be correlated or upgraded.
+- **`ProductCode` can never be hard-coded.** Tauri's `main.wxs` uses
+  `<Product Id="*">`, so it regenerates on every build. Komac reads it out of
+  the `.msi`; anything that predicts it is wrong by construction. `UpgradeCode`
+  is the opposite — pinned above, and the manifest repeats it.
+- **Code signing is not required, and 0.1.1's changelog said otherwise.** The
+  winget-pkgs policies mandate signing for **MSIX** only (Windows will not
+  install an unsigned one); there is no such rule for an `.msi`. The SmartScreen
+  reputation check in the validation pipeline applies to the **installer URL** —
+  ours is a GitHub release URL — not to the binary's signature. A certificate is
+  still worth having; it was just never the winget blocker.
+- **The installer URL must be tag-pinned**, not `releases/latest/download/…`
+  like `site/src/data/site.ts` uses. Validation hashes the file, and a vanity URL
+  whose bytes change under it fails every existing manifest.
+
 ## The APT repository — one-line Linux install (#187)
 
 Spec: `docs/superpowers/specs/2026-08-26-apt-repository-spec.md`. Read that for
