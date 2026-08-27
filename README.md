@@ -33,15 +33,35 @@ brew update && brew upgrade --cask platypusgit         # update
 The app is ad-hoc signed but not notarized. The cask clears the macOS Gatekeeper
 quarantine flag on install, so it launches with no "unidentified developer"
 prompt. No Homebrew? Take the `.dmg` below — a drag-install needs the quarantine
-flag cleared by hand.
+flag cleared by hand, and is told about new versions rather than fetching them.
 
-**Windows** — [`PlatypusGit_x64.msi`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_x64.msi). Installs `pgit` and puts it on your PATH. Not code-signed, so SmartScreen will warn on first run.
+**Windows** — [`PlatypusGit_x64.msi`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_x64.msi). Installs `pgit` and puts it on your PATH. Not code-signed, so SmartScreen will warn on first run. The first install is a manual download ([#187](https://github.com/jonassaa/platypusgit/issues/187)); after that the app updates itself in place.
 
-**Linux** — needs `webkit2gtk 4.1`. The package ships `/usr/bin/pgit`; the AppImage installs nothing.
+**Linux (Debian · Ubuntu)** — one line to install, and `apt` owns updates from
+then on.
 
 ```bash
-sudo apt install ./PlatypusGit_amd64.deb
+curl -fsSL https://www.platypusgit.com/install-platypusgit.sh | sh   # install
+sudo apt update && sudo apt upgrade platypusgit                      # update
 ```
+
+The script adds a signed APT repository at `apt.platypusgit.com` and installs
+`platypusgit` from it — amd64 only so far
+([#266](https://github.com/jonassaa/platypusgit/issues/266)), and it says why
+and stops rather than quietly substituting a package format you did not ask
+for. It is POSIX `sh`, never reads stdin, takes
+`--dry-run`, and is a build-time copy of
+[`scripts/install-platypusgit.sh`](./scripts/install-platypusgit.sh) — read it
+before you run it. The signing key's fingerprint
+(`294C261A1641704535EAC137DDA53BD2C15FB1FB`) and the repository steps spelled
+out by hand are on the [download page](https://www.platypusgit.com/download/).
+
+The `.deb` needs `git` and `webkit2gtk 4.1`, and ships `/usr/bin/pgit`. One
+installed by hand (`sudo apt install ./PlatypusGit_amd64.deb`) still works, but
+`apt upgrade` will not see it — the update panel spots that and offers the
+one-liner above, which upgrades and moves the install onto the repository in the
+same step. On any other distribution take the AppImage: it installs no `pgit`,
+but it does update itself in place.
 
 [`.deb`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_amd64.deb) ·
 [`.AppImage`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_amd64.AppImage) ·
@@ -89,26 +109,26 @@ re-check any cell in a minute. A cell that has gone stale is a bug worth
 
 </details>
 
-**Where we are behind.** We are 0.0.x and the youngest tool on this list:
-installers that warn on first launch, manual updates on Windows and Linux, and
-changed images shown as "binary" rather than a preview — the full list is under
+**Where we are behind.** We are 0.1.x and the youngest tool on this list:
+installers that warn on first launch, no in-app update on macOS, and changed
+images shown as "binary" rather than a preview — the full list is under
 [Status](#status). Two of the gaps are deliberate rather than unfinished: no
 Mercurial, and no Finder/Explorer shell integration, which is the thing
 TortoiseGit exists for.
 
 ## Features
 
-- **Start anywhere** — open a repository, clone one (submodules included, with progress), or init a new one, and keep the ones you use in the recent list.
-- **Staging that goes down to the line** — stage, unstage or discard whole files, individual hunks, or single lines; drag files between Changes and Staged; commit with amend and author override.
+- **Start anywhere** — open a repository, clone one (submodules included, with progress), or init a new one, and keep the ones you use in the recent list; reveal any file in Finder or Explorer, or open the repository in your terminal, straight from the context menu.
+- **Staging that goes down to the line** — stage, unstage or discard whole files, individual hunks, or single lines; drag files between Changes and Staged; commit with amend and author override, running the commit-side hooks (`pre-commit`, `prepare-commit-msg`, `commit-msg`, `post-commit`) with their output inline and a skip-once escape hatch.
 - **Diffs built for reading** — whole-file diffs with no `@@` banners and a scrubable minimap, unified or side-by-side, syntax highlighting and word-level intra-line marks, configurable context, commit-to-commit and range diffs, branch compare, blame, and a file browser at any revision.
 - **Branches, tags and history** — full ref management, merge or rebase from the branch picker, lightweight/annotated/signed tags, a commit graph with ref-scoped log, search by message, author, SHA, date or path, per-file history and a reflog viewer.
 - **Rewriting, safely** — interactive rebase (pick/reword/edit/squash/fixup/drop, drag to reorder, resumable after quitting the app), reset, cherry-pick, revert, and bisect with git's own progress estimate.
 - **Conflicts in one place** — 3-way sides, a dedicated ours · result · theirs resolver window, accept ours/theirs, external mergetool, and an operation bar that says what is in progress.
 - **Stash, including partial** — save/apply/pop/drop, stash only the paths you selected, rename, compare, stash to a new branch.
-- **Remotes with working auth** — add/remove/rename/prune, fetch/fetch-all/pull, push with-lease or force; every network op prompts for credentials and retries, tag pushes and branch deletes included.
+- **Remotes with working auth** — add/remove/rename/prune, fetch/fetch-all/pull, push with-lease or force; every network op prompts for credentials and retries, tag pushes and branch deletes included, and a clone, fetch, pull or push that hangs has a Cancel button — a cancelled clone cleans up the partial directory it left behind.
 - **Pull requests without the browser** — GitHub and GitLab, self-hosted included: list open requests, read the CI summary, check one out (forks too), or open one from the current branch.
 - **The repositories inside your repository** — submodule and linked-worktree screens, and a git-LFS panel with pointer-aware diffs.
-- **Several repos, one window** — multi-repo tabs, each with its own screen and badges, plus resizable panes and a `?` cheat sheet.
+- **Several repos, one window** — multi-repo tabs, each with its own screen and badges, the active repository and branch named in the window title, plus resizable panes and a `?` cheat sheet.
 
 The exhaustive list — every keybinding and option — lives at
 [platypusgit.com/features](https://www.platypusgit.com/features/).
@@ -147,9 +167,10 @@ current screen. If the app is already running, a second `pgit …` doesn't spawn
 another instance — it forwards the request to the running window, focuses it,
 and navigates there.
 
-**Most installs already have it.** The Homebrew cask, the `.deb` and the `.msi`
-install `pgit` alongside the app and remove it on uninstall. Only the macOS
-`.dmg` and the Linux AppImage run no install code, so those two need
+**Most installs already have it.** The Homebrew cask, the `.deb` (via apt or by
+hand) and the `.msi` install `pgit` alongside the app and remove it on
+uninstall. Only the macOS `.dmg` and the Linux AppImage run no install code, so
+those two need
 **Settings → Command line → Install** in the app, or:
 
 ```bash
@@ -163,14 +184,16 @@ copy of [`scripts/install-pgit.sh`](./scripts/install-pgit.sh) and
 
 ## Status
 
-**Active development, versioned 0.0.x** — expect frequent releases and rough
+**Active development, versioned 0.1.x** — expect frequent releases and rough
 edges. Most core git operations work end to end (the feature list above is what
 is implemented, not a roadmap). Known gaps, stated plainly:
 
 - macOS builds are ad-hoc signed and not notarized; the Windows `.msi` is not code-signed.
-- No `winget`/`scoop`/apt repository yet, so on Windows and Linux install and update are a manual download ([#187](https://github.com/jonassaa/platypusgit/issues/187)).
+- No `winget` or `scoop` yet — both wait on that code signing — so the first Windows install is a manual download ([#187](https://github.com/jonassaa/platypusgit/issues/187)). The app self-updates from then on, as does the Linux AppImage.
+- No in-app update on macOS: Homebrew owns upgrades there, and a `.dmg` drag-install is told a new version exists rather than fetching it.
+- The APT repository is amd64 only ([#266](https://github.com/jonassaa/platypusgit/issues/266)), and there is no `.rpm` or AUR package, so every other Linux takes the AppImage.
 - Changed images are reported as binary rather than previewed side by side ([#224](https://github.com/jonassaa/platypusgit/issues/224)).
-- Standalone GUI only. Shell integration — Finder/Explorer icon overlays and context menus — is out of scope. So is Mercurial.
+- Standalone GUI only: no icon overlays or context menus inside Finder and Explorer themselves, which is a different thing from the app's own reveal-in-file-manager action. Mercurial is out of scope too.
 
 Found a bug or want a feature? [Open an issue](https://github.com/jonassaa/platypusgit/issues).
 
@@ -182,7 +205,7 @@ pnpm tauri dev     # first run compiles the whole Rust tree: 2-5 min. Reruns ~10
 ```
 
 Needs Node 22+, pnpm and Rust stable, plus the platform build tools listed in
-[`CONTRIBUTING.md`](./CONTRIBUTING.md#prerequisites).
+[`CONTRIBUTING.md`](./CONTRIBUTING.md#1-prerequisites).
 
 ```bash
 pnpm tauri build --no-sign     # .dmg / .msi / .deb / .AppImage in src-tauri/target/release/bundle/
