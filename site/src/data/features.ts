@@ -144,6 +144,60 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.1.1',
+    date: '2026-08-27',
+    status: 'feature',
+    summary:
+      'Windows gets the treatment Debian got in 0.1.0: installing is two lines with Scoop, and staying current is `scoop update`. The app recognises a Scoop install and stands its own updater down, because self-updating one would have left two copies of platypusgit on the machine — and the `pgit` command comes with it rather than needing a second step.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Install on Windows with Scoop, and let Scoop own updates',
+            detail:
+              '`scoop bucket add platypusgit https://github.com/jonassaa/scoop-platypusgit` then `scoop install platypusgit`, and every later release arrives through `scoop update platypusgit`. It installs per-user, so nothing asks for elevation and `scoop uninstall platypusgit` removes every trace — and it shims both `platypusgit` and `pgit` onto your PATH itself, so the CLI needs no second step. Scoop installs a portable build rather than running the `.msi`, which is what makes all of that true; the trade is that it cannot install the WebView2 runtime for you the way the installer can. Windows 11 ships WebView2 and Windows 10 gets it with Edge, so it is almost certainly already there. The `.msi` is unchanged and remains the route that needs nothing installed first.',
+          },
+          {
+            title: 'The update panel tells a Scoop install to run `scoop update`',
+            detail:
+              'Windows was the one platform that could always swap its own binary, and on a Scoop install that was exactly the wrong thing to do: the in-app update runs the per-machine `.msi`, which does not replace a Scoop install but adds a second one — the new copy in `C:\\Program Files`, Scoop\'s old one still on PATH and still behind the Start Menu shortcut, and `scoop list` reporting the old version from then on. Silently two installs, from one click. The app now recognises a Scoop install and offers the `scoop update` command instead, the same way an apt-managed `.deb` is told to run `apt upgrade`. It decides from Scoop\'s own layout on disk plus the `manifest.json` Scoop writes beside the binary — never from an environment variable, which is set for anyone who uses Scoop at all and would have told `.msi` users to update a package Scoop does not have. The `.msi` install keeps updating itself in place.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'A portable Windows build ships with every release',
+            detail:
+              '`PlatypusGit_x64_portable.zip` — the same binary the `.msi` wraps, plus a `pgit.cmd` and the licence. It exists so Scoop has something to install that is per-user and cleanly removable, and it is deliberately not offered on the download page as its own route: an unpacked copy with no package manager behind it would be told about new versions and then install them somewhere else. Take the `.msi` or Scoop.',
+          },
+          {
+            title: 'The bucket manifest is generated, and a real install gates the release',
+            detail:
+              'The manifest is rendered by a script in the app repository rather than hand-edited in the bucket, so what you install from is reviewed in the same place as the code, and the release job pushes it with the same GitHub App and the same "never on a prerelease" gate that the Homebrew cask and the APT repository already use. Two checks stand between a build and a published manifest: the Windows job unpacks the zip it just built and refuses to attach one whose contents are wrong, and a clean Windows runner then does a real `scoop install` from the pushed manifest and asserts the binary, the `pgit` shim and the version — so a broken manifest fails the release instead of reaching anyone.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Still no `winget` package',
+            detail:
+              'That one genuinely waits on a code-signing certificate rather than on code: an unsigned installer means a SmartScreen warning and a harder path through winget\'s review. Scoop never needed one, which is why it is here first. Chocolatey is not planned.',
+          },
+          {
+            title: 'x64 only, on Windows as on Linux',
+            detail:
+              'Only a 64-bit Intel build is published. The bucket manifest is already written in the form that takes a second architecture as one more entry rather than a rewrite, so arm64 is additive when the build exists.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.0',
     date: '2026-08-27',
     status: 'feature & fixes',
