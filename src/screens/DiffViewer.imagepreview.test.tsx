@@ -113,7 +113,18 @@ describe("DiffViewer, binary file", () => {
       </WithDialogs>,
     );
 
-    expect(await screen.findByText("Binary file")).toBeInTheDocument();
+    // Both reads must LAND before this is meaningful, and the node must be
+    // queried fresh afterwards. `expect(await findByText(...))` was neither: the
+    // resolving preview re-renders this pane, so the node findByText returned
+    // was detached by the time the assertion read it — "element could not be
+    // found in the document", CI-only, once in ~4 runs of the full suite.
+    // Same wait the HEAD-and-worktree test above uses.
+    await waitFor(() =>
+      expect(
+        getInvokeCalls().filter((c) => c.cmd === "read_image_preview").length,
+      ).toBe(2),
+    );
+    expect(screen.getByText("Binary file")).toBeInTheDocument();
     expect(screen.queryByTestId("image-diff")).toBeNull();
   });
 });
