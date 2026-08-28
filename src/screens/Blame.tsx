@@ -178,7 +178,13 @@ export function BlameScreen() {
               {l.author}
             </span>
             <span style={{ width: 40, color: "var(--fg-3)", textAlign: "right" }}>{l.lineNo}</span>
-            <span style={{ flex: 1 }}>
+            {/* The one selectable cell in the row: the source, without the
+                oid / author / line-number gutters beside it, so a copied block
+                pastes as code. `.pg-selectable` (index.css) opts back in from
+                the app-wide `user-select: none` — without it a blamed line could
+                not be selected or copied AT ALL, which is the same contract the
+                four diff surfaces have kept since #61 (#297). */}
+            <span className="pg-selectable" style={{ flex: 1 }}>
               <BlameText text={l.content} syntax={syntax?.[i]} />
             </span>
           </div>

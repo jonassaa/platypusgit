@@ -41,6 +41,7 @@ import {
   HUNK_LEAD_ROWS,
   hunkExtentRows,
   scrollTopForHunk,
+  scrollTopForRow,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
@@ -57,6 +58,7 @@ import {
   chordFor,
   usePaneList,
   useHunkNav,
+  useDiffLineFocus,
 } from "@/features/keymap";
 import type { FileDiff } from "@/lib/types";
 
@@ -345,6 +347,42 @@ export function DiffViewerScreen() {
     },
     [rowH, scrollDiffTo],
   );
+  // The line caret (#297). Read-only surface, so no `onToggle`: Space stays
+  // unclaimed here and falls through to whatever else wants it. The caret is for
+  // reading — knowing where F7 put you, and having somewhere for the next arrow
+  // key to start from.
+  //
+  // Wrap mode is the one case that cannot go by offset: `heights` stops
+  // describing the rendered rows there, which is the same reason windowing is
+  // off — and because it IS off, every row is mounted and the DOM can be asked
+  // directly. That is the one situation where a querySelector cannot silently
+  // no-op (the #68 G10 trap), so it is safe here and nowhere else.
+  const scrollRowIntoView = React.useCallback(
+    (rowIndex: number): boolean => {
+      const el = scrollRef.current;
+      if (!el) return false;
+      if (wrap) {
+        const row = el.querySelector<HTMLElement>("[data-focused]");
+        row?.scrollIntoView?.({ block: "nearest" });
+        return !!row;
+      }
+      const want = scrollTopForRow(heights, rowIndex, {
+        scrollTop: el.scrollTop,
+        viewportH: el.clientHeight,
+      });
+      scrollDiffTo(want);
+      return Math.abs(el.scrollTop - want) <= 1;
+    },
+    [heights, scrollDiffTo, wrap],
+  );
+  const lineFocus = useDiffLineFocus({
+    paneId: "diff.view",
+    rows,
+    // A refetched diff renumbers, so the caret cannot outlive one.
+    resetKey: diff,
+    scrollToRow: scrollRowIntoView,
+  });
+
   const hunkCursor = useHunkNav({
     paneIds: ["diff.files", "diff.view"],
     count: diff?.hunks.length ?? 0,
@@ -352,6 +390,11 @@ export function DiffViewerScreen() {
     // Wrap mode measures the mounted rows instead of trusting `heights` — same
     // centring rule, different ruler.
     scrollToHunk: wrap ? scrollToHunkInWrap : scrollToHunk,
+    // The caret rides along, and the cursor follows it back (#297).
+    onLand: (h) => {
+      lineFocus.focusRow(extents[h]?.first);
+    },
+    follows: lineFocus.focused?.hunkIndex ?? null,
     // Split mode has no unified scroll container, and `useViewportH` keeps the
     // last height it managed to read rather than resetting to 0 when the element
     // goes away — so the mode is part of the question, not just the measurement.
@@ -611,6 +654,7 @@ export function DiffViewerScreen() {
                   rows={rows}
                   window={win}
                   wrap={wrap}
+                  focusedRow={lineFocus.focused?.rowIndex ?? null}
                   activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
                   onExpandGap={expandGap}
                   findMarks={find.marksFor}

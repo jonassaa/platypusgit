@@ -32,6 +32,22 @@ const selectedRow = `${filesPane} [data-pg-row][data-selected]`;
 // FocusableScroll's ariaLabel — the diff pane's own scroll container.
 const diffScroll = '[aria-label="Diff"]';
 const activeHunk = (i: number) => `[data-hunk-index="${i}"][data-hunk-active]`;
+/** The line caret — one row at most, inside the diff pane (#297). */
+const caret = '[data-pg-pane="diff.view"] [data-focused]';
+
+/** Read-only probes, so bare `execute` rather than `executeOnce`. */
+const caretText = () =>
+  browser.execute(
+    (sel: string) => document.querySelector(sel)?.textContent ?? null,
+    caret,
+  );
+const caretCount = () =>
+  browser.execute((sel: string) => document.querySelectorAll(sel).length, caret);
+const flashHere = () =>
+  browser.execute(() => ({
+    up: !!document.querySelector("[data-pg-flash]"),
+    anchored: !!document.querySelector("[data-pg-flash][data-pg-flash-at]"),
+  }));
 
 const FILES = ["one.txt", "two.txt"] as const;
 const LINES = 260;
@@ -103,6 +119,19 @@ describe("diff navigation (issue 188)", () => {
       diffScroll,
     );
     expect(scrollTop).toBeGreaterThan(0);
+
+    // ...and the caret is ON that change (#297). A diff that opens at its first
+    // change while the text cursor stays unplaced contradicts itself: the mark
+    // says "you are here" and the first arrow key says "you are at line 1".
+    await waitForSelector(caret, "the diff opened with no caret on the change");
+    expect(await caretCount()).toBe(1);
+    // `extent.first` is the hunk's first CHANGED row, and the fixture MODIFIES
+    // line 100 — which diffs as a deletion followed by an addition. So the caret
+    // lands on the `−` row carrying the OLD text, not on the `+` row that
+    // replaced it. Asserting the absence of "CHANGED" is what pins that.
+    const opened = await caretText();
+    expect(opened).toContain("line 100");
+    expect(opened).not.toContain("CHANGED");
   });
 
   it("F7 carries into the next file at its first change, and stops at the last", async () => {
@@ -119,8 +148,19 @@ describe("diff navigation (issue 188)", () => {
 
     // Inside the file first: the cursor opened on change 1, so one F7 reaches the
     // last change rather than the second.
+    await waitForSelector(caret, "the diff opened with no caret");
+    expect(await caretText()).toContain("line 100");
     await jsChord("F7");
     await waitForSelector(activeHunk(1), "F7 did not advance to the second change");
+    // The caret went WITH it, and there is still only one of it.
+    await browser.waitUntil(
+      async () => (await caretText())?.includes("line 200") ?? false,
+      {
+        timeout: 10_000,
+        timeoutMsg: "the caret stayed behind when F7 moved to the second change",
+      },
+    );
+    expect(await caretCount()).toBe(1);
 
     // At the last change, F7 announces the crossing WITHOUT performing it. Before
     // issue 188 this press was a silent no-op that still claimed the chord.
@@ -128,9 +168,17 @@ describe("diff navigation (issue 188)", () => {
     expect(await $(selectedRow).getText()).toContain(first);
     const hint = await flashLog();
     expect(hint[hint.length - 1]).toContain("again for the next file");
+    // Beside the caret, not at the bottom of the window (#297). Only a real
+    // webview can show this: the placement reads `getBoundingClientRect`, which
+    // is all zeros without layout.
+    expect(await flashHere()).toEqual({ up: true, anchored: true });
 
     // The next press opens the next file, moving the FILE LIST selection too.
     await jsChord("F7");
+    // Checked HERE, before any wait: the dismissal is synchronous inside the
+    // keydown handler, and the toast would have expired on its own within ~1.7s
+    // — so asserting it after the waits below would pass either way.
+    expect((await flashHere()).up).toBe(false);
     await browser.waitUntil(
       async () => (await $(selectedRow).getText()).includes(second),
       {
@@ -141,6 +189,14 @@ describe("diff navigation (issue 188)", () => {
     await waitForSelector(
       activeHunk(0),
       "the next file did not open at its first change",
+    );
+    // The caret came across with it, onto the new file's first change.
+    await browser.waitUntil(
+      async () => (await caretText())?.includes("line 100") ?? false,
+      {
+        timeout: 10_000,
+        timeoutMsg: "the caret did not follow F7 into the next file",
+      },
     );
 
     // ...and the end of the LIST stops, rather than cycling back to the first file.

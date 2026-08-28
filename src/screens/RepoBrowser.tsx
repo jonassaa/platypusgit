@@ -61,6 +61,7 @@ import {
   flattenDiffRows,
   hunkExtentRows,
   scrollTopForHunk,
+  scrollTopForRow,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
@@ -98,6 +99,7 @@ import {
   useAction,
   useHunkNav,
   usePaneList,
+  useDiffLineFocus,
 } from "@/features/keymap";
 import type {
   BranchInfo,
@@ -746,11 +748,43 @@ export function RepoBrowserScreen() {
     },
     [diffExtents, diffHeights, diffRowH, scrollDiffTo],
   );
+  // The line caret (#297). Read-only surface, so no `onToggle`: Space stays
+  // unclaimed here and falls through to whatever else wants it. The caret is for
+  // reading — knowing where F7 put you, and having somewhere for the next arrow
+  // key to start from.
+  const scrollDiffRowIntoView = React.useCallback(
+    (rowIndex: number): boolean => {
+      const el = diffScrollRef.current;
+      if (!el) return false;
+      const want = scrollTopForRow(diffHeights, rowIndex, {
+        scrollTop: el.scrollTop,
+        viewportH: el.clientHeight,
+      });
+      scrollDiffTo(want);
+      return Math.abs(el.scrollTop - want) <= 1;
+    },
+    [diffHeights, scrollDiffTo],
+  );
+  const lineFocus = useDiffLineFocus({
+    paneId: "repo.preview",
+    rows: diffRows,
+    resetKey: diff,
+    scrollToRow: scrollDiffRowIntoView,
+    // Ignore-whitespace makes hunk indices unusable, and the caret's index space
+    // is derived from them — the same gate the hunk buttons sit behind (#61 D2).
+    disabled: !!hunkActionsDisabled,
+  });
+
   const hunkCursor = useHunkNav({
     paneIds: ["repo.tree", "repo.preview"],
     count: isTextualDiff(diff) && diff ? diff.hunks.length : 0,
     resetKey: selectedFile?.path ?? null,
     scrollToHunk,
+    // The caret rides along, and the cursor follows it back (#297).
+    onLand: (h) => {
+      lineFocus.focusRow(diffExtents[h]?.first);
+    },
+    follows: lineFocus.focused?.hunkIndex ?? null,
     ready: diffOpenReady({
       // The fetch is async, so this pane renders once with the outgoing file's
       // rows while the selection already names the new one.
@@ -1211,6 +1245,7 @@ export function RepoBrowserScreen() {
               <PGWindowedDiff
                 rows={diffRows}
                 window={diffWin}
+                focusedRow={lineFocus.focused?.rowIndex ?? null}
                 activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
                 onExpandGap={expandGap}
                 findMarks={find.marksFor}

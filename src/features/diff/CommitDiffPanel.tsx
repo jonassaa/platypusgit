@@ -11,7 +11,13 @@ import {
 } from "@/design";
 import { useElementSize } from "@/lib/useElementSize";
 import { MinimapGutter } from "./DiffMinimap";
-import { PGPane, FocusableScroll, usePaneList, useHunkNav } from "@/features/keymap";
+import {
+  PGPane,
+  FocusableScroll,
+  usePaneList,
+  useHunkNav,
+  useDiffLineFocus,
+} from "@/features/keymap";
 import { fileIconSpec } from "@/lib/fileIcon";
 import { WhitespaceToggle } from "./WhitespaceToggle";
 import { diffOpenReady, useDiffGaps, useExpandedGaps } from "./useDiffGaps";
@@ -21,6 +27,7 @@ import {
   flattenDiffRows,
   hunkExtentRows,
   scrollTopForHunk,
+  scrollTopForRow,
 } from "@/lib/diffRows";
 import { useVariableWindow } from "@/lib/useVariableWindow";
 import { useViewportH } from "@/lib/useViewportH";
@@ -288,6 +295,33 @@ export function CommitDiffPanel({
     resetKey: selected,
   });
 
+  // The line caret (#297). Read-only surface, so no `onToggle`: Space stays
+  // unclaimed here and falls through to whatever else wants it. The caret is for
+  // reading — knowing where F7 put you, and having somewhere for the next arrow
+  // key to start from.
+  //
+  // REVEAL semantics, unlike F7's centring below: a cursor stepping one row
+  // should scroll one row. Both go by offset — the row is usually unmounted.
+  const scrollRowIntoView = React.useCallback(
+    (rowIndex: number): boolean => {
+      const el = scrollRef.current;
+      if (!el) return false;
+      const want = scrollTopForRow(heights, rowIndex, {
+        scrollTop: el.scrollTop,
+        viewportH: el.clientHeight,
+      });
+      scrollDiffTo(want);
+      return Math.abs(el.scrollTop - want) <= 1;
+    },
+    [heights, scrollDiffTo],
+  );
+  const lineFocus = useDiffLineFocus({
+    paneId: viewPaneId,
+    rows,
+    resetKey: selected,
+    scrollToRow: scrollRowIntoView,
+  });
+
   // F7/⇧F7. The cursor lands on each hunk's ANCHOR row — its first changed line —
   // and scrolling goes BY OFFSET, because that row is usually unmounted (#157).
   const extents = React.useMemo(() => hunkExtentRows(rows), [rows]);
@@ -316,6 +350,11 @@ export function CommitDiffPanel({
     count: current?.hunks.length ?? 0,
     resetKey: selected,
     scrollToHunk,
+    // The caret rides along, and the cursor follows it back (#297).
+    onLand: (h) => {
+      lineFocus.focusRow(extents[h]?.first);
+    },
+    follows: lineFocus.focused?.hunkIndex ?? null,
     ready: diffOpenReady({
       // `current` falls back to `diffs[0]` while `selected` is still the previous
       // commit's file, so these disagree for exactly the renders where the row
@@ -569,9 +608,11 @@ export function CommitDiffPanel({
               );
             }
             const kind = row.line.kind;
+            const focused = lineFocus.focused?.rowIndex === win.start + k;
             const line = (
               <div
                 key={`l${win.start + k}`}
+                data-focused={focused || undefined}
                 style={{
                   height: `var(--diff-row-h)`,
                   fontFamily: "var(--font-mono)",
@@ -594,6 +635,13 @@ export function CommitDiffPanel({
                         : "2px solid transparent",
                   paddingLeft: 2,
                   boxSizing: "border-box",
+                  // outline, not a border: this row's height is the window's
+                  // pitch, and anything that grows it puts the variable-height
+                  // arithmetic out of step with what is rendered. The offset
+                  // pulls the ring inside so neighbours do not clip it. Same
+                  // rule, and same two lines, as `PGDiffRow`.
+                  outline: focused ? "1px solid var(--accent)" : undefined,
+                  outlineOffset: focused ? "-1px" : undefined,
                   color:
                     kind === "add"
                       ? "var(--git-added)"

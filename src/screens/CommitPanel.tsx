@@ -834,6 +834,17 @@ export function CommitPanelScreen() {
     onToggle: toggleFocusedLine,
   });
 
+  // A click is a navigation too. Selecting a line for staging without moving the
+  // caret leaves the reader's two positions in different places, so the next
+  // arrow key resumes from wherever they last used the keyboard (#297).
+  const onLineClickFocusing = React.useCallback(
+    (hunkIndex: number, changedIndex: number, range: boolean) => {
+      lineFocus.focusLine(hunkIndex, changedIndex);
+      onLineClick(hunkIndex, changedIndex, range);
+    },
+    [lineFocus, onLineClick],
+  );
+
   // ONE list across both sections, staged first — the rendered order. Declared
   // here because both `usePaneList` (arrows) and `useHunkNav` (F7 carrying into
   // the next file, issue 188) address the same list: two orderings for two
@@ -861,6 +872,16 @@ export function CommitPanelScreen() {
     count: isTextualDiff(diff) && diff ? diff.hunks.length : 0,
     resetKey: selKey,
     scrollToHunk,
+    // The caret rides along (#297): every landing F7, shift-F7 and the auto-open
+    // make puts the line cursor on that hunk's first changed row — `extent.first`
+    // IS the anchor row, and it always carries a changedIndex, so Space is live
+    // the moment the reader arrives rather than after an arrow key to wake it.
+    onLand: (h) => {
+      lineFocus.focusRow(extents[h]?.first);
+    },
+    // ...and the cursor follows the caret back, so F7 means "the next change
+    // after where I am" rather than "after where I last pressed F7".
+    follows: lineFocus.focused?.hunkIndex ?? null,
     // Split mode renders no unified scroll container, and `useViewportH` keeps the
     // last height it read rather than resetting to 0 when that element goes away.
     ready:
@@ -1543,7 +1564,7 @@ export function CommitPanelScreen() {
                 activeHunk={hunkCursor >= 0 ? hunkCursor : undefined}
                 onExpandGap={expandGap}
                 selectedLines={(i) => lineSel[i] ?? []}
-                onLineClick={onLineClick}
+                onLineClick={onLineClickFocusing}
                 focusedRow={lineFocus.focused?.rowIndex ?? null}
                 findMarks={find.marksFor}
                 hunkActions={(i) => ({
