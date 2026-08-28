@@ -138,6 +138,11 @@ export const useSubmodulesStore = create<SubmodulesState>((set, get) => ({
           await get().refresh();
           set({ error: toAppError(e) });
         },
+        // `busy` above spins the right ROW; this puts the op in the status bar
+        // and, with it, within reach of the Cancel button — which is gated on an
+        // `activity` entry existing (#296). An update that has to fetch is as
+        // stallable as any other network op.
+        { key: "submodule", label: path ? `Updating ${path}…` : "Updating submodules…" },
       );
     } finally {
       set({ busy: null });

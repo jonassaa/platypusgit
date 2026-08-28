@@ -159,6 +159,12 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   `set({ error })` last. (`docs/dev/frontend.md`)
 - **A new `NavIntent` kind must be routed in `AppShell`** — compile-enforced
   (`assertNever`) + `AppShell.navroutes.test.tsx`. (`docs/dev/frontend.md`)
+- **A new long-running op joins `RepoActivity`**, and one that can raise a
+  credential challenge lets `withAuthRetry` own its label (pass `{ key, label }`,
+  never a `finally` at the call site — that clears while the password dialog is
+  still open). `RepoActivity` is what produces the status line, the progress bar
+  and the Cancel button; a private `busy` field only says which row is busy.
+  (`docs/dev/frontend.md`)
 - **Diff surfaces:** one row model (`flattenDiffRows`); gate text rendering on
   `isTextualDiff`, scroll by offset (never `scrollIntoView` under windowing),
   measure viewports with `lib/useViewportH`/`useElementSize` (read first,

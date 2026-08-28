@@ -643,6 +643,38 @@ export interface CloneProgress {
   percent: number;
 }
 
+/** Which network op a `net://progress` tick belongs to. Mirrors Rust `NetOp`. */
+export type NetOp = "Fetch" | "Pull" | "Push";
+
+/**
+ * One tick of `net://progress` (#296). Mirrors `NetProgress` in types.rs.
+ *
+ * `repoId` because the event is app-global while the indicator is per-repository
+ * — a background tab's fetch must not drive the active tab's bar.
+ */
+export interface NetProgress {
+  repoId: string;
+  op: NetOp;
+  phase: string;
+  percent: number;
+}
+
+/**
+ * One tick of `rebase://progress` (#296). Mirrors `RebaseProgress` in types.rs.
+ *
+ * Published before each step is applied, so `nextIndex` is the number of steps
+ * already done — the same value `RebaseStatus.nextIndex` carries, which is what
+ * lets the operation bar render both with one `+ 1`.
+ */
+export interface RebaseProgress {
+  repoId: string;
+  nextIndex: number;
+  total: number;
+  action: RebaseAction;
+  shortOid: string;
+  subject: string;
+}
+
 // ── Forge integration (#92) ──────────────────────────────────────────────────
 // Mirrors `src-tauri/src/forge/mod.rs`. A forge token NEVER appears in any of
 // these: `forge_sign_in` takes one and returns an identity, and nothing hands

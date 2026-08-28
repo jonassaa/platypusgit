@@ -737,6 +737,38 @@ pub struct RebaseStatus {
     pub last_completed: Option<RebaseSummary>,
 }
 
+/// One step boundary during a rebase replay, as emitted on `rebase://progress`
+/// (#296).
+///
+/// `rebase_start` returns a [`RebaseStatus`] only when the plan finishes or
+/// pauses, so `OperationBar`'s "step N of M" could never render during the part
+/// that actually takes time. This is the same counter, published as it moves.
+///
+/// Emitted BEFORE the step is applied, so `next_index` is the number of steps
+/// already done and the step being announced is `next_index + 1` — exactly the
+/// arithmetic `RebaseStatus.next_index` already gets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseProgress {
+    pub repo_id: String,
+    pub next_index: usize,
+    pub total: usize,
+    pub action: RebaseAction,
+    /// Abbreviated pre-rebase oid of the commit being replayed.
+    pub short_oid: String,
+    /// The commit's subject line; empty when it could not be read, which is not
+    /// worth failing a rebase over.
+    pub subject: String,
+}
+
+/// Where [`RebaseProgress`] ticks go.
+///
+/// `&dyn` rather than a generic parameter because `GitBackend` must stay
+/// object-safe — `AppState` holds an `Arc<dyn GitBackend>`. `Send + Sync`
+/// because the sink closes over a Tauri `AppHandle` and runs inside
+/// `spawn_blocking`.
+pub type RebaseProgressSink<'a> = &'a (dyn Fn(RebaseProgress) + Send + Sync);
+
 /// How to integrate fetched changes during a pull.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PullMode {
@@ -789,6 +821,35 @@ pub struct ReflogEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloneProgress {
+    pub phase: String,
+    pub percent: u8,
+}
+
+/// Which network op a `net://progress` tick belongs to (#296).
+///
+/// One variant per `RepoActivity` key that can report a percentage, so the
+/// frontend can route a tick to the indicator already on screen rather than
+/// inventing a second one. LFS and submodule ops are deliberately absent: they
+/// are `git lfs`/`git submodule` wrappers whose stderr is not git's own
+/// `--progress` sideband, so they get a label and a Cancel button but no bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum NetOp {
+    Fetch,
+    Pull,
+    Push,
+}
+
+/// One progress tick from a fetch, pull or push, as emitted on `net://progress`.
+///
+/// Carries `repo_id` because the event is app-global while the indicator is
+/// per-repository: a tick from a background tab's fetch must not drive the
+/// active tab's bar. Same `phase`/`percent` shape as [`CloneProgress`], because
+/// it is parsed out of the same sideband by the same parser.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetProgress {
+    pub repo_id: String,
+    pub op: NetOp,
     pub phase: String,
     pub percent: u8,
 }

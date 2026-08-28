@@ -1,0 +1,153 @@
+// The status bar's "something is running" line (#296).
+//
+// One component rather than markup inlined in `AppStatusBar`, because it is the
+// only place in the app that answers all four of the questions a waiting user
+// has — what is running, how far along, how long it has been, and can I stop it
+// — and those answers should not drift apart across surfaces.
+//
+// Its own file also keeps the 1 Hz elapsed-time re-render inside a leaf: the
+// whole status bar would otherwise re-render every second while any op is live.
+
+import React from "react";
+
+import { PGStatusItem } from "@/design";
+import {
+  activityCount,
+  isCancellable,
+  primaryActivity,
+  type ActivityState,
+} from "./repoActivity";
+import { useRepoStore } from "./useRepoStore";
+
+/**
+ * How long an operation must run before its elapsed time appears.
+ *
+ * Every fetch shows a number for a moment otherwise, which is noise: the reason
+ * to show elapsed time at all is "this is taking longer than I expected", and
+ * nothing under a few seconds is. It also keeps the 1 Hz re-render off the
+ * common case, where the op is over before the first tick.
+ */
+export const ELAPSED_AFTER_MS = 3000;
+
+/** `42s`, `1m 20s`. Seconds resolution — this is a "should I worry?" readout. */
+export function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  if (total < 60) return `${total}s`;
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
+/** Milliseconds since `startedAt`, re-read once a second. Null when idle. */
+function useElapsed(startedAt: number | null): number | null {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (startedAt === null) return;
+    // Re-read immediately as well as on the interval: mounting mid-operation
+    // (a tab switch back) would otherwise show a stale `now` for up to a second.
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [startedAt]);
+  if (startedAt === null) return null;
+  return Math.max(0, now - startedAt);
+}
+
+/** The determinate bar, shown only once git has reported a real percentage. */
+function ProgressBar({ percent }: { percent: number }) {
+  return (
+    <span
+      data-testid="activity-bar"
+      data-percent={percent}
+      aria-hidden
+      style={{
+        display: "inline-block",
+        width: 52,
+        height: 4,
+        marginLeft: 2,
+        background: "var(--bg-2)",
+        borderRadius: 2,
+        overflow: "hidden",
+        verticalAlign: "middle",
+      }}
+    >
+      <span
+        style={{
+          display: "block",
+          height: "100%",
+          // Clamped: a malformed tick must not paint outside the track.
+          width: `${Math.max(0, Math.min(100, percent))}%`,
+          background: "var(--accent)",
+        }}
+      />
+    </span>
+  );
+}
+
+function ActivityLine({ state }: { state: ActivityState }) {
+  const elapsed = useElapsed(state.startedAt);
+  const showElapsed = elapsed !== null && elapsed >= ELAPSED_AFTER_MS;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span data-testid="activity-label">{state.label}</span>
+      {state.percent !== undefined && (
+        <>
+          <ProgressBar percent={state.percent} />
+          <span data-testid="activity-percent">{state.percent}%</span>
+        </>
+      )}
+      {showElapsed && (
+        <span data-testid="activity-elapsed" style={{ color: "var(--fg-3)" }}>
+          {formatElapsed(elapsed)}
+        </span>
+      )}
+    </span>
+  );
+}
+
+export function ActivityStatus() {
+  const activity = useRepoStore((s) => s.activity);
+  const primary = primaryActivity(activity);
+  if (!primary) return null;
+
+  // More than one op at a time stopped being hypothetical once LFS, submodule
+  // and forge checkouts joined `activity` (#296). Naming the count beats
+  // silently hiding the others behind whichever one sorts first.
+  const others = activityCount(activity) - 1;
+
+  return (
+    <>
+      <PGStatusItem
+        icon="sync"
+        tone="accent"
+        label={<ActivityLine state={primary.state} />}
+      />
+      {others > 0 && (
+        <PGStatusItem
+          label={`+${others} more`}
+        />
+      )}
+      {isCancellable(primary.key) && (
+        /*
+          The way out of a stalled fetch, pull or push (#234), and the only one
+          the toolbar's spinning buttons do not offer. It sits beside the label
+          that says what is stuck, because that label is what a user stares at
+          while deciding the app has hung.
+
+          Its own item rather than an onClick on the label: a status line that
+          silently kills the operation when clicked is a trap, and there is
+          nowhere on a bare label to say "Cancel".
+
+          Gated on the op actually being cancellable (#296): it now also covers
+          LFS, submodule and forge ops — which were cancellable in the backend
+          all along and simply had no button — while a rebase replay, which
+          cannot be interrupted, does not get one it could not honour.
+        */
+        <PGStatusItem
+          icon="x"
+          label="Cancel"
+          tone="danger"
+          onClick={() => void useRepoStore.getState().cancelNetworkOps()}
+        />
+      )}
+    </>
+  );
+}

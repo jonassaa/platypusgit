@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use serde::Deserialize;
+use tokio::io::AsyncReadExt;
 
 use crate::{
     cli::{ASKPASS_MODE_ENV, ASKPASS_SECRET_ENV, ASKPASS_USERNAME_ENV},
@@ -100,6 +101,29 @@ pub async fn run_git_authenticated(
     args: &[&str],
     creds: Option<&Credentials>,
 ) -> AppResult<()> {
+    run_git_authenticated_with_progress(cwd, args, creds, &mut |_| {}).await
+}
+
+/// [`run_git_authenticated`], reporting git's own progress as it arrives (#296).
+///
+/// The op must be run with `--progress` for there to be anything to report — git
+/// writes no sideband progress when stderr is not a tty, which it never is here.
+/// `fetch_args`/`push_args` add the flag; a caller that does not is simply one
+/// whose sink never fires, which is why the plain wrapper above can share this
+/// body rather than keeping a second spawn path alive.
+///
+/// Streaming stderr instead of `wait_with_output()`-ing it is the whole
+/// difference between "a spinner" and "62% of 1000 objects" — the same reason
+/// the clone path grew this first, and the splitter is literally the same one
+/// (`progress::ProgressReader`). `stdout` goes to `/dev/null`: nothing has ever
+/// read it, and having exactly one pipe to drain by hand is what removes the
+/// deadlock `wait_with_output` was here to avoid.
+pub async fn run_git_authenticated_with_progress(
+    cwd: &Path,
+    args: &[&str],
+    creds: Option<&Credentials>,
+    on_progress: &mut (dyn FnMut(crate::git::types::CloneProgress) + Send),
+) -> AppResult<()> {
     // `proc::git_async` carries GIT_TERMINAL_PROMPT=0 (which `apply_auth_env`
     // sets too), a closed stdin — nothing feeds it, so an unexpected read would
     // block forever — and, on Windows, CREATE_NO_WINDOW: without it every fetch,
@@ -107,31 +131,58 @@ pub async fn run_git_authenticated(
     // timer with no user action at all (issue 172).
     let mut cmd = crate::proc::git_async(cwd);
     cmd.args(args)
-        // `Command::output()` sets these itself; spawning by hand below to keep
-        // the `Child` reachable means setting them here instead.
-        .stdout(std::process::Stdio::piped())
+        // Discarded, and always was — this function returns `()`. Nulling it now
+        // also keeps a chatty op from filling a pipe nobody drains.
+        .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        // The kill on cancel: the branch below drops the `wait_with_output`
-        // future, which owns the `Child`, and a dropped `Child` with this set is
-        // a killed process. Also covers the window closing mid-fetch.
+        // The kill on cancel: the branches below return without reaping, which
+        // drops the `Child`, and a dropped `Child` with this set is a killed
+        // process. Also covers the window closing mid-fetch.
         .kill_on_drop(true);
     apply_auth_env(&mut cmd, creds);
 
     let (_registration, mut cancel) = crate::cancel::register(crate::cancel::Scope::repo(cwd));
 
-    let child = cmd.spawn().map_err(|e| AppError::Io(e.to_string()))?;
-    // `wait_with_output` and not two manual pipe reads: it drains stdout and
-    // stderr concurrently, and a fetch whose stderr filled the pipe buffer while
-    // we waited on the exit status would deadlock.
-    let output = tokio::select! {
-        // `biased` so a pending cancel is never lost to a coin toss against a
-        // child that happens to be ready in the same poll.
+    let mut child = cmd.spawn().map_err(|e| AppError::Io(e.to_string()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::Internal("git produced no stderr pipe".into()))?;
+
+    let mut reader = crate::progress::ProgressReader::new(crate::progress::DEFAULT_TAIL_LINES);
+    let mut chunk = [0u8; 4096];
+    loop {
+        // Where a stalled fetch actually sits: the connection is open and the
+        // remote is saying nothing, so this read never completes. Selecting on
+        // the cancel token here is what keeps Cancel working (#234) now that the
+        // wait is spread across many reads instead of one `wait_with_output`.
+        let read = tokio::select! {
+            // `biased` so a pending cancel is never lost to a coin toss against a
+            // child that happens to be ready in the same poll. Without it, a
+            // fast-streaming fetch would keep winning that toss for an unbounded
+            // number of iterations after the user had already pressed Cancel.
+            biased;
+            _ = cancel.cancelled() => return Err(AppError::Cancelled),
+            r = stderr.read(&mut chunk) => r.map_err(|e| AppError::Io(e.to_string()))?,
+        };
+        if read == 0 {
+            break;
+        }
+        reader.push(&chunk[..read], on_progress);
+    }
+    reader.finish(on_progress);
+    let tail = reader.into_tail();
+
+    // Stderr at EOF means git has closed it, which it only does on the way out,
+    // so this rarely waits — but "rarely" is not "never", and a git that hung
+    // after its last output would otherwise be the one op Cancel could not stop.
+    let status = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Err(AppError::Cancelled),
-        finished = child.wait_with_output() => finished.map_err(|e| AppError::Io(e.to_string()))?,
+        s = child.wait() => s.map_err(|e| AppError::Io(e.to_string()))?,
     };
 
-    if !output.status.success() {
+    if !status.success() {
         // A cancel that lands while git is already dying loses the `select!`
         // race, and git's last words ("the remote end hung up unexpectedly")
         // would then be reported as a network failure to a user who pressed
@@ -139,7 +190,12 @@ pub async fn run_git_authenticated(
         if cancel.is_cancelled() {
             return Err(AppError::Cancelled);
         }
-        return Err(map_git_failure(&String::from_utf8_lossy(&output.stderr)));
+        // The tail, not raw stderr: progress redraws are already filtered out of
+        // it, so the classifier and the message the user reads see git's actual
+        // words rather than five hundred copies of "Receiving objects". Every
+        // non-progress line is kept, which is what `classify_auth_failure` and
+        // `host_from_stderr` need.
+        return Err(map_git_failure(&tail.join("\n")));
     }
     Ok(())
 }

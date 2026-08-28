@@ -535,6 +535,53 @@ const composer = useCommitComposer({ repoId, branch, ticketPattern, message, set
   `branchMenuItems` Pull/Push entries still use the split; they predate the
   helper and were left alone rather than changed under this feature's tests.
 
+### Progress and loading state (#296)
+
+`RepoActivity` is the app's ONE answer to "is something running, what is it, how
+far along, and can I stop it". A long op that keeps its busy state privately gets
+none of that surface — which is how LFS fetch and submodule update ended up
+cancellable in the backend but unstoppable from the UI for two releases.
+
+- **`withAuthRetry` owns the indicator, not its callers.** It resolves the moment
+  it RAISES a credential challenge; it does not await the retry, which runs later
+  from the dialog's callback. So a caller that set a label before calling and
+  cleared it in a `finally` cleared it while the user was still typing their
+  password, and the retried op — the slower attempt, by definition — ran with no
+  spinner, no status line and no Cancel. Pass `{ key, label }` and every attempt
+  gets its own. Pinned by `useRepoStore.activity.test.ts`; the six sites do not
+  stay in step by hand.
+- **A new long-running op joins `RepoActivity`.** A private `busy` field is only
+  for saying WHICH row is busy (`useLfsStore`, `useSubmodulesStore` and
+  `useForgeStore` keep theirs for exactly that, and set an activity entry too).
+- **Only ops that go through `run_git_authenticated` get a Cancel button**
+  (`isCancellable` in `repoActivity.ts`). It is the registration point for
+  `cancel::Scope::Repo`, so it is the precise set `cancel_network_op` can reach.
+  A rebase replay cannot be interrupted at all yet — offering a button that does
+  nothing is worse than offering none.
+- **`setActivity` is guarded on the repository, like `setFor`.** `activity` is a
+  per-repo slice field and an op outlives a tab switch: a fetch on A finishing
+  after the user moved to B used to clear B's entry, taking B's spinner and
+  Cancel with it. `frozenSlice` clears `activity` for the matching reason — with
+  writes scoped to the current repo, nothing would ever clear a parked tab's
+  entry, and returning to it would show a live status line for an op long over.
+  (The cost: a background tab's running op has no indicator until you come back
+  to it and `refreshAll` re-reads the world. Same trade `loading` already makes.)
+- **Ticks are guarded twice** (`applyNetProgress`): the event is app-global, so it
+  must name the open repository, AND an entry must already exist. Ticks are still
+  in flight when the process exits, and one landing after the op finished would
+  light a status line — with a Cancel button — over nothing.
+- **A label change keeps `startedAt` but drops `phase`/`percent`.** Pull's
+  stash → pull → pop is three labels but one wait, so restarting the elapsed
+  clock three times would make it useless; carrying a 90%-complete bar into the
+  stash pop would be a lie.
+- **Say when you stop doing the thing you said you were doing.** Every network op
+  sets `Refreshing…` before its `refreshAll`, which on a large repository is a
+  real share of the wall clock spent under a label that says "Fetching".
+- **Elapsed time appears only after `ELAPSED_AFTER_MS`.** It exists to answer "is
+  this stuck?", and a number that flashes up on every 200 ms fetch is noise. It
+  also keeps the 1 Hz re-render off the common case — and that re-render is why
+  `ActivityStatus` is a leaf component rather than markup in `AppStatusBar`.
+
 ### Settings: one validator, two untrusted sources (#254)
 
 `useSettingsStore` reads a payload it does not control from two places — the

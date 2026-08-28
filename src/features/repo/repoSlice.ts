@@ -184,14 +184,19 @@ export const REPO_SLICE_KEYS = Object.keys(emptySlice()) as (keyof RepoSlice)[];
 /**
  * The slice as it should be PARKED on an inactive tab.
  *
- * The three in-flight flags are cleared: their requests were issued against the
+ * Every in-flight marker is cleared: those requests were issued against the
  * repository that is no longer active, so `setFor` will drop their responses and
  * nothing will ever clear the flags again. Freezing `loadingMore: true` would
  * make "load more" a permanent no-op on that tab (its re-entry guard reads the
  * flag), and a frozen `loading`/`searching` would park a spinner forever.
  */
 export function frozenSlice(slice: RepoSlice): RepoSlice {
-  return { ...slice, loading: false, loadingMore: false, searching: false };
+  // `activity` clears for the same reason (#296), and it is the same class of
+  // bug the paragraph above describes: the op's `setActivity` is guarded on the
+  // repository being current, so once this tab is parked nothing will ever clear
+  // its entry. Left frozen, returning to the tab shows a spinner — and a Cancel
+  // button — for an operation that finished long ago.
+  return { ...slice, loading: false, loadingMore: false, searching: false, activity: {} };
 }
 
 /** Pick exactly the per-repo fields off a live store state. */

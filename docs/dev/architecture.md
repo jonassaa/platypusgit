@@ -35,6 +35,16 @@ proc.rs          THE only sanctioned child-process spawner (issue 172):
                  git / git_async / git_async_in (CREATE_NO_WINDOW,
                  GIT_TERMINAL_PROMPT=0, stdin closed), program / program_async,
                  and the two *_keeping_console exceptions. See backend.md
+progress.rs      Reading git's own `--progress` sideband off a child's stderr
+                 (#296). parse_progress turns "Receiving objects:  62%
+                 (620/1000)" into a CloneProgress; ProgressReader splits a byte
+                 stream on `\r` AS WELL AS `\n` (git redraws with a bare `\r`,
+                 so reading by line buffers a whole phase and the bar jumps
+                 instead of streaming), bounds an undelimited line, and keeps
+                 the non-progress lines as the failure-message tail. Clone had
+                 all of this privately; fetch/pull/push use the same code now,
+                 so the two cannot drift. Both callers keep their own select!
+                 loop — the cancel arms differ. See backend.md
 reveal.rs        "Reveal in Finder/Explorer" + "Open in terminal" (#215).
                  HostPlatform decouples argv building from the actual host, so
                  reveal_plan/terminal_plan are PURE and unit-tested for all

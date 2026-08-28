@@ -32,7 +32,14 @@ import { PullsScreen } from "@/screens/Pulls";
 import { SubmodulesScreen } from "@/screens/Submodules";
 import { WorktreesScreen } from "@/screens/Worktrees";
 
-import { useRepoStore } from "@/features/repo/useRepoStore";
+import {
+  applyNetProgress,
+  applyRebaseProgress,
+  useRepoStore,
+} from "@/features/repo/useRepoStore";
+import { ActivityStatus } from "@/features/repo/ActivityStatus";
+import { primaryActivity } from "@/features/repo/repoActivity";
+import type { NetProgress, RebaseProgress } from "@/lib/types";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { RepoTabs } from "@/features/repo/RepoTabs";
 import { headUpstream, openRepoDialog } from "@/features/repo/ops";
@@ -205,6 +212,22 @@ export function AppShell() {
     void useSubmodulesStore.getState().refresh();
     void useWorktreesStore.getState().refresh();
   }, [repo]);
+
+  // Progress ticks from the backend's long operations (#296).
+  //
+  // Subscribed once for the app's lifetime, not per repository: the events are
+  // app-global and carry their own `repoId`, and `applyNetProgress` /
+  // `applyRebaseProgress` drop anything that is not for the open one. Resubscribing
+  // on every tab switch would open a window where ticks are silently lost.
+  React.useEffect(() => {
+    const subs = [
+      listen<NetProgress>("net://progress", (e) => applyNetProgress(e.payload)),
+      listen<RebaseProgress>("rebase://progress", (e) => applyRebaseProgress(e.payload)),
+    ];
+    return () => {
+      for (const sub of subs) void sub.then((un) => un()).catch(() => {});
+    };
+  }, []);
 
   const autoFetchEnabled = useSettingsStore((s) => s.autoFetchEnabled);
   const autoFetchMinutes = useSettingsStore((s) => s.autoFetchMinutes);
@@ -671,7 +694,12 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const repo = useRepoStore((s) => s.current);
   const branches = useRepoStore((s) => s.branches);
   const status = useRepoStore((s) => s.status);
-  const activity = useRepoStore((s) => s.activity);
+  // Booleans, not the `activity` object: a fetch publishes a progress tick many
+  // times a second, and selecting the object would re-render the whole toolbar
+  // on each one. These flip twice per operation (#296).
+  const fetching = useRepoStore((s) => !!s.activity.fetch);
+  const pulling = useRepoStore((s) => !!s.activity.pull);
+  const pushing = useRepoStore((s) => !!s.activity.push);
   const refresh = useRepoStore((s) => s.refreshAll);
   const activePath = useTabsStore((s) => s.activePath);
   const defaultPullMode = useSettingsStore((s) => s.defaultPullMode);
@@ -743,7 +771,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   variant="default"
                   icon="fetch"
                   onClick={onFetch}
-                  loading={!!activity.fetch}
+                  loading={fetching}
                 >
                   Fetch
                 </PGButton>
@@ -752,7 +780,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   variant="default"
                   icon="pull"
                   onClick={onPull}
-                  loading={!!activity.pull}
+                  loading={pulling}
                 >
                   Pull{" "}
                   {behind > 0 && (
@@ -768,7 +796,7 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   variant="primary"
                   icon="push"
                   onClick={onPush}
-                  loading={!!activity.push}
+                  loading={pushing}
                 >
                   Push {ahead > 0 && <span style={{ marginLeft: 4 }}>↑{ahead}</span>}
                 </PGButton>
@@ -824,10 +852,11 @@ function AppStatusBar() {
   const branches = useRepoStore((s) => s.branches);
   const status = useRepoStore((s) => s.status);
   const loading = useRepoStore((s) => s.loading);
-  const activity = useRepoStore((s) => s.activity);
-  // First non-empty activity entry wins — expected to be one at a time.
-  const activityLabel =
-    activity.push ?? activity.pull ?? activity.fetch ?? activity.stash ?? activity.branch ?? null;
+  // A boolean, so the status bar does not re-render on every progress tick —
+  // `ActivityStatus` is the leaf that subscribes to the ticks themselves. Which
+  // entry wins, the bar, the elapsed clock and the Cancel button all live there
+  // now (#296); this only needs to know whether to fall back to "syncing…".
+  const busy = useRepoStore((s) => primaryActivity(s.activity) !== null);
 
   if (!repo) {
     return (
@@ -877,28 +906,8 @@ function AppStatusBar() {
               onClick={() => void openMergeWindow(repo.id)}
             />
           )}
-          {loading && !activityLabel && <PGStatusItem icon="sync" label="syncing…" />}
-          {activityLabel && (
-            <>
-              <PGStatusItem icon="sync" label={activityLabel} tone="accent" />
-              {/*
-                The way out of a stalled fetch, pull or push (#234), and the only
-                one the toolbar's spinning buttons do not offer. It sits beside
-                the label that says what is stuck, because that label is what a
-                user stares at while deciding the app has hung.
-
-                Its own item rather than an onClick on the label: a status line
-                that silently kills the operation when clicked is a trap, and
-                there is nowhere on a bare label to say "Cancel".
-              */}
-              <PGStatusItem
-                icon="x"
-                label="Cancel"
-                tone="danger"
-                onClick={() => void useRepoStore.getState().cancelNetworkOps()}
-              />
-            </>
-          )}
+          {loading && !busy && <PGStatusItem icon="sync" label="syncing…" />}
+          <ActivityStatus />
         </>
       }
       right={<PGStatusItem label={repo.path} />}

@@ -7,44 +7,9 @@ use crate::{
     error::{AppError, AppResult},
     git::libgit2::default_branch_name,
     git::types::{CloneProgress, RepoHandle},
+    progress::{ProgressReader, DEFAULT_TAIL_LINES},
     state::AppState,
 };
-
-/// Parse one stderr line from `git clone --progress`.
-///
-/// Git writes progress as `Receiving objects:  62% (620/1000)`, separated by
-/// carriage returns rather than newlines, and interleaves non-progress chatter
-/// ("Cloning into 'foo'...", "remote: Enumerating objects: 1000, done.").
-/// Unrecognized lines return `None` — a guess here would render a bogus bar.
-pub fn parse_progress(line: &str) -> Option<CloneProgress> {
-    let line = line.trim();
-    let (phase, rest) = line.split_once(':')?;
-    let phase = phase.trim();
-    if phase.is_empty() {
-        return None;
-    }
-    // Strip "remote:" prefix and parse the actual phase underneath.
-    if phase == "remote" {
-        return parse_progress(rest.trim());
-    }
-    // Reject non-progress lines that happen to have a colon.
-    if phase == "fatal" || phase == "warning" {
-        return None;
-    }
-    // Require an actual '%' character — split always yields at least one item,
-    // but we need to verify the delimiter was found.
-    let mut parts = rest.trim().splitn(2, '%');
-    let percent_token = parts.next()?.trim();
-    parts.next()?; // only Some when a '%' was actually present
-    let percent: u8 = percent_token.parse().ok()?;
-    if percent > 100 {
-        return None;
-    }
-    Some(CloneProgress {
-        phase: phase.to_string(),
-        percent,
-    })
-}
 
 /// The branch name the Init dialog should prefill.
 #[tauri::command]
@@ -289,20 +254,11 @@ pub async fn run_clone(
         .take()
         .ok_or_else(|| AppError::Internal("git clone produced no stderr pipe".into()))?;
 
-    // Git redraws each progress line with a bare `\r`; `\n` only shows up
-    // once, at the end of a phase ("...done."). Reading by `\n` alone (as
-    // `BufReader::read_until` did) buffers an entire phase — e.g. all of
-    // "Receiving objects" — and only releases it as one burst right before
-    // the next phase starts, which is not streaming: the bar freezes, then
-    // jumps. Read raw bytes as they arrive off the pipe and split on both
-    // `\r` and `\n`, carrying any trailing partial line across reads.
-    let mut tail: Vec<String> = Vec::new();
-    let mut pending: Vec<u8> = Vec::new();
+    // Splitting on `\r` as well as `\n`, the bounded `pending` buffer, and the
+    // progress/failure-tail classification all live in `progress.rs` now: fetch,
+    // pull and push read git's progress exactly the same way (#296).
+    let mut reader = ProgressReader::new(DEFAULT_TAIL_LINES);
     let mut chunk = [0u8; 4096];
-    // Bounds `pending` against a line that never gets a delimiter (a
-    // malformed or adversarial sideband stream) — `read_until` had no such
-    // bound and would have grown forever.
-    const MAX_PENDING: usize = 4096;
 
     loop {
         // Where a stalled clone actually sits: git has the connection open and
@@ -327,21 +283,10 @@ pub async fn run_clone(
         if read == 0 {
             break;
         }
-        pending.extend_from_slice(&chunk[..read]);
-        while let Some(idx) = pending.iter().position(|&b| b == b'\r' || b == b'\n') {
-            let line: Vec<u8> = pending.drain(..=idx).collect();
-            handle_clone_line(&line[..line.len() - 1], &mut on_progress, &mut tail);
-        }
-        if pending.len() > MAX_PENDING {
-            let overflow = std::mem::take(&mut pending);
-            handle_clone_line(&overflow, &mut on_progress, &mut tail);
-        }
+        reader.push(&chunk[..read], &mut on_progress);
     }
-    // EOF can leave one final undelimited line (e.g. git's last error
-    // message doesn't always end in a newline) — flush it too, or it's lost.
-    if !pending.is_empty() {
-        handle_clone_line(&pending, &mut on_progress, &mut tail);
-    }
+    reader.finish(&mut on_progress);
+    let tail = reader.into_tail();
 
     // Stderr at EOF means git has closed it, which it only does on the way out —
     // so this rarely waits. Selected on anyway: "rarely" is not "never", and a
@@ -435,29 +380,6 @@ fn clone_failure_message(tail: &[String], exit_code: Option<i32>) -> String {
     }
 }
 
-/// Classify one stderr segment (already split on `\r`/`\n`): feed progress
-/// lines to `on_progress`, keep everything else as context for a failure
-/// message. `parse_progress`'s contract is a single trimmed line — it must
-/// not see the delimiter itself.
-fn handle_clone_line(bytes: &[u8], on_progress: &mut impl FnMut(CloneProgress), tail: &mut Vec<String>) {
-    let line = String::from_utf8_lossy(bytes);
-    let line = line.trim();
-    if line.is_empty() {
-        return;
-    }
-    match parse_progress(line) {
-        Some(p) => on_progress(p),
-        // Keep non-progress lines: git's failure message is in here, and the
-        // exit status alone would say nothing useful.
-        None => {
-            tail.push(line.to_string());
-            if tail.len() > 20 {
-                tail.remove(0);
-            }
-        }
-    }
-}
-
 /// Clone `url` into `parent_dir/name`, emitting `clone://progress` as it goes.
 #[tauri::command]
 pub async fn clone_repo(
@@ -491,51 +413,6 @@ pub async fn clone_repo(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_a_receiving_objects_line() {
-        assert_eq!(
-            parse_progress("Receiving objects:  62% (620/1000)"),
-            Some(CloneProgress { phase: "Receiving objects".into(), percent: 62 })
-        );
-    }
-
-    #[test]
-    fn parses_every_phase_git_reports() {
-        for (line, phase, pct) in [
-            ("Counting objects: 100% (10/10), done.", "Counting objects", 100),
-            ("Compressing objects:   5% (1/20)", "Compressing objects", 5),
-            ("Resolving deltas: 100% (3/3), done.", "Resolving deltas", 100),
-            ("remote: Compressing objects:  45% (9/20)", "Compressing objects", 45),
-        ] {
-            assert_eq!(
-                parse_progress(line),
-                Some(CloneProgress { phase: phase.into(), percent: pct }),
-                "failed on {line}"
-            );
-        }
-    }
-
-    #[test]
-    fn ignores_lines_that_are_not_progress() {
-        for line in [
-            "Cloning into 'foo'...",
-            "remote: Enumerating objects: 1000, done.",
-            "",
-            "warning: redirecting to https://example.com/repo.git/",
-            "fatal: repository 'https://example.com/nope.git/' not found",
-        ] {
-            assert_eq!(parse_progress(line), None, "should ignore {line}");
-        }
-    }
-
-    #[test]
-    fn rejects_a_percentless_number_instead_of_guessing() {
-        // `split('%')` yields the whole string when the delimiter is absent, so
-        // this used to parse as a confident 6%. Git delimits progress with \r,
-        // so a truncated read really can hand us this.
-        assert_eq!(parse_progress("Receiving objects: 6"), None);
-    }
 
     #[test]
     fn clone_failure_message_uses_the_tail_when_present() {
