@@ -138,3 +138,58 @@ describe("Cancel", () => {
     );
   });
 });
+
+// The escalation is a two-click affordance on the backend (#263): the first
+// cancel SIGTERMs, so git can run `remove_lock_file_on_signal` and not strand
+// `.git/FETCH_HEAD.lock`; a second SIGKILLs, so it cannot. That makes the second
+// click load-bearing, which only works if the first one visibly changed
+// something. Before this the line still read "Fetching origin…" next to a button
+// still reading "Cancel", so the honest reading was "nothing happened" — and the
+// double-click that follows lands on SIGKILL a few hundred milliseconds later.
+describe("once the cancel has been asked for", () => {
+  beforeEach(() => {
+    mockInvoke("cancel_network_op", () => 1);
+  });
+
+  it("says Force stop, so the second click is a decision", () => {
+    show({ fetch: running("Fetching origin…") });
+
+    expect(screen.getByText("Cancel")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Cancel"));
+
+    expect(screen.getByText("Force stop")).toBeInTheDocument();
+    expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
+  });
+
+  it("says Cancelling… instead of the op's own label", () => {
+    show({ fetch: running("Fetching origin…") });
+
+    fireEvent.click(screen.getByText("Cancel"));
+
+    expect(screen.getByTestId("activity-label")).toHaveTextContent("Cancelling…");
+    expect(screen.queryByText("Fetching origin…")).not.toBeInTheDocument();
+  });
+
+  it("drops the progress bar, which would otherwise keep climbing", () => {
+    show({ fetch: running("Fetching origin…", { percent: 61 }) });
+    expect(screen.getByTestId("activity-percent")).toHaveTextContent("61%");
+
+    fireEvent.click(screen.getByText("Cancel"));
+
+    // A bar still moving after the click is the clearest possible way to tell
+    // the user nothing happened.
+    expect(screen.queryByTestId("activity-percent")).not.toBeInTheDocument();
+  });
+
+  it("stays clickable, because the second click IS the escalation", () => {
+    show({ fetch: running("Fetching origin…") });
+
+    fireEvent.click(screen.getByText("Cancel"));
+    fireEvent.click(screen.getByText("Force stop"));
+
+    // A button that disabled itself would leave a git that ignores SIGTERM
+    // unkillable — the dead end #234 existed to remove.
+    expect(getInvokeCalls().filter((c) => c.cmd === "cancel_network_op")).toHaveLength(2);
+  });
+});

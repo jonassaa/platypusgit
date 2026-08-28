@@ -19,6 +19,7 @@ beforeEach(() => {
   useCreateStore.setState({
     open: "clone",
     busy: false,
+    cancelRequested: false,
     progress: null,
     error: null,
   });
@@ -127,4 +128,43 @@ it("still reports a clone that genuinely failed", async () => {
   });
 
   expect(useCreateStore.getState().error).toBe("repository not found");
+});
+
+// Same two-click escalation as the status bar (#263): only the first cancel
+// gives git the chance to remove its own lock files and partial destination.
+describe("the cancel is visible after the first click", () => {
+  it("marks the clone as cancelling", async () => {
+    useCreateStore.setState({ busy: true });
+    mockInvoke("cancel_network_op", () => 1);
+
+    await useCreateStore.getState().cancelClone();
+
+    expect(useCreateStore.getState().cancelRequested).toBe(true);
+  });
+
+  it("does not mark it when no clone is running", async () => {
+    mockInvoke("cancel_network_op", () => 1);
+
+    await useCreateStore.getState().cancelClone();
+
+    expect(useCreateStore.getState().cancelRequested).toBe(false);
+  });
+
+  it("starts every run un-cancelled", async () => {
+    // A retry after a cancelled clone must ask politely again rather than
+    // inheriting the previous run's second-click state and going straight to
+    // SIGKILL.
+    useCreateStore.setState({ cancelRequested: true });
+    mockInvoke("clone_repo", () => {
+      expect(useCreateStore.getState().cancelRequested).toBe(false);
+      throw { kind: "Cancelled" };
+    });
+
+    await useCreateStore.getState().runClone({
+      url: "https://example.com/repo.git",
+      parentDir: "/tmp",
+      name: "repo",
+      recurseSubmodules: false,
+    });
+  });
 });
