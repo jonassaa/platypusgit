@@ -8,9 +8,8 @@
 // Its own file also keeps the 1 Hz elapsed-time re-render inside a leaf: the
 // whole status bar would otherwise re-render every second while any op is live.
 
-import React from "react";
-
 import { PGStatusItem } from "@/design";
+import { formatElapsed, useElapsed } from "./elapsed";
 import {
   activityCount,
   isCancellable,
@@ -28,28 +27,6 @@ import { useRepoStore } from "./useRepoStore";
  * common case, where the op is over before the first tick.
  */
 export const ELAPSED_AFTER_MS = 3000;
-
-/** `42s`, `1m 20s`. Seconds resolution — this is a "should I worry?" readout. */
-export function formatElapsed(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  if (total < 60) return `${total}s`;
-  return `${Math.floor(total / 60)}m ${total % 60}s`;
-}
-
-/** Milliseconds since `startedAt`, re-read once a second. Null when idle. */
-function useElapsed(startedAt: number | null): number | null {
-  const [now, setNow] = React.useState(() => Date.now());
-  React.useEffect(() => {
-    if (startedAt === null) return;
-    // Re-read immediately as well as on the interval: mounting mid-operation
-    // (a tab switch back) would otherwise show a stale `now` for up to a second.
-    setNow(Date.now());
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [startedAt]);
-  if (startedAt === null) return null;
-  return Math.max(0, now - startedAt);
-}
 
 /** The determinate bar, shown only once git has reported a real percentage. */
 function ProgressBar({ percent }: { percent: number }) {

@@ -38,6 +38,7 @@ import {
   useRepoStore,
 } from "@/features/repo/useRepoStore";
 import { ActivityStatus } from "@/features/repo/ActivityStatus";
+import { LoadingStatus } from "@/features/repo/LoadingStatus";
 import { primaryActivity } from "@/features/repo/repoActivity";
 import type { NetProgress, RebaseProgress } from "@/lib/types";
 import { useTabsStore } from "@/features/repo/useTabsStore";
@@ -851,7 +852,6 @@ function AppStatusBar() {
   const repo = useRepoStore((s) => s.current);
   const branches = useRepoStore((s) => s.branches);
   const status = useRepoStore((s) => s.status);
-  const loading = useRepoStore((s) => s.loading);
   // A boolean, so the status bar does not re-render on every progress tick —
   // `ActivityStatus` is the leaf that subscribes to the ticks themselves. Which
   // entry wins, the bar, the elapsed clock and the Cancel button all live there
@@ -906,7 +906,7 @@ function AppStatusBar() {
               onClick={() => void openMergeWindow(repo.id)}
             />
           )}
-          {loading && !busy && <PGStatusItem icon="sync" label="syncing…" />}
+          {!busy && <LoadingStatus />}
           <ActivityStatus />
         </>
       }

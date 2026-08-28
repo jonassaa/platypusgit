@@ -427,6 +427,45 @@ export function setActivity(repoId: string, key: ActivityKey, label: string | nu
   });
 }
 
+/**
+ * Register `work` as a named backend read for as long as it runs (#296 gap 8).
+ *
+ * Returns `work` unchanged, so it drops into an existing `Promise.all` without
+ * restructuring the call — which is the point: ten reads become ten named reads
+ * by wrapping each one, and a read added later that skips this is simply absent
+ * from the popover rather than breaking it.
+ *
+ * NOT `async`: the task has to be registered synchronously, before the first
+ * suspension point, or a `Promise.all` of ten reads would register them one
+ * microtask apart and the "longest-running" pick would be meaningless.
+ *
+ * Both ends are guarded on the repository, like `setFor` and `setActivity`: a
+ * read issued against a tab the user has since left must not add — or remove —
+ * a row describing the tab they are looking at now.
+ */
+export function trackLoad<T>(
+  repoId: string,
+  id: string,
+  label: string,
+  work: Promise<T>,
+): Promise<T> {
+  useRepoStore.setState((s) => {
+    if (s.current?.id !== repoId) return {};
+    // Replace rather than append when the id is already present: two refreshes
+    // can overlap, and the same read counted twice would inflate the "+ N
+    // others" count with work that is not actually separate.
+    const rest = s.loadingTasks.filter((t) => t.id !== id);
+    return { loadingTasks: [...rest, { id, label, startedAt: Date.now() }] };
+  });
+  return work.finally(() => {
+    useRepoStore.setState((s) => {
+      if (s.current?.id !== repoId) return {};
+      if (!s.loadingTasks.some((t) => t.id === id)) return {};
+      return { loadingTasks: s.loadingTasks.filter((t) => t.id !== id) };
+    });
+  });
+}
+
 /** Which activity entry a `net://progress` tick drives. */
 const NET_OP_KEY: Record<NetProgress["op"], ActivityKey> = {
   Fetch: "fetch",
@@ -698,7 +737,12 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     set({ commitFilter: filter, searching: true });
     const refspec = get().logRef;
     try {
-      const page = await getLogFilteredPage(repo.id, filter, null, PAGE_SIZE, refspec);
+      const page = await trackLoad(
+        repo.id,
+        "search",
+        "searching commits",
+        getLogFilteredPage(repo.id, filter, null, PAGE_SIZE, refspec),
+      );
       // Guard against a stale response overwriting a newer filter or scope.
       if (get().commitFilter !== filter || get().logRef !== refspec) return;
       setFor(repo.id, {
@@ -759,7 +803,12 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
     set({ logRef: refspec, loading: true, error: null });
     try {
-      const page = await getLogPage(repo.id, null, PAGE_SIZE, refspec);
+      const page = await trackLoad(
+        repo.id,
+        "log",
+        "loading history",
+        getLogPage(repo.id, null, PAGE_SIZE, refspec),
+      );
       // Guard against a stale response overwriting a newer scope.
       if (get().logRef !== refspec) return;
       setFor(repo.id, {
@@ -795,31 +844,50 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         rebaseStatus,
         bisectStatus,
         headInfo,
+      // Each read is named while it runs (#296 gap 8), so a refresh that takes
+      // nine seconds can say WHICH of the ten is holding it up instead of
+      // showing one undifferentiated "syncing…". The wrappers are the only
+      // change here — every promise is the same promise it always was.
       ] = await Promise.all([
-          getStatus(repo.id),
-          listBranches(repo.id),
-          listTags(repo.id),
-          listStashes(repo.id),
-          listRemotes(repo.id),
-          getLogPage(repo.id, null, PAGE_SIZE, logRef).catch((e) => {
-            // The browsed ref may have vanished since it was selected (e.g.
-            // the branch was deleted) — fall back to HEAD instead of failing
-            // the whole refresh.
-            if (logRef === null) throw e;
-            setFor(repo.id, { logRef: null });
-            return getLogPage(repo.id, null, PAGE_SIZE);
-          }),
-          repoStateFn(repo.id),
-          rebaseStatusFn(repo.id),
+          trackLoad(repo.id, "status", "reading status", getStatus(repo.id)),
+          trackLoad(repo.id, "branches", "listing branches", listBranches(repo.id)),
+          trackLoad(repo.id, "tags", "listing tags", listTags(repo.id)),
+          trackLoad(repo.id, "stashes", "listing stashes", listStashes(repo.id)),
+          trackLoad(repo.id, "remotes", "fetching remotes", listRemotes(repo.id)),
+          trackLoad(
+            repo.id,
+            "log",
+            "loading history",
+            getLogPage(repo.id, null, PAGE_SIZE, logRef).catch((e) => {
+              // The browsed ref may have vanished since it was selected (e.g.
+              // the branch was deleted) — fall back to HEAD instead of failing
+              // the whole refresh.
+              if (logRef === null) throw e;
+              setFor(repo.id, { logRef: null });
+              return getLogPage(repo.id, null, PAGE_SIZE);
+            }),
+          ),
+          trackLoad(repo.id, "repoState", "reading repository state", repoStateFn(repo.id)),
+          trackLoad(repo.id, "rebase", "reading rebase state", rebaseStatusFn(repo.id)),
           // Degrades instead of failing the refresh. `bisect_status` shells out to
           // `git rev-list --bisect-vars` for its progress numbers, and a repository
           // where that cannot run must still show its status, branches and log —
           // the same reasoning as the browsed-ref fallback above. The cost of the
           // fallback is a bar without step counts, not a broken screen.
-          bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
+          trackLoad(
+            repo.id,
+            "bisect",
+            "reading bisect state",
+            bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
+          ),
           // Same degrade-don't-fail policy: the window title (#217) falls back
           // to just the repo name rather than losing the whole refresh.
-          headInfoFn(repo.id).catch(() => null),
+          trackLoad(
+            repo.id,
+            "head",
+            "reading HEAD",
+            headInfoFn(repo.id).catch(() => null),
+          ),
         ]);
       setFor(repo.id, {
         status,

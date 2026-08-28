@@ -582,6 +582,38 @@ cancellable in the backend but unstoppable from the UI for two releases.
   also keeps the 1 Hz re-render off the common case — and that re-render is why
   `ActivityStatus` is a leaf component rather than markup in `AppStatusBar`.
 
+#### `loadingTasks` — the detail behind `loading` (gap 8)
+
+`refreshAll` is TEN backend reads behind one `Promise.all` with one boolean to
+describe them. That is fine until a refresh is slow, and then "syncing…" is
+exactly no help: a `/mnt/c` repository under WSL (#274) spends its nine seconds
+in one or two of the ten and nothing said which.
+
+- **Each read registers a named task while it runs**, via `trackLoad(repoId, id,
+  label, promise)`. It returns the promise unchanged, so it drops into the
+  existing `Promise.all` — a read added later that skips it is simply missing
+  from the popover rather than breaking it. `useRepoStore.loading.test.ts`
+  asserts the full set of ten ids, so an unwrapped read shows up as a diff.
+- **`trackLoad` is NOT `async`.** Registration has to happen before the first
+  suspension point, or ten reads fired together would register one microtask
+  apart and "longest-running" would mean "whichever scheduled first".
+- **`LoadingTask` is deliberately not `RepoActivity`.** An activity entry is an
+  operation the *user* started and earns a Cancel button; a loading task is the
+  app reading its own state, cannot be cancelled, and is usually over in under a
+  tenth of a second. Merging them would put a Cancel button on `listing tags`.
+- **`SHOW_AFTER_MS` is what makes this liveable.** A refresh runs on every tab
+  switch, every commit and after every network op. With no delay the corner of
+  the screen strobes all day; what survives 400 ms is the refresh worth reading
+  about. Same idea as `ELAPSED_AFTER_MS`, different threshold and purpose.
+- **The collapsed label names the longest-running read** (`primaryTask`), so as
+  the fast ones drop off it settles onto the one holding the refresh up. Reads
+  that started in the same millisecond are genuinely tied; the id breaks it so
+  the label cannot flap between two of them on every render.
+- The popover expands **upward** — the status bar is the last row on screen —
+  and sits at `zIndex: 40`: above content (1–5), below pickers and modals (100),
+  which must cover it. The shell root's `overflow: hidden` does not clip it,
+  because it grows into the content area rather than out of the window.
+
 ### Settings: one validator, two untrusted sources (#254)
 
 `useSettingsStore` reads a payload it does not control from two places — the

@@ -39,6 +39,7 @@ import type {
 import { LOG_REF_ALL } from "@/lib/types";
 import type { AppError, HookRejection } from "@/lib/errors";
 import type { RepoActivity } from "./repoActivity";
+import type { LoadingTask } from "./loadingTasks";
 
 export const DEFAULT_REBASE_STATUS: RebaseStatus = {
   inProgress: false,
@@ -129,6 +130,14 @@ export interface RepoSlice {
   /** Active long-running ops keyed by op kind. */
   activity: RepoActivity;
   /**
+   * The backend reads in flight right now (#296 gap 8) — the detail behind
+   * `loading`, which is one boolean for what is usually ten parallel queries.
+   *
+   * Per-repo like everything else here: a refresh running on a background tab
+   * must not describe the one on screen.
+   */
+  loadingTasks: LoadingTask[];
+  /**
    * The git hook refusal to display, or null (#232).
    *
    * Per-repo, and therefore here: a commit rejected by one repository's
@@ -171,6 +180,7 @@ export function emptySlice(): RepoSlice {
     rebaseStatus: DEFAULT_REBASE_STATUS,
     bisectStatus: DEFAULT_BISECT_STATUS,
     activity: {},
+    loadingTasks: [],
     hookRejection: null,
   };
 }
@@ -196,7 +206,14 @@ export function frozenSlice(slice: RepoSlice): RepoSlice {
   // repository being current, so once this tab is parked nothing will ever clear
   // its entry. Left frozen, returning to the tab shows a spinner — and a Cancel
   // button — for an operation that finished long ago.
-  return { ...slice, loading: false, loadingMore: false, searching: false, activity: {} };
+  return {
+    ...slice,
+    loading: false,
+    loadingMore: false,
+    searching: false,
+    activity: {},
+    loadingTasks: [],
+  };
 }
 
 /** Pick exactly the per-repo fields off a live store state. */

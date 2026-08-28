@@ -12,7 +12,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
-import { ActivityStatus, ELAPSED_AFTER_MS, formatElapsed } from "./ActivityStatus";
+import { ActivityStatus, ELAPSED_AFTER_MS } from "./ActivityStatus";
+import { formatElapsed } from "./elapsed";
 import { useRepoStore } from "./useRepoStore";
 import { emptySlice } from "./repoSlice";
 import type { RepoActivity } from "./repoActivity";
