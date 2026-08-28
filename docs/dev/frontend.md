@@ -353,6 +353,18 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `refreshAll` starts with `set({ error: null })` and React batches same-tick
   sets, so the opposite order wipes the banner. A failed git op must still
   refresh — the UI reflects disk truth even on error.
+- **Cancel is a two-click affordance, and the first click MUST be visible**
+  (#263). The backend sends `SIGTERM` on the first cancel of an op and
+  escalates to `SIGKILL` only on a second one — and only the `SIGTERM` lets git
+  run its own lock-file cleanup, so an accidental escalation strands
+  `.git/FETCH_HEAD.lock` and breaks the NEXT fetch. That makes the second click
+  load-bearing, which is only safe if the first one changed something on
+  screen: `cancelRequested` (in `RepoSlice`, and its own field on
+  `useCreateStore`) flips the status line to "Cancelling…" and the button to
+  "Force stop". Neither surface may become disabled — a git that ignores
+  `SIGTERM` is escapable only by clicking again. `cancelRequested` clears when
+  the last `activity` label goes, so the next stalled op starts from the polite
+  signal. See `docs/dev/backend.md` for the signal half.
 
 ## Styling
 

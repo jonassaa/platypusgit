@@ -202,7 +202,11 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `getpgid(pid) == pid` before `killpg`, so a future spawn site that forgot
   `process_group(0)` degrades to a single-process `kill` instead of signalling
   OUR OWN process group. The second click is the escalation signal — no timer,
-  no rule for how long the first gets. Windows has no `SIGTERM` and a
+  no rule for how long the first gets. **That puts a requirement on the UI:**
+  the first click has to visibly change something, or an impatient double-click
+  reaches `SIGKILL` in a few hundred milliseconds and strands the lock file
+  this whole path exists to protect. `cancelRequested` and the
+  "Cancelling…"/"Force stop" labels are that half — see `docs/dev/frontend.md`. Windows has no `SIGTERM` and a
   `CREATE_NO_WINDOW` child has no console for `GenerateConsoleCtrlEvent`, so
   there `kill_tree` is always `taskkill /F /T`; git gets no chance to clean up
   its lock files on Windows, a known and accepted gap, not one this closes.

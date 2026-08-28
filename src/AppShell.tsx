@@ -814,12 +814,19 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   );
 }
 
-function AppStatusBar() {
+/**
+ * Exported for `AppShell.cancelfeedback.test.tsx` only — it is rendered by
+ * `AppShell` below, never imported elsewhere. The alternative is driving the
+ * whole `App` through fifteen command mocks to read one label, which tests the
+ * wiring rather than the thing the label is for.
+ */
+export function AppStatusBar() {
   const repo = useRepoStore((s) => s.current);
   const branches = useRepoStore((s) => s.branches);
   const status = useRepoStore((s) => s.status);
   const loading = useRepoStore((s) => s.loading);
   const activity = useRepoStore((s) => s.activity);
+  const cancelRequested = useRepoStore((s) => s.cancelRequested);
   // First non-empty activity entry wins — expected to be one at a time.
   const activityLabel =
     activity.push ?? activity.pull ?? activity.fetch ?? activity.stash ?? activity.branch ?? null;
@@ -875,7 +882,11 @@ function AppStatusBar() {
           {loading && !activityLabel && <PGStatusItem icon="sync" label="syncing…" />}
           {activityLabel && (
             <>
-              <PGStatusItem icon="sync" label={activityLabel} tone="accent" />
+              <PGStatusItem
+                icon="sync"
+                label={cancelRequested ? "Cancelling…" : activityLabel}
+                tone="accent"
+              />
               {/*
                 The way out of a stalled fetch, pull or push (#234), and the only
                 one the toolbar's spinning buttons do not offer. It sits beside
@@ -885,10 +896,19 @@ function AppStatusBar() {
                 Its own item rather than an onClick on the label: a status line
                 that silently kills the operation when clicked is a trap, and
                 there is nowhere on a bare label to say "Cancel".
+
+                Two labels, because there are two signals (#263). The first
+                click SIGTERMs, which is what lets git remove its own lock
+                files; a second escalates to SIGKILL, which does not. So the
+                first click MUST visibly change something — otherwise the
+                honest reading of a status line that still says "Fetching…"
+                next to a button that still says "Cancel" is "nothing
+                happened", and the user double-clicks their way to the
+                stranded-lock-file bug the SIGTERM was added to avoid.
               */}
               <PGStatusItem
                 icon="x"
-                label="Cancel"
+                label={cancelRequested ? "Force stop" : "Cancel"}
                 tone="danger"
                 onClick={() => void useRepoStore.getState().cancelNetworkOps()}
               />

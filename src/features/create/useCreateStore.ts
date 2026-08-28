@@ -28,6 +28,16 @@ type OpenDialog = "none" | "clone" | "init";
 interface CreateState {
   open: OpenDialog;
   busy: boolean;
+  /**
+   * Whether Cancel has already been clicked on the clone in flight (#263).
+   *
+   * The backend escalates SIGTERM → SIGKILL on the second cancel of the same
+   * op, so the first click has to visibly change something or the user has no
+   * way to tell it landed — and only SIGTERM gives git the chance to remove
+   * its own lock files and partial destination. Meaningful only while `busy`;
+   * every run clears it on the way in.
+   */
+  cancelRequested: boolean;
   progress: CloneProgress | null;
   error: string | null;
   openClone: () => void;
@@ -58,6 +68,7 @@ interface CreateState {
 export const useCreateStore = create<CreateState>((set, get) => ({
   open: "none",
   busy: false,
+  cancelRequested: false,
   progress: null,
   error: null,
 
@@ -87,10 +98,13 @@ export const useCreateStore = create<CreateState>((set, get) => ({
 
   async cancelClone() {
     if (!get().busy) return;
-    // Nothing is set here: `runClone`'s catch owns the transition back to idle.
-    // Clearing `busy` from here would unlock the dialog while git was still
-    // being reaped, and a second Clone could start into the directory the first
-    // one is in the middle of deleting.
+    // `cancelRequested` is the only thing set here, and it is UI intent, not op
+    // state (#263): the second click escalates to SIGKILL, so the first one has
+    // to be visible in the button. `runClone`'s catch still owns the transition
+    // back to idle — clearing `busy` from here would unlock the dialog while git
+    // was still being reaped, and a second Clone could start into the directory
+    // the first one is in the middle of deleting.
+    set({ cancelRequested: true });
     await cancelNetworkOp().catch((e) => {
       // A cancel that could not even be signalled leaves the user stuck with no
       // way out, which is the whole bug — so it gets said out loud, in the
@@ -100,7 +114,7 @@ export const useCreateStore = create<CreateState>((set, get) => ({
   },
 
   async runClone({ url, parentDir, name, recurseSubmodules }) {
-    set({ busy: true, error: null, progress: null });
+    set({ busy: true, cancelRequested: false, error: null, progress: null });
 
     const attempt = async (creds?: Credentials) => {
       const dest = await cloneRepo(url, parentDir, name, recurseSubmodules, creds);
@@ -143,7 +157,7 @@ export const useCreateStore = create<CreateState>((set, get) => ({
         host,
         kind,
         retry: async (creds, remember) => {
-          set({ busy: true, error: null, progress: null });
+          set({ busy: true, cancelRequested: false, error: null, progress: null });
           try {
             await attempt(creds);
             // Only after it worked, and only for HTTPS — `git credential

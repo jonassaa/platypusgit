@@ -129,6 +129,19 @@ export interface RepoSlice {
   /** Active long-running ops keyed by op kind. */
   activity: RepoActivity;
   /**
+   * Whether the user has already asked to cancel the network ops in flight
+   * (#263).
+   *
+   * Per-repo, and therefore here: a cancel asked for in one tab must not make
+   * another tab's Cancel read "Force stop". Purely a UI-intent flag — the
+   * authoritative per-op state lives in the backend registry (`cancel.rs`) —
+   * but the status bar has to show it, because the SECOND click is what
+   * escalates SIGTERM to SIGKILL and a button that never changes gives the
+   * user no way to know that. Cleared when `activity` empties, i.e. when the
+   * ops this cancel was aimed at have all unwound.
+   */
+  cancelRequested: boolean;
+  /**
    * The git hook refusal to display, or null (#232).
    *
    * Per-repo, and therefore here: a commit rejected by one repository's
@@ -171,6 +184,7 @@ export function emptySlice(): RepoSlice {
     rebaseStatus: DEFAULT_REBASE_STATUS,
     bisectStatus: DEFAULT_BISECT_STATUS,
     activity: {},
+    cancelRequested: false,
     hookRejection: null,
   };
 }
