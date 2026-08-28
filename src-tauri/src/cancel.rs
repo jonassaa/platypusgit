@@ -494,6 +494,70 @@ mod tests {
         );
     }
 
+    /// The escalation itself, through `cancel()` — not `kill_tree` called with a
+    /// literal.
+    ///
+    /// `kill_tree_soft_sends_sigterm`/`_hard_sends_sigkill` pin what each signal
+    /// does, but neither goes through the registry, so the one line that DECIDES
+    /// which signal to send (`let hard = entry.cancel_requested`) was free to be
+    /// inverted or dropped with the suite still green. This is the test that
+    /// fails when it is.
+    ///
+    /// The child ignores SIGTERM, standing in for a git that does not die on the
+    /// polite ask — so surviving the first `cancel()` is itself the proof that
+    /// the first one was not a SIGKILL, which nothing can ignore.
+    #[cfg(unix)]
+    #[test]
+    fn cancel_asks_politely_first_and_escalates_on_the_second_call() {
+        use std::io::BufRead as _;
+        use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
+
+        let scope = Scope::repo(Path::new("/tmp/escalation"));
+        let registration = register(scope.clone());
+
+        // `trap '' TERM` in a LOOP, not around a single `sleep 30`: the group
+        // signal kills the inner `sleep` too, and a script whose only command
+        // died would then simply end — exiting for a reason that has nothing to
+        // do with the signal we are measuring.
+        let mut child = crate::proc::program("sh")
+            .arg("-c")
+            .arg("trap '' TERM; echo ready; while :; do sleep 1; done")
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn the SIGTERM-ignoring child");
+
+        // Wait for the trap to actually be installed. Without this handshake the
+        // first signal races the shell's startup and kills it by the DEFAULT
+        // disposition, which proves nothing about escalation — and does it only
+        // on a loaded machine, i.e. in CI.
+        let mut ready = String::new();
+        std::io::BufReader::new(child.stdout.take().expect("stdout"))
+            .read_line(&mut ready)
+            .expect("read the ready handshake");
+        assert_eq!(ready.trim(), "ready");
+
+        assert!(registration.attach(child.id()));
+
+        // First: SIGTERM, which this child ignores.
+        assert_eq!(cancel(&scope), 1);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            child.try_wait().expect("try_wait").is_none(),
+            "the FIRST cancel must be an ignorable SIGTERM — a child that is \
+             gone here was sent SIGKILL, and git never got to run \
+             remove_lock_file_on_signal"
+        );
+
+        // Second: the user telling us the first one did not work.
+        assert_eq!(cancel(&scope), 1);
+        assert_eq!(
+            child.wait().expect("wait").signal(),
+            Some(libc::SIGKILL),
+            "the SECOND cancel must escalate to SIGKILL"
+        );
+    }
+
     /// A future spawn site that forgot `process_group(0)` inherits OUR group —
     /// `kill_tree` must notice the target is not its own group leader and fall
     /// back to a single-process kill, or a cancel button would signal every
