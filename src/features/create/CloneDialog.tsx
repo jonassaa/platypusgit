@@ -20,6 +20,7 @@ export function CloneDialog() {
   const close = useCreateStore((s) => s.close);
   const runClone = useCreateStore((s) => s.runClone);
   const cancelClone = useCreateStore((s) => s.cancelClone);
+  const cancelRequested = useCreateStore((s) => s.cancelRequested);
   const setProgress = useCreateStore((s) => s.setProgress);
 
   const [url, setUrl] = React.useState("");
@@ -307,13 +308,18 @@ export function CloneDialog() {
 
           Deliberately NOT a second button next to it: a disabled "Cancel" beside
           a live "Stop" is the arrangement that teaches people the dialog is
-          stuck. The label carries the difference instead.
+          stuck. The label carries the difference instead — now for three states
+          rather than two (#263), because the second click on a running clone
+          escalates SIGTERM to SIGKILL and only the SIGTERM lets git clean up
+          its own lock files and partial destination. A button whose label did
+          not move on the first click would read as "nothing happened", and the
+          double-click that follows skips straight past the polite signal.
         */}
         <PGButton
           data-testid="clone-cancel"
           onClick={() => (busy ? void cancelClone() : close())}
         >
-          {busy ? "Cancel clone" : "Cancel"}
+          {busy ? (cancelRequested ? "Force stop" : "Cancel clone") : "Cancel"}
         </PGButton>
         <PGButton
           variant="primary"

@@ -442,7 +442,15 @@ export function setActivity(repoId: string, key: ActivityKey, label: string | nu
     const next = { ...s.activity };
     if (label === null) delete next[key];
     else next[key] = { label, startedAt: next[key]?.startedAt ?? Date.now() };
-    return { activity: next };
+    // The one place `cancelRequested` is dropped (#263). An op's `finally`
+    // clears its own label and nothing else; when the LAST one goes, the ops
+    // that cancel was aimed at have all unwound, so the next click starts a
+    // fresh SIGTERM-then-SIGKILL escalation rather than inheriting the previous
+    // one's second-click state — which would send SIGKILL to a git that had
+    // never been asked politely.
+    return Object.keys(next).length === 0
+      ? { activity: next, cancelRequested: false }
+      : { activity: next };
   });
 }
 
@@ -1754,10 +1762,20 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async cancelNetworkOps() {
     const repo = get().current;
     if (!repo) return;
-    // Nothing is set here. The running op owns its own unwind: it returns
-    // `Cancelled`, its `finally` clears the activity label, and `setErrorFor`
-    // drops the error. Clearing `activity` from here would race that and blank
-    // the status line while git was still being reaped.
+    // The ONLY thing set here, and it is UI intent rather than op state (#263):
+    // the backend escalates SIGTERM → SIGKILL on the second cancel of the same
+    // op, so the user has to be able to see that the first click landed and
+    // that clicking again does something different. Without it the label reads
+    // "Cancel" and the status line reads "Fetching…" exactly as before, and an
+    // ordinary impatient double-click reaches SIGKILL in a few hundred
+    // milliseconds — killing git before it can run its own lock-file cleanup,
+    // which is the bug the SIGTERM exists to avoid.
+    //
+    // Everything else the running op still owns: it returns `Cancelled`, its
+    // `finally` clears the activity label, and `setErrorFor` drops the error.
+    // Clearing `activity` from here would race that and blank the status line
+    // while git was still being reaped.
+    set({ cancelRequested: true });
     await cancelNetworkOp(repo.id).catch((e) => {
       // The op finishing first is the common way this "fails", and it is the
       // outcome the click wanted anyway. A real failure to signal is worth a
