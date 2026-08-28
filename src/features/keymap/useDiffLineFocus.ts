@@ -15,6 +15,13 @@
 // Independent of useHunkNav on purpose. F7/⇧F7 bind different actions and move a
 // different cursor, so neither claims the other's chord; the two coexist as
 // "jump to the next change block" and "step through changed lines".
+//
+// Independent is not the same as unaware, though (#297). The arrows are not the
+// only thing that moves a reader through a diff: F7 jumps to the next change, the
+// auto-open jumps to the first one, and a click picks a line. Each of those used
+// to leave the caret where it was, so the text cursor and the row the reader was
+// actually looking at were different places — and the next arrow key went back to
+// the wrong one. `focusRow` is the entry point all three come in through.
 
 import React from "react";
 import type { DiffRow } from "@/lib/diffRows";
@@ -58,6 +65,33 @@ export interface DiffLineFocus {
   /** -1 while the pane has no cursor yet. */
   index: number;
   focused: DiffLineTarget | null;
+  /**
+   * Put the caret on the changed line at a FLAT ROW index, for a reader who was
+   * moved by something other than the arrow keys — F7's landing, the auto-open's,
+   * a click.
+   *
+   * Returns whether it found one, and declines rather than approximating: a row
+   * with no `changedIndex` (context, whole-file fill, a fold separator) is not in
+   * this cursor's index space, and putting the caret there would both park it
+   * where Space cannot act and break the one mapping the backend's line ops
+   * speak. `null` is accepted and declined, so a caller with no row to offer —
+   * an empty hunk, a diff still loading — needs no guard of its own.
+   *
+   * Identity is stable across renders: surfaces hand this to `useHunkNav` as
+   * `onLand`, and a new function per render would re-register the F7 actions on
+   * every render of the screen.
+   */
+  focusRow: (rowIndex: number | null | undefined) => boolean;
+  /**
+   * The same move addressed in the BACKEND's index space — the pair a click
+   * already carries (`onLineClick`), rather than the flat row index only the
+   * renderer knows.
+   *
+   * Clicking a line without this leaves the caret where it was, which is the
+   * arrow-key bug in mouse form: click line 40 to stage it, press the down arrow,
+   * and the cursor resumes from line 12 where you last left it.
+   */
+  focusLine: (hunkIndex: number, changedIndex: number) => boolean;
 }
 
 export function useDiffLineFocus(opts: {
@@ -112,6 +146,32 @@ export function useDiffLineFocus(opts: {
     [targets, scrollToRow],
   );
 
+  // Read through a ref so `focusRow` can keep one identity for the life of the
+  // pane while still seeing the current targets — `targets` changes with every
+  // refetch, and this is called from another hook's effects.
+  const targetsRef = React.useRef(targets);
+  targetsRef.current = targets;
+  const focusRow = React.useCallback(
+    (rowIndex: number | null | undefined): boolean => {
+      if (rowIndex == null) return false;
+      const i = targetsRef.current.findIndex((t) => t.rowIndex === rowIndex);
+      if (i < 0) return false;
+      setIndex(i);
+      return true;
+    },
+    [],
+  );
+
+  const focusLine = React.useCallback(
+    (hunkIndex: number, changedIndex: number): boolean => {
+      const t = targetsRef.current.find(
+        (x) => x.hunkIndex === hunkIndex && x.changedIndex === changedIndex,
+      );
+      return focusRow(t?.rowIndex);
+    },
+    [focusRow],
+  );
+
   usePaneList({
     paneId,
     count: targets.length,
@@ -137,5 +197,5 @@ export function useDiffLineFocus(opts: {
     { paneId },
   );
 
-  return { targets, index: cursor, focused };
+  return { targets, index: cursor, focused, focusRow, focusLine };
 }

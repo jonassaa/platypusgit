@@ -25,6 +25,12 @@
 //     supplies no `files` keeps the old clamp.
 //  3. STOP AT THE ENDS. The last file's last hunk flashes and stays put; there is
 //     no wrap-around. Silently re-showing a file already reviewed is worse.
+//  4. THE CARET RIDES ALONG (#297). Every landing is reported through `onLand`,
+//     and the surface puts its LINE caret (`useDiffLineFocus`) on the hunk's
+//     first changed row. Before it, "go to the next change" moved a highlight and
+//     a scroll position and left no cursor in the text it had gone to: the next
+//     arrow key started over at the file's first changed line, and Space had
+//     nothing to act on. `follows` closes the loop in the other direction.
 //
 // Scrolling goes through the caller's `scrollToHunk` when it supplies one, and it
 // must: under windowing the anchor row is usually unmounted, so the DOM route
@@ -35,7 +41,7 @@
 import React from "react";
 import { useAction } from "./useAction";
 import { chordFor } from "./chordFor";
-import { pgFlash, PG_FLASH_MS } from "@/design/ui-helpers";
+import { pgFlash, pgFlashClear, PG_FLASH_MS } from "@/design/ui-helpers";
 
 /**
  * The caller's own file list, and the only thing that makes F7 cross files.
@@ -94,8 +100,46 @@ export function useHunkNav(opts: {
   ready?: boolean;
   /** Supply to let F7 carry into the next file. Omit to keep the old clamp. */
   files?: HunkNavFiles;
+  /**
+   * The cursor landed on this hunk — the auto-open's landing, F7's and shift-F7's
+   * alike. Surfaces put their line caret on the hunk's first changed row, which
+   * is what turns "next change" into a place in the text rather than a scroll
+   * position (#297).
+   *
+   * Called AFTER the reveal, deliberately: F7 CENTRES a hunk while the caret
+   * scrolls with REVEAL semantics, and a reveal is only the intended no-op once
+   * the centring has already put the row on screen. Landing first would scroll
+   * the pane against the old position.
+   *
+   * Not called when the cursor did not move — a clamped press at either end
+   * reports nothing, so the caret stays where the reader put it.
+   */
+  onLand?: (hunkIndex: number) => void;
+  /**
+   * The hunk the reader's caret is in, or null while they have not placed one.
+   * The cursor TRACKS it, without scrolling.
+   *
+   * This is the other half of the coupling, and it is what keeps `F7` meaning
+   * "the next change after where I am". Arrow down through a hunk or two and the
+   * cursor would otherwise still sit where the last `F7` left it, so the next
+   * press walks back over ground already read — one wasted press per hunk
+   * arrowed past.
+   *
+   * Read as a MOVE, not as a state — see the effect below for why the difference
+   * is load-bearing rather than stylistic.
+   */
+  follows?: number | null;
 }): number {
-  const { paneIds, count, resetKey, scrollToHunk, ready = false, files } = opts;
+  const {
+    paneIds,
+    count,
+    resetKey,
+    scrollToHunk,
+    ready = false,
+    files,
+    onLand,
+    follows = null,
+  } = opts;
   const [cursor, setCursor] = React.useState(-1);
 
   // Read by the key handlers, which run long after any render, so a ref keeps a
@@ -103,6 +147,14 @@ export function useHunkNav(opts: {
   const filesRef = React.useRef(files);
   React.useEffect(() => {
     filesRef.current = files;
+  });
+
+  // Same reason as `filesRef`: the surfaces build this closure over their caret's
+  // targets, so it is a new function every render and would re-register both
+  // actions each time if the handlers read it directly.
+  const onLandRef = React.useRef(onLand);
+  React.useEffect(() => {
+    onLandRef.current = onLand;
   });
 
   // Which end of the NEXT file to land on, and the request that sets it. Two refs
@@ -117,16 +169,43 @@ export function useHunkNav(opts: {
   const opened = React.useRef(false);
   /** The reader has moved the cursor in this file — from here on it is theirs. */
   const readerActed = React.useRef(false);
+  /** Last caret position seen, so `follows` can be read as a move and not a state. */
+  const lastFollows = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     setCursor(-1);
     armed.current = null;
     opened.current = false;
     readerActed.current = false;
+    lastFollows.current = null;
     landing.current = pending.current ?? "first";
     pending.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey]);
+
+  /**
+   * The row the reader is standing on, for a hint that should appear THERE and
+   * not at the bottom of the window (#297).
+   *
+   * The caret first, since that is literally where they are looking; the hunk
+   * cursor's anchor row as a fallback, for a surface whose caret is off
+   * (ignore-whitespace) or has not been placed yet. Panes are tried in the
+   * caller's order, and a file list carries neither attribute, so a screen whose
+   * scope spans both panes still finds the diff row.
+   *
+   * Null degrades to the centred toast rather than suppressing the hint: the
+   * message is worth more mispositioned than missing.
+   */
+  const caretAnchor = (): HTMLElement | null => {
+    for (const paneId of paneIds) {
+      const scope = `[data-pg-pane="${paneId}"]`;
+      const el =
+        document.querySelector<HTMLElement>(`${scope} [data-focused]`) ??
+        document.querySelector<HTMLElement>(`${scope} [data-hunk-active]`);
+      if (el) return el;
+    }
+    return null;
+  };
 
   /** Did the hunk actually get addressed? See `scrollToHunk`. */
   const reveal = (hunkIndex: number): boolean => {
@@ -179,8 +258,31 @@ export function useHunkNav(opts: {
     landing.current = "first";
     opened.current = true;
     setCursor(target);
+    // The auto-open is a landing like any other. A diff that opens AT its first
+    // change and leaves the caret unplaced contradicts itself: the highlight says
+    // "you are here", the first arrow key says "you are at the top of the file".
+    onLandRef.current?.(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, count, resetKey, scrollToHunk]);
+
+  // The reader's caret wins: the cursor follows it wherever they put it, by arrow
+  // key or by click. No scroll — the caret's own movement already did that, with
+  // the reveal semantics a one-row step should have.
+  //
+  // An EDGE, not a level: this reacts to the caret MOVING, and never to it merely
+  // sitting somewhere. Comparing `follows` against the cursor on every render
+  // instead makes the caret continuously authoritative, and then any render where
+  // it has not caught up drags the cursor back — F7 sets the cursor to 3, this
+  // effect reads a caret still on 2 and undoes it. That window is real (`onLand`
+  // is what moves the caret, one setState later) and it is unbounded when the
+  // caret cannot move at all: with the line cursor disabled by ignore-whitespace
+  // there are no targets to land on, `follows` never changes, and a level-based
+  // rule would pin F7 to one hunk forever.
+  React.useEffect(() => {
+    const moved = follows != null && follows !== lastFollows.current;
+    lastFollows.current = follows;
+    if (moved) setCursor(follows);
+  }, [follows]);
 
   const go = (delta: 1 | -1) => (): boolean => {
     if (count === 0) return false;
@@ -203,6 +305,10 @@ export function useHunkNav(opts: {
         now - armed.current.at <= PG_FLASH_MS;
       if (isArmed && crossable) {
         armed.current = null;
+        // The hint asked a question and this press answered it. Left up, it would
+        // spend the rest of its lifetime under the file it moved TO, announcing
+        // "no more changes" from on top of that file's first one.
+        pgFlashClear();
         // Coming from below, land on the previous file's LAST change.
         pending.current = delta === 1 ? "first" : "last";
         list.select(to);
@@ -216,6 +322,7 @@ export function useHunkNav(opts: {
           delta === 1
             ? "Last file — no more changes"
             : "First file — no earlier changes",
+          caretAnchor(),
         );
         return true;
       }
@@ -225,13 +332,20 @@ export function useHunkNav(opts: {
         `No more changes — press ${chord} again for the ${
           delta === 1 ? "next" : "previous"
         } file`,
+        caretAnchor(),
       );
       return true;
     }
     armed.current = null;
     const next = Math.max(0, Math.min(count - 1, cursor + delta));
     setCursor(next);
+    // Still re-centres on a clamped press, as it always has — that nudge is how a
+    // dead end announces itself on a surface with no file list to carry into.
     reveal(next);
+    // But it reports no LANDING, because nothing landed: the caret would be
+    // dragged back to the anchor row of the hunk the reader is already inside,
+    // undoing the arrow keys that got them further down it.
+    if (next !== cursor) onLandRef.current?.(next);
     return true;
   };
 

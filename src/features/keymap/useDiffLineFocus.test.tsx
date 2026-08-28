@@ -72,7 +72,11 @@ function Harness(props: {
   onToggle?: (t: DiffLineTarget) => void;
   scrollToRow?: (i: number) => void;
   disabled?: boolean;
-  seen: { focus: DiffLineTarget | null };
+  seen: {
+    focus: DiffLineTarget | null;
+    focusRow?: (r: number | null) => boolean;
+    focusLine?: (h: number, c: number) => boolean;
+  };
 }) {
   const f = useDiffLineFocus({
     paneId: "d.diff",
@@ -83,6 +87,8 @@ function Harness(props: {
     disabled: props.disabled,
   });
   props.seen.focus = f.focused;
+  props.seen.focusRow = f.focusRow;
+  props.seen.focusLine = f.focusLine;
   return null;
 }
 
@@ -263,6 +269,127 @@ describe("useDiffLineFocus", () => {
 
     const one = rowsFor([hunkWithContext("@@ -1,3 +1,4 @@")]);
     act(() => rerender(<Harness rows={one} seen={seen} />));
+    expect(seen.focus).toBeNull();
+  });
+});
+
+// ── focusRow: putting the caret where the reader was SENT (#297) ───────────
+//
+// The arrow keys are not the only thing that moves a reader through a diff. F7
+// jumps to the next change, the auto-open jumps to the first one, and a click
+// picks a line — and every one of those used to leave the caret behind, so the
+// text cursor and the place the reader was actually looking at were different
+// rows. This is the entry point all three come in through.
+describe("focusRow", () => {
+  beforeEach(reset);
+
+  const rows = rowsFor([hunkWithContext("@@ -1,3 +1,4 @@")]);
+
+  it("puts the caret on the changed line at a row index", () => {
+    const seen: { focus: DiffLineTarget | null; focusRow?: (r: number | null) => boolean } = {
+      focus: null,
+    };
+    render(<Harness rows={rows} seen={seen} />);
+    expect(seen.focus).toBeNull();
+
+    // Row 3 is the `rem` line — changedIndex 1, two rows below the first change.
+    act(() => {
+      expect(seen.focusRow!(3)).toBe(true);
+    });
+    expect(seen.focus).toEqual({ rowIndex: 3, hunkIndex: 0, changedIndex: 1 });
+  });
+
+  it("declines a row that carries no changed line, leaving the caret alone", () => {
+    const seen: { focus: DiffLineTarget | null; focusRow?: (r: number | null) => boolean } = {
+      focus: null,
+    };
+    render(<Harness rows={rows} seen={seen} />);
+    act(() => {
+      seen.focusRow!(1);
+    });
+    expect(seen.focus?.rowIndex).toBe(1);
+
+    // Row 0 is context: unstageable, so it is not in the cursor's index space at
+    // all. Moving the caret there would put it somewhere Space cannot act, and
+    // silently break the changedIndex mapping the backend's line ops speak.
+    act(() => {
+      expect(seen.focusRow!(0)).toBe(false);
+    });
+    expect(seen.focus?.rowIndex).toBe(1);
+  });
+
+  it("declines null, so a caller with no row to offer says so in one place", () => {
+    const seen: { focus: DiffLineTarget | null; focusRow?: (r: number | null) => boolean } = {
+      focus: null,
+    };
+    render(<Harness rows={rows} seen={seen} />);
+    act(() => {
+      expect(seen.focusRow!(null)).toBe(false);
+    });
+    expect(seen.focus).toBeNull();
+  });
+
+  it("declines while ignore-whitespace has the cursor disabled", () => {
+    const seen: { focus: DiffLineTarget | null; focusRow?: (r: number | null) => boolean } = {
+      focus: null,
+    };
+    render(<Harness rows={rows} seen={seen} disabled />);
+    // Same gate the arrows and the mouse sit behind (#61 D2): hunk indices do not
+    // address what git would apply, so nothing may put a cursor on them — F7
+    // included. It degrades to the caret-less behaviour, not to a wrong caret.
+    act(() => {
+      expect(seen.focusRow!(3)).toBe(false);
+    });
+    expect(seen.focus).toBeNull();
+  });
+
+  it("keeps a stable identity across renders", () => {
+    const seen: { focus: DiffLineTarget | null; focusRow?: (r: number | null) => boolean } = {
+      focus: null,
+    };
+    const { rerender } = render(<Harness rows={rows} seen={seen} />);
+    const first = seen.focusRow;
+    rerender(<Harness rows={rows} seen={seen} />);
+    // Surfaces hand this to `useHunkNav` as `onLand`, which stores it in a ref
+    // precisely because a new function every render would re-register both F7
+    // actions on every render of the screen.
+    expect(seen.focusRow).toBe(first);
+  });
+});
+
+describe("focusLine", () => {
+  beforeEach(reset);
+
+  it("moves the caret to a (hunk, changedIndex) pair — what a click carries", () => {
+    const rows = rowsFor([
+      hunkWithContext("@@ -1,3 +1,4 @@"),
+      hunkWithContext("@@ -20,3 +20,4 @@", 20),
+    ]);
+    const seen: {
+      focus: DiffLineTarget | null;
+      focusLine?: (h: number, c: number) => boolean;
+    } = { focus: null };
+    render(<Harness rows={rows} seen={seen} />);
+
+    act(() => {
+      expect(seen.focusLine!(1, 2)).toBe(true);
+    });
+    // Addressed in the backend's index space and resolved to the renderer's: the
+    // second hunk's third changed line, whose flat row index is neither 2 nor 5.
+    expect(seen.focus).toMatchObject({ hunkIndex: 1, changedIndex: 2 });
+    expect(seen.focus!.rowIndex).toBeGreaterThan(5);
+  });
+
+  it("declines a pair no row carries", () => {
+    const seen: {
+      focus: DiffLineTarget | null;
+      focusLine?: (h: number, c: number) => boolean;
+    } = { focus: null };
+    render(<Harness rows={rowsFor([hunkWithContext("@@ -1,3 +1,4 @@")])} seen={seen} />);
+    act(() => {
+      expect(seen.focusLine!(0, 99)).toBe(false);
+      expect(seen.focusLine!(7, 0)).toBe(false);
+    });
     expect(seen.focus).toBeNull();
   });
 });

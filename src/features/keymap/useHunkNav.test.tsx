@@ -10,7 +10,7 @@ import { act, render } from "@testing-library/react";
 import { useHunkNav } from "./useHunkNav";
 import { useKeymapStore } from "./useKeymapStore";
 import { useFocusStore } from "./useFocusStore";
-import { PG_FLASH_MS } from "@/design/ui-helpers";
+import { pgFlash, pgFlashClear, PG_FLASH_MS } from "@/design/ui-helpers";
 
 function Harness({
   count,
@@ -19,6 +19,8 @@ function Harness({
   paneIds = ["d.files", "d.view"],
   ready,
   scrollToHunk,
+  onLand,
+  follows,
 }: {
   count: number;
   resetKey: string;
@@ -26,8 +28,18 @@ function Harness({
   paneIds?: string[];
   ready?: boolean;
   scrollToHunk?: (i: number) => void;
+  onLand?: (i: number) => void;
+  follows?: number | null;
 }) {
-  const cursor = useHunkNav({ paneIds, count, resetKey, ready, scrollToHunk });
+  const cursor = useHunkNav({
+    paneIds,
+    count,
+    resetKey,
+    ready,
+    scrollToHunk,
+    onLand,
+    follows,
+  });
   onCursor(cursor);
   return null;
 }
@@ -46,6 +58,7 @@ function FileHarness({
   onSelect,
   scrollToHunk,
   startIndex = 0,
+  follows,
 }: {
   hunksPerFile: number[];
   ready?: boolean;
@@ -53,6 +66,7 @@ function FileHarness({
   onSelect?: (i: number) => void;
   scrollToHunk?: (i: number) => void;
   startIndex?: number;
+  follows?: number | null;
 }) {
   const [index, setIndex] = React.useState(startIndex);
   const cursor = useHunkNav({
@@ -65,6 +79,7 @@ function FileHarness({
     // harness renders no rows, so the auto-open would never land. A surface that
     // scrolls and reports nothing is the shape being modelled here.
     scrollToHunk: scrollToHunk ?? (() => {}),
+    follows,
     files: {
       count: hunksPerFile.length,
       index,
@@ -441,6 +456,39 @@ describe("useHunkNav", () => {
     expect(scrollToHunk).toHaveBeenCalledWith(0);
   });
 
+  it("takes the hint down the moment it crosses, not a second later", () => {
+    render(<FileHarness hunksPerFile={[2, 3]} onCursor={onCursor} />);
+    useFocusStore.setState({ focused: "d.view" });
+    press("F7"); // → hunk 1 (last)
+    press("F7"); // arms + flashes
+    expect(flashText()).not.toBeNull();
+
+    press("F7"); // crosses
+    // The hint was a question ("press F7 again?") and the press just answered it.
+    // Leaving it up parks "No more changes" under the file it moved TO, standing
+    // on the first of that file's changes — a statement that is false where it is
+    // now drawn, for the rest of its 1.4s.
+    expect(flashText()).toBeNull();
+    expect(flashCount()).toBe(0);
+  });
+
+  it("dismissing is idempotent, and survives a toast that is already gone", () => {
+    // `useHunkNav` calls it on every crossing, including ones where nothing was
+    // ever flashed (the arming can outlive its own toast by a frame). A dismissal
+    // that threw there would break navigation, not just the hint.
+    expect(() => pgFlashClear()).not.toThrow();
+    pgFlash("up");
+    expect(flashText()).toBe("up");
+    pgFlashClear();
+    pgFlashClear();
+    expect(flashCount()).toBe(0);
+    // And the module handle really was released — the next flash mounts a fresh
+    // element rather than writing into the detached one.
+    pgFlash("again");
+    expect(flashText()).toBe("again");
+    expect(flashCount()).toBe(1);
+  });
+
   it("forgets the arming once the hint has expired", () => {
     vi.useFakeTimers();
     try {
@@ -550,5 +598,201 @@ describe("useHunkNav", () => {
     const handlers = useKeymapStore.getState().handlers;
     expect(handlers.get("diff.nextChange")?.length).toBe(1);
     expect(handlers.get("diff.prevChange")?.length).toBe(1);
+  });
+
+  // ── The caret rides along (#297) ─────────────────────────────────────────
+  // F7 used to move a hunk highlight and a scroll position and nothing else, so
+  // "go to the next change" left no cursor in the text it went to: the next
+  // arrow started over at the file's first changed line and Space had nothing to
+  // act on. `onLand` is the hook's half of the fix — the surface puts its line
+  // caret on the hunk's first changed row.
+
+  it("reports every landing it makes, the auto-open's included", () => {
+    const onLand = vi.fn();
+    render(
+      <Harness
+        count={3}
+        resetKey="a"
+        onCursor={onCursor}
+        ready
+        scrollToHunk={() => {}}
+        onLand={onLand}
+      />,
+    );
+    // The auto-open is a landing like any other: a diff that opens AT its first
+    // change must open with the caret there too, or the pane contradicts itself.
+    expect(onLand).toHaveBeenCalledWith(0);
+
+    useFocusStore.setState({ focused: "d.view" });
+    onLand.mockClear();
+    press("F7");
+    expect(onLand).toHaveBeenCalledWith(1);
+    press("F7", true);
+    expect(onLand).toHaveBeenLastCalledWith(0);
+  });
+
+  it("does not report a landing it did not make", () => {
+    const onLand = vi.fn();
+    render(
+      <Harness
+        count={1}
+        resetKey="a"
+        onCursor={onCursor}
+        ready
+        scrollToHunk={() => {}}
+        onLand={onLand}
+      />,
+    );
+    useFocusStore.setState({ focused: "d.view" });
+    onLand.mockClear();
+    press("F7"); // clamped at the only hunk — the cursor did not move
+    expect(onLand).not.toHaveBeenCalled();
+  });
+
+  it("reports the landing AFTER the scroll, so the caret's reveal is a no-op", () => {
+    const order: string[] = [];
+    render(
+      <Harness
+        count={3}
+        resetKey="a"
+        onCursor={onCursor}
+        ready
+        scrollToHunk={() => {
+          order.push("scroll");
+        }}
+        onLand={() => order.push("land")}
+      />,
+    );
+    useFocusStore.setState({ focused: "d.view" });
+    order.length = 0;
+    press("F7");
+    // Order is load-bearing. F7 CENTRES the hunk; the caret that follows it
+    // scrolls with REVEAL semantics, which is a no-op only while the row is
+    // already on screen. Landing first would reveal against the OLD scroll
+    // position and drag the pane somewhere F7 never asked for.
+    expect(order).toEqual(["scroll", "land"]);
+  });
+
+  it("tracks the caret, so F7 continues from where the READER is", () => {
+    const { rerender } = render(
+      <Harness count={4} resetKey="a" onCursor={onCursor} ready scrollToHunk={() => {}} />,
+    );
+    useFocusStore.setState({ focused: "d.view" });
+    expect(cursor).toBe(0);
+
+    // The reader arrows down through the lines and ends up inside hunk 2.
+    rerender(
+      <Harness
+        count={4}
+        resetKey="a"
+        onCursor={onCursor}
+        ready
+        scrollToHunk={() => {}}
+        follows={2}
+      />,
+    );
+    expect(cursor).toBe(2);
+    // ...so "next change" is 3, not 1. Without this, F7 walks back over ground
+    // the reader has already covered, one press per hunk they arrowed past.
+    press("F7");
+    expect(cursor).toBe(3);
+  });
+
+  it("a tracked caret at the last hunk still arms the crossing", () => {
+    const select = vi.fn();
+    render(
+      <FileHarness
+        hunksPerFile={[3, 2]}
+        onCursor={onCursor}
+        onSelect={select}
+        follows={2}
+      />,
+    );
+    useFocusStore.setState({ focused: "d.view" });
+    expect(cursor).toBe(2);
+    press("F7");
+    expect(flashText()).toBe("No more changes — press F7 again for the next file");
+    expect(select).not.toHaveBeenCalled();
+    press("F7");
+    expect(select).toHaveBeenCalledWith(1);
+  });
+
+  // ── The hint appears where the reader is (#297) ──────────────────────────
+  // The bottom-centre toast is a sidebar and a file list away from the change
+  // the same keypress just centred, and it is the ONLY thing that says a second
+  // press leaves the file.
+
+  it("anchors the hint to the caret's row", () => {
+    const pane = document.createElement("div");
+    pane.setAttribute("data-pg-pane", "d.view");
+    const row = document.createElement("div");
+    row.setAttribute("data-focused", "");
+    pane.appendChild(row);
+    document.body.appendChild(pane);
+
+    render(<FileHarness hunksPerFile={[2, 2]} onCursor={onCursor} />);
+    useFocusStore.setState({ focused: "d.view" });
+    press("F7");
+    press("F7"); // the hint
+
+    const toast = document.querySelector<HTMLElement>("[data-pg-flash]")!;
+    expect(toast.hasAttribute("data-pg-flash-at")).toBe(true);
+    // The bottom-centre positioning must be actively undone, not just overridden:
+    // one element is reused for every toast, so a leftover `bottom` under a fresh
+    // `top` stretches it down the screen.
+    expect(toast.style.bottom).toBe("auto");
+    expect(toast.style.transform).toBe("none");
+    expect(toast.style.top).not.toBe("");
+  });
+
+  it("falls back to the hunk cursor's row when no caret has been placed", () => {
+    const pane = document.createElement("div");
+    pane.setAttribute("data-pg-pane", "d.view");
+    const row = document.createElement("div");
+    // Ignore-whitespace turns the line cursor off entirely, so some surfaces
+    // reach the hint with a hunk highlight and no caret at all.
+    row.setAttribute("data-hunk-active", "");
+    pane.appendChild(row);
+    document.body.appendChild(pane);
+
+    render(<FileHarness hunksPerFile={[2, 2]} onCursor={onCursor} />);
+    useFocusStore.setState({ focused: "d.view" });
+    press("F7");
+    press("F7");
+    expect(
+      document.querySelector("[data-pg-flash]")!.hasAttribute("data-pg-flash-at"),
+    ).toBe(true);
+  });
+
+  it("degrades to the centred toast rather than dropping the hint", () => {
+    // No pane mounted, so there is nothing to anchor to. The message is worth
+    // more mispositioned than missing — it is what announces the arming.
+    render(<FileHarness hunksPerFile={[2, 2]} onCursor={onCursor} />);
+    useFocusStore.setState({ focused: "d.view" });
+    press("F7");
+    press("F7");
+    const toast = document.querySelector<HTMLElement>("[data-pg-flash]")!;
+    expect(toast.textContent).toBe(
+      "No more changes — press F7 again for the next file",
+    );
+    expect(toast.hasAttribute("data-pg-flash-at")).toBe(false);
+    expect(toast.style.bottom).toBe("24px");
+  });
+
+  it("anchors the end-of-list message too", () => {
+    const pane = document.createElement("div");
+    pane.setAttribute("data-pg-pane", "d.view");
+    const row = document.createElement("div");
+    row.setAttribute("data-focused", "");
+    pane.appendChild(row);
+    document.body.appendChild(pane);
+
+    render(<FileHarness hunksPerFile={[2]} onCursor={onCursor} />);
+    useFocusStore.setState({ focused: "d.view" });
+    press("F7");
+    press("F7"); // the only file, so: "Last file — no more changes"
+    const toast = document.querySelector<HTMLElement>("[data-pg-flash]")!;
+    expect(toast.textContent).toBe("Last file — no more changes");
+    expect(toast.hasAttribute("data-pg-flash-at")).toBe(true);
   });
 });

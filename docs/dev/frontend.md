@@ -191,6 +191,32 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   carries BOTH `rowIndex` (flat-row space: focus ring, `scrollTopForRow`) and
   `changedIndex` (the ONLY value `stage/unstage/discard_lines` accept). Never
   derive one from the other; read `changedIndex` off the row.
+- **Two cursors, ONE position (#297).** They are separate index spaces, not
+  separate places the reader is. Every landing `useHunkNav` makes is reported
+  through `onLand`, and the surface answers it with
+  `lineFocus.focusRow(extents[h].first)` — the anchor row, which always carries a
+  `changedIndex`, so `Space` is live on arrival. `follows` closes the loop the
+  other way, so F7 means "the next change after where I am" rather than "after
+  where I last pressed F7". Three rules hold this together and each one was a bug
+  first:
+  - `follows` is an **edge, not a level** — it reacts to the caret MOVING. Read
+    as a level, any render where the caret has not caught up undoes the jump (F7
+    sets 3, the effect sees a caret still on 2), and where the caret cannot move
+    at all — ignore-whitespace leaves no targets — it pins F7 to one hunk forever.
+  - `onLand` fires **after** the reveal. F7 CENTRES and the caret REVEALS, and a
+    reveal is the intended no-op only once the centring has put the row on screen.
+  - A clamped press reports **nothing**. Landing on a cursor that did not move
+    would drag the caret back to the anchor of the hunk the reader is inside.
+  - All four surfaces mount the caret and both couplings; `test/diffCaretSurfaces.test.ts`
+    fails the build for a fifth that does not. Read-only surfaces (`DiffViewer`,
+    `CommitDiffPanel`, `RepoBrowser`) pass no `onToggle`, so `Space` stays
+    unclaimed there.
+- **Code is selectable wherever it is SHOWN, not just in a diff.** The app is
+  `user-select: none` (`index.css`) and each code cell opts back in with
+  `.pg-selectable` — the code, never the gutters. Blame rendered its source bare
+  and so could not be selected or copied at all, invisibly, because the three
+  rendering guards enumerate diff surfaces only. `test/codeSelectable.test.ts` is
+  the list that includes it.
 - **Scroll diff rows BY OFFSET** (`scrollTopForRow`), never
   `querySelector` + `scrollIntoView` — the row is usually unmounted under
   windowing and the DOM route silently does nothing (the #68 G10 trap). F7
@@ -267,6 +293,15 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   - The hint names its chord via `chordFor("diff.nextChange")` (bindings are
     rebindable); the arming expires with `PG_FLASH_MS`; `pgFlash` is
     single-instance.
+  - **The hint appears at the caret, and dies with the crossing (#297).**
+    `pgFlash` takes an optional anchor; `useHunkNav` passes the caret's row
+    (`[data-focused]`, then `[data-hunk-active]`, then null → the centred toast,
+    because a hint is worth more mispositioned than missing). The press that
+    crosses calls `pgFlashClear()`: the hint is a question, and left up it spends
+    its remaining 1.4s under the file it moved TO, announcing "no more changes"
+    from on top of that file's first one. It is deliberately NOT dismissed on
+    scroll — the arming expires on a timer, so an early dismissal would leave a
+    live arming with nothing on screen to explain it.
 - **A programmatic `scrollTop` write is not a scroll event** — the windowed
   range does not update by itself (measured: seconds of `start: 0` on WebKitGTK
   while the DOM sat scrolled, masked usually by token arrival — a token-cache
