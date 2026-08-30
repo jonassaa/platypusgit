@@ -1,6 +1,7 @@
 import React from "react";
 import { PGEmpty, PGSpinner, PGToggle } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { ShallowNotice } from "@/features/repo/ShallowNotice";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { blameFile } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
@@ -106,6 +107,11 @@ export function BlameScreen() {
   return (
     <PGPane id="blame.content" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <DeepViewHeader crumbs={[`Blame — ${path}`]} />
+      {/* Above the ignore-revs strip, because it outranks it: an ignored
+          revision misattributes some lines, a shallow boundary misattributes
+          every line older than it, and the blame says neither on its own
+          (#255). */}
+      <ShallowNotice surface="blame" />
       {/* The toggle exists only where an ignore-revs file does: a repository
           without one would gain a control that changes nothing. */}
       {result?.ignoreRevsFile && (

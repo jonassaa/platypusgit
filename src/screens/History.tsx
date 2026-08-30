@@ -38,6 +38,7 @@ import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { CommitNotes } from "@/features/commits/CommitNotes";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { ShallowNotice } from "@/features/repo/ShallowNotice";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -1010,6 +1011,12 @@ export function HistoryScreen() {
     <>
       <PGToolbar left={toolbarLeft} right={toolbarRight} />
       {advancedPanel}
+      {/* The log is a prefix of history at the best of times; in a shallow clone
+          it is a prefix of a history that stops. Above the list rather than at
+          the end of it (#255): a reader with five hundred commits loaded never
+          scrolls to the end, and the fact belongs to the repository, not to the
+          scroll position. */}
+      <ShallowNotice surface="history" />
       <div
         ref={layout.ref}
         style={{

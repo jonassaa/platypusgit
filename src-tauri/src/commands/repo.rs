@@ -6,7 +6,7 @@ use crate::{
     error::{AppError, AppResult},
     git::types::{
         BlobSource, DeleteFailure, FileContent, FileStatus, HeadInfo, ImagePreview, RepoHandle,
-        RepoId,
+        RepoId, ShallowInfo,
     },
     state::AppState,
 };
@@ -97,6 +97,24 @@ pub async fn head_info(state: State<'_, AppState>, repo_id: String) -> AppResult
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     tokio::task::spawn_blocking(move || backend.head_info(&repo_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// How much of this repository is actually here (#255).
+///
+/// Read on every `refreshAll` rather than remembered, because git owns the
+/// answer: `.git/shallow` and the remotes' fetch refspecs. An `--unshallow` run
+/// in a terminal, or in another window of this app, shows up on the next
+/// refresh with nothing to invalidate.
+#[tauri::command]
+pub async fn shallow_info(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> AppResult<ShallowInfo> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    tokio::task::spawn_blocking(move || backend.shallow_info(&repo_id))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

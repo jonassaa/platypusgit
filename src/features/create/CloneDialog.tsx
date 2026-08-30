@@ -9,6 +9,9 @@ import { deriveRepoName } from "./deriveRepoName";
 import { Field } from "./Field";
 import { useCreateStore } from "./useCreateStore";
 
+/** What the depth box starts at when shallow is switched on. */
+const DEFAULT_DEPTH = 1;
+
 export function CloneDialog() {
   const open = useCreateStore((s) => s.open);
   const busy = useCreateStore((s) => s.busy);
@@ -26,6 +29,16 @@ export function CloneDialog() {
   const [name, setName] = React.useState("");
   const [nameEdited, setNameEdited] = React.useState(false);
   const [recurse, setRecurse] = React.useState(true);
+  // #255. `advanced` is disclosure only — the values below it are live whether
+  // the section is open or shut, so collapsing it never silently changes what
+  // Clone would do. `shallow` and `depth` are two fields because the checkbox is
+  // the decision and the number is a detail of it: unticking must not lose the
+  // number the user typed, and a blank number must not mean "full clone".
+  const [advanced, setAdvanced] = React.useState(false);
+  const [shallow, setShallow] = React.useState(false);
+  const [depth, setDepth] = React.useState(String(DEFAULT_DEPTH));
+  const [blobless, setBlobless] = React.useState(false);
+  const [singleBranch, setSingleBranch] = React.useState(false);
 
   // Listen before the first clone starts: the first progress tick can land
   // before the invoke promise settles. This dialog stays mounted for the
@@ -45,15 +58,22 @@ export function CloneDialog() {
   // next open. Reset the form on each closed→open transition. `parentDir`
   // is re-read from settings rather than cleared: it's the whole point of
   // persisting `lastCreateDir` that the next clone starts where the last
-  // one left off. Everything else (url, name, the nameEdited latch, recurse)
-  // starts fresh — a name the user edited on a previous clone must not
-  // silently disable URL→name derivation for future ones.
+  // one left off. Everything else (url, name, the nameEdited latch, recurse,
+  // and every Advanced field including the disclosure itself) starts fresh —
+  // a name the user edited on a previous clone must not silently disable
+  // URL→name derivation for future ones, and a `--depth 1` chosen for one
+  // enormous repository must not quietly truncate the next.
   React.useEffect(() => {
     if (open !== "clone") return;
     setUrl("");
     setName("");
     setNameEdited(false);
     setRecurse(true);
+    setAdvanced(false);
+    setShallow(false);
+    setDepth(String(DEFAULT_DEPTH));
+    setBlobless(false);
+    setSingleBranch(false);
     setParentDir(useSettingsStore.getState().lastCreateDir);
   }, [open]);
 
@@ -75,7 +95,15 @@ export function CloneDialog() {
   }
 
   const resolved = parentDir && name ? `${parentDir}/${name}` : "";
-  const canClone = !busy && url.trim() !== "" && parentDir !== "" && name !== "";
+  // The box is text, because a number input cannot be empty and non-empty at
+  // once and the user is allowed to clear it mid-edit. A value that is not a
+  // positive integer disables Clone rather than being silently rounded into
+  // one — the backend refuses a 0 too, but a form should not need the round
+  // trip to say so.
+  const parsedDepth = /^\d+$/.test(depth.trim()) ? Number(depth.trim()) : NaN;
+  const depthValid = !shallow || (Number.isFinite(parsedDepth) && parsedDepth >= 1);
+  const canClone =
+    !busy && url.trim() !== "" && parentDir !== "" && name !== "" && depthValid;
 
   return (
     <PGModal onCancel={close} dismissable={!busy}>
@@ -117,12 +145,96 @@ export function CloneDialog() {
         />
       </Field>
 
-      <PGCheckbox
-        checked={recurse}
+      {/*
+        Progressive disclosure (#255): the default clone is URL + folder +
+        Clone, and everything that can truncate what lands on disk is one click
+        away rather than in the way. A PGButton rather than a `<details>`: the
+        app owns its own chrome, and a native disclosure triangle is the one
+        widget in this dialog that would not be themed.
+      */}
+      <PGButton
+        variant="ghost"
+        size="sm"
+        icon={advanced ? "chevronDown" : "chevronRight"}
+        data-testid="clone-advanced-toggle"
+        aria-expanded={advanced}
         disabled={busy}
-        onChange={() => setRecurse((v) => !v)}
-        label="Initialize submodules"
-      />
+        onClick={() => setAdvanced((v) => !v)}
+        style={{ paddingLeft: 0 }}
+      >
+        Advanced
+      </PGButton>
+
+      {advanced && (
+        <div
+          data-testid="clone-advanced"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            padding: "8px 0 4px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <PGCheckbox
+              testId="clone-shallow"
+              checked={shallow}
+              disabled={busy}
+              onChange={() => setShallow((v) => !v)}
+              label="Shallow clone — keep only the newest"
+            />
+            <PGInput
+              data-testid="clone-depth"
+              value={depth}
+              disabled={busy || !shallow}
+              onChange={setDepth}
+              size="sm"
+              style={{ width: 64 }}
+              aria-label="Clone depth"
+            />
+            <span style={{ fontSize: "var(--fs-12)" }}>commits</span>
+          </div>
+          {shallow && !depthValid && (
+            <div
+              data-testid="clone-depth-error"
+              style={{ fontSize: "var(--fs-11)", color: "var(--git-removed)" }}
+            >
+              Depth must be a whole number, 1 or more.
+            </div>
+          )}
+          {shallow && (
+            <div
+              data-testid="clone-shallow-warning"
+              style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
+            >
+              History genuinely stops: older commits are absent, not just
+              unfetched, and blame is truncated with them. The app says so
+              afterwards and offers to fetch the rest.
+            </div>
+          )}
+          <PGCheckbox
+            testId="clone-blobless"
+            checked={blobless}
+            disabled={busy}
+            onChange={() => setBlobless((v) => !v)}
+            label="Blobless — full history, file contents fetched on demand"
+          />
+          <PGCheckbox
+            testId="clone-single-branch"
+            checked={singleBranch}
+            disabled={busy}
+            onChange={() => setSingleBranch((v) => !v)}
+            label="Single branch — fetch only the default branch"
+          />
+          <PGCheckbox
+            testId="clone-submodules"
+            checked={recurse}
+            disabled={busy}
+            onChange={() => setRecurse((v) => !v)}
+            label="Initialize submodules"
+          />
+        </div>
+      )}
 
       {resolved && (
         <div
@@ -212,7 +324,15 @@ export function CloneDialog() {
               url: url.trim(),
               parentDir,
               name,
-              recurseSubmodules: recurse,
+              options: {
+                recurseSubmodules: recurse,
+                // The checkbox is what decides, not the box's contents: a
+                // number left in the field with shallow unticked must not
+                // truncate the clone.
+                depth: shallow ? parsedDepth : null,
+                blobless,
+                singleBranch,
+              },
             })
           }
         >

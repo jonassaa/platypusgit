@@ -263,6 +263,64 @@ pub async fn fetch_all(
     .await
 }
 
+/// Build the argument list for `git fetch --unshallow` (#255).
+///
+/// Deliberately carries NO remote name. git resolves the default itself (the
+/// current branch's `branch.<name>.remote`, else `origin`), and leaving the
+/// choice to git is what keeps this argument list entirely free of
+/// user-supplied text — there is no `--upload-pack=<program>` shape to guard
+/// against, and therefore no `--` needed either.
+///
+/// `--progress` for the same reason `fetch_args` carries it: git writes no
+/// sideband progress unless stderr is a tty, which it never is here — and
+/// unshallowing a large repository is the longest wait in the app, so a bar is
+/// the difference between "working" and "hung".
+pub fn unshallow_args() -> Vec<&'static str> {
+    vec!["fetch", "--progress", "--unshallow"]
+}
+
+/// Fetch the history a shallow clone left behind (#255).
+///
+/// Answers whether a fetch actually ran. `git fetch --unshallow` on a complete
+/// repository is `fatal: --unshallow on a complete repository does not make
+/// sense`, and that is not something to show anyone: the outcome the caller
+/// asked for — full history — already holds. A stale banner, or another window
+/// having unshallowed first, must not turn a no-op into a red error. So the
+/// state is re-read here and `Ok(false)` is the honest answer.
+///
+/// One credential path like every other network op: `run_git_progress` is
+/// `run_git_authenticated_with_progress`, which registers the run under
+/// `cancel::Scope::Repo` — so this is cancellable and reports progress with
+/// nothing extra to remember.
+#[tauri::command]
+pub async fn unshallow(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_id: String,
+    credentials: Option<Credentials>,
+) -> AppResult<bool> {
+    let repo_id = RepoId(repo_id);
+    let backend = state.backend.clone();
+    let probe_id = repo_id.clone();
+    let info = tokio::task::spawn_blocking(move || backend.shallow_info(&probe_id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))??;
+    if !info.shallow {
+        return Ok(false);
+    }
+    let path = get_repo_path(&state, &repo_id).await?;
+    run_git_progress(
+        &app,
+        &path,
+        &repo_id,
+        NetOp::Fetch,
+        &unshallow_args(),
+        credentials.as_ref(),
+    )
+    .await?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn pull(
     app: AppHandle,
@@ -709,7 +767,16 @@ pub async fn push_delete_branch(
 
 #[cfg(test)]
 mod tests {
-    use super::{fetch_args, push_delete_args, push_tag_args};
+    use super::{fetch_args, push_delete_args, push_tag_args, unshallow_args};
+
+    #[test]
+    fn unshallow_args_carry_progress_and_no_user_value() {
+        let args = unshallow_args();
+        assert_eq!(args, ["fetch", "--progress", "--unshallow"]);
+        // The whole point of naming no remote: there is nothing in this argv a
+        // user typed, so there is nothing for `--` to protect.
+        assert!(!args.contains(&"--"));
+    }
 
     #[test]
     fn fetch_args_with_prune() {

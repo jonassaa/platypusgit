@@ -37,6 +37,11 @@ function mockRefreshAll() {
   mockInvoke("rebase_status", () => null);
   mockInvoke("bisect_status", () => null);
   mockInvoke("head_info", () => null);
+  mockInvoke("shallow_info", () => ({
+    shallow: false,
+    boundaryCount: 0,
+    singleBranch: false,
+  }));
 }
 
 beforeEach(() => {
@@ -108,13 +113,13 @@ describe("trackLoad", () => {
 
 describe("refreshAll", () => {
   it("names every read it is waiting on", async () => {
-    // One read held open; the other nine resolve. What is left is what the
+    // One read held open; the other ten resolve. What is left is what the
     // status bar would be naming.
     const held = deferred<unknown[]>();
     mockInvoke("list_remotes", () => held.promise);
 
     const refreshing = useRepoStore.getState().refreshAll();
-    // All ten, registered synchronously — a read added to `refreshAll` later
+    // All eleven, registered synchronously — a read added to `refreshAll` later
     // that skips `trackLoad` shows up here as a missing name.
     expect(ids()).toEqual([
       "bisect",
@@ -124,6 +129,7 @@ describe("refreshAll", () => {
       "rebase",
       "remotes",
       "repoState",
+      "shallow",
       "stashes",
       "status",
       "tags",
@@ -136,16 +142,16 @@ describe("refreshAll", () => {
   });
 
   it("narrows to the slow read once the fast ones finish", async () => {
-    // The behaviour worth having: ten reads start together, so at t=0 they are
-    // all equally long-running and the named one is an arbitrary (but stable)
-    // pick. What makes the indicator useful is what happens next — the nine
-    // fast reads drop off and the label is left pointing at the one that is
+    // The behaviour worth having: eleven reads start together, so at t=0 they
+    // are all equally long-running and the named one is an arbitrary (but
+    // stable) pick. What makes the indicator useful is what happens next — the
+    // ten fast reads drop off and the label is left pointing at the one that is
     // actually holding the refresh up.
     const held = deferred<unknown[]>();
     mockInvoke("list_remotes", () => held.promise);
 
     const refreshing = useRepoStore.getState().refreshAll();
-    expect(loadingSummary(tasks())).toMatch(/\+ 9 others$/);
+    expect(loadingSummary(tasks())).toMatch(/\+ 10 others$/);
 
     // A macrotask, not a few microtasks: the fast reads each settle through
     // their own await chain, and counting ticks would be guesswork.

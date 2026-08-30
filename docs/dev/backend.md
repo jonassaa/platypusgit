@@ -131,7 +131,7 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `commands::net::run_git_authenticated` (clone uses its primitives
   `apply_auth_env` + `map_git_failure` for a streamed stderr): fetch, fetch_all,
   pull, push, push_tag, push_delete_branch, fast_forward_branch,
-  fast_forward_all_branches, clone_repo,
+  fast_forward_all_branches, unshallow, clone_repo,
   forge_checkout_pull_request's fetch (its second git call passes `None` — the
   tip is already local), submodule_update, lfs_fetch/lfs_pull.
   `grep -rn 'run_git_authenticated\|run_git_creds\|apply_auth_env' src-tauri/src/`
@@ -656,6 +656,53 @@ again. `commands/repo.rs::delete_untracked_files` is therefore thin.
   header via `extract_signature` and answers `SigState::None` with no
   subprocess (same pre-check `verify_tag` has) — a cost win on every platform,
   and the question to ask of any new shell-out.
+
+## Clone options, and what a shallow clone costs (#255)
+
+`--depth`, `--filter=blob:none`, `--single-branch` and `--recurse-submodules`
+are **flags on the one `git clone`** in `commands/create.rs`. There is no second
+clone implementation and there must not be one: `run_clone` owns the destination
+validation, the streamed `--progress` stderr, the `cancel::Scope::Clone`
+registration, the partial-destination cleanup and the credential env, and every
+one of those has to hold for an option-bearing clone too.
+
+- **`--depth` implies `--single-branch` unless told otherwise**, so `clone_args`
+  emits `--no-single-branch` when a depth is set and the box is unticked. Without
+  it the checkbox would silently mean nothing on exactly the combination a user
+  reaches for. Every option in that list is OURS — a `u32` we format, or a fixed
+  literal — so the argv carries no user text at all ahead of the `--`.
+- **`--depth 0` is refused in `run_clone`**, not relayed from git. `fatal: depth
+  0 is not a positive number` is a form validation wearing a clone failure's
+  clothes, and it would only arrive after the spawn.
+- **Shallow state is READ, never remembered.** There is no
+  `.git/platypusgit-shallow.json` — the `git/bisect.rs` call, not the
+  `git/rebase_state.rs` one. `Repository::is_shallow()` stats
+  `<commondir>/shallow` on **every** call (measured against libgit2's source and
+  pinned by `tests/clone_options.rs`), which is what lets a `git2::Repository`
+  cached for the life of a tab stop reporting shallow the moment `--unshallow`
+  removes the file. Pinning that is not pedantry: a cached `true` would leave
+  every truncation notice up forever with the full history behind it.
+- `ShallowInfo` carries three facts, and the count is **best-effort**: an
+  unreadable `.git/shallow` leaves `boundary_count: 0` with `shallow: true`,
+  because the boolean is what every surface branches on and a wrong number is
+  worse than none. `single_branch` is the durable trace `--single-branch` leaves
+  in `remote.<name>.fetch` — the parsing is pure in `git/shallow.rs`, and the
+  glob that decides is on the **source** side of the refspec.
+- **`unshallow` is a fetch and goes on the one runner.** `git fetch --unshallow`,
+  through `run_git_authenticated_with_progress`, so it is credentialed,
+  cancellable and reports progress — which matters, because unshallowing a large
+  repository is the longest single wait in the app. It names **no remote**: git
+  resolves the default itself, which is what keeps the argument list free of
+  user-supplied text entirely.
+- **It answers `false` rather than relaying git's refusal.** `--unshallow` on a
+  complete repository is `fatal: --unshallow on a complete repository does not
+  make sense`, and a user who clicked a button another window had already acted
+  on must not be shown that. The command re-reads `is_shallow()` first.
+- **Deepen-by-N and widening a single-branch refspec are deliberately absent.**
+  A deepen leaves the repository shallow, so every notice stays up afterwards and
+  the reader's actual question ("why does history stop") goes unanswered; a widen
+  rewrites the user's own config with a per-remote choice to make. Both are their
+  own change — see the spec.
 
 ## Bisect: git's state is the only state of record (#93)
 

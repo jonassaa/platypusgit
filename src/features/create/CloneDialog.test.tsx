@@ -4,8 +4,10 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { CloneDialog } from "./CloneDialog";
 import { useCreateStore } from "./useCreateStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { mockInvoke } from "@/test/invokeMock";
+import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
 import { emitMockEvent } from "@/test/eventMock";
+
+const cloneCalls = () => getInvokeCalls().filter((c) => c.cmd === "clone_repo");
 
 describe("CloneDialog", () => {
   beforeEach(() => {
@@ -168,6 +170,159 @@ describe("CloneDialog", () => {
       "https://github.com/org/my-repo.git",
     );
     expect(screen.getByTestId("clone-name")).toHaveValue("my-repo");
+  });
+
+  // ── The Advanced section (#255) ───────────────────────────────────────────
+
+  /** Fill in a valid URL + destination and open Advanced. */
+  function armAdvanced() {
+    fireEvent.change(screen.getByTestId("clone-url"), {
+      target: { value: "https://github.com/org/repo.git" },
+    });
+    fireEvent.change(screen.getByTestId("clone-parent"), {
+      target: { value: "/tmp/dest" },
+    });
+    fireEvent.click(screen.getByTestId("clone-advanced-toggle"));
+  }
+
+  it("keeps the options out of the way until Advanced is opened", () => {
+    render(<CloneDialog />);
+    expect(screen.queryByTestId("clone-advanced")).toBeNull();
+    expect(screen.queryByTestId("clone-depth")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("clone-advanced-toggle"));
+    expect(screen.getByTestId("clone-advanced")).toBeInTheDocument();
+  });
+
+  it("sends a plain clone when Advanced is never opened", () => {
+    render(<CloneDialog />);
+    fireEvent.change(screen.getByTestId("clone-url"), {
+      target: { value: "https://github.com/org/repo.git" },
+    });
+    fireEvent.change(screen.getByTestId("clone-parent"), {
+      target: { value: "/tmp/dest" },
+    });
+
+    fireEvent.click(screen.getByTestId("clone-submit"));
+
+    expect(cloneCalls()[0].args.options).toEqual({
+      // Submodules keep the default they have always had — the checkbox moved
+      // into Advanced, the behaviour did not move with it.
+      recurseSubmodules: true,
+      depth: null,
+      blobless: false,
+      singleBranch: false,
+    });
+  });
+
+  it("ignores a depth left in the box while the shallow tick is off", () => {
+    // The checkbox is the decision, the number is a detail of it — a number
+    // sitting in the field with the box unticked must not truncate the clone.
+    render(<CloneDialog />);
+    armAdvanced();
+    fireEvent.change(screen.getByTestId("clone-depth"), {
+      target: { value: "50" },
+    });
+
+    fireEvent.click(screen.getByTestId("clone-submit"));
+
+    expect(cloneCalls()[0].args.options.depth).toBeNull();
+  });
+
+  it("sends the depth once the shallow box is ticked", () => {
+    render(<CloneDialog />);
+    armAdvanced();
+    fireEvent.click(screen.getByTestId("clone-shallow"));
+    fireEvent.change(screen.getByTestId("clone-depth"), {
+      target: { value: "50" },
+    });
+
+    fireEvent.click(screen.getByTestId("clone-submit"));
+
+    expect(cloneCalls()[0].args.options.depth).toBe(50);
+  });
+
+  it("refuses to clone on a depth that is not a positive whole number", () => {
+    render(<CloneDialog />);
+    armAdvanced();
+    fireEvent.click(screen.getByTestId("clone-shallow"));
+
+    for (const bad of ["0", "", "  ", "-3", "1.5", "many"]) {
+      fireEvent.change(screen.getByTestId("clone-depth"), {
+        target: { value: bad },
+      });
+      expect(screen.getByTestId("clone-submit")).toBeDisabled();
+      expect(screen.getByTestId("clone-depth-error")).toBeInTheDocument();
+    }
+
+    fireEvent.change(screen.getByTestId("clone-depth"), {
+      target: { value: "1" },
+    });
+    expect(screen.getByTestId("clone-submit")).not.toBeDisabled();
+    expect(screen.queryByTestId("clone-depth-error")).toBeNull();
+  });
+
+  it("warns that a shallow clone truncates history for real", () => {
+    render(<CloneDialog />);
+    armAdvanced();
+    expect(screen.queryByTestId("clone-shallow-warning")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("clone-shallow"));
+
+    expect(screen.getByTestId("clone-shallow-warning")).toHaveTextContent(
+      "History genuinely stops",
+    );
+  });
+
+  it("carries blobless, single-branch and submodules through to the backend", () => {
+    render(<CloneDialog />);
+    armAdvanced();
+    fireEvent.click(screen.getByTestId("clone-blobless"));
+    fireEvent.click(screen.getByTestId("clone-single-branch"));
+    fireEvent.click(screen.getByTestId("clone-submodules"));
+
+    fireEvent.click(screen.getByTestId("clone-submit"));
+
+    expect(cloneCalls()[0].args.options).toEqual({
+      recurseSubmodules: false,
+      depth: null,
+      blobless: true,
+      singleBranch: true,
+    });
+  });
+
+  it("resets every Advanced field on reopen, the disclosure included", () => {
+    // A `--depth 1` chosen for one enormous repository must not quietly
+    // truncate the next one, and a section left open is a section whose values
+    // the user can at least see.
+    render(<CloneDialog />);
+    armAdvanced();
+    fireEvent.click(screen.getByTestId("clone-shallow"));
+    fireEvent.click(screen.getByTestId("clone-blobless"));
+
+    act(() => {
+      useCreateStore.setState({ open: "none" });
+    });
+    act(() => {
+      useCreateStore.setState({ open: "clone" });
+    });
+
+    expect(screen.queryByTestId("clone-advanced")).toBeNull();
+    fireEvent.click(screen.getByTestId("clone-advanced-toggle"));
+    fireEvent.change(screen.getByTestId("clone-url"), {
+      target: { value: "https://github.com/org/repo.git" },
+    });
+    fireEvent.change(screen.getByTestId("clone-parent"), {
+      target: { value: "/tmp/dest" },
+    });
+    fireEvent.click(screen.getByTestId("clone-submit"));
+
+    expect(cloneCalls()[0].args.options).toEqual({
+      recurseSubmodules: true,
+      depth: null,
+      blobless: false,
+      singleBranch: false,
+    });
   });
 
   it("renders nothing when another dialog is open", () => {

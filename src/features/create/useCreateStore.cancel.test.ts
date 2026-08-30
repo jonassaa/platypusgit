@@ -11,6 +11,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { useCreateStore } from "./useCreateStore";
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
+import type { CloneOptions } from "@/lib/types";
+/** The plain clone — no Advanced option set. Every test here is about the
+ *  credential/cancel flow, which the options do not touch. */
+const PLAIN: CloneOptions = {
+  recurseSubmodules: false,
+  depth: null,
+  blobless: false,
+  singleBranch: false,
+};
+
 
 const calls = (cmd: string) => getInvokeCalls().filter((c) => c.cmd === cmd);
 
@@ -77,7 +87,7 @@ describe("a cancelled clone", () => {
       url: "https://example.com/repo.git",
       parentDir: "/tmp",
       name: "repo",
-      recurseSubmodules: false,
+      options: PLAIN,
     });
 
   beforeEach(() => {
@@ -123,7 +133,7 @@ it("still reports a clone that genuinely failed", async () => {
     url: "https://example.com/nope.git",
     parentDir: "/tmp",
     name: "nope",
-    recurseSubmodules: false,
+    options: PLAIN,
   });
 
   expect(useCreateStore.getState().error).toBe("repository not found");

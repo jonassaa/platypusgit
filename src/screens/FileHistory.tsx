@@ -1,6 +1,7 @@
 import React from "react";
 import { PGEmpty, PGSpinner } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { ShallowNotice } from "@/features/repo/ShallowNotice";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { fileHistory } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
@@ -66,6 +67,9 @@ export function FileHistoryScreen() {
   return (
     <PGPane id="fileHistory.list" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <DeepViewHeader crumbs={[`History — ${path}`]} />
+      {/* A file's history ends at the shallow boundary too, and the list gives
+          no sign of it: it simply has fewer rows (#255). */}
+      <ShallowNotice surface="fileHistory" />
       {loading && <div style={{ padding: 12 }}><PGSpinner /></div>}
       {error && <div style={{ padding: 12, color: "var(--git-removed)" }}>{error}</div>}
       {!loading && !error && commits.length === 0 && (

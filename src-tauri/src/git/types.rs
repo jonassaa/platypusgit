@@ -825,6 +825,57 @@ pub struct CloneProgress {
     pub percent: u8,
 }
 
+/// What the Clone dialog's **Advanced** section asked for (#255).
+///
+/// Every field is a flag on the ONE `git clone` in `commands/create.rs` — there
+/// is no second clone implementation, and there must not be one: the
+/// destination validation, the streamed progress, the cancel registration and
+/// the credential env all live on that path.
+///
+/// `Default` is the plain clone the dialog does when Advanced is left shut:
+/// full history, every branch, no filter, no submodules. Note that the
+/// **dialog** defaults `recurse_submodules` to on — this default is the
+/// "nothing was asked for" value, which is what a caller with no options wants.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CloneOptions {
+    /// `--recurse-submodules`.
+    pub recurse_submodules: bool,
+    /// `--depth N`. `None` is a full clone; `Some(0)` is refused by
+    /// `clone_repo` (git: "depth 0 is not a positive number").
+    pub depth: Option<u32>,
+    /// `--filter=blob:none` — full history, file contents fetched on demand.
+    pub blobless: bool,
+    /// `--single-branch`. When `false` AND a depth is set, `clone_args` emits
+    /// `--no-single-branch`, because `--depth` implies `--single-branch`
+    /// otherwise and the checkbox would silently mean nothing.
+    pub single_branch: bool,
+}
+
+/// How much of the repository is actually here (#255).
+///
+/// Read from git on every refresh, never remembered: git owns `.git/shallow`
+/// and the remotes' fetch refspecs, so a second record could only disagree —
+/// the same call `git/bisect.rs` makes. An `--unshallow` run in a terminal, or
+/// in another window, is picked up by the next `refreshAll`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShallowInfo {
+    /// libgit2's `is_shallow()` — `.git/shallow` exists and is non-empty.
+    pub shallow: bool,
+    /// How many commits history stops at, from `<commondir>/shallow`.
+    ///
+    /// Best-effort: a file that cannot be read leaves this 0 while `shallow`
+    /// stays true. The boolean is the load-bearing half — the count only makes
+    /// the sentence more specific.
+    pub boundary_count: usize,
+    /// Every remote's fetch refspecs name exactly one branch — the durable
+    /// trace `--single-branch` leaves in `remote.<name>.fetch`. Its symptom
+    /// ("where are my other branches?") is the same class of silent wrongness
+    /// as a truncated history, so it is reported beside it.
+    pub single_branch: bool,
+}
+
 /// Which network op a `net://progress` tick belongs to (#296).
 ///
 /// One variant per `RepoActivity` key that can report a percentage, so the
