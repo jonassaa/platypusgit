@@ -48,6 +48,9 @@ import type {
   RepoHandle,
   SignatureStatus,
   RepoState,
+  SshKeyGenerateRequest,
+  SshKeyInfo,
+  SshKeyStatus,
   StashInfo,
   SubmoduleInfo,
   TagInfo,
@@ -1293,6 +1296,37 @@ export function getUpdateCapability(): Promise<UpdateCapability> {
 
 export function openUrl(url: string): Promise<void> {
   return invoke("open_url", { url });
+}
+
+/**
+ * Which SSH keys are on this machine, and where a new one would go (#248).
+ *
+ * `host` comes from the failed challenge, and drives both the add-key link and
+ * a host-specific default file name; `kind` disambiguates a self-hosted
+ * instance, which a URL cannot tell apart. Both optional — the panel still
+ * works without them, it just cannot link.
+ */
+export function sshKeyStatus(
+  host?: string | null,
+  kind?: ForgeKind | null,
+): Promise<SshKeyStatus> {
+  return invoke<SshKeyStatus>("ssh_key_status", {
+    host: host ?? undefined,
+    kind: kind ?? undefined,
+  });
+}
+
+/**
+ * Generate an ed25519 key pair, resolving with its PUBLIC half (#248).
+ *
+ * The passphrase in `request` is the only place it exists on this side: it is
+ * component state handed straight to this call, never written to a store — the
+ * same rule `CredentialDialog` follows for a credential.
+ */
+export function sshKeyGenerate(
+  request: SshKeyGenerateRequest,
+): Promise<SshKeyInfo> {
+  return invoke<SshKeyInfo>("ssh_key_generate", { request });
 }
 
 export async function initRepo(

@@ -13,6 +13,7 @@ pub mod net;
 pub mod rebase;
 pub mod reflog;
 pub mod repo;
+pub mod ssh;
 pub mod stash;
 pub mod submodule;
 pub mod update;

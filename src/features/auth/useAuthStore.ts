@@ -11,7 +11,17 @@ import type { Credentials } from "@/lib/tauri";
 export interface AuthChallengeRequest {
   host: string | null;
   kind: AuthKind;
-  retry: (creds: Credentials, remember: boolean) => Promise<void>;
+  /**
+   * `undefined` means "run it again with no credential at all" — the
+   * prompt-less first attempt, repeated.
+   *
+   * Not a loophole: it is what a retry MEANS after SSH key setup (#248). The
+   * user generated a key and registered it with the host; there is no secret to
+   * type, and the very attempt that just failed is now the one that succeeds.
+   * `withAuthRetry`'s `attempt` has always taken an optional credential — this
+   * only stops the dialog having to invent one.
+   */
+  retry: (creds: Credentials | undefined, remember: boolean) => Promise<void>;
 }
 
 interface AuthStoreState {
