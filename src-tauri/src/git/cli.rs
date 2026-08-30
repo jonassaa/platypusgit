@@ -5,7 +5,7 @@ use crate::error::{AppError, AppResult};
 use super::{
     types::{
         AheadBehind, BisectMark, BisectStatus, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult, ConflictSides,
-        DeleteFailure, DiffKind, FileContent,
+        DeleteFailure, DiffKind, DiffToolTarget, FileContent,
         BulkFastForward, FastForward,
         FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
         BlobSource, ImagePreview,
@@ -378,6 +378,15 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn shallow_info(&self, _repo_id: &RepoId) -> AppResult<ShallowInfo> {
+        Err(AppError::NotImplemented)
+    }
+    fn difftool_plan(
+        &self,
+        _repo_id: &RepoId,
+        _target: &DiffToolTarget,
+        _paths: &[String],
+        _tool: Option<&str>,
+    ) -> AppResult<crate::git::difftool::DiffToolPlan> {
         Err(AppError::NotImplemented)
     }
     fn add_remote(&self, _repo_id: &RepoId, _name: &str, _url: &str) -> AppResult<()> {

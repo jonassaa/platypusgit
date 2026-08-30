@@ -59,6 +59,17 @@ const CONSOLE_KEEPING_CALLERS: &[(&str, &str, &str)] = &[
          unaffected either way — the flag does not apply to non-console apps.",
     ),
     (
+        "src/commands/diff.rs",
+        "crate::proc::git_async_keeping_console(",
+        "`git difftool` (#235), for the identical reason to `git mergetool` \
+         directly above: it launches the tool the USER configured, and a console \
+         difftool (`vimdiff`, `nvimdiff`) is a terminal program that needs the \
+         console it is given. The asymmetry is the same one — silencing costs a \
+         GUI tool nothing (the flag does not apply to it) and costs a console \
+         tool the window it renders in, leaving an invisible process holding \
+         the file with no way to stop it.",
+    ),
+    (
         "src/commands/repo.rs",
         "crate::proc::program_async_keeping_console(",
         "`$VISUAL`/`$EDITOR`. `EDITOR=vim` names a console program, and hiding \

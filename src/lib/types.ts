@@ -357,6 +357,29 @@ export type ImageSource =
   | { kind: "stage"; stage: number };
 
 /**
+ * Which two sides `git difftool` should be pointed at (#235). Mirrors Rust's
+ * `DiffToolTarget`.
+ *
+ * `commit` is a kind of its own rather than a `range` built here with `^`,
+ * because both shorthands for "this commit against its parent" are wrong at a
+ * ROOT commit: `<oid>^` fails to resolve, and `<oid>^!` silently degrades to a
+ * diff against the WORKING TREE. The backend resolves the parent instead — see
+ * `git/difftool.rs`. So a surface that knows it is showing one commit passes
+ * `commit`, never a range it composed.
+ */
+export type DiffToolTarget =
+  /** Unstaged changes — the working tree against the index. */
+  | { kind: "worktree" }
+  /** Staged changes — the index against HEAD. */
+  | { kind: "staged" }
+  /** One commit against its first parent (or the empty tree, at a root). */
+  | { kind: "commit"; oid: string }
+  /** Any two revisions, in git's own order: old, then new. */
+  | { kind: "range"; from: string; to: string }
+  /** A revision against the working tree. */
+  | { kind: "revToWorktree"; rev: string };
+
+/**
  * One side of an image preview (#224). Mirrors Rust's `ImagePreview`.
  *
  * `null` from `readImagePreview` is a FIFTH state and means something else

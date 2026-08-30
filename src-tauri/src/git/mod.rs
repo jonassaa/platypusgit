@@ -3,6 +3,7 @@ pub mod bisect;
 pub mod blame;
 pub mod cli;
 pub mod commit_template;
+pub mod difftool;
 pub mod hooks;
 pub mod image;
 pub mod libgit2;
@@ -26,7 +27,7 @@ use crate::error::AppResult;
 use types::{
     AheadBehind,
     BisectMark, BisectStatus, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult, ConflictSides,
-    DeleteFailure, DiffKind, FileContent,
+    DeleteFailure, DiffKind, DiffToolTarget, FileContent,
     BulkFastForward, FastForward,
     FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
     BlobSource, ImagePreview,
@@ -392,6 +393,22 @@ pub trait GitBackend: Send + Sync {
     /// `remote.<name>.fetch` are git's, and a second record could only
     /// disagree. See `git/shallow.rs` for the parsing half.
     fn shallow_info(&self, repo_id: &RepoId) -> AppResult<ShallowInfo>;
+    /// Everything `git difftool` needs for one file, decided under one lock
+    /// (#235) — see `git/difftool.rs`.
+    ///
+    /// A PLAN rather than the spawn itself: the spawn is async and deliberately
+    /// keeps its console (a console difftool is a terminal program), so it lives
+    /// in `commands/diff.rs` next to the one other exception, where
+    /// `tests/spawn_no_window.rs` can allow-list it by name. Everything that
+    /// needs the repository — the workdir, a commit's parent, the pathspec
+    /// check — happens here instead of being re-derived at the call site.
+    fn difftool_plan(
+        &self,
+        repo_id: &RepoId,
+        target: &DiffToolTarget,
+        paths: &[String],
+        tool: Option<&str>,
+    ) -> AppResult<difftool::DiffToolPlan>;
 
     // === index writes ===
     fn stage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;

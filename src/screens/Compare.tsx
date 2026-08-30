@@ -424,6 +424,21 @@ export function CompareScreen() {
                 ? { kind: "worktree" }
                 : { kind: "rev", rev: right.rev },
           }}
+          // The same two sides again, in git's own vocabulary (#235). The
+          // working-tree right-hand side is a one-revision diff, not a range —
+          // `git diff <rev> -- <path>` already means "against the working tree".
+          difftoolTarget={
+            right.kind === "workdir"
+              ? {
+                  kind: "revToWorktree",
+                  rev: left.kind === "rev" ? left.rev : "HEAD",
+                }
+              : {
+                  kind: "range",
+                  from: left.kind === "rev" ? left.rev : "HEAD",
+                  to: right.rev,
+                }
+          }
         />
       </div>
     </div>

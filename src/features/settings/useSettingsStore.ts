@@ -662,6 +662,26 @@ function normalizeDensity(density: UiDensity): UiDensity {
 }
 
 /**
+ * Is this a git diff-tool NAME (#235)?
+ *
+ * The one mistake worth catching in the field: pasting a command line
+ * (`bcompare "$LOCAL" "$REMOTE"`). git would look for a tool by that whole
+ * name and fail with a message about a tool nobody configured — the command
+ * line belongs in `difftool.<tool>.cmd`, which is where git reads it from.
+ *
+ * Empty is VALID, and it is the default: it means "let git decide", the
+ * zero-config case the feature is designed around. The authority is
+ * `git/difftool.rs::normalize_tool`, which refuses the same shapes on the way
+ * in; this is the half that can colour the border while it is being typed.
+ */
+export function isValidDiffToolName(name: string): boolean {
+  const trimmed = name.trim();
+  if (trimmed === "") return true;
+  // eslint-disable-next-line no-control-regex
+  return !/[\s\u0000-\u001f\u007f]/.test(trimmed);
+}
+
+/**
  * Apply UI density by writing the row-step slot to CSS vars on :root.
  *
  * `data-density` is also set — a reserved hook for any future density rule
@@ -824,6 +844,21 @@ interface PersistedState {
   diffContextMode: "wholeFile" | "chunks";
   ignoreWhitespaceInDiff: boolean;
   /**
+   * Which external diff tool to hand a diff to, overriding git config (#235).
+   *
+   * Empty — the default — means "let git decide", and that is the case the
+   * feature is built around: `git difftool` already resolves `diff.guitool`,
+   * `diff.tool`, `merge.tool` and `difftool.<tool>.cmd` on its own, so anyone
+   * who has already set one up needs nothing here. A value is passed as
+   * `--tool=<name>`, which git treats as the top of that list.
+   *
+   * A tool NAME, not a command line: `meld`, `bc`, `vimdiff`, or a name the
+   * user defined with `difftool.<tool>.cmd`. The backend refuses anything with
+   * whitespace in it rather than letting git fail with a message about a tool
+   * nobody configured — see `git/difftool.rs::normalize_tool`.
+   */
+  externalDiffTool: string;
+  /**
    * Whether the app checks for a newer release, and on whose initiative — see
    * UpdateCheckMode. The gate itself lives in `useUpdateStore.check()`, not at
    * the call sites, so no path can spend a request the user disabled.
@@ -920,6 +955,7 @@ const DEFAULTS: PersistedState = {
   diffViewMode: "inline",
   diffContextMode: "wholeFile",
   ignoreWhitespaceInDiff: false,
+  externalDiffTool: "",
   updateCheckMode: "auto",
   lastCreateDir: "",
 };
@@ -1232,6 +1268,12 @@ function coerceSettings(
   // safety.
   if (!isValidTicketPattern(String(out.commitTicketPattern))) {
     out.commitTicketPattern = DEFAULTS.commitTicketPattern;
+  }
+  // Same reasoning one setting over: a stored tool name that git cannot use
+  // would fail every "open in external diff tool" click with nothing on screen
+  // explaining it. Empty — git decides — is the documented safe value.
+  if (!isValidDiffToolName(String(out.externalDiffTool))) {
+    out.externalDiffTool = DEFAULTS.externalDiffTool;
   }
   // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
   // factor is rejected by the webview and would leave the UI unzoomable.

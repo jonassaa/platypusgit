@@ -11,7 +11,12 @@ import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { headAncestryOf } from "@/features/commits/headAncestry";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
-import type { BranchInfo, CommitInfo, FileDiff } from "@/lib/types";
+import type {
+  BranchInfo,
+  CommitInfo,
+  DiffToolTarget,
+  FileDiff,
+} from "@/lib/types";
 import { fileDiffToText, selectedLinesToText } from "@/lib/diffCopy";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
@@ -940,6 +945,40 @@ export function copyPathItems(paths: string[]): ContextMenuItem[] {
   ];
 }
 
+/**
+ * "Open in external diff tool" — the one definition, for every surface (#235).
+ *
+ * A helper rather than a copied literal because the entry has to say the same
+ * thing everywhere: this is the escape hatch out of our diff, and a user who
+ * finds it on a working-tree row and not on a commit's file has found a bug, not
+ * a distinction.
+ *
+ * `paths` is a list so a rename can pass `[oldPath, newPath]`: scoped to the new
+ * path alone git reports a renamed file as a whole file added, which is exactly
+ * the dead end this exists to remove.
+ *
+ * Which tool runs is not decided here and not named in the label — git resolves
+ * it from `diff.guitool` / `diff.tool` / `merge.tool`, and a label claiming
+ * "Open in Meld" would be a guess printed as a fact.
+ */
+export function externalDiffItem(
+  target: DiffToolTarget,
+  paths: string[],
+  opts: { disabled?: boolean } = {},
+): ContextMenuItem {
+  const usable = paths.filter((p) => !!p && !!p.trim());
+  const disabled = opts.disabled || usable.length === 0;
+  return {
+    icon: "external",
+    label: "Open in external diff tool",
+    disabled,
+    onClick: () => {
+      if (disabled) return;
+      void useRepoStore.getState().openInDifftool(target, usable);
+    },
+  };
+}
+
 export function worktreeMenuItems(
   worktree: {
     name?: string;
@@ -1742,6 +1781,18 @@ export function fileMenuItems(
         useRepoStore.getState().openInEditor(path);
       },
     },
+    // The escape hatch out of our own diff (#235). A staged row's two sides are
+    // the index and HEAD; every other row's are the working tree and the index —
+    // the same split "Unstage"/"Stage" above is already making.
+    //
+    // Disabled for a purely untracked row, and that is not fussiness: the file is
+    // in NEITHER side of any diff git computes, so `git difftool` would run no
+    // tool at all and the click would do nothing whatsoever. A dead entry that
+    // looks dead beats one that looks alive. Staging it first makes it work, via
+    // the `staged` target — which is why the gate is `untracked && !staged`.
+    externalDiffItem({ kind: staged ? "staged" : "worktree" }, [path], {
+      disabled: untracked && !staged,
+    }),
     // Partial stash of one file (#133). Here as well as in the multi-selection
     // menu because one row IS the common selection — reaching it only by
     // selecting two files first would be a shortcut nobody finds.

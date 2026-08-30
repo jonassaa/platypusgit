@@ -636,13 +636,15 @@ again. `commands/repo.rs::delete_untracked_files` is therefore thin.
   `GIT_TERMINAL_PROMPT=0` and a closed stdin; `git_async_in` is the clone shape
   (cwd instead of `-C`); `program`/`program_async` apply the flag only. Later
   builder calls win, so a caller piping stdin just overrides the null.
-- **The two console-KEEPING exceptions are deliberate:**
-  `git_async_keeping_console` (`git mergetool`) and
-  `program_async_keeping_console` (`$VISUAL`/`$EDITOR`) — a console mergetool
-  or `EDITOR=vim` IS a terminal program; silencing it leaves an invisible
-  process holding the file forever. A stray console window is cosmetic; an
-  invisible editor is Task Manager. The guard test allow-lists both call sites
-  by name.
+- **The console-KEEPING exceptions are deliberate**, and there are three call
+  sites across two constructors: `git_async_keeping_console` for `git mergetool`
+  and for `git difftool` (#235), `program_async_keeping_console` for
+  `$VISUAL`/`$EDITOR`. A console mergetool, a console difftool (`vimdiff`,
+  `nvimdiff`) or `EDITOR=vim` IS a terminal program; silencing it leaves an
+  invisible process holding the file forever. A stray console window is
+  cosmetic; an invisible editor is Task Manager. The guard test allow-lists
+  every call site by name with its reason, so a fourth is an argued change with
+  a test to update.
 - **Pin Windows system executables to an absolute path.** `CreateProcess`
   searches the **current directory before the system directory**, and this
   app's cwd *is* a repository whenever the `pgit` shim launched it from inside
@@ -703,6 +705,60 @@ one of those has to hold for an option-bearing clone too.
   the reader's actual question ("why does history stop") goes unanswered; a widen
   rewrites the user's own config with a per-remote choice to make. Both are their
   own change — see the spec.
+
+## `git difftool` — what we decide, and what git does (#235)
+
+The feature is "open this diff in Beyond Compare / Kaleidoscope / Meld /
+`nvimdiff`", and almost all of it is git's. `git/difftool.rs` decides which two
+sides and builds the argv; `commands/diff.rs::open_in_difftool` spawns it.
+
+- **Shell out, never materialise the sides ourselves.** For a commit or an index
+  diff neither side is a file — they are blobs — and `git difftool` already
+  extracts both, honours `diff.guitool` / `diff.tool` / `merge.tool` /
+  `difftool.<tool>.cmd` / `difftool.<tool>.path`, and cleans up. Our own copy
+  would be worse and would drift the first time git adds a tool. That is also
+  what makes this zero-config for anyone already set up: with no Settings
+  override we pass no tool at all.
+- **`--gui` and `--tool` are mutually exclusive.** git refuses the pair —
+  `fatal: options '--gui' and '--tool' cannot be used together` — because they
+  answer the same question. No override → `--gui` (which puts `diff.guitool`
+  first and falls back to `diff.tool`); an override → `--tool=<name>` alone.
+  Found by the end-to-end test, pinned by a unit test.
+- **A commit's own diff resolves its parent in RUST.** Both shorthands are wrong
+  at a root commit: `<oid>^` fails to resolve, and `<oid>^!` — git's own
+  documented "changes on this commit" form — silently degrades to
+  `git diff <oid>`, a diff against the **working tree**. So `spec_for` asks git2
+  for the first parent and falls back to `treebuilder(None).write()`, the
+  repository's own empty tree (hash-algorithm-correct, where a hard-coded
+  `4b825dc…` is SHA-1 only). `tests/difftool.rs` pins the wrong answer as much as
+  the right one: an uncommitted edit in the worktree must never reach a commit's
+  diff.
+- **A tool NAME is not a command line.** `normalize_tool` refuses whitespace and
+  control characters with `InvalidArgument`, because `diff.tool=meld` selects
+  `difftool.meld.cmd` — the command line belongs in that key, where git reads it.
+- **No `NoDiffTool` variant.** When nothing resolves, git says
+  `This message is displayed because 'diff.tool' is not configured` in the user's
+  own locale. The command pipes **stderr** (stdin and stdout stay inherited, so a
+  console tool still owns the terminal) and puts its tail in `AppError::Git`.
+  Minting a variant would mean pattern-matching English against a resolution
+  order we do not own.
+- **No caller-supplied string reaches argv.** Revisions are RESOLVED to hex oids
+  (`resolve_commit`), not validated: `git difftool` needs its revisions **ahead
+  of `--`**, so the separator that protects the pathspecs cannot protect them,
+  and a `--output=…` in a revision slot would be read as an option. Resolving
+  makes that unrepresentable rather than merely refused, and it is the better
+  error besides — a bad ref fails as `InvalidRef` with git's own message instead
+  of after the spawn. `every_revision_reaching_argv_is_a_hex_oid` asserts it as a
+  property over every target shape, so a new variant that passed a string through
+  fails without anyone remembering this paragraph.
+- **`GIT_LITERAL_PATHSPECS` is the second user of `git/stash.rs`'s constant.**
+  This is the app's other pathspec-passing shell-out; without it a file named
+  `a[b].c` is a glob and the row the user right-clicked is not the file git
+  opens. Tested with a decoy that the glob would have matched.
+- Paths are a LIST so a rename passes `[oldPath, newPath]` — scoped to the new
+  path alone git reports a renamed file as wholly added, which is the dead end
+  the feature exists to remove. Every path goes through
+  `opener::safe_workdir_path`, and one bad path refuses the whole batch.
 
 ## Bisect: git's state is the only state of record (#93)
 

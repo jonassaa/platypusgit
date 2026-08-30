@@ -8,7 +8,7 @@ import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { diffCommit, diffCommits, diffRefToWorkdir, stashDiff } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
-import type { FileDiff } from "@/lib/types";
+import type { DiffToolTarget, FileDiff } from "@/lib/types";
 import type { SideSource } from "@/lib/syntax/useDiffSyntax";
 
 /**
@@ -81,6 +81,39 @@ function syntaxSidesFor(
         old: { kind: "rev", rev: target.oid },
         new: { kind: "rev", rev: "HEAD" },
       };
+  }
+}
+
+/**
+ * The same two sides again, for `git difftool` (#235).
+ *
+ * A separate function from `syntaxSidesFor` rather than a translation of it,
+ * and the reason is `commit-self`: `syntaxSidesFor` says `<oid>^`, which is
+ * allowed to fail — a root commit simply renders plain. `git difftool` cannot
+ * be given that. `<oid>^` errors, and `<oid>^!` silently diffs the commit
+ * against the WORKING TREE. So the commit targets pass `commit` and let the
+ * backend resolve the parent (or the empty tree at a root).
+ *
+ * `stash-diff` is the same shape — a stash IS a commit, and its first parent is
+ * the base it was taken from, which is the pair `git stash show` uses. Its
+ * untracked payload lives on a third parent that `git difftool` will not reach,
+ * so an untracked file in the stash opens empty; the screen already says the
+ * untracked files are included, and the alternative is no entry at all on a
+ * surface where most rows work.
+ */
+function difftoolTargetFor(target: Target): DiffToolTarget {
+  switch (target.kind) {
+    case "commit-self":
+    case "stash-diff":
+      return { kind: "commit", oid: target.oid };
+    case "stash-vs-wt":
+      return { kind: "revToWorktree", rev: target.oid };
+    case "commit-vs-commit":
+      return { kind: "range", from: target.from, to: target.to };
+    case "commit-vs-wt":
+      // Not `revToWorktree`: this target diffs the commit against HEAD, which
+      // is what the fetch above does too. The header says so.
+      return { kind: "range", from: target.oid, to: "HEAD" };
   }
 }
 
@@ -217,6 +250,7 @@ export function CommitDiffScreen() {
         // comparison does not (#61 D6).
         verifyOid={target.kind === "commit-self" ? target.oid : undefined}
         syntaxSides={repo ? syntaxSidesFor(target, repo.id) : undefined}
+        difftoolTarget={difftoolTargetFor(target)}
       />
     </div>
   );

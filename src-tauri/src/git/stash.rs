@@ -19,8 +19,11 @@ use crate::git::types::StashSaveOptions;
 /// A path reaching us is data from `git status`, but git reads a leading `:`
 /// as pathspec MAGIC — a file honestly named `:(exclude)x` would otherwise
 /// select a different set than the row the user right-clicked. This is the
-/// pathspec-shaped member of the same family as the `--` rule, and it is set
-/// only here because no other shell-out in the app passes a pathspec.
+/// pathspec-shaped member of the same family as the `--` rule.
+///
+/// Defined here and reused: `commands::diff::open_in_difftool` (#235) is the
+/// second shell-out in the app that passes a pathspec, and it needs exactly
+/// this. A second copy of the pair would be a second one to forget.
 pub const LITERAL_PATHSPECS: (&str, &str) = ("GIT_LITERAL_PATHSPECS", "1");
 
 /// `git stash push …` for a pathspec-scoped stash.

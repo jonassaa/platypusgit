@@ -58,6 +58,16 @@ export interface RepoActivity {
   submodule?: ActivityState;
   /** Checking out a pull request's head ref. */
   forge?: ActivityState;
+  /**
+   * `git difftool` — the user's own diff tool, open on one file (#235).
+   *
+   * The longest-lived entry in here by a wide margin: git waits for the tool,
+   * and a person reading a diff in Beyond Compare takes minutes. That is exactly
+   * why it is an entry at all — without one, clicking "Open in external diff
+   * tool" and then alt-tabbing back to a window that says nothing looks like the
+   * click was swallowed.
+   */
+  difftool?: ActivityState;
 }
 
 export type ActivityKey = keyof RepoActivity;
@@ -68,7 +78,10 @@ export type ActivityKey = keyof RepoActivity;
  * "Expected to be one at a time" stopped being true once LFS, submodule and
  * forge ops joined: a submodule update fetching while the user pushes is
  * ordinary. The order is by how much the user is waiting on it — the push they
- * just started outranks a background submodule fetch.
+ * just started outranks a background submodule fetch. `difftool` sits low for
+ * the same reason it is the longest-lived: the app is not busy, the user is
+ * reading, and any real git op running underneath is the more urgent thing to
+ * say.
  */
 export const ACTIVITY_PRIORITY: readonly ActivityKey[] = [
   "push",
@@ -78,6 +91,7 @@ export const ACTIVITY_PRIORITY: readonly ActivityKey[] = [
   "stash",
   "branch",
   "forge",
+  "difftool",
   "lfs",
   "submodule",
 ];

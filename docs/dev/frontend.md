@@ -329,6 +329,30 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   boundaries): both click path and keyboard cursor are disabled by
   `useHunkActionsDisabledReason` — the keyboard must never reach what the mouse
   cannot (#61 D2).
+- **The way OUT of our diff is one helper** (#235):
+  `design/context-menu.tsx::externalDiffItem(target, paths)`, in `fileMenuItems`
+  (Commit panel, repo browser) and on `CommitDiffPanel`'s file rows (commit
+  diff, History inline, Compare, both stash diffs). One definition because the
+  entry has to say the same thing everywhere — a user who finds it on a
+  working-tree row and not on a commit's file has found a bug, not a
+  distinction. Three things about it:
+  - **`CommitDiffPanel` takes an explicit `difftoolTarget`, never one derived
+    from `syntaxSides`.** The two describe the same comparison, but `syntaxSides`
+    is allowed to be approximate — History passes `{ rev: "<oid>^" }`, which
+    fails harmlessly on a root commit — and `<oid>^` handed to `git difftool`
+    either errors or, in its `^!` spelling, diffs against the WORKING TREE. A
+    surface showing one commit passes `{ kind: "commit" }` and the backend
+    resolves the parent.
+  - **A rename passes BOTH paths.** `[oldPath, newPath]`, so git pairs them
+    instead of reporting the file as wholly added.
+  - **Not in the multi-file menu**, and **disabled on a purely untracked row.**
+    Forty files is forty windows; and an untracked path is in neither side of
+    any diff git computes, so the click would do nothing at all. Staging it makes
+    it work via the `staged` target — hence `untracked && !staged`.
+  The store action (`useRepoStore.openInDifftool`) holds a `difftool`
+  `RepoActivity` entry for the whole time the tool is open — it resolves when the
+  TOOL exits, which is minutes — and `refreshAll()`s afterwards, because a
+  working-tree side is handed to the tool as the REAL file, not a copy.
 
 ## The commit-message composer (#252)
 

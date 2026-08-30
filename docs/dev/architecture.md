@@ -213,6 +213,16 @@ git/
 │                append_signature, validate_tag_name, parse_verify_tag. Also
 │                the shared ref-name validator (#214): validate_ref_component,
 │                validate_branch_name
+├── difftool.rs  `git difftool` — handing any diff to the user's own tool (#235).
+│                Decides WHICH TWO SIDES and builds the argv; which PROGRAM runs
+│                stays git's (diff.guitool / diff.tool / merge.tool /
+│                difftool.<tool>.cmd), which is what makes it zero-config.
+│                difftool_args + normalize_tool are PURE; spec_for is the one
+│                impure fn and exists for a single case — a commit's own diff
+│                resolves its first parent HERE, because `<oid>^` fails at a
+│                root commit and `<oid>^!` silently degrades to a diff against
+│                the WORKING TREE. `--gui` and `--tool` are never passed
+│                together: git refuses the pair
 ├── commit_template.rs
 │                `commit.template` + `core.commentChar` + `commit.cleanup`
 │                (#252). Resolves the
@@ -283,8 +293,13 @@ commands/        Thin Tauri handlers, one file per area:
 ├── diff.rs      get_diff, stage/unstage/discard_paths, stage/unstage/discard_hunk,
 │                stage/unstage/discard_lines, diff_ref_to_workdir, blame_file
 │                (takes ignoreRevs — the Blame screen's toggle; see git/blame.rs),
-│                and two commit diffs ONE character apart: diff_commit (one oid
-│                vs its first parent) and diff_commits (rev↔rev) — check arity
+│                two commit diffs ONE character apart: diff_commit (one oid
+│                vs its first parent) and diff_commits (rev↔rev) — check arity —
+│                and open_in_difftool (#235), the only command here that does
+│                not return a diff: it hands one to `git difftool`. Thin over
+│                GitBackend::difftool_plan; the spawn is the SECOND deliberate
+│                console-keeping exception (see backend.md) and pipes stderr, so
+│                git's own "diff.tool is not configured" reaches the banner
 ├── branches.rs  list_branches/tags/stashes/remotes,
 │                checkout/create/delete/rename_branch, set_upstream,
 │                fetch, fetch_all, pull, push,

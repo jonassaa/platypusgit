@@ -425,6 +425,33 @@ pub enum BlobSource {
     Stage { stage: u16 },
 }
 
+/// Which two sides `git difftool` should be pointed at (#235).
+///
+/// Named rather than passed as a revspec pair, for the reason `BlobSource`
+/// above is: "the working tree" and "the index" are not revisions, and a
+/// nullable rev that means either of them is how call sites get it wrong.
+///
+/// `Commit` is a kind of its own instead of a `Range` the frontend builds with
+/// `^`, because both shorthands for "this commit against its parent" are wrong
+/// on a ROOT commit: `<oid>^` fails to resolve, and `<oid>^!` — git's own
+/// documented form — silently degrades to `git diff <oid>`, which diffs the
+/// commit against the WORKING TREE. `git/difftool.rs::spec_for` resolves the
+/// parent instead. Deserialize only: it never travels back.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DiffToolTarget {
+    /// Unstaged changes — the working tree against the index.
+    Worktree,
+    /// Staged changes — the index against HEAD.
+    Staged,
+    /// One commit against its first parent (or the empty tree, at a root).
+    Commit { oid: String },
+    /// Any two revisions, in git's own order: old, then new.
+    Range { from: String, to: String },
+    /// A revision against the working tree.
+    RevToWorktree { rev: String },
+}
+
 /// Why a blob that exists is not being previewed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
