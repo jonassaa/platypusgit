@@ -115,6 +115,13 @@ async function runNetworkOp(
 ): Promise<void> {
   const repo = useRepoStore.getState().current;
   if (!repo) return;
+  // TWO pieces of busy state, and they are not redundant (#296). `busy` says
+  // WHICH LFS op this panel is running, so its own buttons can spin the right
+  // one. The `activity` entry is the app-wide one: it is what puts a line in the
+  // status bar and — because the Cancel button is gated on exactly that — what
+  // makes a stalled `git lfs pull` stoppable at all. It goes through
+  // `run_git_authenticated`, so the backend could always cancel it; there was
+  // simply no button.
   set({ busy: op, error: null });
   try {
     await withAuthRetry(
@@ -129,6 +136,7 @@ async function runNetworkOp(
         await get().refresh();
         set({ error: toAppError(e) });
       },
+      { key: "lfs", label: op === "fetch" ? "Fetching LFS objects…" : "Pulling LFS objects…" },
     );
   } finally {
     set({ busy: null });

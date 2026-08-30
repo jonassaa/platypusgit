@@ -27,7 +27,7 @@ use types::{
     BisectMark, BisectStatus, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult, ConflictSides,
     DeleteFailure, DiffKind, FileContent,
     BulkFastForward, FastForward,
-    FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+    FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
     BlobSource, ImagePreview,
     RemoteInfo,
     RepoHandle,
@@ -679,8 +679,30 @@ pub trait GitBackend: Send + Sync {
     fn continue_operation(&self, repo_id: &RepoId) -> AppResult<String>;
 
     // === interactive rebase ===
-    fn rebase_start(&self, repo_id: &RepoId, plan: Vec<RebaseStep>) -> AppResult<RebaseStatus>;
-    fn rebase_continue(&self, repo_id: &RepoId) -> AppResult<RebaseStatus>;
+    /// Replay `plan`, reporting each step boundary to `on_progress` (#296).
+    ///
+    /// The whole plan runs inside this ONE call — it returns only when the plan
+    /// is exhausted or a step pauses — so without a sink there is no way to
+    /// render progress for the part of a long rebase that actually takes time.
+    fn rebase_start_with_progress(
+        &self,
+        repo_id: &RepoId,
+        plan: Vec<RebaseStep>,
+        on_progress: RebaseProgressSink<'_>,
+    ) -> AppResult<RebaseStatus>;
+    /// [`Self::rebase_start_with_progress`] for a caller that has nowhere to put
+    /// the ticks — every test, and `resolve_and_continue`'s internal resume.
+    fn rebase_start(&self, repo_id: &RepoId, plan: Vec<RebaseStep>) -> AppResult<RebaseStatus> {
+        self.rebase_start_with_progress(repo_id, plan, &|_| {})
+    }
+    fn rebase_continue_with_progress(
+        &self,
+        repo_id: &RepoId,
+        on_progress: RebaseProgressSink<'_>,
+    ) -> AppResult<RebaseStatus>;
+    fn rebase_continue(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
+        self.rebase_continue_with_progress(repo_id, &|_| {})
+    }
     fn rebase_abort(&self, repo_id: &RepoId) -> AppResult<()>;
     fn rebase_status(&self, repo_id: &RepoId) -> AppResult<RebaseStatus>;
     /// Drop the retained `RebaseStatus.last_completed` summary. Called once the

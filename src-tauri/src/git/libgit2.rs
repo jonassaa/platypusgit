@@ -28,7 +28,8 @@ use super::{
         DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileStatus, HeadInfo, ImagePreview,
         LfsStatus,
         LogFilter, LogPage,
-        RebaseAction, RebaseStatus, RebaseStep, RebaseSummary, ReflogEntry, ReflogOp, RemoteInfo,
+        RebaseAction, RebaseProgress, RebaseProgressSink, RebaseStatus, RebaseStep, RebaseSummary,
+        ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag,
         SubmoduleInfo, TagInfo, TagTarget, UnsupportedReason, WorkdirDiff, WorktreeBranch, WorktreeInfo,
         REFSPEC_ALL,
@@ -662,10 +663,34 @@ impl Libgit2Backend {
         self.rebase_status(repo_id)
     }
 
+    /// The subject line of `oid`, for a progress tick. Best-effort: a step whose
+    /// commit cannot be read still replays, and an empty subject just means the
+    /// status line shows the oid alone (#296).
+    fn step_subject(&self, repo_id: &RepoId, oid: &str) -> String {
+        self.with_repo(repo_id, |repo| {
+            Ok(repo
+                .revparse_single(oid)
+                .ok()
+                .and_then(|o| o.peel_to_commit().ok())
+                .and_then(|c| c.summary().map(str::to_string))
+                .unwrap_or_default())
+        })
+        .unwrap_or_default()
+    }
+
     /// The main execution loop: pops steps off the front of the plan and
     /// applies them until either (a) the plan is exhausted, or (b) a step
     /// pauses execution (conflict / edit).
-    fn advance_rebase(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
+    ///
+    /// `on_progress` fires once per step, BEFORE it is applied (#296). The
+    /// whole plan runs inside this one call, so a tick here is the only way the
+    /// frontend learns anything before the run ends — `rebase_status` is
+    /// accurate throughout, but nothing polls it mid-replay.
+    fn advance_rebase(
+        &self,
+        repo_id: &RepoId,
+        on_progress: RebaseProgressSink<'_>,
+    ) -> AppResult<RebaseStatus> {
         loop {
             // Resume a conflict step first (its cherry-pick already ran and the
             // user has resolved + staged the tree), else take the next planned
@@ -726,6 +751,32 @@ impl Libgit2Backend {
                 status.last_completed = Some(summary);
                 return Ok(status);
             };
+
+            // Announce the step before doing any of its work: the tick is what
+            // the status line and the operation bar render while this iteration
+            // runs, and one published after the fact would always be one step
+            // behind. Drops are announced too — they are part of the plan's
+            // total, so skipping them would make the counter appear to stall.
+            {
+                let (next_index, total) = {
+                    let rebases = self
+                        .rebases
+                        .lock()
+                        .map_err(|e| AppError::Internal(e.to_string()))?;
+                    match rebases.get(repo_id) {
+                        Some(s) => (s.completed, s.total),
+                        None => (0, 0),
+                    }
+                };
+                on_progress(RebaseProgress {
+                    repo_id: repo_id.0.clone(),
+                    next_index,
+                    total,
+                    action: step.action,
+                    short_oid: crate::git::rebase_plan::short(&step.oid).to_string(),
+                    subject: self.step_subject(repo_id, &step.oid),
+                });
+            }
 
             // Drop is never cherry-picked, so it is never a resume step. It
             // still maps into `rewritten` — as the HEAD it left behind — so a
@@ -5249,7 +5300,12 @@ impl GitBackend for Libgit2Backend {
         Ok(())
     }
 
-    fn rebase_start(&self, repo_id: &RepoId, plan: Vec<RebaseStep>) -> AppResult<RebaseStatus> {
+    fn rebase_start_with_progress(
+        &self,
+        repo_id: &RepoId,
+        plan: Vec<RebaseStep>,
+        on_progress: RebaseProgressSink<'_>,
+    ) -> AppResult<RebaseStatus> {
         // Validate BEFORE touching anything. An unexecutable step used to be
         // discovered mid-replay, with earlier picks already committed and the
         // branch tip already moved.
@@ -5355,10 +5411,14 @@ impl GitBackend for Libgit2Backend {
         // the first commit must still be recoverable.
         self.persist_rebase(repo_id)?;
 
-        self.advance_rebase(repo_id)
+        self.advance_rebase(repo_id, on_progress)
     }
 
-    fn rebase_continue(&self, repo_id: &RepoId) -> AppResult<RebaseStatus> {
+    fn rebase_continue_with_progress(
+        &self,
+        repo_id: &RepoId,
+        on_progress: RebaseProgressSink<'_>,
+    ) -> AppResult<RebaseStatus> {
         // A rebase started by an earlier session has no in-memory entry; its
         // plan, progress, and rewritten map are all on disk.
         let known = {
@@ -5382,7 +5442,7 @@ impl GitBackend for Libgit2Backend {
             }
             Ok(())
         })?;
-        self.advance_rebase(repo_id)
+        self.advance_rebase(repo_id, on_progress)
     }
 
     fn rebase_abort(&self, repo_id: &RepoId) -> AppResult<()> {

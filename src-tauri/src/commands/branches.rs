@@ -1,11 +1,11 @@
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::{
     commands::net::Credentials,
     error::{AppError, AppResult},
     git::types::{
-        BranchInfo, BulkFastForward, FastForward, PullMode, PushForce, RemoteInfo, RepoId,
-        StashInfo, TagInfo, TagTarget,
+        BranchInfo, BulkFastForward, FastForward, NetOp, NetProgress, PullMode, PushForce,
+        RemoteInfo, RepoId, StashInfo, TagInfo, TagTarget,
     },
     state::AppState,
 };
@@ -153,6 +153,40 @@ async fn run_git_creds(
     crate::commands::net::run_git_authenticated(cwd, args, creds).await
 }
 
+/// `run_git_creds`, forwarding git's own progress to the frontend (#296).
+///
+/// The four ops a user watches — fetch, fetch-all, pull, push — go through this
+/// one; everything else that talks to a remote (fast-forward's fetch, tag push,
+/// remote-branch delete) keeps the quiet path, because its transfer is a handful
+/// of objects and a bar that fills instantly is noise.
+///
+/// `repo_id` rides along on every tick because the event is app-global while the
+/// indicator is per-repository: a background tab's fetch must not drive the
+/// active tab's bar.
+async fn run_git_progress(
+    app: &AppHandle,
+    cwd: &std::path::Path,
+    repo_id: &RepoId,
+    op: NetOp,
+    args: &[&str],
+    creds: Option<&Credentials>,
+) -> AppResult<()> {
+    let repo_id = repo_id.0.clone();
+    crate::commands::net::run_git_authenticated_with_progress(cwd, args, creds, &mut |p| {
+        // A dropped event costs one progress tick, never the operation.
+        let _ = app.emit(
+            "net://progress",
+            &NetProgress {
+                repo_id: repo_id.clone(),
+                op,
+                phase: p.phase,
+                percent: p.percent,
+            },
+        );
+    })
+    .await
+}
+
 /// Build the argument list for `git fetch`. `remote = None` means all remotes.
 ///
 /// The remote name lands strictly after `--`, for the reason spelled out on
@@ -163,8 +197,13 @@ async fn run_git_creds(
 /// Verified against git 2.50: `git fetch --prune -- origin` fetches normally,
 /// and `-- --upload-pack=/bin/false` is refused as a strange pathname instead of
 /// being honoured as an option.
+///
+/// `--progress` is unconditional: git writes no sideband progress unless stderr
+/// is a tty, which it never is here, so without the flag there is nothing for
+/// `run_git_progress` to report (#296). Harmless on the quiet callers — a sink
+/// that never fires just discards the ticks.
 fn fetch_args(remote: Option<&str>, prune: bool) -> Vec<&str> {
-    let mut args = vec!["fetch"];
+    let mut args = vec!["fetch", "--progress"];
     if remote.is_none() {
         args.push("--all");
     }
@@ -180,6 +219,7 @@ fn fetch_args(remote: Option<&str>, prune: bool) -> Vec<&str> {
 
 #[tauri::command]
 pub async fn fetch(
+    app: AppHandle,
     state: State<'_, AppState>,
     repo_id: String,
     remote: String,
@@ -189,9 +229,13 @@ pub async fn fetch(
     // credential (#61 D5).
     credentials: Option<Credentials>,
 ) -> AppResult<()> {
-    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git_creds(
+    let repo_id = RepoId(repo_id);
+    let path = get_repo_path(&state, &repo_id).await?;
+    run_git_progress(
+        &app,
         &path,
+        &repo_id,
+        NetOp::Fetch,
         &fetch_args(Some(remote.as_str()), prune),
         credentials.as_ref(),
     )
@@ -200,17 +244,28 @@ pub async fn fetch(
 
 #[tauri::command]
 pub async fn fetch_all(
+    app: AppHandle,
     state: State<'_, AppState>,
     repo_id: String,
     prune: bool,
     credentials: Option<Credentials>,
 ) -> AppResult<()> {
-    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git_creds(&path, &fetch_args(None, prune), credentials.as_ref()).await
+    let repo_id = RepoId(repo_id);
+    let path = get_repo_path(&state, &repo_id).await?;
+    run_git_progress(
+        &app,
+        &path,
+        &repo_id,
+        NetOp::Fetch,
+        &fetch_args(None, prune),
+        credentials.as_ref(),
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn pull(
+    app: AppHandle,
     state: State<'_, AppState>,
     repo_id: String,
     remote: String,
@@ -218,15 +273,21 @@ pub async fn pull(
     mode: PullMode,
     credentials: Option<Credentials>,
 ) -> AppResult<()> {
-    let path = get_repo_path(&state, &RepoId(repo_id)).await?;
+    let repo_id = RepoId(repo_id);
+    let path = get_repo_path(&state, &repo_id).await?;
     let mode_flag = match mode {
         PullMode::FastForward => "--ff-only",
         PullMode::Merge => "--no-rebase",
         PullMode::Rebase => "--rebase",
     };
-    run_git_creds(
+    run_git_progress(
+        &app,
         &path,
-        &["pull", mode_flag, remote.as_str(), branch.as_str()],
+        &repo_id,
+        NetOp::Pull,
+        // `--progress` for the same reason `fetch_args` carries it: a pull is a
+        // fetch, and the fetch half is the part that takes the time.
+        &["pull", "--progress", mode_flag, remote.as_str(), branch.as_str()],
         credentials.as_ref(),
     )
     .await
@@ -319,7 +380,9 @@ fn push_args(
     set_upstream: bool,
     no_verify: bool,
 ) -> Vec<String> {
-    let mut args: Vec<String> = vec!["push".to_string()];
+    // `--progress` for the same reason `fetch_args` carries it (#296): without
+    // it git stays silent on a non-tty stderr and there is no bar to draw.
+    let mut args: Vec<String> = vec!["push".to_string(), "--progress".to_string()];
     if set_upstream {
         args.push("-u".to_string());
     }
@@ -340,6 +403,7 @@ fn push_args(
 
 #[tauri::command]
 pub async fn push(
+    app: AppHandle,
     state: State<'_, AppState>,
     repo_id: String,
     remote: String,
@@ -372,7 +436,15 @@ pub async fn push(
 
     let args = push_args(&remote, &branch, force, needs_upstream, no_verify.unwrap_or(false));
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    run_git_creds(&path, &arg_refs, credentials.as_ref()).await
+    run_git_progress(
+        &app,
+        &path,
+        &repo_id,
+        NetOp::Push,
+        &arg_refs,
+        credentials.as_ref(),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -383,11 +455,11 @@ mod push_args_tests {
     fn no_verify_is_added_only_when_asked() {
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, false),
-            vec!["push", "origin", "main"]
+            vec!["push", "--progress", "origin", "main"]
         );
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, true),
-            vec!["push", "origin", "main", "--no-verify"]
+            vec!["push", "--progress", "origin", "main", "--no-verify"]
         );
     }
 
@@ -397,6 +469,7 @@ mod push_args_tests {
             push_args("origin", "feat/x", PushForce::WithLease, true, true),
             vec![
                 "push",
+                "--progress",
                 "-u",
                 "origin",
                 "feat/x",
@@ -412,11 +485,11 @@ mod push_args_tests {
     fn adds_u_only_when_requested() {
         assert_eq!(
             push_args("origin", "main", PushForce::None, true, false),
-            vec!["push", "-u", "origin", "main"]
+            vec!["push", "--progress", "-u", "origin", "main"]
         );
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, false),
-            vec!["push", "origin", "main"]
+            vec!["push", "--progress", "origin", "main"]
         );
     }
 
@@ -424,11 +497,11 @@ mod push_args_tests {
     fn force_flag_comes_last() {
         assert_eq!(
             push_args("origin", "main", PushForce::WithLease, false, false),
-            vec!["push", "origin", "main", "--force-with-lease"]
+            vec!["push", "--progress", "origin", "main", "--force-with-lease"]
         );
         assert_eq!(
             push_args("origin", "feat/x", PushForce::Force, true, false),
-            vec!["push", "-u", "origin", "feat/x", "--force"]
+            vec!["push", "--progress", "-u", "origin", "feat/x", "--force"]
         );
     }
 }
@@ -642,15 +715,15 @@ mod tests {
     fn fetch_args_with_prune() {
         assert_eq!(
             fetch_args(Some("origin"), true),
-            ["fetch", "--prune", "--", "origin"]
+            ["fetch", "--progress", "--prune", "--", "origin"]
         );
-        assert_eq!(fetch_args(None, true), ["fetch", "--all", "--prune"]);
+        assert_eq!(fetch_args(None, true), ["fetch", "--progress", "--all", "--prune"]);
     }
 
     #[test]
     fn fetch_args_without_prune() {
-        assert_eq!(fetch_args(Some("origin"), false), ["fetch", "--", "origin"]);
-        assert_eq!(fetch_args(None, false), ["fetch", "--all"]);
+        assert_eq!(fetch_args(Some("origin"), false), ["fetch", "--progress", "--", "origin"]);
+        assert_eq!(fetch_args(None, false), ["fetch", "--progress", "--all"]);
     }
 
     #[test]

@@ -100,12 +100,15 @@ function RebaseBanner({
   nextIndex,
   total,
   pauseReason,
+  busy,
 }: {
   onContinue: () => void;
   onAbort: () => void;
   nextIndex: number;
   total: number;
   pauseReason: string | null;
+  /** A continue or abort is running — both take as long as a replay (#296). */
+  busy: boolean;
 }) {
   const isConflict = pauseReason === "conflict";
   const isEdit = pauseReason === "edit";
@@ -154,6 +157,8 @@ function RebaseBanner({
         variant="outline"
         onClick={onAbort}
         icon="x"
+        loading={busy}
+        disabled={busy}
         data-testid="rebase-abort"
       >
         Abort
@@ -163,6 +168,8 @@ function RebaseBanner({
         variant="primary"
         onClick={onContinue}
         icon="check"
+        loading={busy}
+        disabled={busy}
         data-testid="rebase-continue"
       >
         Continue
@@ -177,6 +184,8 @@ export function RebaseScreen() {
   const current = useRepoStore((s) => s.current);
   const commits = useRepoStore((s) => s.commits);
   const rebaseStatus = useRepoStore((s) => s.rebaseStatus);
+  /** True while a replay, continue, abort or `rebase --onto` is running (#296). */
+  const rebaseBusy = useRepoStore((s) => !!s.activity.rebase);
   // Store actions are stable identities; selecting them individually keeps this
   // screen from re-rendering on every unrelated store write (the selector-less
   // destructure subscribed to the whole store).
@@ -484,6 +493,7 @@ export function RebaseScreen() {
           nextIndex={rebaseStatus.nextIndex}
           total={rebaseStatus.total}
           pauseReason={rebaseStatus.pauseReason}
+          busy={rebaseBusy}
           onContinue={() => rebaseContinue()}
           onAbort={() => rebaseAbort()}
         />
@@ -565,12 +575,19 @@ export function RebaseScreen() {
                 Clear
               </PGButton>
             )}
+            {/*
+              A long plan replays inside one backend call, so this button used
+              to sit un-spun and re-clickable for the whole run — a dead-looking
+              button whose second click starts a second rebase (#296). The
+              status bar carries the live "Rebasing 12 of 200: <subject>" line.
+            */}
             <PGButton
               size="sm"
               variant="primary"
               icon="rebase"
               onClick={handleStart}
-              disabled={plan.length === 0}
+              loading={rebaseBusy}
+              disabled={plan.length === 0 || rebaseBusy}
               data-testid="rebase-start"
             >
               Start rebase

@@ -295,6 +295,10 @@ export const useForgeStore = create<ForgeState>((set, get) => ({
         outcome = "error";
         set({ error: appErrorMessage(e) });
       },
+      // `checkingOut` drives this panel's own button; the `activity` entry is
+      // what reaches the status bar and the Cancel button (#296). Fetching a
+      // pull request's head ref is an ordinary transfer and can stall like one.
+      { key: "forge", label: `Checking out #${pr.number}…` },
     );
     set({ checkingOut: false });
     return outcome;

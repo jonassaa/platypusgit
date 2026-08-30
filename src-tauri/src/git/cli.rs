@@ -7,7 +7,7 @@ use super::{
         AheadBehind, BisectMark, BisectStatus, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult, ConflictSides,
         DeleteFailure, DiffKind, FileContent,
         BulkFastForward, FastForward,
-        FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseStatus, RebaseStep, ReflogEntry,
+        FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
         BlobSource, ImagePreview,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
         SubmoduleInfo, TagInfo,
@@ -418,10 +418,19 @@ impl GitBackend for CliBackend {
     fn continue_operation(&self, _repo_id: &RepoId) -> AppResult<String> {
         Err(AppError::NotImplemented)
     }
-    fn rebase_start(&self, _repo_id: &RepoId, _plan: Vec<RebaseStep>) -> AppResult<RebaseStatus> {
+    fn rebase_start_with_progress(
+        &self,
+        _repo_id: &RepoId,
+        _plan: Vec<RebaseStep>,
+        _on_progress: RebaseProgressSink<'_>,
+    ) -> AppResult<RebaseStatus> {
         Err(AppError::NotImplemented)
     }
-    fn rebase_continue(&self, _repo_id: &RepoId) -> AppResult<RebaseStatus> {
+    fn rebase_continue_with_progress(
+        &self,
+        _repo_id: &RepoId,
+        _on_progress: RebaseProgressSink<'_>,
+    ) -> AppResult<RebaseStatus> {
         Err(AppError::NotImplemented)
     }
     fn rebase_abort(&self, _repo_id: &RepoId) -> AppResult<()> {

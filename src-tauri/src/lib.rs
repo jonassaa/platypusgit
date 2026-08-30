@@ -8,6 +8,7 @@ pub mod forge;
 pub mod git;
 pub mod opener;
 pub mod proc;
+pub mod progress;
 pub mod reveal;
 pub mod state;
 pub mod update;

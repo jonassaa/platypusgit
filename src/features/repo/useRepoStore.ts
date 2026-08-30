@@ -8,6 +8,8 @@ import type {
   FileContent,
   FileStatus,
   LogFilter,
+  NetProgress,
+  RebaseProgress,
   RebaseStatus,
   RebaseStep,
   RepoHandle,
@@ -123,7 +125,7 @@ import {
   sliceOf,
   type RepoSlice,
 } from "./repoSlice";
-import type { RepoActivity } from "./repoActivity";
+import type { ActivityKey } from "./repoActivity";
 
 export type { RepoActivity } from "./repoActivity";
 
@@ -397,6 +399,132 @@ interface RepoStoreState extends RepoSlice {
 }
 
 /**
+ * Set or clear one activity entry, for `repoId` only (#296).
+ *
+ * Module-level rather than a closure inside `create()` because `withAuthRetry`
+ * — which owns the indicator for every network op — is module-level too.
+ *
+ * **Guarded on the repository, like `setFor`.** `activity` lives in the
+ * per-repo slice, and an op outlives a tab switch: a fetch on A that finished
+ * after the user moved to B used to clear B's entry, taking B's own spinner and
+ * Cancel button with it. Same reasoning, same guard — the write belongs to the
+ * repository that asked for it, not to whichever tab happens to be open.
+ * `frozenSlice` handles the other half by clearing `activity` on the way out.
+ *
+ * A label change on a live entry KEEPS its `startedAt`: pull's stash → pull →
+ * pop sequence is three labels but one wait, and restarting the clock at each
+ * would make the elapsed readout useless exactly when it matters. It clears
+ * `phase`/`percent` though: those describe the transfer the previous label
+ * named, and carrying a stale bar into the next phase is worse than no bar.
+ */
+export function setActivity(repoId: string, key: ActivityKey, label: string | null) {
+  useRepoStore.setState((s) => {
+    if (s.current?.id !== repoId) return {};
+    const next = { ...s.activity };
+    if (label === null) delete next[key];
+    else next[key] = { label, startedAt: next[key]?.startedAt ?? Date.now() };
+    return { activity: next };
+  });
+}
+
+/**
+ * Register `work` as a named backend read for as long as it runs (#296 gap 8).
+ *
+ * Returns `work` unchanged, so it drops into an existing `Promise.all` without
+ * restructuring the call — which is the point: ten reads become ten named reads
+ * by wrapping each one, and a read added later that skips this is simply absent
+ * from the popover rather than breaking it.
+ *
+ * NOT `async`: the task has to be registered synchronously, before the first
+ * suspension point, or a `Promise.all` of ten reads would register them one
+ * microtask apart and the "longest-running" pick would be meaningless.
+ *
+ * Both ends are guarded on the repository, like `setFor` and `setActivity`: a
+ * read issued against a tab the user has since left must not add — or remove —
+ * a row describing the tab they are looking at now.
+ */
+export function trackLoad<T>(
+  repoId: string,
+  id: string,
+  label: string,
+  work: Promise<T>,
+): Promise<T> {
+  useRepoStore.setState((s) => {
+    if (s.current?.id !== repoId) return {};
+    // Replace rather than append when the id is already present: two refreshes
+    // can overlap, and the same read counted twice would inflate the "+ N
+    // others" count with work that is not actually separate.
+    const rest = s.loadingTasks.filter((t) => t.id !== id);
+    return { loadingTasks: [...rest, { id, label, startedAt: Date.now() }] };
+  });
+  return work.finally(() => {
+    useRepoStore.setState((s) => {
+      if (s.current?.id !== repoId) return {};
+      if (!s.loadingTasks.some((t) => t.id === id)) return {};
+      return { loadingTasks: s.loadingTasks.filter((t) => t.id !== id) };
+    });
+  });
+}
+
+/** Which activity entry a `net://progress` tick drives. */
+const NET_OP_KEY: Record<NetProgress["op"], ActivityKey> = {
+  Fetch: "fetch",
+  Pull: "pull",
+  Push: "push",
+};
+
+/**
+ * Apply one `net://progress` tick to the indicator already on screen (#296).
+ *
+ * Two guards, both load-bearing:
+ *
+ * - **The repository must still be the open one.** The event is app-global; a
+ *   fetch running on a background tab would otherwise drive the active tab's bar.
+ * - **The entry must already exist.** A tick that arrives after the op finished
+ *   (they are in flight when the process exits) must not resurrect a cleared
+ *   indicator, which would leave a Cancel button over nothing.
+ */
+export function applyNetProgress(p: NetProgress) {
+  const key = NET_OP_KEY[p.op];
+  useRepoStore.setState((s) => {
+    if (s.current?.id !== p.repoId) return {};
+    const live = s.activity[key];
+    if (!live) return {};
+    return {
+      activity: { ...s.activity, [key]: { ...live, phase: p.phase, percent: p.percent } },
+    };
+  });
+}
+
+/**
+ * Apply one `rebase://progress` tick (#296).
+ *
+ * Relabels the `rebase` entry rather than writing `rebaseStatus`: the status is
+ * the backend's to report when the replay ends or pauses, and a second writer
+ * would race that. The percentage is steps, not bytes — which is the honest unit
+ * for a rebase, where one step can take far longer than another.
+ */
+export function applyRebaseProgress(p: RebaseProgress) {
+  useRepoStore.setState((s) => {
+    if (s.current?.id !== p.repoId) return {};
+    const live = s.activity.rebase;
+    if (!live) return {};
+    const step = p.nextIndex + 1;
+    const what = p.subject || p.shortOid;
+    return {
+      activity: {
+        ...s.activity,
+        rebase: {
+          ...live,
+          label: `Rebasing ${step} of ${p.total}: ${what}`,
+          percent: p.total > 0 ? Math.round((p.nextIndex / p.total) * 100) : undefined,
+        },
+      },
+    };
+  });
+}
+
+/**
  * Run a network op; on an authentication failure, raise a credential challenge
  * whose retry re-runs the SAME op with credentials (#61 D5).
  *
@@ -414,14 +542,34 @@ interface RepoStoreState extends RepoSlice {
  * than growing a second retry path — `useForgeStore.checkout` fetches a pull
  * request's head ref, which needs a git-transport credential exactly like
  * fetch/pull/push/pushTag do (#92). Keep it the only implementation.
+ *
+ * **`activity` is why this function, and not its callers, owns the indicator
+ * (#296).** This resolves the moment it RAISES a challenge — it does not await
+ * the retry, which runs later from the dialog's callback. So a caller that set
+ * a label before calling and cleared it in a `finally` cleared it while the user
+ * was still typing their password, and the retried push — the slower attempt, by
+ * definition — then ran with no spinner, no status line and no Cancel button.
+ * Passing the label here instead makes every attempt carry its own indicator,
+ * and makes it impossible for a network op added later to forget.
  */
 export async function withAuthRetry(
   repoId: string,
   run: (creds?: Credentials) => Promise<void>,
   onError: (e: unknown) => void | Promise<void>,
+  activity?: { key: ActivityKey; label: string },
 ): Promise<void> {
+  /** One attempt, wrapped in its own indicator. */
+  const attempt = async (creds?: Credentials) => {
+    if (!activity) return run(creds);
+    setActivity(repoId, activity.key, activity.label);
+    try {
+      await run(creds);
+    } finally {
+      setActivity(repoId, activity.key, null);
+    }
+  };
   try {
-    await run();
+    await attempt();
     return;
   } catch (e) {
     if (!isAuthError(e)) {
@@ -434,7 +582,7 @@ export async function withAuthRetry(
       kind,
       retry: async (creds, remember) => {
         try {
-          await run(creds);
+          await attempt(creds);
           // Only after it worked: storing on submit would persist a typo.
           // HTTPS only: `git credential approve` stores an HTTP(S) password, so
           // remembering an SSH passphrase there would file the wrong secret
@@ -481,14 +629,8 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (isCancelledError(e)) return;
     set({ error: toAppError(e) });
   };
-  const setActivity = (key: keyof RepoActivity, label: string | null) => {
-    set((s) => {
-      const next = { ...s.activity };
-      if (label === null) delete next[key];
-      else next[key] = label;
-      return { activity: next };
-    });
-  };
+  // `setActivity` is the module-level one above — shared with `withAuthRetry`,
+  // which owns the indicator for every op that can raise a credential challenge.
   /**
    * Open `path` into a freshly reset slice. Throws on failure.
    *
@@ -595,7 +737,12 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     set({ commitFilter: filter, searching: true });
     const refspec = get().logRef;
     try {
-      const page = await getLogFilteredPage(repo.id, filter, null, PAGE_SIZE, refspec);
+      const page = await trackLoad(
+        repo.id,
+        "search",
+        "searching commits",
+        getLogFilteredPage(repo.id, filter, null, PAGE_SIZE, refspec),
+      );
       // Guard against a stale response overwriting a newer filter or scope.
       if (get().commitFilter !== filter || get().logRef !== refspec) return;
       setFor(repo.id, {
@@ -656,7 +803,12 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
     set({ logRef: refspec, loading: true, error: null });
     try {
-      const page = await getLogPage(repo.id, null, PAGE_SIZE, refspec);
+      const page = await trackLoad(
+        repo.id,
+        "log",
+        "loading history",
+        getLogPage(repo.id, null, PAGE_SIZE, refspec),
+      );
       // Guard against a stale response overwriting a newer scope.
       if (get().logRef !== refspec) return;
       setFor(repo.id, {
@@ -692,31 +844,50 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         rebaseStatus,
         bisectStatus,
         headInfo,
+      // Each read is named while it runs (#296 gap 8), so a refresh that takes
+      // nine seconds can say WHICH of the ten is holding it up instead of
+      // showing one undifferentiated "syncing…". The wrappers are the only
+      // change here — every promise is the same promise it always was.
       ] = await Promise.all([
-          getStatus(repo.id),
-          listBranches(repo.id),
-          listTags(repo.id),
-          listStashes(repo.id),
-          listRemotes(repo.id),
-          getLogPage(repo.id, null, PAGE_SIZE, logRef).catch((e) => {
-            // The browsed ref may have vanished since it was selected (e.g.
-            // the branch was deleted) — fall back to HEAD instead of failing
-            // the whole refresh.
-            if (logRef === null) throw e;
-            setFor(repo.id, { logRef: null });
-            return getLogPage(repo.id, null, PAGE_SIZE);
-          }),
-          repoStateFn(repo.id),
-          rebaseStatusFn(repo.id),
+          trackLoad(repo.id, "status", "reading status", getStatus(repo.id)),
+          trackLoad(repo.id, "branches", "listing branches", listBranches(repo.id)),
+          trackLoad(repo.id, "tags", "listing tags", listTags(repo.id)),
+          trackLoad(repo.id, "stashes", "listing stashes", listStashes(repo.id)),
+          trackLoad(repo.id, "remotes", "fetching remotes", listRemotes(repo.id)),
+          trackLoad(
+            repo.id,
+            "log",
+            "loading history",
+            getLogPage(repo.id, null, PAGE_SIZE, logRef).catch((e) => {
+              // The browsed ref may have vanished since it was selected (e.g.
+              // the branch was deleted) — fall back to HEAD instead of failing
+              // the whole refresh.
+              if (logRef === null) throw e;
+              setFor(repo.id, { logRef: null });
+              return getLogPage(repo.id, null, PAGE_SIZE);
+            }),
+          ),
+          trackLoad(repo.id, "repoState", "reading repository state", repoStateFn(repo.id)),
+          trackLoad(repo.id, "rebase", "reading rebase state", rebaseStatusFn(repo.id)),
           // Degrades instead of failing the refresh. `bisect_status` shells out to
           // `git rev-list --bisect-vars` for its progress numbers, and a repository
           // where that cannot run must still show its status, branches and log —
           // the same reasoning as the browsed-ref fallback above. The cost of the
           // fallback is a bar without step counts, not a broken screen.
-          bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
+          trackLoad(
+            repo.id,
+            "bisect",
+            "reading bisect state",
+            bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
+          ),
           // Same degrade-don't-fail policy: the window title (#217) falls back
           // to just the repo name rather than losing the whole refresh.
-          headInfoFn(repo.id).catch(() => null),
+          trackLoad(
+            repo.id,
+            "head",
+            "reading HEAD",
+            headInfoFn(repo.id).catch(() => null),
+          ),
         ]);
       setFor(repo.id, {
         status,
@@ -1015,22 +1186,22 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async checkoutBranch(name) {
     const repo = get().current;
     if (!repo) return;
-    setActivity("branch", `Switching to ${name}…`);
+    setActivity(repo.id, "branch", `Switching to ${name}…`);
     try {
       // Carry over uncommitted work automatically: stash → checkout → pop.
       // stashSave returns null when there's nothing to stash, so this is a
       // no-op on a clean tree. The client-side `status` can lag behind the
       // backend, so we always attempt the stash rather than gating on it.
-      setActivity("branch", `Stashing changes…`);
+      setActivity(repo.id, "branch", `Stashing changes…`);
       const stashed = await stashSave(repo.id, {
         message: `auto: switch to ${name}`,
         includeUntracked: true,
         keepIndex: false,
       });
-      setActivity("branch", `Switching to ${name}…`);
+      setActivity(repo.id, "branch", `Switching to ${name}…`);
       await checkoutBranch(repo.id, name);
       if (stashed) {
-        setActivity("branch", `Restoring stashed changes…`);
+        setActivity(repo.id, "branch", `Restoring stashed changes…`);
         await stashPop(repo.id, 0);
       }
       await get().refreshAll();
@@ -1038,7 +1209,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       setErrorFor(repo.id, e);
       await get().refreshAll();
     } finally {
-      setActivity("branch", null);
+      setActivity(repo.id, "branch", null);
     }
   },
 
@@ -1071,6 +1242,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async rebaseOnto(upstream) {
     const repo = get().current;
     if (!repo) return;
+    setActivity(repo.id, "rebase", `Rebasing onto ${upstream}…`);
     try {
       await rebaseOntoFn(repo.id, upstream);
       await get().refreshAll();
@@ -1079,6 +1251,8 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // batched away by refreshAll's own `error: null` reset.
       await get().refreshAll();
       setErrorFor(repo.id, e);
+    } finally {
+      setActivity(repo.id, "rebase", null);
     }
   },
 
@@ -1089,6 +1263,10 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async pushTag(remote, name) {
     const repo = get().current;
     if (!repo) return;
+    // These two are pushes, and a push to a slow remote is a wait like any other
+    // (#296). Without an activity entry they were completely silent: no spinner,
+    // no status line, and — because the status bar's Cancel is gated on one —
+    // no way to stop a stalled one either.
     await withAuthRetry(
       repo.id,
       async (creds) => {
@@ -1096,6 +1274,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         await get().refreshAll();
       },
       (e) => setErrorFor(repo.id, e),
+      { key: "push", label: `Pushing tag ${name}…` },
     );
   },
 
@@ -1109,6 +1288,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         await get().refreshAll();
       },
       (e) => setErrorFor(repo.id, e),
+      { key: "push", label: `Deleting ${remote}/${name}…` },
     );
   },
 
@@ -1126,16 +1306,16 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async createAndSwitchBranch(name, opts) {
     const repo = get().current;
     if (!repo) return false;
-    setActivity("branch", `Creating ${name}…`);
+    setActivity(repo.id, "branch", `Creating ${name}…`);
     try {
       await createBranch(repo.id, name, opts?.from);
     } catch (e) {
       setErrorFor(repo.id, e);
-      setActivity("branch", null);
+      setActivity(repo.id, "branch", null);
       await get().refreshAll();
       return false;
     }
-    setActivity("branch", null);
+    setActivity(repo.id, "branch", null);
     // checkoutBranch handles stash + checkout + pop and its own activity
     // labels. Any error surfaces via the store's `error` field.
     await get().checkoutBranch(name);
@@ -1336,42 +1516,42 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async fetch(remote) {
     const repo = get().current;
     if (!repo) return;
-    setActivity("fetch", `Fetching ${remote}…`);
-    try {
-      await withAuthRetry(
-        repo.id,
-        async (creds) => {
-          await fetchRemote(
-            repo.id,
-            remote,
-            useSettingsStore.getState().pruneOnFetch,
-            creds,
-          );
-          await get().refreshAll();
-        },
-        (e) => setErrorFor(repo.id, e),
-      );
-    } finally {
-      setActivity("fetch", null);
-    }
+    // The label belongs to `withAuthRetry`, not to a `finally` here (#296):
+    // that `finally` fired the moment a credential challenge was raised, so the
+    // retry ran with no spinner and no Cancel. See `withAuthRetry`.
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        await fetchRemote(
+          repo.id,
+          remote,
+          useSettingsStore.getState().pruneOnFetch,
+          creds,
+        );
+        // The fetch is done; the refresh that follows is not the fetch, and on a
+        // large repository it is a real share of the wait. Saying so beats
+        // holding "Fetching origin…" up over ten queries against a local repo.
+        setActivity(repo.id, "fetch", "Refreshing…");
+        await get().refreshAll();
+      },
+      (e) => setErrorFor(repo.id, e),
+      { key: "fetch", label: `Fetching ${remote}…` },
+    );
   },
 
   async fetchAll() {
     const repo = get().current;
     if (!repo) return;
-    setActivity("fetch", "Fetching all remotes…");
-    try {
-      await withAuthRetry(
-        repo.id,
-        async (creds) => {
-          await fetchAll(repo.id, useSettingsStore.getState().pruneOnFetch, creds);
-          await get().refreshAll();
-        },
-        (e) => setErrorFor(repo.id, e),
-      );
-    } finally {
-      setActivity("fetch", null);
-    }
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        await fetchAll(repo.id, useSettingsStore.getState().pruneOnFetch, creds);
+        setActivity(repo.id, "fetch", "Refreshing…");
+        await get().refreshAll();
+      },
+      (e) => setErrorFor(repo.id, e),
+      { key: "fetch", label: "Fetching all remotes…" },
+    );
   },
 
   async pull(remote, branch, mode = "Merge") {
@@ -1383,39 +1563,36 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     // the now-clean tree, pull successfully and never pop — silently stranding
     // the user's uncommitted work in a stash they were never told about.
     let stashed: string | null = null;
+    // `withAuthRetry` sets and clears the indicator around EACH attempt (#296),
+    // which is what this closure used to hand-roll — the phase changes below
+    // just relabel the entry it opened.
     await withAuthRetry(
       repo.id,
       async (creds) => {
-        // Each attempt owns its own progress indicator: the retry runs long
-        // after the first attempt's `finally` would have cleared it.
-        setActivity("pull", `Pulling ${remote}/${branch}…`);
-        try {
-          // Carry over uncommitted work when the setting is on: stash → pull →
-          // pop, mirroring checkoutBranch's auto-stash. stashSave returns null
-          // when the tree is clean, so this is a no-op in the common case. If
-          // the pull fails, the stash is deliberately NOT popped — the work
-          // stays safe in the stash list rather than colliding with a conflicted
-          // worktree (same policy as checkoutBranch).
-          if (useSettingsStore.getState().autoStashBeforePull && stashed === null) {
-            setActivity("pull", "Stashing changes…");
-            stashed = await stashSave(repo.id, {
-              message: `auto: pull ${remote}/${branch}`,
-              includeUntracked: true,
-              keepIndex: false,
-            });
-            setActivity("pull", `Pulling ${remote}/${branch}…`);
-          }
-          await pullRemote(repo.id, remote, branch, mode, creds);
-          if (stashed) {
-            setActivity("pull", "Restoring stashed changes…");
-            await stashPop(repo.id, 0);
-            // Popped — a later attempt must not pop it a second time.
-            stashed = null;
-          }
-          await get().refreshAll();
-        } finally {
-          setActivity("pull", null);
+        // Carry over uncommitted work when the setting is on: stash → pull →
+        // pop, mirroring checkoutBranch's auto-stash. stashSave returns null
+        // when the tree is clean, so this is a no-op in the common case. If
+        // the pull fails, the stash is deliberately NOT popped — the work
+        // stays safe in the stash list rather than colliding with a conflicted
+        // worktree (same policy as checkoutBranch).
+        if (useSettingsStore.getState().autoStashBeforePull && stashed === null) {
+          setActivity(repo.id, "pull", "Stashing changes…");
+          stashed = await stashSave(repo.id, {
+            message: `auto: pull ${remote}/${branch}`,
+            includeUntracked: true,
+            keepIndex: false,
+          });
+          setActivity(repo.id, "pull", `Pulling ${remote}/${branch}…`);
         }
+        await pullRemote(repo.id, remote, branch, mode, creds);
+        if (stashed) {
+          setActivity(repo.id, "pull", "Restoring stashed changes…");
+          await stashPop(repo.id, 0);
+          // Popped — a later attempt must not pop it a second time.
+          stashed = null;
+        }
+        setActivity(repo.id, "pull", "Refreshing…");
+        await get().refreshAll();
       },
       async (e) => {
         // See mergeBranch's catch: refresh first, error last, so it isn't
@@ -1423,6 +1600,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         await get().refreshAll();
         setErrorFor(repo.id, e);
       },
+      { key: "pull", label: `Pulling ${remote}/${branch}…` },
     );
   },
 
@@ -1449,29 +1627,26 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
 
     let out: FastForward | null = null;
-    setActivity("fetch", `Fast-forwarding ${name}…`);
-    try {
-      await withAuthRetry(
-        repo.id,
-        async (creds) => {
-          out = await fastForwardBranchFn(
-            repo.id,
-            name,
-            useSettingsStore.getState().pruneOnFetch,
-            creds,
-          );
-          await get().refreshAll();
-        },
-        async (e) => {
-          // Refresh first, error last — refreshAll clears `error` as its first
-          // act, so the other order loses the banner (see mergeBranch).
-          await get().refreshAll();
-          setErrorFor(repo.id, e);
-        },
-      );
-    } finally {
-      setActivity("fetch", null);
-    }
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        out = await fastForwardBranchFn(
+          repo.id,
+          name,
+          useSettingsStore.getState().pruneOnFetch,
+          creds,
+        );
+        setActivity(repo.id, "fetch", "Refreshing…");
+        await get().refreshAll();
+      },
+      async (e) => {
+        // Refresh first, error last — refreshAll clears `error` as its first
+        // act, so the other order loses the banner (see mergeBranch).
+        await get().refreshAll();
+        setErrorFor(repo.id, e);
+      },
+      { key: "fetch", label: `Fast-forwarding ${name}…` },
+    );
     return out;
   },
 
@@ -1479,45 +1654,39 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     const repo = get().current;
     if (!repo) return null;
     let out: BulkFastForward | null = null;
-    setActivity("fetch", "Fast-forwarding branches…");
-    try {
-      await withAuthRetry(
-        repo.id,
-        async (creds) => {
-          out = await fastForwardAllBranchesFn(
-            repo.id,
-            useSettingsStore.getState().pruneOnFetch,
-            creds,
-          );
-          await get().refreshAll();
-        },
-        async (e) => {
-          await get().refreshAll();
-          setErrorFor(repo.id, e);
-        },
-      );
-    } finally {
-      setActivity("fetch", null);
-    }
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        out = await fastForwardAllBranchesFn(
+          repo.id,
+          useSettingsStore.getState().pruneOnFetch,
+          creds,
+        );
+        setActivity(repo.id, "fetch", "Refreshing…");
+        await get().refreshAll();
+      },
+      async (e) => {
+        await get().refreshAll();
+        setErrorFor(repo.id, e);
+      },
+      { key: "fetch", label: "Fast-forwarding branches…" },
+    );
     return out;
   },
 
   async push(remote, branch, force = "None", noVerify = false) {
     const repo = get().current;
     if (!repo) return;
-    setActivity("push", `Pushing ${remote}/${branch}…`);
-    try {
-      await withAuthRetry(
-        repo.id,
-        async (creds) => {
-          await pushRemote(repo.id, remote, branch, force, creds, noVerify);
-          await get().refreshAll();
-        },
-        (e) => setErrorFor(repo.id, e),
-      );
-    } finally {
-      setActivity("push", null);
-    }
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        await pushRemote(repo.id, remote, branch, force, creds, noVerify);
+        setActivity(repo.id, "push", "Refreshing…");
+        await get().refreshAll();
+      },
+      (e) => setErrorFor(repo.id, e),
+      { key: "push", label: `Pushing ${remote}/${branch}…` },
+    );
   },
 
   async cancelNetworkOps() {
@@ -1692,40 +1861,54 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async rebaseStart(plan) {
     const repo = get().current;
     if (!repo) return null;
+    // The whole plan replays inside this one call, so without an activity entry
+    // the Start button sat un-spun and re-clickable for the entire run (#296).
+    // `rebase://progress` relabels this entry per step as the replay advances.
+    setActivity(repo.id, "rebase", `Rebasing ${plan.length} commit${plan.length === 1 ? "" : "s"}…`);
     try {
       const status = await rebaseStartFn(repo.id, plan);
       setFor(repo.id, { rebaseStatus: status });
+      setActivity(repo.id, "rebase", "Refreshing…");
       await get().refreshAll();
       return status;
     } catch (e) {
       setErrorFor(repo.id, e);
       return null;
+    } finally {
+      setActivity(repo.id, "rebase", null);
     }
   },
 
   async rebaseContinue() {
     const repo = get().current;
     if (!repo) return null;
+    setActivity(repo.id, "rebase", "Continuing rebase…");
     try {
       const status = await rebaseContinueFn(repo.id);
       setFor(repo.id, { rebaseStatus: status });
+      setActivity(repo.id, "rebase", "Refreshing…");
       await get().refreshAll();
       return status;
     } catch (e) {
       setErrorFor(repo.id, e);
       return null;
+    } finally {
+      setActivity(repo.id, "rebase", null);
     }
   },
 
   async rebaseAbort() {
     const repo = get().current;
     if (!repo) return;
+    setActivity(repo.id, "rebase", "Aborting rebase…");
     try {
       await rebaseAbort(repo.id);
       setFor(repo.id, { rebaseStatus: DEFAULT_REBASE_STATUS });
       await get().refreshAll();
     } catch (e) {
       setErrorFor(repo.id, e);
+    } finally {
+      setActivity(repo.id, "rebase", null);
     }
   },
 

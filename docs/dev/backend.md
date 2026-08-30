@@ -206,6 +206,43 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   group — a platform-specific kill path through the one sanctioned spawner —
   and is deliberately not done. The user-visible hang is gone either way.
 
+### Reporting progress from a long op (#296)
+
+- **`--progress` or there is nothing to report.** Git writes its sideband
+  progress only when stderr is a tty, and it never is here. `fetch_args` and
+  `push_args` carry the flag unconditionally; a caller with no sink just
+  discards the ticks. Forgetting the flag is the silent failure mode — the code
+  looks wired up and no tick ever arrives.
+- **One parser and one byte-splitter, in `progress.rs`.** Clone had both
+  privately first. The splitter breaks on `\r` **as well as** `\n`: git redraws
+  a progress line with a bare `\r`, so `read_until(b'\n')` buffers a whole phase
+  and releases it in one burst — the bar freezes, then jumps. It also bounds an
+  undelimited line and keeps the non-progress lines as the failure tail.
+- **The failure message comes from that tail, not from raw stderr.** Progress
+  redraws are filtered out of it, so `classify_auth_failure` and
+  `host_from_stderr` see git's actual words instead of five hundred copies of
+  "Receiving objects". Every non-progress line is kept, which is what those two
+  need; the cap keeps the NEWEST lines, because git puts its `fatal:` last.
+- **`run_git_authenticated` drains stderr by hand, so stdout goes to
+  `/dev/null`.** It always discarded stdout; `wait_with_output` was there to
+  drain both concurrently and avoid a deadlock. With one pipe to read, nulling
+  the other removes the hazard rather than managing it.
+- **Cancellation still works because the `select!` is inside the read loop.**
+  The wait used to be one `wait_with_output`; it is now many reads, and each one
+  races the cancel token `biased`-first. A stalled fetch sits in exactly that
+  read.
+- **Rebase reports through a sink on the trait, not an `AppHandle` on the
+  backend.** `rebase_start_with_progress` / `rebase_continue_with_progress` take
+  a `RebaseProgressSink`; the old names remain as default methods delegating
+  with a no-op. That keeps 66 existing call sites untouched, keeps
+  `GitBackend` object-safe (`AppState` holds an `Arc<dyn GitBackend>`), and
+  keeps the ticks assertable from a plain `cargo test` — see
+  `tests/rebase_progress.rs`.
+- **A tick fires BEFORE its step is applied**, and `next_index` is the count of
+  steps already done — the same value `RebaseStatus.next_index` carries, so one
+  `+ 1` renders both. Drops tick too: they are part of `total`, and skipping
+  them would freeze the counter on a plan that is in fact advancing.
+
 ## "No telemetry, no account" is a build gate (#226)
 
 - The README advertises three promises as the reason to choose this app: no
