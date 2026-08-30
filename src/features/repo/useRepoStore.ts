@@ -588,7 +588,9 @@ export async function withAuthRetry(
           // remembering an SSH passphrase there would file the wrong secret
           // under `protocol=https` for this host and offer it at the next HTTPS
           // prompt. SSH passphrases belong to ssh-agent, which we do not manage.
-          if (remember && host && kind === "Https") {
+          // `creds` is optional now (#248: an SSH retry carries none), and
+          // there is nothing to remember when nothing was typed.
+          if (remember && host && creds && kind === "Https") {
             await rememberCredential(repoId, host, creds).catch(() => {
               // No helper configured is not a failure the user needs to see —
               // the operation they asked for still succeeded.

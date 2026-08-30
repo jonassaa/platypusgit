@@ -906,3 +906,71 @@ export interface CommitTemplate {
   /** `commit.cleanup`; `"default"` when unset or unrecognised. */
   cleanup: CleanupMode;
 }
+
+/**
+ * One SSH key pair found on this machine (#248). Mirrors Rust
+ * `ssh.rs::SshKeyInfo`.
+ *
+ * **There is no field for the private key, and there must not be.** The backend
+ * only ever `chmod`s the private half and asks `ssh-keygen` whether it is
+ * encrypted; `src-tauri/tests/ssh_keys.rs` asserts on the serialised payload
+ * that no private key material crosses IPC.
+ */
+export interface SshKeyInfo {
+  /** Absolute path to the private key. */
+  path: string;
+  /** Absolute path to its `.pub` sibling. */
+  publicPath: string;
+  /** The algorithm as the `.pub` file spells it (`ssh-ed25519`). */
+  algorithm: string;
+  /** Trailing comment from the `.pub` line; empty when there is none. */
+  comment: string;
+  /** `SHA256:…` — the form GitHub and GitLab show beside a registered key. */
+  fingerprint: string;
+  /** The whole `.pub` line, which is what a host's add-key form wants. */
+  publicKey: string;
+  /**
+   * ssh would try this key with no configuration at all. NOT a promise that it
+   * is the key ssh offered — a `~/.ssh/config` entry, an agent identity and the
+   * server's own preferences all change that, and the backend deliberately
+   * refuses to guess.
+   */
+  isDefaultIdentity: boolean;
+}
+
+/** What the SSH panel needs to say something useful (#248). Mirrors Rust
+ *  `ssh.rs::SshKeyStatus`. */
+export interface SshKeyStatus {
+  /** The directory that was searched, shown verbatim. */
+  dir: string;
+  dirExists: boolean;
+  /** Default identities first, then the rest by name. */
+  keys: SshKeyInfo[];
+  /**
+   * `ssh-keygen` is runnable. A STATE, like `LfsStatus`'s availability: the
+   * generate button disables and explains rather than the panel erroring.
+   */
+  canGenerate: boolean;
+  /** A file name that does not exist yet — never one that would be overwritten. */
+  suggestedName: string;
+  /** `user.email` from the global git config, else `user@host`. */
+  suggestedComment: string;
+  /** The host's "add a new SSH key" page, when the forge is known. */
+  addKeyUrl: string | null;
+  /** The host this status was resolved for. */
+  host: string | null;
+}
+
+/**
+ * A request to generate a key (#248). Mirrors Rust `ssh.rs::GenerateRequest`.
+ *
+ * `name` is a file NAME inside the ssh directory, never a path — that is what
+ * makes traversal impossible to express rather than merely checked for. The
+ * `passphrase` is handed to the backend and to nothing else: it is never stored,
+ * never logged, and reaches `ssh-keygen` through the environment, not argv.
+ */
+export interface SshKeyGenerateRequest {
+  name?: string;
+  comment?: string;
+  passphrase?: string;
+}

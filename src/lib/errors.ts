@@ -70,6 +70,18 @@ export type AppError =
    */
   | { kind: "Cancelled"; message?: string }
   /**
+   * A key file already exists where a generate would write (#248). Carries the
+   * PATH, not prose — `appErrorDetail` turns it into a sentence, and the panel
+   * offers the next free name.
+   */
+  | { kind: "SshKeyExists"; message: string }
+  /**
+   * `ssh-keygen` is missing or not runnable (#248). A state the panel disables
+   * on, in the shape `LfsUnavailable` already uses — git's own "No such file or
+   * directory" must never reach a banner.
+   */
+  | { kind: "SshKeygenUnavailable"; message: string }
+  /**
    * A git hook ran and refused (#232). The payload is a STRUCT, and its
    * `output` is deliberately NOT rendered into the banner sentence: forty lines
    * of eslint belong in the dedicated output block, which scrolls. See
@@ -155,6 +167,11 @@ function appErrorDetail(e: AppError): string {
   }
   if (e.kind === "BranchExists" && typeof message === "string") {
     return `A local branch named ${message} already exists.`;
+  }
+  // SshKeyExists carries a PATH. Rendered raw the banner would be a file name
+  // with no hint that the app refused on purpose rather than failed.
+  if (e.kind === "SshKeyExists" && typeof message === "string") {
+    return `${message} already exists. Nothing was overwritten — choose another name.`;
   }
   // StaleStash carries a LABEL (`stash@{1}`) — rendered raw the banner would
   // just read "stash@{1}" with no hint of what to do about it.
@@ -381,3 +398,17 @@ export function isLfsUnavailableError(e: unknown): boolean {
 
 export const LFS_UNAVAILABLE_HELP =
   "Install git-lfs and run `git lfs install` once, then reopen the repository. Large files stay as pointer text until their objects are fetched.";
+
+/** Narrow to "there is already a key at that path" (#248). */
+export function isSshKeyExistsError(e: unknown): boolean {
+  return isAppError(e) && e.kind === "SshKeyExists";
+}
+
+/** Narrow to "ssh-keygen is not installed" (#248), so a surface can disable
+ *  rather than error — the same split `isLfsUnavailableError` makes. */
+export function isSshKeygenUnavailableError(e: unknown): boolean {
+  return isAppError(e) && e.kind === "SshKeygenUnavailable";
+}
+
+export const SSH_KEYGEN_UNAVAILABLE_HELP =
+  "Generating a key needs ssh-keygen, which ships with OpenSSH (and with Git for Windows). Install it and reopen this dialog, or create the key from a terminal with `ssh-keygen -t ed25519`.";

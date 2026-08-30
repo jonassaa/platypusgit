@@ -319,6 +319,68 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   errors. Pinned by `tests/image_preview.rs`; the sniffing table is unit-tested
   in `git/image.rs` with no repository at all, the `reveal.rs` model.
 
+## SSH keys: showing one, and making one (#248)
+
+- **The other half of "clone over SSH failed".** `git/auth.rs` classifies
+  `Permission denied (publickey)` as `AuthKind::SshKey`; `ssh.rs` is what lets
+  the app do something about it. The precise message the issue asks for —
+  "you have a key, it just is not registered" vs "you have no key" — is decided
+  on the FRONTEND (`features/auth/sshAdvice.ts`) from two facts it already has,
+  because `classify_auth_failure` is pure over git's stderr and must not start
+  reading `~/.ssh`.
+- **Not a `GitBackend` method.** Nothing here opens a repository, takes a
+  `RepoId` or touches an index; `commands/ssh.rs` takes no repo argument. Same
+  shape as `diagnostics.rs` / `update.rs` / `reveal.rs`. The key comment comes
+  from `git2::Config::open_default()` — global scope, because an SSH key is not
+  per-repository.
+- **The passphrase reuses the ONE askpass, and never touches argv.**
+  `ssh-keygen` has no env var for a passphrase and `-N <secret>` is visible to
+  `ps`, so a requested passphrase goes exactly where a git credential goes: our
+  own executable as `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE=force`, and
+  `PLATYPUSGIT_ASKPASS_SECRET`. `cli::askpass_want` already routes any prompt
+  containing "passphrase" to the secret, which covers both of ssh-keygen's — so
+  this added no shim and no second auth path. An EMPTY passphrase is not a
+  secret and goes in argv as `-N ""`, with no askpass set up at all.
+- **Three refusals in `generate`, each from a measured behaviour** (OpenSSH
+  10.2p1, probed — the spec's table has the runs):
+  1. *Never overwrite.* Ours, not ssh-keygen's: `ssh-keygen -f <existing>`
+     blocks on an interactive `Overwrite (y/n)?` against a stdin nobody feeds,
+     and its prompt guards only the PRIVATE path, so a stale `.pub` beside a
+     missing private key would be clobbered silently. Checked with
+     `symlink_metadata`, so a broken symlink counts as something being there.
+     `AppError::SshKeyExists` carries the path; `suggested_name` makes "pick
+     another" one click.
+  2. *0600, re-read.* ssh refuses a loosely-permissioned private key, and
+     `~/.ssh` is created `0700` — a key we made and ssh will not touch is a
+     worse problem than the one being solved.
+  3. *A passphrase that did not stick deletes the key.* With no askpass
+     reachable, `ssh-keygen` prints both prompts, writes an **unencrypted** key
+     and exits **0**. So a passphrase run is verified with
+     `ssh-keygen -y -P ""` (which succeeds only on an unencrypted key) and both
+     files are removed if it did. Reporting "created, encrypted" over an
+     unencrypted key is the one outcome worse than failing. An unrunnable probe
+     reads as "encrypted": the gate must not throw away a good key over a
+     broken PATH.
+- **The private key never crosses IPC.** `SshKeyInfo` has no field for it, and
+  `tests/ssh_keys.rs` asserts on the SERIALISED payload rather than field by
+  field — a field added later would pass a field check and still ship the key.
+- **The add-key URL is built in Rust from the runtime host.**
+  `format!("https://{host}/settings/ssh/new")` is what both privacy guards read
+  as a user-supplied host rather than a baked-in destination, so this feature
+  adds no allow-list entry and bakes no hostname into `src/`. A host that fails
+  `forge::validate_host` — or has a label starting with `-`, which that
+  validator permits and RFC 1123 does not — yields `None`, never a URL.
+- **`ssh-keygen` missing is a STATE**, in the `LfsUnavailable` shape:
+  `SshKeyStatus.canGenerate` disables the button with a reason, and only the
+  generate command raises `AppError::SshKeygenUnavailable`.
+- **`parse_public_key` must never read a PRIVATE key as a public one.**
+  `-----BEGIN OPENSSH PRIVATE KEY-----` splits into three whitespace fields of
+  dashes and capitals, which a charset-only check accepts as
+  `<algo> <blob> <comment>` — so the algorithm is matched on OpenSSH's three
+  real prefixes (`ssh-`, `ecdsa-`, `sk-`), with a regression test.
+- Not `git/signing.rs`, which also drives `ssh-keygen` — for SIGNATURES. Two
+  files, two jobs; check which one you are in.
+
 ## Signing: one chain for commits and tags (#61 D6, #132)
 
 - **One chain, two callers:** `libgit2.rs::sign_payload` =

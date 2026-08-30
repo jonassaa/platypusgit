@@ -877,6 +877,36 @@ update checks back on for someone who turned them off.
   component tests need `WithDialogs` from `@/test/dialog`, or every confirm
   silently reads as "cancelled".
 
+### The credential dialog's SSH half (#248)
+
+- `CredentialDialog` renders `SshKeyPanel` for the two SSH `AuthKind`s and never
+  for `Https`. On an `SshKey` challenge — the server REJECTED the public half —
+  the passphrase box is folded away behind a disclosure and the panel leads: a
+  passphrase unlocks the private key and does nothing about a key the host has
+  never seen. On `SshPassphrase` the box keeps the lead and the panel is
+  context.
+- **`useSshKeyStore` is its own store on purpose.** An SSH key is machine state,
+  so a per-repo field would have to join `RepoSlice` and would then be dropped
+  and re-fetched on every tab switch for nothing. `useAuthStore` is not it
+  either — it holds one challenge and deliberately nothing else.
+- **The passphrase for a new key is component state**, handed straight to
+  `sshKeyGenerate` and cleared on the way out — the same rule the credential
+  secret follows, and pinned by the same shape of test.
+- **The add-key URL comes from the backend**, which builds it from the runtime
+  host. The panel renders `status.addKeyUrl` and hands it to `openUrl`; it must
+  never compose one, or a hostname lands in `src/` and `test/privacy.test.ts`
+  has a new allow-list entry to argue about.
+- `sshAdvice` is PURE and lives beside the panel: it is a choice of WORDS across
+  the (kind × has-a-key) grid, and `null` status means "not looked yet", never
+  "no key".
+- **An SSH retry may carry NO credential.** `AuthChallengeRequest.retry` takes
+  `Credentials | undefined`, because after generating a key and registering it
+  with the host there is nothing to type — the prompt-less attempt that just
+  failed is the one that now succeeds, and `withAuthRetry`'s `attempt` has
+  always accepted an optional credential. HTTPS still requires a secret: a blank
+  token burns an authentication attempt on a credential we know is empty. Both
+  `rememberCredential` call sites guard on `creds` for the same reason.
+
 ## File lists
 
 - Row glyph + tint from `lib/fileIcon.ts` (`fileIconSpec(path)`); add a

@@ -60,6 +60,25 @@ reveal.rs        "Reveal in Finder/Explorer" + "Open in terminal" (#215).
                  pinned path); Windows launchers are pinned to System32 /
                  WindowsApps against binary planting; a missing Linux terminal
                  falls through an ordered candidate list rather than silently
+ssh.rs           Finding and making an SSH key (#248) — the other half of
+                 "clone over SSH failed", which git/auth.rs can only classify.
+                 Pure and unit-tested: parse_public_key, fingerprint (SHA256:
+                 computed IN PROCESS, so listing N keys is zero subprocesses —
+                 pinned byte-identical to `ssh-keygen -lf`), validate_key_name
+                 (a NAME, never a path, so traversal cannot be expressed),
+                 validate_comment, suggested_name, host_label, add_key_url.
+                 discover() lists `*.pub` files with a private sibling and FLAGS
+                 the default identities — it deliberately does NOT claim to know
+                 which key ssh would offer (~/.ssh/config, an agent, the
+                 server's own preferences). generate() carries the three
+                 refusals: never overwrite (ours, because ssh-keygen's is an
+                 interactive prompt against a closed stdin), 0600 re-read, and
+                 delete-the-key when a requested passphrase did not stick —
+                 ssh-keygen writes an UNENCRYPTED key and exits 0 when no
+                 askpass is reachable. The passphrase travels in the
+                 ENVIRONMENT through the SAME askpass shim git credentials use.
+                 See backend.md. Not git/signing.rs, which also drives
+                 ssh-keygen but for SIGNATURES
 diagnostics.rs   What the log must say about the machine that wrote it (#274),
                  plus the log-file helpers Settings needs. is_wsl_kernel /
                  describe_wsl / parse_git_version / environment_line /
@@ -271,6 +290,11 @@ commands/        Thin Tauri handlers, one file per area:
 ├── update.rs    check_for_update, get_update_capability, open_url — thin
 │                handlers for src-tauri/src/update.rs (same basename, two files)
 ├── history.rs   reset, cherry_pick, revert
+├── ssh.rs       ssh_key_status, ssh_key_generate (#248) — thin over
+│                src-tauri/src/ssh.rs. Take NO repository: an SSH key belongs to
+│                the machine, not to a repo, which is also why this is not a
+│                GitBackend method. ssh_key_generate resolves the askpass from
+│                current_exe() HERE, so tests can pass their own script
 ├── stash.rs     stash_save/apply/pop/drop/branch, stash_save_paths,
 │                stash_rename, stash_diff (#133)
 ├── conflict.rs  repo_state, conflict_sides, accept_ours/theirs, mark_resolved,
@@ -380,7 +404,13 @@ features/            Components + Zustand store colocated per feature:
 │                    app.closeOverlay)
 ├── auth/            useAuthStore (ONE pending challenge + retry closure — never
 │                    the secret) + CredentialDialog. withAuthRetry LIVES IN
-│                    useRepoStore.ts, exported — never grow a second retry path
+│                    useRepoStore.ts, exported — never grow a second retry path.
+│                    Plus the SSH key setup an `SshKey` challenge needs (#248):
+│                    sshAdvice (PURE — the kind × has-a-key grid that turns
+│                    "authentication failed" into "no key" vs "not registered"),
+│                    useSshKeyStore (machine state, so NOT RepoSlice; never
+│                    holds the passphrase) and SshKeyPanel (copy the public
+│                    half, open the host's add-key page, generate)
 ├── create/          Clone + Init dialogs (PGModal), useCreateStore,
 │                    deriveRepoName. Clone shells out with the prompt-less env
 ├── forge/           useForgeStore (hostKinds+logins under pg-forge-hosts, NEVER

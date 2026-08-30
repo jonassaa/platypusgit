@@ -149,7 +149,9 @@ export const useCreateStore = create<CreateState>((set, get) => ({
             // Only after it worked, and only for HTTPS — `git credential
             // approve` stores an HTTP(S) password. Needs the freshly opened repo
             // to run the helper in, so this comes after `attempt` succeeded.
-            if (remember && host && kind === "Https") {
+            // `creds` is optional now (#248: an SSH retry carries none), and
+            // there is nothing to remember when nothing was typed.
+            if (remember && host && creds && kind === "Https") {
               const repo = useRepoStore.getState().current;
               if (repo) {
                 await rememberCredential(repo.id, host, creds).catch(() => {

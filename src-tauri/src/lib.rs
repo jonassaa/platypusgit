@@ -10,6 +10,7 @@ pub mod opener;
 pub mod proc;
 pub mod progress;
 pub mod reveal;
+pub mod ssh;
 pub mod state;
 pub mod update;
 
@@ -333,6 +334,8 @@ pub fn run() {
             commands::cli::take_launch_intent,
             commands::cli::cli_shim_status,
             commands::cli::install_cli_shim,
+            commands::ssh::ssh_key_status,
+            commands::ssh::ssh_key_generate,
             commands::update::check_for_update,
             commands::update::get_update_capability,
             commands::update::open_url,

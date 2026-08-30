@@ -154,6 +154,23 @@ pub enum AppError {
     #[error("cancelled")]
     Cancelled,
 
+    /// A key file already exists where a generate would write (#248). Carries
+    /// the PATH, not prose.
+    ///
+    /// Its own variant because the remedy is specific and one click away — pick
+    /// another name — and because "never overwrite a key file" is the rule this
+    /// error exists to enforce, not an incidental IO failure. `Io` would bury it
+    /// among genuine filesystem problems and give the UI nothing to act on.
+    #[error("an SSH key already exists at {0}")]
+    SshKeyExists(String),
+
+    /// `ssh-keygen` is missing or not runnable (#248). A **state**, not a
+    /// failure, in the shape `LfsUnavailable` already uses: the panel disables
+    /// the generate button and says why, and git's own `No such file or
+    /// directory` never reaches a banner.
+    #[error("ssh-keygen is not available: {0}")]
+    SshKeygenUnavailable(String),
+
     /// A git hook ran and refused (#232).
     ///
     /// Carries the hook's NAME and its OUTPUT as separate fields rather than one
