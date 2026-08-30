@@ -11,6 +11,7 @@ pub mod notes;
 pub mod ownership;
 pub mod rebase_plan;
 pub mod rebase_state;
+pub mod shallow;
 pub mod signature;
 pub mod signing;
 pub mod stash;
@@ -31,7 +32,8 @@ use types::{
     BlobSource, ImagePreview,
     RemoteInfo,
     RepoHandle,
-    RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, SubmoduleInfo, TagInfo, TagTarget,
+    RepoId, RepoState, ResetMode, ShallowInfo, StashInfo, StashSaveOptions, SubmoduleInfo, TagInfo,
+    TagTarget,
     WorkdirDiff, WorktreeBranch, WorktreeInfo,
 };
 
@@ -382,6 +384,14 @@ pub trait GitBackend: Send + Sync {
     /// Return the working-directory path for a given open repo.
     /// Used by network commands that shell out to git CLI.
     fn repo_path(&self, repo_id: &RepoId) -> AppResult<PathBuf>;
+
+    /// How much of the repository is actually here (#255): shallow or not, how
+    /// many commits history stops at, and whether the remotes fetch one branch.
+    ///
+    /// READ from git every time rather than remembered — `.git/shallow` and
+    /// `remote.<name>.fetch` are git's, and a second record could only
+    /// disagree. See `git/shallow.rs` for the parsing half.
+    fn shallow_info(&self, repo_id: &RepoId) -> AppResult<ShallowInfo>;
 
     // === index writes ===
     fn stage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()>;

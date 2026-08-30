@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::error::{AppError, AppResult};
 use crate::git::image;
 use crate::git::ownership;
+use crate::git::shallow as shallow_mod;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use crate::opener::{resolved_workdir_path, safe_workdir_path};
@@ -30,7 +31,8 @@ use super::{
         LogFilter, LogPage,
         RebaseAction, RebaseProgress, RebaseProgressSink, RebaseStatus, RebaseStep, RebaseSummary,
         ReflogEntry, ReflogOp, RemoteInfo,
-        RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions, StatusFlag,
+        RepoHandle, RepoId, RepoState, ResetMode, ShallowInfo, StashInfo, StashSaveOptions,
+        StatusFlag,
         SubmoduleInfo, TagInfo, TagTarget, UnsupportedReason, WorkdirDiff, WorktreeBranch, WorktreeInfo,
         REFSPEC_ALL,
     },
@@ -5247,6 +5249,58 @@ impl GitBackend for Libgit2Backend {
             repo.workdir()
                 .map(PathBuf::from)
                 .ok_or_else(|| AppError::InvalidPath("bare repository has no workdir".into()))
+        })
+    }
+
+    /// How much of the repository is actually here (#255).
+    ///
+    /// Three reads, no subprocess. `is_shallow()` is libgit2's
+    /// `git_repository_is_shallow`, which stats `<commondir>/shallow` on every
+    /// call rather than caching — load-bearing, because `Libgit2Backend` holds
+    /// each `git2::Repository` open for the life of the tab, and a cached
+    /// answer would keep claiming "shallow" after `--unshallow` removed the
+    /// file.
+    ///
+    /// The boundary count comes from reading that same file, because git2 0.20
+    /// binds no `shallow_roots`. It is best-effort on purpose: a file we cannot
+    /// read leaves the count 0 while `shallow` stays true, since the boolean is
+    /// what every surface actually branches on.
+    fn shallow_info(&self, repo_id: &RepoId) -> AppResult<ShallowInfo> {
+        self.with_repo(repo_id, |repo| {
+            let shallow = repo.is_shallow();
+            let boundary_count = if shallow {
+                std::fs::read_to_string(repo.commondir().join("shallow"))
+                    .map(|t| shallow_mod::count_shallow_roots(&t))
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+
+            // One `Vec` of fetch refspecs per remote; a remote that cannot be
+            // opened contributes nothing rather than failing the read, for the
+            // same reason as the count above — this answer must never be the
+            // thing that stops a repository rendering.
+            let mut per_remote: Vec<Vec<String>> = Vec::new();
+            if let Ok(names) = repo.remotes() {
+                for name in names.iter().flatten() {
+                    if let Ok(remote) = repo.find_remote(name) {
+                        per_remote.push(
+                            remote
+                                .fetch_refspecs()
+                                .map(|specs| {
+                                    specs.iter().flatten().map(|s| s.to_string()).collect()
+                                })
+                                .unwrap_or_default(),
+                        );
+                    }
+                }
+            }
+
+            Ok(ShallowInfo {
+                shallow,
+                boundary_count,
+                single_branch: shallow_mod::single_branch_from_refspecs(&per_remote),
+            })
         })
     }
 

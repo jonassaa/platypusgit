@@ -113,6 +113,8 @@ git/
 │                StashInfo, RemoteInfo, FileDiff, BlameLine, ReflogEntry,
 │                RebaseStep, RepoState, ConflictSides, CommitOptions,
 │                StashSaveOptions, TagTarget, ResetMode, SubmoduleInfo/State,
+│                CloneOptions (#255 — the Clone dialog's Advanced flags) and
+│                ShallowInfo (shallow + boundary count + single-branch),
 │                WorktreeInfo/WorktreeBranch, LfsStatus/LfsFile/LfsPointer/
 │                LfsDiff, BisectStatus/BisectMark, BlobSource/ImagePreview
 │                (#224 — which SIDE a preview reads, and the four answers:
@@ -175,6 +177,15 @@ git/
 │                side-effect-free capability probe, with a Unix-only direct-exec
 │                fallback for a git older than 2.36. NOTE `git hook run` sends
 │                the hook's STDOUT to stderr, so the captured stream is stderr
+├── shallow.rs   How much of a repository is actually HERE (#255) — the PURE
+│                half: count_shallow_roots (lines of .git/shallow),
+│                refspec_is_pinned (a fetch refspec whose SOURCE side has no
+│                `*`) and single_branch_from_refspecs. The IO half is
+│                libgit2.rs::shallow_info: is_shallow() (libgit2 stats the file
+│                every call, so a cached Repository still reports the truth
+│                after --unshallow), one file read for the count, the remote
+│                list for the refspecs. No state file — git owns the answer, the
+│                bisect.rs call rather than the rebase_state.rs one
 ├── signing.rs   CRYPTOGRAPHIC signing, GPG/SSH — not signature.rs. Pure: key
 │                resolution, resolve_key_file (key::… literals refused), signer
 │                argv, parse_verify_output. Payload-agnostic: commits and tags
@@ -203,7 +214,10 @@ git/
 commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs      open_repo, close_repo, trust_repo_path, get_status, head_info
 │                (HEAD's branch/oid, re-polled every refresh — unlike
-│                RepoHandle.head, which open_repo sets once), list_all_files,
+│                RepoHandle.head, which open_repo sets once),
+│                shallow_info (#255 — shallow? how many boundary commits? do the
+│                remotes fetch one branch? read on every refreshAll, never
+│                remembered), list_all_files,
 │                append_gitignore, open_in_editor, reveal_in_file_manager,
 │                open_in_terminal (#215 — both take an optional relative_path;
 │                omitted/empty targets the repo ROOT instead, for the repo
@@ -255,6 +269,9 @@ commands/        Thin Tauri handlers, one file per area:
 ├── branches.rs  list_branches/tags/stashes/remotes,
 │                checkout/create/delete/rename_branch, set_upstream,
 │                fetch, fetch_all, pull, push,
+│                unshallow (#255 — `git fetch --unshallow`, on the one runner;
+│                answers false instead of relaying git's refusal when the
+│                repository is already complete),
 │                fast_forward_branch — fetch the branch's remote, then advance
 │                a NOT-checked-out branch to its upstream if that is a
 │                fast-forward (#246); fast_forward_all_branches does the sweep
@@ -330,7 +347,11 @@ screens/             One per activity-bar item + deep views: RepoBrowser,
 features/            Components + Zustand store colocated per feature:
 ├── repo/            useRepoStore (ONE repo's live state — the active tab's),
 │                    repoSlice (RepoSlice / REPO_SLICE_KEYS / emptySlice),
-│                    repoActivity, tabs.ts (pure tab reducers, labelTabs,
+│                    repoActivity, shallowNoticeText (PURE, per-surface
+│                    sentences) + ShallowNotice (the strip; History, FileHistory,
+│                    Blame and Compare mount it — test/shallowSurfaces.test.ts
+│                    fails the build for a fifth that forgets),
+│                    tabs.ts (pure tab reducers, labelTabs,
 │                    pg-open-repos persistence), useTabsStore (open set +
 │                    activate/close/cycle + session restore), RepoTabs,
 │                    useRecentsStore, ops (shared runners), OperationBar

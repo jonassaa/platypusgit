@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use platypusgit_lib::cancel::{self, Scope};
 use platypusgit_lib::error::AppError;
+use platypusgit_lib::git::types::CloneOptions;
 
 /// A listener that accepts connections and then holds them open, silent.
 ///
@@ -76,7 +77,7 @@ async fn a_stalled_clone_is_cancellable_and_leaves_nothing_behind() {
     let url = format!("http://127.0.0.1:{port}/stalled.git");
 
     let clone = tokio::spawn(async move {
-        platypusgit_lib::commands::create::run_clone(&url, &parent, "cloned", false, None, |_| {})
+        platypusgit_lib::commands::create::run_clone(&url, &parent, "cloned", &CloneOptions::default(), None, |_| {})
             .await
     });
 
@@ -116,7 +117,7 @@ async fn cancelling_puts_back_an_empty_directory_the_user_chose() {
     let url = format!("http://127.0.0.1:{port}/stalled.git");
 
     let clone = tokio::spawn(async move {
-        platypusgit_lib::commands::create::run_clone(&url, &parent, "mine", false, None, |_| {})
+        platypusgit_lib::commands::create::run_clone(&url, &parent, "mine", &CloneOptions::default(), None, |_| {})
             .await
     });
 

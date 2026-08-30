@@ -437,6 +437,56 @@ const composer = useCommitComposer({ repoId, branch, ticketPattern, message, set
 - An unusable ignore-revs file is a WARNING strip above a working blame, never
   an error screen — the backend already degraded to a plain blame.
 
+## Saying a clone is only partly here (#255)
+
+A shallow clone does not fail. History has fewer rows, Blame attributes
+everything older than the boundary to the boundary commit, File history ends
+early, and Compare's ahead/behind is arithmetic over a graph missing its merge
+base. Each of those reads as a repository with a strange past rather than one
+that is only partly here — which is the whole reason the notice exists.
+
+- **One component, four surfaces, one strip each.** `ShallowNotice`
+  (`features/repo/`) is the shape Blame's ignore-revs warning already
+  established: a strip UNDER the screen's header that says something about the
+  data below it without replacing it. Never a modal, never an empty state — the
+  screen still works. History, FileHistory, Blame and Compare mount it;
+  `test/shallowSurfaces.test.ts` fails the build for a fifth that forgets, the
+  same guard shape `diffFindSurfaces.test.ts` uses.
+- **The sentence is per surface, from a pure `shallowNoticeText`.** "This is a
+  shallow clone" on a blame screen does not tell the reader what is wrong with
+  the blame in front of them. The `surface` prop is therefore as load-bearing as
+  the mount, and the guard test checks both.
+- **At the TOP of the screen, not at the end of the list** — even on History,
+  where the truncation literally is the end of the list. A reader with five
+  hundred commits loaded never scrolls there, and the fact belongs to the
+  repository rather than to the scroll position.
+- **Shallow outranks single-branch when a clone is both.** Two stacked strips is
+  how a warning stops being read; the truncated history is the bigger distortion
+  and the one with a button. A single-branch clone that is otherwise complete
+  gets the sentence and **no** Unshallow button: `--unshallow` fetches history,
+  not branches, and a button that runs and changes nothing the reader complained
+  about is worse than none.
+- **`shallowInfo` is a `RepoSlice` field read by `refreshAll`**, the eleventh
+  `trackLoad`ed read. Per-repo, or a shallow clone in one tab would put a
+  truncation strip on another tab's blame. Re-read every refresh rather than
+  once on open, because the notice has to come **down** when the history
+  arrives — after an unshallow here, a fetch, or a `git fetch --unshallow` in a
+  terminal. It degrades to `DEFAULT_SHALLOW_INFO` on a failed read, like its
+  neighbours: a repository whose depth cannot be read must still show its log.
+- **`unshallow` files itself under the `fetch` activity key**, because it is a
+  fetch — which is also how it inherits the status line, the progress bar and
+  the Cancel button (`isCancellable` already lists that key), and how the strip
+  knows to disable its own button while one is running.
+- **The Clone dialog's Advanced section is disclosure only.** The values under
+  it are live whether it is open or shut, so collapsing it never silently
+  changes what Clone would do. `shallow` and `depth` are two pieces of state on
+  purpose: the checkbox is the decision and the number is a detail of it, so
+  unticking must not lose a typed number and a number left in the box must not
+  truncate the clone. A depth that is not a positive whole number disables
+  Clone rather than being rounded into one. Everything, the disclosure
+  included, resets on a closed→open transition — a `--depth 1` chosen for one
+  enormous repository must not quietly truncate the next.
+
 ## Navigation model
 
 - Activity bar = primary switcher, History first. **Launch always lands on

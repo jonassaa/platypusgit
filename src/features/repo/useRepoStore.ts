@@ -94,6 +94,8 @@ import {
   rememberCredential,
   setRemoteUrl,
   setUpstream as setUpstreamFn,
+  shallowInfo as shallowInfoFn,
+  unshallow as unshallowFn,
   type Credentials,
   stageHunk,
   stageLines as stageLinesFn,
@@ -121,6 +123,7 @@ import { useRecentsStore } from "./useRecentsStore";
 import {
   DEFAULT_BISECT_STATUS,
   DEFAULT_REBASE_STATUS,
+  DEFAULT_SHALLOW_INFO,
   emptySlice,
   sliceOf,
   type RepoSlice,
@@ -317,6 +320,11 @@ interface RepoStoreState extends RepoSlice {
   // network
   fetch: (remote: string) => Promise<void>;
   fetchAll: () => Promise<void>;
+  /**
+   * `git fetch --unshallow` — fetch the history a shallow clone left behind
+   * (#255). A no-op on a repository that is already complete.
+   */
+  unshallow: () => Promise<void>;
   pull: (remote: string, branch: string, mode?: PullMode) => Promise<void>;
   /**
    * Fetch a branch's remote and advance the branch to its upstream (#246).
@@ -844,6 +852,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         rebaseStatus,
         bisectStatus,
         headInfo,
+        shallow,
       // Each read is named while it runs (#296 gap 8), so a refresh that takes
       // nine seconds can say WHICH of the ten is holding it up instead of
       // showing one undifferentiated "syncing…". The wrappers are the only
@@ -888,6 +897,18 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
             "reading HEAD",
             headInfoFn(repo.id).catch(() => null),
           ),
+          // Re-read on every refresh, not once on open (#255): a fetch, an
+          // unshallow here, or a `git fetch --unshallow` in a terminal all
+          // change the answer, and the truncation notices have to come DOWN
+          // when the history arrives. Same degrade-don't-fail policy as its
+          // neighbours — a repository whose shallow state cannot be read must
+          // still show its log.
+          trackLoad(
+            repo.id,
+            "shallow",
+            "reading clone depth",
+            shallowInfoFn(repo.id).catch(() => DEFAULT_SHALLOW_INFO),
+          ),
         ]);
       setFor(repo.id, {
         status,
@@ -902,6 +923,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         rebaseStatus,
         bisectStatus,
         headInfo,
+        shallowInfo: shallow,
         loading: false,
       });
       // Keep an active search in sync with the refreshed history.
@@ -1551,6 +1573,33 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       },
       (e) => setErrorFor(repo.id, e),
       { key: "fetch", label: "Fetching all remotes…" },
+    );
+  },
+
+  /**
+   * Fetch the history a shallow clone left behind (#255).
+   *
+   * Filed under the `fetch` activity key because that is what it is — which
+   * also means it inherits the status line, the progress bar and the Cancel
+   * button, and `isCancellable` already lists that key. Unshallowing a large
+   * repository is the longest single wait in the app, so all three matter.
+   *
+   * Nothing is reported when the repository was already complete: the backend
+   * answers `false` rather than relaying git's refusal, and `refreshAll` takes
+   * the notice down either way.
+   */
+  async unshallow() {
+    const repo = get().current;
+    if (!repo) return;
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        await unshallowFn(repo.id, creds);
+        setActivity(repo.id, "fetch", "Refreshing…");
+        await get().refreshAll();
+      },
+      (e) => setErrorFor(repo.id, e),
+      { key: "fetch", label: "Fetching full history…" },
     );
   },
 

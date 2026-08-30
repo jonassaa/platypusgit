@@ -33,6 +33,7 @@ import type {
   RemoteInfo,
   RepoHandle,
   RepoState as GitRepoState,
+  ShallowInfo,
   StashInfo,
   TagInfo,
 } from "@/lib/types";
@@ -46,6 +47,17 @@ export const DEFAULT_REBASE_STATUS: RebaseStatus = {
   nextIndex: 0,
   total: 0,
   pauseReason: null,
+};
+
+/**
+ * A repository with nothing missing (#255) — and the value a failed read
+ * degrades to, so a `shallow_info` that could not run costs a notice rather
+ * than the whole refresh.
+ */
+export const DEFAULT_SHALLOW_INFO: ShallowInfo = {
+  shallow: false,
+  boundaryCount: 0,
+  singleBranch: false,
 };
 
 /** No bisect, with git's default terms. Mirrors Rust `BisectStatus::idle()`. */
@@ -127,6 +139,17 @@ export interface RepoSlice {
    * bisect started in a terminal.
    */
   bisectStatus: BisectStatus;
+  /**
+   * How much of this repository is actually here (#255) — read from git on
+   * every refresh, never remembered.
+   *
+   * Per-repo, and therefore here: a shallow clone open in one tab must not put
+   * a "history is truncated" strip on another tab's blame. It is also why the
+   * value is re-read by `refreshAll` rather than fetched once on open — an
+   * unshallow, a fetch, or a `git fetch --unshallow` in a terminal all change
+   * it, and the notices have to come down when they do.
+   */
+  shallowInfo: ShallowInfo;
   /** Active long-running ops keyed by op kind. */
   activity: RepoActivity;
   /**
@@ -179,6 +202,7 @@ export function emptySlice(): RepoSlice {
     repoState: "Clean",
     rebaseStatus: DEFAULT_REBASE_STATUS,
     bisectStatus: DEFAULT_BISECT_STATUS,
+    shallowInfo: DEFAULT_SHALLOW_INFO,
     activity: {},
     loadingTasks: [],
     hookRejection: null,

@@ -13,6 +13,7 @@ import type {
   ChecksSummary,
   DeleteFailure,
   CliShimStatus,
+  CloneOptions,
   CommitInfo,
   CommitNote,
   CommitResult,
@@ -46,6 +47,7 @@ import type {
   ReflogEntry,
   RemoteInfo,
   RepoHandle,
+  ShallowInfo,
   SignatureStatus,
   RepoState,
   StashInfo,
@@ -940,6 +942,32 @@ export async function cancelNetworkOp(repoId?: string): Promise<number> {
   return invoke<number>("cancel_network_op", { repoId: repoId ?? null });
 }
 
+/**
+ * How much of this repository is actually here (#255) — shallow or not, how many
+ * commits history stops at, and whether the remotes fetch a single branch.
+ *
+ * Answered by reading git's own state on every call, so an `--unshallow` from a
+ * terminal or another window needs nothing invalidated.
+ */
+export async function shallowInfo(repoId: string): Promise<ShallowInfo> {
+  return invoke<ShallowInfo>("shallow_info", { repoId });
+}
+
+/**
+ * `git fetch --unshallow` — fetch the history a shallow clone left behind.
+ *
+ * Resolves `false` when the repository was already complete: git refuses that
+ * outright ("--unshallow on a complete repository does not make sense"), and a
+ * user who clicked a button another window had already acted on must not be
+ * shown an error for it.
+ */
+export async function unshallow(
+  repoId: string,
+  credentials?: Credentials,
+): Promise<boolean> {
+  return invoke<boolean>("unshallow", { repoId, credentials });
+}
+
 export async function fetch(
   repoId: string,
   remote: string,
@@ -1310,19 +1338,23 @@ export async function defaultInitBranch(): Promise<string> {
  * Clone `url` into `parentDir/name`, resolving with the destination path.
  * Progress arrives out of band on the `clone://progress` event — listen before
  * calling, since the first tick can land before this promise settles.
+ *
+ * `options` carries the Advanced section's four flags (#255). They are flags on
+ * the same clone, not a second one — cancel, progress and the credential retry
+ * behave identically whatever is set.
  */
 export async function cloneRepo(
   url: string,
   parentDir: string,
   name: string,
-  recurseSubmodules: boolean,
+  options: CloneOptions,
   credentials?: Credentials,
 ): Promise<string> {
   return invoke<string>("clone_repo", {
     url,
     parentDir,
     name,
-    recurseSubmodules,
+    options,
     credentials,
   });
 }

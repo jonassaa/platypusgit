@@ -643,6 +643,52 @@ export interface CloneProgress {
   percent: number;
 }
 
+/**
+ * What the Clone dialog's **Advanced** section asked for (#255). Mirrors
+ * `CloneOptions` in types.rs.
+ *
+ * These are flags on the ONE `git clone` the backend already runs — there is no
+ * second clone path, so the destination validation, the cancel button, the
+ * progress bar and the credential retry all still apply.
+ */
+export interface CloneOptions {
+  /** `--recurse-submodules`. */
+  recurseSubmodules: boolean;
+  /** `--depth N`. `null` is a full clone; the backend refuses 0. */
+  depth: number | null;
+  /** `--filter=blob:none` — full history, file contents fetched on demand. */
+  blobless: boolean;
+  /**
+   * `--single-branch`. Unticking it alongside a depth emits
+   * `--no-single-branch`, because `--depth` implies single-branch otherwise.
+   */
+  singleBranch: boolean;
+}
+
+/**
+ * How much of the repository is actually here (#255). Mirrors `ShallowInfo` in
+ * types.rs.
+ *
+ * Read from git on every `refreshAll`, never remembered: `.git/shallow` and the
+ * remotes' fetch refspecs are git's, so an `--unshallow` run in a terminal
+ * shows up on the next refresh with nothing to invalidate.
+ */
+export interface ShallowInfo {
+  /** `.git/shallow` exists and is non-empty — history genuinely stops. */
+  shallow: boolean;
+  /**
+   * How many commits history stops at. 0 with `shallow: true` means the file
+   * could not be read; the boolean is the half every surface branches on.
+   */
+  boundaryCount: number;
+  /**
+   * Every remote fetches exactly one branch — the trace `--single-branch`
+   * leaves in `remote.<name>.fetch`. Independent of `shallow`: one truncates
+   * the branch list, the other the history.
+   */
+  singleBranch: boolean;
+}
+
 /** Which network op a `net://progress` tick belongs to. Mirrors Rust `NetOp`. */
 export type NetOp = "Fetch" | "Pull" | "Push";
 

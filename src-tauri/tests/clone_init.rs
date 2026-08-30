@@ -2,6 +2,7 @@ mod support;
 
 use platypusgit_lib::commands::create::{clone_args, validate_clone_target};
 use platypusgit_lib::error::AppError;
+use platypusgit_lib::git::types::CloneOptions;
 use platypusgit_lib::git::{libgit2::default_branch_name, libgit2::Libgit2Backend, GitBackend};
 
 use support::{BareTempRepo, TempRepo};
@@ -257,9 +258,17 @@ fn concurrent_init_calls_on_the_same_path_are_serialized() {
     );
 }
 
+/// `--recurse-submodules` only, the way the dialog's default clone asks for it.
+fn submodules_only() -> CloneOptions {
+    CloneOptions {
+        recurse_submodules: true,
+        ..CloneOptions::default()
+    }
+}
+
 #[test]
 fn clone_args_are_shell_free_and_option_terminated() {
-    let args = clone_args("https://example.com/repo.git", "repo", true);
+    let args = clone_args("https://example.com/repo.git", "repo", &submodules_only());
     assert_eq!(
         args,
         vec![
@@ -274,7 +283,11 @@ fn clone_args_are_shell_free_and_option_terminated() {
         ]
     );
 
-    let plain = clone_args("https://example.com/repo.git", "repo", false);
+    let plain = clone_args(
+        "https://example.com/repo.git",
+        "repo",
+        &CloneOptions::default(),
+    );
     assert!(!plain.contains(&"--recurse-submodules".to_string()));
     // The `-c` override must land before the `clone` subcommand, or it's just
     // another positional argument to git rather than a global option.
@@ -295,7 +308,11 @@ fn clone_args_disallows_the_ext_remote_helper_regardless_of_ambient_config() {
     // (protocol.ext.allow=always turns `ext::sh -c '...'` URLs into arbitrary
     // command execution with no credential prompt needed). Pin it here so a
     // directly-spawned `git clone` is safe independent of ambient config.
-    let args = clone_args("https://example.com/repo.git", "repo", false);
+    let args = clone_args(
+        "https://example.com/repo.git",
+        "repo",
+        &CloneOptions::default(),
+    );
     let c_idx = args.iter().position(|a| a == "-c").expect("must set -c");
     assert_eq!(args[c_idx + 1], "protocol.ext.allow=never");
 }
@@ -452,7 +469,7 @@ async fn clone_from_a_local_bare_repo_lands_the_files() {
         bare.path.to_str().unwrap(),
         dest_parent.path(),
         "cloned",
-        false,
+        &CloneOptions::default(),
         None,
         |_| {},
     )
@@ -508,7 +525,7 @@ async fn clone_streams_progress_ticks_as_they_arrive() {
         &url,
         dest_parent.path(),
         "cloned",
-        false,
+        &CloneOptions::default(),
         None,
         move |p| ticks_for_closure.lock().unwrap().push(p),
     )
@@ -553,7 +570,7 @@ async fn run_clone_trims_whitespace_from_the_name_and_matches_disk() {
         bare.path.to_str().unwrap(),
         dest_parent.path(),
         "cloned ", // trailing space, exactly the reviewer's repro
-        false,
+        &CloneOptions::default(),
         None,
         |_| {},
     )
@@ -588,7 +605,7 @@ async fn run_clone_reports_a_missing_parent_directory_by_name() {
         "https://example.com/repo.git",
         &missing_parent,
         "cloned",
-        false,
+        &CloneOptions::default(),
         None,
         |_| {},
     )
@@ -620,7 +637,7 @@ async fn a_failed_clone_reports_git_stderr_and_leaves_nothing_behind() {
         missing.to_str().unwrap(),
         dest_parent.path(),
         "cloned",
-        false,
+        &CloneOptions::default(),
         None,
         |_| {},
     )

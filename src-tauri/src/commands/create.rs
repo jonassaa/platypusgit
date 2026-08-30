@@ -6,7 +6,7 @@ use tokio::io::AsyncReadExt;
 use crate::{
     error::{AppError, AppResult},
     git::libgit2::default_branch_name,
-    git::types::{CloneProgress, RepoHandle},
+    git::types::{CloneOptions, CloneProgress, RepoHandle},
     progress::{ProgressReader, DEFAULT_TAIL_LINES},
     state::AppState,
 };
@@ -154,15 +154,38 @@ pub fn validate_clone_target(parent: &Path, name: &str) -> AppResult<PathBuf> {
 ///
 /// `--` terminates option parsing before the URL, so a URL beginning with a
 /// dash is treated as a URL rather than a flag. Nothing here is ever handed to
-/// a shell — these become argv elements of a directly-spawned `git`.
-pub fn clone_args(url: &str, name: &str, recurse_submodules: bool) -> Vec<String> {
+/// a shell — these become argv elements of a directly-spawned `git`. Every
+/// option below is OURS: a `u32` formatted here, or a fixed literal, so there
+/// is no user text among the flags at all.
+///
+/// **`--no-single-branch` is not a strange extra** (#255): `git clone --depth`
+/// *implies* `--single-branch` unless told otherwise, so a depth with the
+/// dialog's Single branch box unticked would silently produce a single-branch
+/// clone. Emitting the negation is what makes the checkbox mean what it says on
+/// every combination.
+pub fn clone_args(url: &str, name: &str, opts: &CloneOptions) -> Vec<String> {
     let mut args = vec![
         "-c".to_string(),
         "protocol.ext.allow=never".to_string(),
         "clone".to_string(),
         "--progress".to_string(),
     ];
-    if recurse_submodules {
+    if let Some(depth) = opts.depth {
+        args.push("--depth".to_string());
+        args.push(depth.to_string());
+    }
+    if opts.blobless {
+        // Full history, file contents fetched on demand — the better answer for
+        // a big repository you intend to work in, and the one that does not
+        // truncate anything.
+        args.push("--filter=blob:none".to_string());
+    }
+    if opts.single_branch {
+        args.push("--single-branch".to_string());
+    } else if opts.depth.is_some() {
+        args.push("--no-single-branch".to_string());
+    }
+    if opts.recurse_submodules {
         args.push("--recurse-submodules".to_string());
     }
     args.push("--".to_string());
@@ -180,10 +203,21 @@ pub async fn run_clone(
     url: &str,
     parent: &Path,
     name: &str,
-    recurse_submodules: bool,
+    opts: &CloneOptions,
     creds: Option<&crate::commands::net::Credentials>,
     mut on_progress: impl FnMut(CloneProgress),
 ) -> AppResult<PathBuf> {
+    // git's own answer to `--depth 0` is `fatal: depth 0 is not a positive
+    // number` — a form-validation message wearing a clone failure's clothes,
+    // and one that arrives only after the spawn. Refuse it up front, where the
+    // dialog can show it beside the field it belongs to. (`depth` is a `u32`,
+    // so 0 is the only unusable value there is.)
+    if opts.depth == Some(0) {
+        return Err(AppError::InvalidArgument(
+            "clone depth must be at least 1".into(),
+        ));
+    }
+
     // Trimmed once, here, and reused for both validation and argv below.
     // `validate_clone_target` trims internally too, but that trimmed value
     // never left the function — the untrimmed `name` used to go straight to
@@ -211,7 +245,7 @@ pub async fn run_clone(
     // it is one of those two, which is what makes the cancel cleanup below safe
     // to do at all — see `cancelled_clone`.
     let target_preexisted = target.is_dir();
-    let args = clone_args(url, name, recurse_submodules);
+    let args = clone_args(url, name, opts);
 
     // `git_async_in` and not `git_async`: a clone's working directory is the
     // PARENT of a repository that does not exist yet, so there is nothing for
@@ -381,13 +415,18 @@ fn clone_failure_message(tail: &[String], exit_code: Option<i32>) -> String {
 }
 
 /// Clone `url` into `parent_dir/name`, emitting `clone://progress` as it goes.
+///
+/// `options` carries the Advanced section's four flags (#255). They are flags on
+/// THIS clone — there is no second implementation, so the destination
+/// validation, the cancel registration, the streamed progress and the one
+/// credential path all still apply exactly as they did.
 #[tauri::command]
 pub async fn clone_repo(
     app: AppHandle,
     url: String,
     parent_dir: String,
     name: String,
-    recurse_submodules: bool,
+    options: CloneOptions,
     credentials: Option<crate::commands::net::Credentials>,
 ) -> AppResult<String> {
     let url = url.trim().to_string();
@@ -395,17 +434,10 @@ pub async fn clone_repo(
         return Err(AppError::InvalidPath("no repository URL given".into()));
     }
     let parent = PathBuf::from(parent_dir);
-    let dest = run_clone(
-        &url,
-        &parent,
-        &name,
-        recurse_submodules,
-        credentials.as_ref(),
-        |p| {
-            // A dropped event only costs a progress tick, never the clone.
-            let _ = app.emit("clone://progress", &p);
-        },
-    )
+    let dest = run_clone(&url, &parent, &name, &options, credentials.as_ref(), |p| {
+        // A dropped event only costs a progress tick, never the clone.
+        let _ = app.emit("clone://progress", &p);
+    })
     .await?;
     Ok(dest.to_string_lossy().to_string())
 }

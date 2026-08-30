@@ -24,6 +24,7 @@ import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { FocusableScroll, PGPane } from "@/features/keymap";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { ShallowNotice } from "@/features/repo/ShallowNotice";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useCompareStore } from "@/features/compare/useCompareStore";
 import { CompareSidePicker } from "@/features/compare/CompareSidePicker";
@@ -232,6 +233,10 @@ export function CompareScreen() {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <DeepViewHeader crumbs={[`Compare ${header}`]} />
+      {/* The ahead/behind summary below is arithmetic over the graph that is
+          actually here. A merge base older than the shallow boundary is not,
+          and the numbers give no hint of it (#255). */}
+      <ShallowNotice surface="compare" />
 
       <div
         data-testid="compare-bar"

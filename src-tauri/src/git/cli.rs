@@ -9,7 +9,8 @@ use super::{
         BulkFastForward, FastForward,
         FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
         BlobSource, ImagePreview,
-        RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, StashInfo, StashSaveOptions,
+        RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, ShallowInfo, StashInfo,
+        StashSaveOptions,
         SubmoduleInfo, TagInfo,
         TagTarget, WorkdirDiff, WorktreeBranch, WorktreeInfo,
     },
@@ -374,6 +375,9 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
     fn repo_path(&self, _repo_id: &RepoId) -> AppResult<PathBuf> {
+        Err(AppError::NotImplemented)
+    }
+    fn shallow_info(&self, _repo_id: &RepoId) -> AppResult<ShallowInfo> {
         Err(AppError::NotImplemented)
     }
     fn add_remote(&self, _repo_id: &RepoId, _name: &str, _url: &str) -> AppResult<()> {

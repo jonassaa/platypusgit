@@ -11,6 +11,16 @@ import { useCreateStore } from "@/features/create/useCreateStore";
 import { useAuthStore } from "@/features/auth/useAuthStore";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
+import type { CloneOptions } from "@/lib/types";
+/** The plain clone — no Advanced option set. Every test here is about the
+ *  credential/cancel flow, which the options do not touch. */
+const PLAIN: CloneOptions = {
+  recurseSubmodules: false,
+  depth: null,
+  blobless: false,
+  singleBranch: false,
+};
+
 
 const AUTH = {
   kind: "Auth",
@@ -63,7 +73,7 @@ describe("clone credential retry", () => {
       url: "https://github.com/me/private.git",
       parentDir: "/dev",
       name: "private",
-      recurseSubmodules: false,
+      options: PLAIN,
     });
 
     const challenge = useAuthStore.getState().challenge;
@@ -83,7 +93,7 @@ describe("clone credential retry", () => {
       url: "https://github.com/me/private.git",
       parentDir: "/dev",
       name: "private",
-      recurseSubmodules: false,
+      options: PLAIN,
     });
 
     await useAuthStore
@@ -105,7 +115,7 @@ describe("clone credential retry", () => {
       url: "https://github.com/me/private.git",
       parentDir: "/dev",
       name: "private",
-      recurseSubmodules: false,
+      options: PLAIN,
     });
 
     // Nothing stored yet — the credential has not been proven.
@@ -128,7 +138,7 @@ describe("clone credential retry", () => {
       url: "https://nope.invalid/x.git",
       parentDir: "/dev",
       name: "x",
-      recurseSubmodules: false,
+      options: PLAIN,
     });
 
     expect(useAuthStore.getState().challenge).toBeNull();

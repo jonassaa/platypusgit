@@ -14,7 +14,7 @@ import {
   trustRepoPath,
   type Credentials,
 } from "@/lib/tauri";
-import type { CloneProgress, RepoHandle } from "@/lib/types";
+import type { CloneOptions, CloneProgress, RepoHandle } from "@/lib/types";
 import {
   appErrorMessage,
   dubiousOwnershipPath,
@@ -46,7 +46,12 @@ interface CreateState {
     url: string;
     parentDir: string;
     name: string;
-    recurseSubmodules: boolean;
+    /**
+     * The Advanced section's flags (#255). One object rather than four
+     * parameters, and the same shape the backend takes, so a fifth option is a
+     * field here and nothing else.
+     */
+    options: CloneOptions;
   }) => Promise<void>;
   runInit: (args: {
     parentDir: string;
@@ -99,11 +104,11 @@ export const useCreateStore = create<CreateState>((set, get) => ({
     });
   },
 
-  async runClone({ url, parentDir, name, recurseSubmodules }) {
+  async runClone({ url, parentDir, name, options }) {
     set({ busy: true, error: null, progress: null });
 
     const attempt = async (creds?: Credentials) => {
-      const dest = await cloneRepo(url, parentDir, name, recurseSubmodules, creds);
+      const dest = await cloneRepo(url, parentDir, name, options, creds);
       useSettingsStore.getState().set("lastCreateDir", parentDir);
       // busy false BEFORE close(), which refuses to close while busy.
       set({ busy: false, progress: null });
