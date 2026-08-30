@@ -511,6 +511,51 @@ that is only partly here — which is the whole reason the notice exists.
   included, resets on a closed→open transition — a `--depth 1` chosen for one
   enormous repository must not quietly truncate the next.
 
+## Branch folders (#244)
+
+- **Filter, then order, then group — in that order.** `orderBranches` (#135) is
+  still THE branch ordering; `features/branches/branchTree.ts` only moves the
+  ordered rows into folders, so the pinned default branch stays the first row on
+  the screen and the newest-first order holds inside every folder. A folder
+  ranks where its first (freshest) branch was. Grouping never sorts.
+- **A prefix that groups nothing is not a folder.** Single-child chains compress
+  (`feat/foo/bar` alone is ONE row reading `feat/foo/bar`, not three), the same
+  rule `lib/tree.ts::compactNode` applies to file paths. So a folder row always
+  holds at least two things, and `branchFolderPaths` names the compressed paths
+  — the ones "collapse all" must write, not one per segment.
+- **The output is FLAT: rows carrying their own `depth`.** The Branches screen
+  keeps its grid, its `usePaneList` index and its selection model unchanged; a
+  nested render would have needed all three rewritten. Indentation lives in the
+  NAME cell only, so TIP / UPSTREAM / STATUS stay on the grid at any depth.
+- **A leaf row's `path` is always the branch's full name** — selection, context
+  menus and the inspector key off it. That is why a name with an empty segment
+  (`a//b`, which git rejects anyway) is left whole rather than split.
+- **A filter flattens the tree to its matches, showing full names.** Hiding a
+  hit behind a folded folder is the one thing a search box must never do, and a
+  bare `bar` with no `feat/foo` above it names nothing.
+- **Fold state is the EXCEPTIONS, per repository, outside the store.**
+  `useBranchFolders` persists the set of COLLAPSED paths in localStorage keyed by
+  repository path (`pg-branch-folders-v1`), pruning a repository's entry once it
+  is empty. Not in `useRepoStore`: that holds one repository's live git state and
+  every field must join `RepoSlice`, whereas this has to outlive the tab. It is
+  re-read on every repository change, or one tab's folds would be written back
+  under another tab's path.
+- **Folding the folder the selection sits in moves the selection onto it.**
+  Otherwise `flatIndex` goes to -1 and the next ArrowDown restarts at the top.
+  ← on a folder folds it and on anything else climbs to `parentFolderPath`.
+- **"Delete merged branches in this folder" means `git branch --merged`** —
+  contained in HEAD — and the confirm says so. Never a remote (that would be a
+  push), never HEAD, never the default branch even when it lives in a folder.
+  The merge check is one `ahead_behind` per candidate, run on demand and
+  sequentially (the backend serializes per-repository work), never per render; a
+  branch it cannot ask about is reported unmerged, the safe direction. The
+  confirm names every branch in a scrolling list — "8 branches" is not something
+  anyone can check before clicking Delete.
+- **Drag and drop is deliberately NOT wired to folder rows yet.** When it is, a
+  branch dragged onto or out of a folder resolves through `resolveDrop.ts` like
+  every other drop, with a keyboard equivalent — see the drag-and-drop rules
+  below.
+
 ## Navigation model
 
 - Activity bar = primary switcher, History first. **Launch always lands on
