@@ -64,6 +64,11 @@ const PORTABLE = [
   "diffContextLines",
   "diffContextMode",
   "diffViewMode",
+  // The external diff tool's NAME (#235). Portable on purpose: it says which
+  // tool this person prefers, not where anything lives on this machine, and a
+  // name that is not installed on the next machine fails visibly with git's own
+  // message rather than silently doing the wrong thing.
+  "externalDiffTool",
   "headMarks",
   "headWeight",
   "ignoreWhitespaceInDiff",
@@ -404,6 +409,25 @@ describe("import validates like load() does", () => {
     const store = await freshStore();
     store.useSettingsStore.getState().importSettings(payloadOf({ commitTicketPattern: "" }));
     expect(store.useSettingsStore.getState().commitTicketPattern).toBe("");
+  });
+
+  it("falls back to 'git decides' for a diff tool name git cannot use", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().set("externalDiffTool", "meld");
+    store.useSettingsStore
+      .getState()
+      .importSettings(payloadOf({ externalDiffTool: 'bcompare "$LOCAL"' }));
+    // Empty is the documented safe value: it hands the choice back to git,
+    // rather than failing every difftool click with a banner about a tool
+    // nobody configured.
+    expect(store.useSettingsStore.getState().externalDiffTool).toBe("");
+  });
+
+  it("keeps an empty diff tool name — that IS the default", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().set("externalDiffTool", "meld");
+    store.useSettingsStore.getState().importSettings(payloadOf({ externalDiffTool: "" }));
+    expect(store.useSettingsStore.getState().externalDiffTool).toBe("");
   });
 
   it("falls back to auto for a bad updateCheckMode", async () => {

@@ -17,6 +17,7 @@ import {
   ZOOM_MAX,
   ZOOM_MIN,
   applyTheme,
+  isValidDiffToolName,
   useSettingsStore,
   type SettingsImportReport,
   type ThemeColors,
@@ -313,6 +314,36 @@ export function SettingsScreen() {
               <PGToggle
                 checked={s.ignoreWhitespaceInDiff}
                 onChange={(v) => s.set("ignoreWhitespaceInDiff", v)}
+              />
+            }
+          />
+          <Row
+            label="External diff tool"
+            hint={
+              <>
+                Which tool &quot;Open in external diff tool&quot; hands a file
+                to. Leave it empty and git decides, from{" "}
+                <code>diff.guitool</code>, <code>diff.tool</code> or{" "}
+                <code>merge.tool</code> — so anyone who has already configured
+                one needs nothing here. A tool NAME, not a command line
+                (<code>meld</code>, <code>bc</code>, <code>vimdiff</code>, or one
+                you defined with <code>difftool.&lt;tool&gt;.cmd</code>).
+              </>
+            }
+            control={
+              <PGInput
+                value={s.externalDiffTool}
+                onChange={(v) => s.set("externalDiffTool", v)}
+                // A command line here would fail inside git with a message
+                // about a tool nobody configured, so the field says so while it
+                // is being typed — same treatment as the ticket pattern above.
+                error={!isValidDiffToolName(s.externalDiffTool)}
+                aria-invalid={!isValidDiffToolName(s.externalDiffTool)}
+                mono
+                size="sm"
+                placeholder="git decides"
+                style={{ width: 220 }}
+                data-testid="settings-external-diff-tool"
               />
             }
           />

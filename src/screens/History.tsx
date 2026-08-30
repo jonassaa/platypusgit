@@ -932,6 +932,11 @@ export function HistoryScreen() {
             }
           : undefined
       }
+      // The commit itself, NOT the `^` pair above (#235): `^` is fine for
+      // highlighting, where failing on a root commit just renders plain, and
+      // wrong for difftool, where it either errors or diffs against the working
+      // tree. The backend resolves the parent.
+      difftoolTarget={current ? { kind: "commit", oid: current.oid } : undefined}
     />
   );
 

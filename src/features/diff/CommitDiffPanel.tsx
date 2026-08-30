@@ -4,7 +4,9 @@ import {
   PGIcon,
   PGResizeHandle,
   PGSkeleton,
+  copyPathItems,
   diffCopyMenuItems,
+  externalDiffItem,
   useContextMenu,
   usePaneSize,
   type DiffLineData,
@@ -36,7 +38,7 @@ import { buildLineSpans } from "@/lib/lineSpans";
 import type { FindMark } from "@/lib/diffFind";
 import { DiffFindBar } from "./DiffFindBar";
 import { useDiffFind } from "./useDiffFind";
-import type { FileDiff } from "@/lib/types";
+import type { DiffToolTarget, FileDiff } from "@/lib/types";
 import { isTextualDiff } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { ImageDiffView } from "./ImageDiffView";
@@ -149,6 +151,21 @@ export interface CommitDiffPanelProps {
    * filled in by the panel itself, which knows the selected file.
    */
   syntaxSides?: { repoId: string; old: SideSource; new: SideSource };
+  /**
+   * The two sides to hand an external diff tool, for the file-row menu (#235).
+   *
+   * An explicit target rather than something derived from `syntaxSides`, even
+   * though the two describe the same comparison. `syntaxSides` is allowed to be
+   * approximate — History passes `{ rev: "<oid>^" }`, which simply fails and
+   * renders plain on a root commit — whereas `<oid>^` handed to `git difftool`
+   * either errors or, in its `^!` spelling, silently diffs against the WORKING
+   * TREE. A surface showing one commit passes `{ kind: "commit" }` and lets the
+   * backend resolve the parent.
+   *
+   * Omitted where the comparison has no external equivalent (a combined
+   * multi-commit diff), and the menu entry is then absent rather than broken.
+   */
+  difftoolTarget?: DiffToolTarget;
 }
 
 /**
@@ -166,6 +183,7 @@ export function CommitDiffPanel({
   emptyLabel = "No changes in this commit.",
   verifyOid,
   syntaxSides,
+  difftoolTarget,
 }: CommitDiffPanelProps) {
   const filesPaneId = `${paneIdPrefix}.files`;
   const viewPaneId = `${paneIdPrefix}.view`;
@@ -214,6 +232,27 @@ export function CommitDiffPanel({
   const diffCopyMenu = useContextMenu<void>(() =>
     diffCopyMenuItems({ diff: current }),
   );
+
+  // The file ROWS get their own menu (#235). Until this existed the read-only
+  // diff surfaces had no per-file menu at all — right-clicking a row did
+  // nothing — so this is the whole entry point for "open this one in my own
+  // tool" on a commit, a compare and a stash.
+  //
+  // A rename passes BOTH paths, so git can pair them instead of reporting the
+  // file as wholly added.
+  const fileMenu = useContextMenu<FileDiff>((d) => [
+    { __menuTitle: d?.path || "file" },
+    ...copyPathItems(d?.path ? [d.path] : []),
+    ...(difftoolTarget && d
+      ? [
+          { divider: true },
+          externalDiffItem(
+            difftoolTarget,
+            d.oldPath && d.oldPath !== d.path ? [d.oldPath, d.path] : [d.path],
+          ),
+        ]
+      : []),
+  ]);
 
   const syntax = useDiffSyntax({
     repoId: syntaxSides?.repoId ?? null,
@@ -458,6 +497,13 @@ export function CommitDiffPanel({
             <div
               key={d.path}
               onClick={() => setSelected(d.path)}
+              onContextMenu={(e) => {
+                // Select first: a menu acting on a row the user is not looking
+                // at is the same surprise a right-click on an unselected file
+                // row makes anywhere else.
+                setSelected(d.path);
+                fileMenu.onContextMenu(e, d);
+              }}
               data-pg-row=""
               data-selected={d.path === selected ? "" : undefined}
               data-path={d.path}
@@ -524,6 +570,7 @@ export function CommitDiffPanel({
             );
           })}
         </FocusableScroll>
+        {fileMenu.menu}
       </PGPane>
       <PGResizeHandle
         side="right"

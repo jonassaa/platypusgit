@@ -256,6 +256,7 @@ pub fn run() {
             commands::diff::diff_commit,
             commands::diff::diff_ref_to_workdir,
             commands::diff::blame_file,
+            commands::diff::open_in_difftool,
             commands::branches::list_branches,
             commands::branches::list_tags,
             commands::branches::list_stashes,

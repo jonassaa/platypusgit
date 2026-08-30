@@ -21,6 +21,7 @@ import type {
   ConflictSides,
   DiagnosticsReport,
   DiffKind,
+  DiffToolTarget,
   FastForward,
   FileContent,
   FileDiff,
@@ -1223,6 +1224,29 @@ export async function openInEditor(
   relativePath: string,
 ): Promise<void> {
   return invoke<void>("open_in_editor", { repoId, relativePath });
+}
+
+/**
+ * Hand one file's diff to the user's own diff tool (#235).
+ *
+ * `paths` is a LIST so a rename can pass `[oldPath, newPath]`: scoped to the new
+ * path alone, `git difftool` reports a renamed file as a whole file added, which
+ * is the dead end this feature exists to remove.
+ *
+ * `tool` is the app's optional Settings override. Omit it — the normal case —
+ * and git resolves the tool itself from `diff.guitool` / `diff.tool` /
+ * `merge.tool`, which is what makes this zero-config for anyone already set up.
+ *
+ * Resolves when the tool EXITS: `git difftool` waits for it, so this promise is
+ * open for as long as the window is. Callers show an activity entry.
+ */
+export async function openInDifftool(
+  repoId: string,
+  target: DiffToolTarget,
+  paths: string[],
+  tool?: string | null,
+): Promise<void> {
+  return invoke<void>("open_in_difftool", { repoId, target, paths, tool });
 }
 
 /**

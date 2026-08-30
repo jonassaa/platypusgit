@@ -26,6 +26,7 @@ use super::{
         BulkFastForward,
         BlobSource,
         DiffKind,
+        DiffToolTarget,
         DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileStatus, HeadInfo, ImagePreview,
         LfsStatus,
         LogFilter, LogPage,
@@ -5300,6 +5301,42 @@ impl GitBackend for Libgit2Backend {
                 shallow,
                 boundary_count,
                 single_branch: shallow_mod::single_branch_from_refspecs(&per_remote),
+            })
+        })
+    }
+
+    fn difftool_plan(
+        &self,
+        repo_id: &RepoId,
+        target: &DiffToolTarget,
+        paths: &[String],
+        tool: Option<&str>,
+    ) -> AppResult<super::difftool::DiffToolPlan> {
+        // Validated before the repository is touched: an unusable request must
+        // not depend on which lock was free.
+        let tool = super::difftool::normalize_tool(tool)?;
+        if paths.is_empty() {
+            return Err(AppError::InvalidArgument(
+                "no path to open in a diff tool".into(),
+            ));
+        }
+        self.with_repo(repo_id, |repo| {
+            let workdir = repo
+                .workdir()
+                .map(PathBuf::from)
+                .ok_or_else(|| AppError::InvalidPath("bare repository has no workdir".into()))?;
+            // The pathspecs are relative to the worktree root (`git -C`), so the
+            // lexical check is the right strength — nothing here unlinks. It
+            // rejects the three shapes that would address a file outside the
+            // repository: empty, absolute, and one containing `..`.
+            for path in paths {
+                safe_workdir_path(&workdir, path)?;
+            }
+            let spec = super::difftool::spec_for(repo, target)?;
+            Ok(super::difftool::DiffToolPlan {
+                workdir,
+                args: super::difftool::difftool_args(&spec, tool.as_deref(), paths),
+                tool,
             })
         })
     }

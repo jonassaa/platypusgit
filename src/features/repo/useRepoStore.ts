@@ -4,6 +4,7 @@ import type {
   BisectMark,
   BulkFastForward,
   CommitResult,
+  DiffToolTarget,
   FastForward,
   FileContent,
   FileStatus,
@@ -35,6 +36,7 @@ import {
   bisectStart as bisectStartFn,
   bisectStatus as bisectStatusFn,
   appendGitignore as appendGitignoreFn,
+  openInDifftool as openInDifftoolFn,
   openInEditor as openInEditorFn,
   revealInFileManager as revealInFileManagerFn,
   openInTerminal as openInTerminalFn,
@@ -400,6 +402,15 @@ interface RepoStoreState extends RepoSlice {
   bisectReset: () => Promise<void>;
   appendGitignore: (pattern: string) => Promise<void>;
   openInEditor: (relativePath: string) => Promise<void>;
+  /**
+   * Open `paths` in the user's own diff tool (#235).
+   *
+   * `paths` is a list because a rename has two of them — pass
+   * `[oldPath, newPath]` so git can pair them; one path is the ordinary case.
+   * Resolves when the TOOL exits, which can be minutes, so this holds a
+   * `difftool` activity entry for the whole time.
+   */
+  openInDifftool: (target: DiffToolTarget, paths: string[]) => Promise<void>;
   /** Reveal in the OS file manager; omitted reveals the repo root (#215). */
   revealInFileManager: (relativePath?: string) => Promise<void>;
   /** Open a terminal at the containing directory; omitted uses the repo root. */
@@ -2039,6 +2050,34 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       await openInEditorFn(repo.id, relativePath);
     } catch (e) {
       setErrorFor(repo.id, e);
+    }
+  },
+
+  async openInDifftool(target, paths) {
+    const repo = get().current;
+    if (!repo || paths.length === 0) return;
+    // The label names the FILE, not the tool: we deliberately do not resolve
+    // which tool git will pick (see git/difftool.rs), so claiming one here
+    // would be a guess printed as a fact.
+    const label = `Diffing ${paths[paths.length - 1]} externally…`;
+    setActivity(repo.id, "difftool", label);
+    try {
+      // Empty means "let git decide", which is the zero-config case the whole
+      // feature is built around — so it is passed through as null rather than
+      // as an empty `--tool=`.
+      const tool = useSettingsStore.getState().externalDiffTool.trim();
+      await openInDifftoolFn(repo.id, target, paths, tool === "" ? null : tool);
+      // The tool may have EDITED the file: when the right-hand side is the
+      // working tree, git difftool hands it the real one rather than a copy.
+      await get().refreshAll();
+    } catch (e) {
+      // Refresh first, error last — refreshAll clears `error` as its first act
+      // and React batches same-tick sets. Same order every danger-op catch arm
+      // uses; a tool that half-wrote a file must not leave the UI stale either.
+      await get().refreshAll();
+      setErrorFor(repo.id, e);
+    } finally {
+      setActivity(repo.id, "difftool", null);
     }
   },
 
