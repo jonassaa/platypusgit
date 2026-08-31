@@ -24,9 +24,12 @@ set -eu
 OWNER=jonassaa
 REPO=platypusgit
 PRODUCT=platypusgit
-PRIVACY_URL=https://www.platypusgit.com/privacy
+# Trailing slash: the site serves /privacy/ and 301s the unslashed form. This is
+# the value that gets pasted into Partner Center, so it is the canonical one.
+PRIVACY_URL=https://www.platypusgit.com/privacy/
 STORE_SIGNUP=https://storedeveloper.microsoft.com
 PARTNER_CENTER=https://partner.microsoft.com/dashboard
+PARTNER_APPS=https://aka.ms/submitwindowsapp
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 MANIFEST="$root/src-tauri/windows/Package.appxmanifest"
@@ -120,14 +123,23 @@ fi
 
 # ─── 1. the account ──────────────────────────────────────────────────────────
 
-step "1/8  Create the developer account — START AT THE RIGHT URL"
+step "1/8  The developer account"
 
-say "Open: $STORE_SIGNUP"
+say "ALREADY HAVE A MICROSOFT DEVELOPER ACCOUNT? Skip this step entirely."
+say "Microsoft's own FAQ: 'this flow is only for new individual developers"
+say "creating their account for the first time.' Go straight to:"
 say ""
-say "THIS IS THE TRAP, and it costs money to get wrong. That page states it is"
-say "the ONLY supported entry point for the fee-free flow. Reaching Partner"
-say "Center any other way — a direct dashboard link, Xbox, Visual Studio —"
-say "serves the LEGACY flow, which still charges the \$19 registration fee."
+say "  $PARTNER_APPS"
+say ""
+say "FIRST ACCOUNT? Then the entry point matters — open:"
+say ""
+say "  $STORE_SIGNUP"
+say ""
+say "That page states it is the ONLY supported entry point for the fee-free"
+say "flow: 'Other paths (e.g. direct via Partner Center, Xbox, or Visual"
+say "Studio) will show the legacy flow.' The \$19 registration fee is waived in"
+say "the new flow. Microsoft does not document what the legacy flow costs, so"
+say "the safe move is simply to start at the URL above."
 say ""
 say "Choose 'Get started for free', then 'Individual developer'."
 say "Store policy 10.14 reserves Company accounts for organisations and for"
@@ -136,7 +148,7 @@ say "project is an Individual account."
 say ""
 say "Verification is a government-issued ID plus a selfie, on a phone, in good"
 say "light. Nobody can do this step for you."
-confirm "Account created and verified?" || say "Skipped."
+confirm "Account ready (existing or newly verified)?" || say "Skipped."
 
 # ─── 2. the name ─────────────────────────────────────────────────────────────
 
@@ -178,12 +190,17 @@ if confirm "Enter them now, and I will print the exact pack command?"; then
     esac
 
     say ""
-    say "Export these before packing, and msix-pack.sh will pick them up:"
+    say "THE RELEASE READS THESE FROM REPOSITORY VARIABLES. Set them once:"
     say ""
-    say "  export MSIX_IDENTITY_NAME='$identity_name'"
-    say "  export MSIX_PUBLISHER='$publisher'"
+    say "  gh variable set MSIX_IDENTITY_NAME --body '$identity_name'"
+    say "  gh variable set MSIX_PUBLISHER     --body '$publisher'"
     say ""
-    say "Or pass them directly:"
+    say "They are public values — they ship inside every installed package — so"
+    say "they are variables, not secrets. release.yml FAILS the msix job if"
+    say "either is unset, rather than attaching a bundle stamped with the"
+    say "development identity that Partner Center would reject."
+    say ""
+    say "For a one-off local pack, pass them directly instead:"
     say ""
     say "  sh scripts/msix-pack.sh --version <X.Y.Z> --arch x64 \\"
     say "      --exe src-tauri/target/x86_64-pc-windows-msvc/release/platypusgit.exe \\"
@@ -191,8 +208,7 @@ if confirm "Enter them now, and I will print the exact pack command?"; then
     say "      --identity-name '$identity_name' \\"
     say "      --publisher '$publisher'"
     say ""
-    say "Nothing was written to disk: these belong in the release environment,"
-    say "not in the repository."
+    say "Nothing was written to disk by this wizard."
 else
     say "Skipped — you can re-run this step alone later."
 fi
@@ -288,8 +304,8 @@ step "Done — what you should have now"
 say "  1. An Individual developer account, created via $STORE_SIGNUP"
 say "     (fee-free — any other entry point charges)."
 say "  2. The name '$PRODUCT' reserved."
-say "  3. Identity Name + Publisher copied out, passed to msix-pack.sh as flags"
-say "     or exported as MSIX_IDENTITY_NAME / MSIX_PUBLISHER. Never committed."
+say "  3. Identity Name + Publisher stored as the MSIX_IDENTITY_NAME and"
+say "     MSIX_PUBLISHER repository variables. Never committed to the tree."
 say "  4. Age ratings completed."
 say "  5. runFullTrust justified."
 say "  6. A description whose FIRST line names the git dependency."

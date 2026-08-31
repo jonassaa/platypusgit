@@ -390,10 +390,26 @@ jobs:
       - name: Build arm64
         run: pnpm tauri build --no-bundle --target aarch64-pc-windows-msvc --config src-tauri/tauri.msstore.conf.json
 
+      # The Store identity comes from REPOSITORY VARIABLES, not from the script's
+      # defaults. msix-pack.sh falls back to a development identity
+      # (`platypusgit.dev` / `CN=platypusgit-development`) so a local build works
+      # without Partner Center — but a RELEASE stamped with that identity is
+      # rejected on upload, and nothing before the upload would say so. Both are
+      # public values (they ship inside every installed package), hence `vars`
+      # rather than `secrets`; set them from Partner Center > Product identity:
+      #   gh variable set MSIX_IDENTITY_NAME --body '<Publisher>.<name>'
+      #   gh variable set MSIX_PUBLISHER     --body 'CN=<guid>'
       - name: Stage and pack both architectures
         shell: bash
+        env:
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
         run: |
           set -euo pipefail
+          # Fail the job rather than attach an unsubmittable bundle to a public
+          # release. `${VAR:?msg}` under `set -u` aborts with the message.
+          : "${MSIX_IDENTITY_NAME:?repository variable is unset — copy it from Partner Center > Product identity}"
+          : "${MSIX_PUBLISHER:?repository variable is unset — the whole CN=... string from Partner Center}"
           v="${{ needs.version.outputs.version }}"
           sh scripts/msix-pack.sh --version "$v" --arch x64 \
             --exe src-tauri/target/x86_64-pc-windows-msvc/release/platypusgit.exe \
@@ -439,6 +455,13 @@ jobs:
               $manifest = Get-Content (Join-Path $inner 'AppxManifest.xml') -Raw
               if ($manifest -match '__MSIX_') {
                   throw "$arch manifest carries an unsubstituted token"
+              }
+              # Second line of defence behind the `:?` guards on the pack step.
+              # A dev-identity bundle is the one defect that passes every other
+              # check here, installs fine locally, and is only rejected by
+              # Partner Center days later.
+              if ($manifest -match 'platypusgit\.dev' -or $manifest -match 'CN=platypusgit-development') {
+                  throw "$arch package carries the DEVELOPMENT identity — set the MSIX_IDENTITY_NAME and MSIX_PUBLISHER repository variables"
               }
               if ($manifest -notmatch 'Alias="pgit\.exe"') {
                   throw "$arch manifest lost the pgit alias, so the package would ship no CLI"
