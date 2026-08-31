@@ -29,6 +29,8 @@ import {
   DEFAULT_TICKET_PATTERN,
   isValidTicketPattern,
 } from "@/features/commits/message";
+import { IdentityForm } from "@/features/commits/identity/IdentityForm";
+import { useRepoStore } from "@/features/repo/useRepoStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { ForgeSettings } from "@/features/forge/ForgeSettings";
 import {
@@ -103,6 +105,8 @@ export function SettingsScreen() {
         >
           Preferences are saved locally and apply to every repository.
         </p>
+
+        <IdentitySection />
 
         <AppearanceSection active={active} />
 
@@ -363,6 +367,37 @@ export function SettingsScreen() {
 // ═════════════════════════════════════════════════════════════════════════════
 // KEYBOARD SECTION — keymap preset picker
 // ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * `user.name` / `user.email` (#212) — the one thing on this screen that is NOT
+ * a platypusgit preference.
+ *
+ * It is here anyway, and first, because it is the only setting the app cannot
+ * work without: git refuses to record a commit until both are set, and until
+ * #212 there was nowhere in the app to set them. The subtitle says out loud
+ * that this writes git's own config, since the page's own header promises
+ * "preferences are saved locally".
+ *
+ * Reachable with no repository open, which is why `repoId` is optional all the
+ * way down: a user who lands in Settings before opening anything still gets a
+ * true answer, from the global + system chain.
+ */
+function IdentitySection() {
+  const repo = useRepoStore((s) => s.current);
+  return (
+    <Section
+      title="Identity"
+      subtitle="Who your commits are recorded as. Unlike everything else here, this is written to your git config — the same user.name and user.email git itself reads."
+    >
+      <Row
+        label="Commit author"
+        hint="git refuses to record a commit without both. Saving writes them to your global git config, so every repository on this machine gets them."
+        stacked
+        control={<IdentityForm repoId={repo?.id ?? null} />}
+      />
+    </Section>
+  );
+}
 
 function KeyboardSection() {
   const activePresetId = useKeymapStore((k) => k.activePresetId);

@@ -4487,6 +4487,21 @@ impl GitBackend for Libgit2Backend {
         self.with_repo(repo_id, crate::git::commit_template::read)
     }
 
+    fn identity(&self, repo_id: Option<&RepoId>) -> AppResult<crate::git::signature::GitIdentity> {
+        match repo_id {
+            Some(repo_id) => {
+                self.with_repo(repo_id, |repo| crate::git::signature::read_identity(Some(repo)))
+            }
+            // No repository, no per-repo mutex to take: the global + system
+            // chain is the whole answer.
+            None => crate::git::signature::read_identity(None),
+        }
+    }
+
+    fn set_global_identity(&self, name: &str, email: &str) -> AppResult<()> {
+        crate::git::signature::set_global_identity(name, email)
+    }
+
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
         self.with_repo(repo_id, |repo| {
             let head_ref = repo.head().ok();

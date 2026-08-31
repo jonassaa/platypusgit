@@ -977,6 +977,47 @@ export interface CommitTemplate {
 }
 
 /**
+ * Which config file a `user.name` / `user.email` came from (#212). Mirrors Rust
+ * `git/signature.rs::IdentityScope`.
+ */
+export type IdentityScope = "repository" | "global" | "system";
+
+/** One configured value plus where it came from. */
+export interface ConfiguredValue {
+  /**
+   * Verbatim, INCLUDING a blank one — a `user.email =` line git refuses is a
+   * state the user has to see to fix.
+   */
+  value: string;
+  scope: IdentityScope;
+}
+
+/**
+ * The committer identity a commit would use (#212). Mirrors Rust
+ * `git/signature.rs::GitIdentity`.
+ *
+ * Both halves are optional because the state this describes is a fresh
+ * machine, where neither is set — the case that used to end in a banner
+ * reading "NoSignature" with nothing to click.
+ */
+export interface GitIdentity {
+  name: ConfiguredValue | null;
+  email: ConfiguredValue | null;
+  /** The file a save would write to, so the UI can name it beforehand. */
+  globalConfigPath: string | null;
+}
+
+/**
+ * Whether git could build a committer signature from this — both halves
+ * present and non-blank, the same rule `GitIdentity::usable` applies in Rust.
+ */
+export function identityIsUsable(identity: GitIdentity | null): boolean {
+  if (!identity) return false;
+  const ok = (v: ConfiguredValue | null) => !!v && v.value.trim() !== "";
+  return ok(identity.name) && ok(identity.email);
+}
+
+/**
  * One SSH key pair found on this machine (#248). Mirrors Rust
  * `ssh.rs::SshKeyInfo`.
  *
