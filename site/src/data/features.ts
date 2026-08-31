@@ -144,6 +144,50 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.2.1',
+    date: '2026-08-31',
+    status: 'packaging fix',
+    summary:
+      'The Microsoft Store package now builds. 0.2.0 shipped every other channel correctly, but its Store bundle was never produced — three separate Windows-only faults in the packaging step. Nothing in the app itself changed between 0.2.0 and 0.2.1; if you are already on 0.2.0 there is nothing here for you.',
+    sections: [
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'Three faults between a built app and a Store package',
+            detail:
+              'Each one hid behind the last, and all three were specific to building on Windows. `makeappx`, the tool that assembles the package, ships with the Windows SDK but is not on the command path, so it could not be found. With that fixed it ran and rejected its own arguments: the release builds under Git Bash, which rewrites anything shaped like a Unix path, so the flag `/d` arrived as `D:/`. With that fixed it got as far as reading the manifest and refused it, because naming the large square tile obliges you to name a wide one too — and 0.2.0 named only the square. The large tile is now omitted entirely rather than half-specified; Windows falls back to the medium one.',
+          },
+          {
+            title: 'The Store package is now checked on every change to it',
+            detail:
+              'Two of those three faults reached a published release, because nothing before the release job could see them — they need a Windows machine, and no test here had one. A gate now builds a real package on Windows whenever the packaging inputs change, and checks what came out: the executable, the `pgit` entry point, the app identity, the version. It found the third fault in about a minute. It deliberately does not build the whole app, since the faults were in the packaging rather than the binary, which is what keeps it cheap enough to run every time.',
+          },
+          {
+            title: 'The apt check stopped failing on a working repository',
+            detail:
+              'The release gate that installs from apt.platypusgit.com in a clean container failed twice during 0.2.0 against a repository that was serving the right thing minutes later. It waited for the index to answer but not for it to be current, and the hosting behind it does not publish atomically — so it installed the previous version and reported that as a broken repository. It now waits for the version it expects. No apt user was ever affected; the releases just looked broken.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'The Store listing is still not live',
+            detail:
+              'This release produces a submittable package; submitting it is a separate, manual step. Until the listing exists, install on Windows with the `.msi`, Scoop or winget as before.',
+          },
+          {
+            title: 'The packaged app has still not been run on Windows',
+            detail:
+              'Six behaviours specific to the packaged form remain unobserved on a real machine — most importantly whether git can invoke the app as its credential helper from inside a package directory, which if it fails would break authenticated operations quietly rather than loudly. The new gate proves the package can be BUILT, not that it works once installed. Carried forward from 0.2.0 unchanged.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.0',
     date: '2026-08-31',
     status: 'features & a fourth Windows channel',
