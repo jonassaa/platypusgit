@@ -53,7 +53,7 @@ regex = "1"
 # (#224) — a `Vec<u8>` serialises as a JSON array of numbers, which is ~5x
 # the bytes. Already in the tree transitively, so this declares it rather
 # than adding it.
-base64 = "0.22"
+base64 = "0.23"
 # OpenSSH's `SHA256:` key fingerprint is base64(sha256(blob)) — the string a
 # host shows beside a registered key, so computing it in-process (#248) is what
 # lets the SSH panel list N keys with zero subprocesses. Already in the tree
