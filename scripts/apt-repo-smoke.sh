@@ -208,6 +208,29 @@ until curl -fsS "$PG_BASE_URL/dists/stable/InRelease" > /dev/null 2>&1; do
 done
 ok "repository reachable at $PG_BASE_URL (after ${i}s)"
 
+# REACHABLE IS NOT THE SAME AS CURRENT, and against the live host that
+# distinction is the difference between a real failure and a false one.
+#
+# GitHub Pages does not publish atomically. On the v0.2.0 release this loop
+# above answered "reachable (after 0s)" against an index that still described
+# the PREVIOUS version, so the run installed it and reported
+# `installed version is '0.1.2', expected '0.2.0'` — a broken repository, said
+# of a repository that was merely mid-deploy and was serving the right thing
+# minutes later. A second run hit the neighbouring window where the index and
+# its signature disagreed and apt exited 100. Two red releases, no defect.
+#
+# So wait for the expected version to actually be LISTED. In local mode the pool
+# was just built, so this returns on the first try and costs nothing.
+i=0
+until curl -fsS "$PG_BASE_URL/dists/stable/main/binary-amd64/Packages" 2> /dev/null \
+    | grep -qx "Version: $PG_EXPECT_VERSION"; do
+    i=$((i + 1))
+    [ "$i" -lt "$PG_WAIT_SECS" ] \
+        || fail "index at $PG_BASE_URL never listed version $PG_EXPECT_VERSION after ${PG_WAIT_SECS}s"
+    sleep 1
+done
+ok "index lists version $PG_EXPECT_VERSION (after ${i}s)"
+
 # --- install ---------------------------------------------------------------
 
 if [ "$PG_MODE" = installer ]; then
