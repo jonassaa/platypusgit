@@ -2379,6 +2379,13 @@ export interface PGWorktreeRowProps {
   busy?: boolean;
 }
 
+/**
+ * Width of one action slot. The three actions live in a fixed 3-column grid so
+ * they line up DOWN the list: Lock/Unlock are different lengths, and letting the
+ * buttons size to their labels slid Open and Remove sideways on every locked row.
+ */
+const WORKTREE_ACTION_W = 84;
+
 export function PGWorktreeRow({
   worktree,
   onContextMenu,
@@ -2387,6 +2394,28 @@ export function PGWorktreeRow({
   onToggleLock,
   busy,
 }: PGWorktreeRowProps) {
+  // One fact per line, each clipped rather than wrapped. This list's whole job
+  // is telling near-identical paths apart, and a name + branch + lock reason
+  // crammed onto one line wrapped into a different row height per worktree.
+  const line: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    minWidth: 0,
+    maxWidth: "100%",
+  };
+  const clip: React.CSSProperties = {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  };
+  const meta: React.CSSProperties = {
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--fs-11)",
+    color: "var(--fg-2)",
+  };
+
   return (
     <div
       data-testid="worktree-row"
@@ -2403,7 +2432,9 @@ export function PGWorktreeRow({
           : "1px solid var(--border-0)",
         borderRadius: "var(--r-3)",
         display: "flex",
-        alignItems: "center",
+        // Top, not center: the info column grows a line when a worktree is
+        // locked, and the buttons stay on the name's line either way.
+        alignItems: "flex-start",
         gap: 10,
         marginBottom: 6,
       }}
@@ -2411,49 +2442,95 @@ export function PGWorktreeRow({
       <PGIcon
         name="worktree"
         size={14}
-        style={{ color: worktree.isCurrent ? "var(--accent)" : "var(--fg-2)" }}
+        style={{
+          color: worktree.isCurrent ? "var(--accent)" : "var(--fg-2)",
+          flexShrink: 0,
+          marginTop: 3,
+        }}
       />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontWeight: 600, fontSize: "var(--fs-13)" }}>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: 3,
+        }}
+      >
+        <div style={line}>
+          <span
+            title={worktree.name}
+            style={{ ...clip, fontWeight: 600, fontSize: "var(--fs-13)" }}
+          >
             {worktree.name}
           </span>
-          {worktree.branch ? (
-            <PGBranchPill name={worktree.branch} tone="accent" />
-          ) : (
-            <PGBadge tone="muted">detached</PGBadge>
-          )}
-          {worktree.isCurrent && <PGBadge tone="accent">this window</PGBadge>}
-          {worktree.locked && (
-            <PGBadge tone="warn" icon="lock">
-              {worktree.lockReason ? `locked · ${worktree.lockReason}` : "locked"}
+          {worktree.isCurrent && (
+            <PGBadge tone="accent" style={{ flexShrink: 0 }}>
+              this window
             </PGBadge>
           )}
           {worktree.prunable && (
-            <PGBadge tone="danger" icon="warn">
+            <PGBadge tone="danger" icon="warn" style={{ flexShrink: 0 }}>
               directory missing
             </PGBadge>
           )}
         </div>
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--fs-11)",
-            color: "var(--fg-2)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {worktree.path}
-          {worktree.headOid ? ` · ${worktree.headOid.slice(0, 7)}` : ""}
+        <div style={line}>
+          {worktree.branch ? (
+            <PGBranchPill name={worktree.branch} tone="accent" />
+          ) : (
+            <PGBadge tone="muted" style={{ flexShrink: 0 }}>
+              detached
+            </PGBadge>
+          )}
+          {worktree.headOid && (
+            <span style={{ ...meta, flexShrink: 0 }}>
+              {worktree.headOid.slice(0, 7)}
+            </span>
+          )}
         </div>
+        <div title={worktree.path} style={{ ...clip, ...meta, maxWidth: "100%" }}>
+          {worktree.path}
+        </div>
+        {worktree.locked && (
+          <div style={line}>
+            <PGBadge tone="warn" icon="lock" style={{ flexShrink: 0 }}>
+              locked
+            </PGBadge>
+            {worktree.lockReason && (
+              <span
+                title={worktree.lockReason}
+                style={{
+                  ...clip,
+                  fontSize: "var(--fs-11)",
+                  color: "var(--git-modified)",
+                }}
+              >
+                {worktree.lockReason}
+              </span>
+            )}
+          </div>
+        )}
       </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <div
+        style={{
+          display: "grid",
+          // Spelled out rather than repeat(): three identical tracks is the
+          // property that keeps the column still, and this way a test can read it.
+          gridTemplateColumns: `${WORKTREE_ACTION_W}px ${WORKTREE_ACTION_W}px ${WORKTREE_ACTION_W}px`,
+          gap: 6,
+          flexShrink: 0,
+        }}
+      >
         <PGButton
           size="sm"
           variant="outline"
           icon="folder"
+          fullWidth
+          // Left, not centred: in a fixed slot, centring re-centres the label
+          // when Lock becomes Unlock, and the icon column jitters row to row.
+          style={{ justifyContent: "flex-start" }}
           data-testid="worktree-open"
           onClick={onOpen}
           // Nothing to open once the directory is gone.
@@ -2465,6 +2542,10 @@ export function PGWorktreeRow({
           size="sm"
           variant="ghost"
           icon="lock"
+          fullWidth
+          // Left, not centred: in a fixed slot, centring re-centres the label
+          // when Lock becomes Unlock, and the icon column jitters row to row.
+          style={{ justifyContent: "flex-start" }}
           data-testid="worktree-lock"
           onClick={onToggleLock}
         >
@@ -2475,6 +2556,10 @@ export function PGWorktreeRow({
           variant="ghost"
           tone="danger"
           icon="trash"
+          fullWidth
+          // Left, not centred: in a fixed slot, centring re-centres the label
+          // when Lock becomes Unlock, and the icon column jitters row to row.
+          style={{ justifyContent: "flex-start" }}
           data-testid="worktree-remove"
           onClick={onRemove}
           loading={busy}
