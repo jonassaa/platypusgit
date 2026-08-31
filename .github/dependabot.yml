@@ -1,0 +1,108 @@
+version: 2
+
+updates:
+  # ── Frontend, root pnpm project ─────────────────────────────────────────
+  # Note: "npm" is the ecosystem name that reads pnpm-lock.yaml too.
+  #
+  # Every PR here rebuilds the binary and runs the full 4-shard e2e suite —
+  # package.json and pnpm-lock.yaml are in BOTH change-filters (tests.yml and
+  # e2e.yml). That is what the grouping below is for: a handful of PRs a week,
+  # not forty.
+  #
+  # Groups are matched top-down, first match wins, so the specific groups must
+  # stay above the two catch-alls.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Oslo"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      # shiki and @shikijs/langs-precompiled are version-COUPLED — the
+      # precompiled grammars are built against one shiki version, which is why
+      # langs-precompiled is pinned exact (4.4.3) against shiki ^4.4.3. A split
+      # bump breaks highlighting, so they move in one PR or not at all.
+      shiki:
+        patterns: ["shiki", "@shikijs/*"]
+      # The @tauri-apps/* JS packages track the Rust crates' release train.
+      # Bumping one plugin alone risks an API mismatch with @tauri-apps/api.
+      tauri-js:
+        patterns: ["@tauri-apps/*"]
+      # WDIO ships its packages in lockstep. If a grouped bump fails to
+      # install, the `pnpm.overrides` pin of @wdio/native-utils to 2.5.0 in
+      # package.json is the first thing to re-check.
+      wdio:
+        patterns: ["@wdio/*", "webdriverio"]
+      codemirror:
+        patterns: ["@codemirror/*"]
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      # Everything else: two PRs a week, minor+patch only. Majors stay
+      # UNGROUPED on purpose — each gets its own PR and its own review.
+      production-minor-patch:
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
+      development-minor-patch:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
+
+  # ── Marketing site, its own pnpm project ────────────────────────────────
+  # Separate lockfile, so it needs its own entry — a root entry does not reach
+  # it. Deliberately monthly and single-grouped: site/** is in NEITHER CI
+  # change-filter and site.yml only runs on push to main, so a PR here runs no
+  # checks at all. Give these a real look before merging; CI will not catch it.
+  - package-ecosystem: "npm"
+    directory: "/site"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "site"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      site:
+        patterns: ["*"]
+
+  # ── Rust backend ────────────────────────────────────────────────────────
+  # A src-tauri/ change runs cargo test AND the full e2e suite, so group hard.
+  # git2's vendored-openssl means openssl-src CVEs land here — worth weekly.
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Oslo"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "rust"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Official Tauri crates share a release train. tauri-plugin-wdio-webdriver
+      # is third-party with its own cadence, so it is excluded and gets its own
+      # PR — it is also the one crate that must never reach a shipped binary.
+      tauri:
+        patterns: ["tauri", "tauri-build", "tauri-plugin-*"]
+        exclude-patterns: ["tauri-plugin-wdio-webdriver"]
+      minor-patch:
+        update-types: ["minor", "patch"]
+
+  # ── GitHub Actions ──────────────────────────────────────────────────────
+  # directory is always "/" for this ecosystem; it scans .github/workflows/.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]
