@@ -33,6 +33,7 @@ jobs:
     outputs:
       js: ${{ steps.filter.outputs.js || 'true' }}
       rust: ${{ steps.filter.outputs.rust || 'true' }}
+      msix: ${{ steps.filter.outputs.msix || 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,6 +77,19 @@ jobs:
           else
             echo "rust=false" >> "$GITHUB_OUTPUT"
             echo "-> no backend sources touched, skipping the Rust suite"
+          fi
+
+          # The Store packaging inputs. This gate exists because TWO bugs in it
+          # reached a published release and could only be found on a Windows
+          # runner: makeappx not being on PATH, then Git Bash rewriting `/d`
+          # into `D:/`. Neither is reachable from a Mac or from the unit suites,
+          # so nothing before the release job could see them.
+          if echo "$changed" | grep -qE '^(src-tauri/windows/Package\.appxmanifest$|src-tauri/tauri\.msstore\.conf\.json$|scripts/msix-pack\.sh$|\.github/workflows/(release|tests)\.yml$)'; then
+            echo "msix=true" >> "$GITHUB_OUTPUT"
+            echo "-> Store packaging touched, running the msix pack gate"
+          else
+            echo "msix=false" >> "$GITHUB_OUTPUT"
+            echo "-> Store packaging untouched, skipping the msix pack gate"
           fi
 
   # Frontend: both typechecks plus the vitest unit + component tests. Pure
@@ -217,3 +231,81 @@ jobs:
               ;;
             *) echo "Rust suite did not pass."; exit 1 ;;
           esac
+
+  # Prove the Store package can actually be BUILT, on a PR rather than on a
+  # release.
+  #
+  # Why this exists: two bugs in this path reached a published release, and
+  # neither was reachable from a Mac or from any other suite here — makeappx was
+  # not on PATH, and then Git Bash rewrote `/d` into `D:/` so every flag arrived
+  # corrupted. Both are Windows-runner-only, and both cost a 20-minute release
+  # cycle to discover.
+  #
+  # Why it does NOT build the app: the bugs are in the PACKAGING, not the binary,
+  # so any valid PE proves the same thing. Copying a system executable makes this
+  # a one-minute job instead of a Rust release build, which is what keeps it
+  # affordable on every PR that touches these three files. It deliberately does
+  # not sign, submit, or upload anything.
+  msix-pack:
+    needs: changes
+    if: ${{ needs.changes.outputs.msix == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Put the Windows SDK's makeappx on PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\Program Files (x86)\Windows Kits\10\bin'
+          if (-not (Test-Path $root)) { throw "no Windows 10 SDK at $root" }
+          $sdk = Get-ChildItem $root -Directory |
+              Where-Object {
+                  $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and
+                  (Test-Path (Join-Path $_.FullName 'x64\makeappx.exe'))
+              } |
+              Sort-Object { [version]$_.Name } -Descending |
+              Select-Object -First 1
+          if (-not $sdk) { throw "no x64\makeappx.exe under any SDK version in $root" }
+          $bin = Join-Path $sdk.FullName 'x64'
+          Write-Host "makeappx found in: $bin"
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      # A real PE, because makeappx validates the Executable it is pointed at.
+      # `where.exe` is tiny and always present; nothing here runs it.
+      - name: Stand in a real executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path stand-in | Out-Null
+          Copy-Item C:\Windows\System32\where.exe stand-in\platypusgit.exe
+
+      # Deliberately runs under `shell: bash` — Git Bash — because that is the
+      # shell the release uses and the one whose argument rewriting broke it.
+      # Running this under pwsh would pass while the release still failed.
+      - name: Pack, the same way the release does
+        shell: bash
+        env:
+          MSIX_IDENTITY_NAME: GateCheck.platypusgit
+          MSIX_PUBLISHER: CN=00000000-0000-0000-0000-000000000000
+        run: |
+          set -euo pipefail
+          sh scripts/msix-pack.sh --version 9.9.9 --arch x64 \
+            --exe stand-in/platypusgit.exe --out msix-gate
+
+      - name: Gate — a package exists and carries what it must
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'msix-gate.msix')) { throw 'no .msix was produced' }
+          Expand-Archive -Path 'msix-gate.msix' -DestinationPath 'msix-gate-check' -Force
+          foreach ($f in 'platypusgit.exe', 'pgit.cmd', 'AppxManifest.xml') {
+              if (-not (Test-Path (Join-Path 'msix-gate-check' $f))) {
+                  throw "packed .msix has no $f at its root"
+              }
+          }
+          $manifest = Get-Content 'msix-gate-check\AppxManifest.xml' -Raw
+          if ($manifest -match '__MSIX_') { throw 'packed manifest carries an unsubstituted token' }
+          if ($manifest -notmatch 'Alias="pgit\.exe"') { throw 'packed manifest lost the pgit alias' }
+          if ($manifest -notmatch 'Version="9\.9\.9\.0"') { throw 'packed manifest has the wrong version' }
+          Write-Host 'msix pack gate OK'
