@@ -390,6 +390,36 @@ jobs:
       - name: Build arm64
         run: pnpm tauri build --no-bundle --target aarch64-pc-windows-msvc --config src-tauri/tauri.msstore.conf.json
 
+      # `makeappx.exe` ships with the Windows 10 SDK, and the SDK IS on the
+      # runner — but its `bin\<version>\x64` directory is NOT on PATH, so the
+      # command does not resolve. Learned the hard way: the v0.2.0 release
+      # staged both payloads successfully and then failed with "makeappx.exe is
+      # not on PATH", attaching no bundle.
+      #
+      # `$GITHUB_PATH` is the only thing that carries a PATH addition to later
+      # steps — the same reason `scoop-verify-live` below uses it. The highest
+      # SDK version present is chosen rather than a pinned one, so a runner
+      # image bump does not silently break this; the name filter is required
+      # because that `bin` directory also holds non-version `x64`/`x86`/`arm64`
+      # directories, and `[version]` would throw on those.
+      - name: Put the Windows SDK's makeappx on PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\Program Files (x86)\Windows Kits\10\bin'
+          if (-not (Test-Path $root)) { throw "no Windows 10 SDK at $root" }
+          $sdk = Get-ChildItem $root -Directory |
+              Where-Object {
+                  $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and
+                  (Test-Path (Join-Path $_.FullName 'x64\makeappx.exe'))
+              } |
+              Sort-Object { [version]$_.Name } -Descending |
+              Select-Object -First 1
+          if (-not $sdk) { throw "no x64\makeappx.exe under any SDK version in $root" }
+          $bin = Join-Path $sdk.FullName 'x64'
+          Write-Host "makeappx found in: $bin"
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       # The Store identity comes from REPOSITORY VARIABLES, not from the script's
       # defaults. msix-pack.sh falls back to a development identity
       # (`platypusgit.dev` / `CN=platypusgit-development`) so a local build works
