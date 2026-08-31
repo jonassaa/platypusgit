@@ -12,6 +12,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CommitPanelScreen } from "./CommitPanel";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
+import { pgPickOption } from "@/test/select";
 import { appErrorMessage } from "@/lib/errors";
 import type { FileStatus, GitIdentity } from "@/lib/types";
 
@@ -28,6 +29,7 @@ const NO_IDENTITY: GitIdentity = {
   name: null,
   email: null,
   globalConfigPath: "/home/ada/.gitconfig",
+  localConfigPath: null,
 };
 
 /** How many times `commit` has been attempted. */
@@ -205,14 +207,25 @@ describe("CommitPanel — no committer identity (#212)", () => {
   });
 
   it("says which repository is overriding the identity, so a global save is not a mystery", async () => {
+    // A repository-scoped value implies an open repository, so the fixture
+    // names its config file — and with one, the form opens on repository scope
+    // (#233), where the warning correctly does not apply. It is the switch TO
+    // global that needs explaining.
     setup({
       identity: {
         name: { value: "Repo Local", scope: "repository" },
         email: { value: "local@example.com", scope: "repository" },
         globalConfigPath: "/home/ada/.gitconfig",
+        localConfigPath: "/repo/.git/config",
       },
     });
     await commitAndGetRefused();
+    expect(screen.queryByTestId("identity-scope-note")).toBeNull();
+
+    pgPickOption(screen.getByTestId("identity-scope"), "global");
+    await waitFor(() =>
+      expect(screen.getByTestId("identity-scope-note")).toBeTruthy(),
+    );
     const note = screen.getByTestId("identity-scope-note").textContent ?? "";
     expect(note).toContain("This repository sets its own");
     // No issue numbers in prose a user reads.
@@ -228,6 +241,7 @@ describe("CommitPanel — no committer identity (#212)", () => {
         name: { value: "Managed Name", scope: "system" },
         email: { value: "ada@example.com", scope: "global" },
         globalConfigPath: "/home/ada/.gitconfig",
+        localConfigPath: null,
       },
     });
     await commitAndGetRefused();
@@ -242,6 +256,7 @@ describe("CommitPanel — no committer identity (#212)", () => {
         name: { value: "Ada Lovelace", scope: "global" },
         email: null,
         globalConfigPath: "/home/ada/.gitconfig",
+        localConfigPath: null,
       },
     });
     await commitAndGetRefused();
@@ -261,5 +276,88 @@ describe("appErrorMessage — NoSignature (#212)", () => {
     expect(msg).not.toBe("NoSignature");
     expect(msg).toContain("user.name");
     expect(msg).toContain("user.email");
+  });
+});
+
+describe("CommitPanel — who the commit will be attributed to (#233)", () => {
+  beforeEach(() => {
+    resetInvokeMock();
+  });
+
+  const IDENTITY: GitIdentity = {
+    name: { value: "Ada Lovelace", scope: "global" },
+    email: { value: "ada@example.com", scope: "global" },
+    globalConfigPath: "/home/ada/.gitconfig",
+    localConfigPath: "/repo/.git/config",
+  };
+
+  it("names the identity rather than the fact that one exists", async () => {
+    // It used to read "(signature will come from git config)" — true, and
+    // useless to the person who has two addresses and needs to know which one
+    // this repository is about to use.
+    setup({ identity: IDENTITY });
+    await waitFor(() =>
+      expect(screen.getByTestId("commit-attribution").textContent).toContain(
+        "Ada Lovelace <ada@example.com>",
+      ),
+    );
+  });
+
+  it("says which config it came from", async () => {
+    setup({
+      identity: {
+        ...IDENTITY,
+        name: { value: "Work Person", scope: "repository" },
+        email: { value: "work@corp.example", scope: "repository" },
+      },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("commit-identity-origin").textContent,
+      ).toContain("this repository"),
+    );
+  });
+
+  it("stays quiet about the source when the two halves disagree", async () => {
+    // `user.name` from /etc/gitconfig and `user.email` from ~/.gitconfig.
+    // Naming one would be a confident wrong answer about the other.
+    setup({
+      identity: {
+        ...IDENTITY,
+        name: { value: "Managed", scope: "system" },
+        email: { value: "ada@example.com", scope: "global" },
+      },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("commit-attribution").textContent).toContain(
+        "Managed <ada@example.com>",
+      ),
+    );
+    expect(screen.queryByTestId("commit-identity-origin")).toBeNull();
+  });
+
+  it("says git has none, rather than showing an empty byline", async () => {
+    setup({ identity: NO_IDENTITY });
+    await waitFor(() =>
+      expect(screen.getByTestId("commit-attribution").textContent).toContain(
+        "git has no identity configured",
+      ),
+    );
+  });
+
+  it("an author override still wins, and still says the committer is you", async () => {
+    // `author_override` (#61 D1) moves the AUTHOR only — a different claim from
+    // the identity, and the byline must not conflate them.
+    setup({ identity: IDENTITY });
+    await waitFor(() => expect(screen.getByTestId("commit-author")).toBeTruthy());
+    fireEvent.change(screen.getByTestId("commit-author"), {
+      target: { value: "Grace Hopper <grace@example.com>" },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("commit-attribution").textContent).toContain(
+        "you stay the committer",
+      ),
+    );
+    expect(screen.queryByTestId("commit-identity-origin")).toBeNull();
   });
 });

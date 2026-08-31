@@ -37,6 +37,7 @@ const GLOBAL_IDENTITY: GitIdentity = {
   name: { value: "Ada Lovelace", scope: "global" },
   email: { value: "ada@example.com", scope: "global" },
   globalConfigPath: "/home/ada/.gitconfig",
+  localConfigPath: null,
 };
 
 beforeEach(() => {
@@ -102,6 +103,7 @@ describe("Settings → Identity (#212)", () => {
       name: null,
       email: null,
       globalConfigPath: "/home/ada/.gitconfig",
+      localConfigPath: null,
     };
     mockInvoke("get_identity", () => stored);
     mockInvoke("set_identity", (args) => {
@@ -109,6 +111,7 @@ describe("Settings → Identity (#212)", () => {
         name: { value: String(args.name), scope: "global" },
         email: { value: String(args.email), scope: "global" },
         globalConfigPath: "/home/ada/.gitconfig",
+        localConfigPath: null,
       };
       return null;
     });

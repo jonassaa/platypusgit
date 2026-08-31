@@ -248,10 +248,18 @@ git/
                  error code, because a MISSING user.name is NotFound while a
                  BLANK one is a generic error whose only mark is the prose
                  "failed to parse signature"), read_identity / global_config_
-                 path / validate_identity / set_global_identity (#212 — the
-                 write side, GLOBAL only; validate_identity is the ONE rule
-                 both the writer and default_signature use, so "what we save"
-                 and "what we call missing" cannot drift), and apply_signoff
+                 path / local_config_path / validate_identity /
+                 set_global_identity / set_local_identity (#212, #233 — the
+                 write side, at BOTH scopes. IdentityWriteScope is deliberately
+                 not IdentityScope: the latter has a System member because a
+                 value can be READ from /etc/gitconfig, but writing there needs
+                 root and would change every user on the machine, so two enums
+                 keep that unreachable rather than merely unhandled.
+                 local_config_path uses commondir(), not path(): they differ in
+                 a linked worktree, where --local writes the SHARED config.
+                 validate_identity is the ONE rule both writers and
+                 default_signature use, so "what we save" and "what we call
+                 missing" cannot drift), and apply_signoff
                  (Signed-off-by trailer, idempotent)
 commands/        Thin Tauri handlers, one file per area:
 ├── repo.rs      open_repo, close_repo, trust_repo_path, get_status, head_info
@@ -296,15 +304,18 @@ commands/        Thin Tauri handlers, one file per area:
 │                comment prefix; a configured template that cannot be read
 │                comes back FLAGGED, never as an error, so a stale config line
 │                cannot stop the commit screen opening).
-│                get_identity / set_identity (#212 — the committer identity.
-│                get_identity's repoId is OPTIONAL, because Settings is
-│                reachable before a repo is open and the global chain is the
-│                real answer there; it reports each half's SCOPE so the UI can
-│                say why a global save changed nothing in a repo that overrides
-│                it. set_identity is the only write in the app that touches the
-│                user's own global git config, and it validates before opening
-│                anything, so a refused value creates no file. See
-│                git/signature.rs)
+│                get_identity / set_identity (#212, #233 — the committer
+│                identity. get_identity's repoId is OPTIONAL, because Settings
+│                is reachable before a repo is open and the global chain is the
+│                real answer there; it reports each half's SCOPE, and both
+│                config paths, so the UI can name the file a save will write.
+│                set_identity is the only write in the app that touches the
+│                user's own git config; its `scope` is REQUIRED with no default
+│                — "which config did that change?" is the question #233 exists
+│                to stop people asking — and `repository` without a repoId is
+│                REFUSED rather than falling back to global. It validates
+│                before opening anything, so a refused value creates no file.
+│                See git/signature.rs)
 │                REFSPEC_ALL sentinel = walk all refs, so
 │                the loaded log is NOT HEAD ancestry — rebase input must go
 │                through headAncestryOf. Paged (see frontend.md): get_log_page /

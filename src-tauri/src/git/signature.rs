@@ -22,6 +22,23 @@ pub enum IdentityScope {
     System,
 }
 
+/// Where a write goes (#233).
+///
+/// Deliberately NOT `IdentityScope`. That type has a `System` variant, because
+/// a value can be READ from `/etc/gitconfig` — but writing there needs root and
+/// would change the identity of every user on the machine, which is never what
+/// someone fixing their own commits is asking for. Keeping the two enums apart
+/// makes "you cannot save to system" a fact the type system enforces rather
+/// than a runtime check someone can forget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum IdentityWriteScope {
+    /// This repository's `.git/config` — `git config --local`.
+    Repository,
+    /// `~/.gitconfig` — `git config --global`.
+    Global,
+}
+
 /// One configured value plus where it came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +65,14 @@ pub struct GitIdentity {
     /// The file [`set_global_identity`] would write to, so the UI can name it
     /// before anything changes. `None` only when no home directory resolves.
     pub global_config_path: Option<String>,
+    /// The file [`set_local_identity`] would write to (#233). `None` when the
+    /// identity was read without a repository — the Settings screen with
+    /// nothing open, where "this repository" is not an option to offer.
+    ///
+    /// Named for the same reason the global one is: a save that writes to the
+    /// user's own git config, outside the app's settings, should say which file
+    /// it is about to touch.
+    pub local_config_path: Option<String>,
 }
 
 impl GitIdentity {
@@ -100,6 +125,7 @@ pub fn read_identity(repo: Option<&Repository>) -> AppResult<GitIdentity> {
         global_config_path: global_config_path()
             .ok()
             .map(|p| p.to_string_lossy().to_string()),
+        local_config_path: repo.map(|r| local_config_path(r).to_string_lossy().to_string()),
     })
 }
 
@@ -121,6 +147,41 @@ pub fn global_config_path() -> AppResult<PathBuf> {
         .ok_or_else(|| {
             AppError::Io("no home directory to write a global git config into".to_string())
         })
+}
+
+/// The file `git config --local` would write to.
+///
+/// `commondir()`, not `path()`. They differ in a linked worktree: `path()` is
+/// that worktree's own gitdir (`.git/worktrees/<name>`), while `--local` writes
+/// to the SHARED config in the common directory — so `path()` would name a file
+/// git never writes and the UI would promise the wrong thing. In an ordinary
+/// repository the two are the same directory, which is why the difference is
+/// easy to miss.
+pub fn local_config_path(repo: &Repository) -> PathBuf {
+    repo.commondir().join("config")
+}
+
+/// Write `user.name` / `user.email` to this repository's own config (#233).
+///
+/// The counterpart to [`set_global_identity`], and the reason #233 exists: a
+/// work identity and a personal one on the same machine differ per repository,
+/// and the cost of getting it wrong — a corporate address on a public commit —
+/// is not fixable after the push.
+///
+/// Validated BEFORE the config is opened, the same rule the global writer
+/// follows: a refused value must leave nothing behind.
+pub fn set_local_identity(repo: &Repository, name: &str, email: &str) -> AppResult<()> {
+    let (name, email) = validate_identity(name, email)?;
+    // `repo.config()` is the whole chain, and `set_str` on it writes to the
+    // highest-priority writable level — which IS local today. Opening the level
+    // explicitly says so at the call site instead of relying on that, so a
+    // future libgit2 that resolves it differently fails loudly here rather than
+    // quietly writing the user's global config from a button labelled "this
+    // repository".
+    let mut cfg = repo.config()?.open_level(git2::ConfigLevel::Local)?;
+    cfg.set_str("user.name", &name)?;
+    cfg.set_str("user.email", &email)?;
+    Ok(())
 }
 
 /// A `user.name` / `user.email` a user typed, trimmed — or the reason git would
@@ -363,6 +424,7 @@ mod identity_tests {
             name,
             email,
             global_config_path: None,
+            local_config_path: None,
         };
         assert!(id(value("Ada"), value("ada@example.com")).usable());
         assert!(!id(None, value("ada@example.com")).usable());

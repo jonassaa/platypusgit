@@ -543,13 +543,21 @@ pub trait GitBackend: Send + Sync {
     /// global + system chain IS the effective identity.
     fn identity(&self, repo_id: Option<&RepoId>) -> AppResult<signature::GitIdentity>;
 
-    /// Write `user.name` / `user.email` to the global git config, creating the
-    /// file when there is none (#212).
+    /// Write `user.name` / `user.email` at `scope` (#212, #233).
     ///
-    /// Takes no `repo_id`: the state this exists to fix is a machine with no
-    /// identity at all, so the fix has to outlive the repository the user
-    /// happened to be in. Per-repository identities are #233.
-    fn set_global_identity(&self, name: &str, email: &str) -> AppResult<()>;
+    /// `Global` creates the file when there is none — the state #212 exists to
+    /// fix is a machine with no identity at all, so that fix has to outlive the
+    /// repository the user happens to have open. `Repository` needs a
+    /// `repo_id`, and is refused without one rather than silently falling back
+    /// to global: a save the user scoped to one repository must never quietly
+    /// change every other one.
+    fn set_identity(
+        &self,
+        repo_id: Option<&RepoId>,
+        scope: signature::IdentityWriteScope,
+        name: &str,
+        email: &str,
+    ) -> AppResult<()>;
 
     // === refs ===
     fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;

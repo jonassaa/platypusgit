@@ -1,4 +1,5 @@
-//! The committer identity on a machine that has none (#212).
+//! The committer identity: a machine that has none (#212), and choosing
+//! which config a fix is written to (#233).
 //!
 //! Every other test in this suite gets a repo-local `user.name` / `user.email`
 //! from `support::TempRepo::fresh` — deliberately, "so commit() works without
@@ -20,7 +21,7 @@ use git2::ConfigLevel;
 use platypusgit_lib::{
     error::AppError,
     git::{
-        signature::{IdentityScope, GitIdentity},
+        signature::{local_config_path, GitIdentity, IdentityScope, IdentityWriteScope},
         types::CommitOptions,
         GitBackend,
     },
@@ -131,7 +132,7 @@ fn a_machine_with_no_identity_can_be_told_who_it_is() {
         ("Ada\nLovelace", "ada@example.com"),
     ] {
         let err = backend
-            .set_global_identity(name, email)
+            .set_identity(None, IdentityWriteScope::Global, name, email)
             .expect_err("expected a refusal");
         assert!(
             matches!(err, AppError::InvalidArgument(_)),
@@ -147,7 +148,12 @@ fn a_machine_with_no_identity_can_be_told_who_it_is() {
     // attributed to what was typed. Surrounding whitespace is trimmed, the way
     // git trims it.
     backend
-        .set_global_identity("  Ada Lovelace  ", " ada@example.com ")
+        .set_identity(
+            None,
+            IdentityWriteScope::Global,
+            "  Ada Lovelace  ",
+            " ada@example.com ",
+        )
         .expect("set identity");
     assert!(
         global_path.exists(),
@@ -186,7 +192,12 @@ fn a_machine_with_no_identity_can_be_told_who_it_is() {
     // append-only writer would look correct here and diverge the moment
     // anything read the file with `--get`.
     backend
-        .set_global_identity("Grace Hopper", "grace@example.com")
+        .set_identity(
+            None,
+            IdentityWriteScope::Global,
+            "Grace Hopper",
+            "grace@example.com",
+        )
         .expect("rewrite identity");
     let text = std::fs::read_to_string(&global_path).unwrap();
     assert_eq!(
@@ -248,4 +259,137 @@ fn a_machine_with_no_identity_can_be_told_who_it_is() {
     let identity = backend.identity(Some(&handle.id)).expect("identity");
     assert_eq!(value_of(&identity.email), Some("   "));
     assert!(!identity.usable(), "a blank email is not a usable identity");
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Per-repository identity (#233)
+    // ════════════════════════════════════════════════════════════════════════
+
+    // --- 9. The repository's own config is named, so the UI can say which file
+    // "this repository" means before anything is written.
+    let repo = git2::Repository::open(tr.path()).unwrap();
+    let local_path = local_config_path(&repo);
+    assert_eq!(
+        identity.local_config_path.as_deref(),
+        Some(local_path.to_string_lossy().as_ref()),
+    );
+    assert!(local_path.exists(), "an open repository has a .git/config");
+
+    // ...and it is absent when there is no repository, because "this
+    // repository" is not a scope the UI may offer there.
+    let no_repo = backend.identity(None).expect("identity with no repo");
+    assert_eq!(no_repo.local_config_path, None);
+
+    // --- 10. Saving at Repository scope writes the repository's config, wins
+    // over the global one, and leaves the global one alone. This is the whole
+    // feature: a work address on this repo, the personal one everywhere else.
+    let global_before = std::fs::read_to_string(&global_path).unwrap();
+    backend
+        .set_identity(
+            Some(&handle.id),
+            IdentityWriteScope::Repository,
+            "  Work Person  ",
+            " work@corp.example ",
+        )
+        .expect("set a repo-local identity");
+
+    let identity = backend.identity(Some(&handle.id)).expect("identity");
+    assert_eq!(value_of(&identity.name), Some("Work Person"));
+    assert_eq!(value_of(&identity.email), Some("work@corp.example"));
+    assert_eq!(scope_of(&identity.name), Some(IdentityScope::Repository));
+    assert_eq!(scope_of(&identity.email), Some(IdentityScope::Repository));
+    assert!(identity.usable(), "the blank email from step 8 is fixed");
+    assert_eq!(
+        std::fs::read_to_string(&global_path).unwrap(),
+        global_before,
+        "a repository-scoped save must not touch the global config"
+    );
+    // The global identity is still what a DIFFERENT repository would get.
+    let global_identity = backend.identity(None).expect("global identity");
+    assert_eq!(value_of(&global_identity.name), Some("Grace Hopper"));
+
+    // --- 11. A repo-local rewrite overwrites rather than appending, the same
+    // property step 5 pins for the global writer. A duplicated key is legal in
+    // a git config and the LAST one wins, so an append-only writer reads
+    // correct here and diverges the moment anything uses `--get`.
+    backend
+        .set_identity(
+            Some(&handle.id),
+            IdentityWriteScope::Repository,
+            "Work Person",
+            "second@corp.example",
+        )
+        .expect("rewrite the repo-local identity");
+    let text = std::fs::read_to_string(&local_path).unwrap();
+    assert_eq!(
+        text.matches("email").count(),
+        1,
+        "user.email should appear once in .git/config, not once per save:\n{text}"
+    );
+
+    // --- 12. The commit is attributed to the repository's identity, not the
+    // global one — the assertion the whole feature is for.
+    support::fs::write_file(tr.path(), "third.md", "more\n");
+    backend
+        .stage(&handle.id, &[PathBuf::from("third.md")])
+        .expect("stage");
+    let result = backend
+        .commit(
+            &handle.id,
+            CommitOptions {
+                message: "third".to_string(),
+                amend: false,
+                author_override: None,
+                signoff: false,
+                sign: None,
+                no_verify: false,
+            },
+        )
+        .expect("commit with a repo-local identity");
+    let repo = git2::Repository::open(tr.path()).unwrap();
+    let commit = repo
+        .find_commit(git2::Oid::from_str(&result.oid).unwrap())
+        .unwrap();
+    assert_eq!(commit.author().email().ok(), Some("second@corp.example"));
+    // The COMMITTER too, not just the author. `author_override` (#61 D1) only
+    // moves the author, which is exactly why it is not an identity feature.
+    assert_eq!(commit.committer().email().ok(), Some("second@corp.example"));
+
+    // --- 13. Repository scope with no repository is refused, not silently
+    // downgraded to global. Writing every repository's identity from a control
+    // labelled "this repository" is the one failure this feature must not have.
+    let err = backend
+        .set_identity(
+            None,
+            IdentityWriteScope::Repository,
+            "Nobody",
+            "nobody@example.com",
+        )
+        .expect_err("repository scope with no repository must be refused");
+    assert!(
+        matches!(err, AppError::InvalidArgument(_)),
+        "expected InvalidArgument, got {err:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&global_path).unwrap(),
+        global_before,
+        "the refused save must not have fallen back to the global config"
+    );
+
+    // --- 14. Validation runs before the repository config is opened, the same
+    // rule the global writer follows — a refused value changes nothing.
+    let before = std::fs::read_to_string(&local_path).unwrap();
+    let err = backend
+        .set_identity(
+            Some(&handle.id),
+            IdentityWriteScope::Repository,
+            "Ada <Lovelace>",
+            "ada@example.com",
+        )
+        .expect_err("an invalid identity must be refused at repository scope too");
+    assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
+    assert_eq!(
+        std::fs::read_to_string(&local_path).unwrap(),
+        before,
+        "a refused identity must leave the repository config untouched"
+    );
 }

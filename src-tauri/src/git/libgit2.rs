@@ -4501,8 +4501,27 @@ impl GitBackend for Libgit2Backend {
         }
     }
 
-    fn set_global_identity(&self, name: &str, email: &str) -> AppResult<()> {
-        crate::git::signature::set_global_identity(name, email)
+    fn set_identity(
+        &self,
+        repo_id: Option<&RepoId>,
+        scope: crate::git::signature::IdentityWriteScope,
+        name: &str,
+        email: &str,
+    ) -> AppResult<()> {
+        use crate::git::signature::IdentityWriteScope;
+        match scope {
+            IdentityWriteScope::Global => crate::git::signature::set_global_identity(name, email),
+            IdentityWriteScope::Repository => {
+                let repo_id = repo_id.ok_or_else(|| {
+                    AppError::InvalidArgument(
+                        "saving to this repository needs a repository to be open".to_string(),
+                    )
+                })?;
+                self.with_repo(repo_id, |repo| {
+                    crate::git::signature::set_local_identity(repo, name, email)
+                })
+            }
+        }
     }
 
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
