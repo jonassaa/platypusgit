@@ -92,7 +92,7 @@ fn mainline_pick_keeps_the_merge_as_one_commit() {
         "the result must be an ordinary commit"
     );
     assert_eq!(
-        head.summary().unwrap(),
+        head.summary().unwrap().unwrap(),
         "Merge branch 'feature'",
         "the merge's message is kept"
     );

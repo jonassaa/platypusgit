@@ -28,7 +28,7 @@ fn init_creates_a_repo_on_the_requested_branch() {
     let repo = git2::Repository::open(&target).expect("the new repo opens");
     // HEAD is unborn until the first commit, so read the symbolic target.
     assert_eq!(
-        repo.find_reference("HEAD").unwrap().symbolic_target().unwrap(),
+        repo.find_reference("HEAD").unwrap().symbolic_target().unwrap().unwrap(),
         "refs/heads/trunk"
     );
 }
@@ -48,7 +48,7 @@ fn init_defaults_to_main_when_no_branch_is_given() {
     let repo = git2::Repository::open(&target).unwrap();
     let expected = format!("refs/heads/{}", default_branch_name());
     assert_eq!(
-        repo.find_reference("HEAD").unwrap().symbolic_target().unwrap(),
+        repo.find_reference("HEAD").unwrap().symbolic_target().unwrap().unwrap(),
         expected
     );
 }
@@ -137,7 +137,7 @@ fn init_rejects_an_invalid_branch_name_without_poisoning_the_directory() {
 
     let repo = git2::Repository::open(&target).unwrap();
     assert_eq!(
-        repo.find_reference("HEAD").unwrap().symbolic_target().unwrap(),
+        repo.find_reference("HEAD").unwrap().symbolic_target().unwrap().unwrap(),
         "refs/heads/trunk"
     );
     assert!(backend.status(&handle.id).is_ok());
@@ -252,6 +252,7 @@ fn concurrent_init_calls_on_the_same_path_are_serialized() {
         repo.find_reference("HEAD")
             .unwrap()
             .symbolic_target()
+            .unwrap()
             .unwrap(),
         "refs/heads/main",
         "the winner's repository should have the requested branch"

@@ -63,7 +63,7 @@ pub fn notes_refs(repo: &Repository) -> AppResult<Vec<String>> {
     let mut out: Vec<String> = repo
         .references()?
         .flatten()
-        .filter_map(|r| r.name().map(str::to_string))
+        .filter_map(|r| r.name().ok().map(str::to_string))
         .filter(|name| is_notes_ref(name))
         .collect();
     sort_refs(&mut out);

@@ -49,7 +49,7 @@ pub fn info(repo: &Repository, name: &str, current: Option<&Path>) -> AppResult<
             let branch = head
                 .as_ref()
                 .filter(|h| h.is_branch())
-                .and_then(|h| h.shorthand().map(str::to_string));
+                .and_then(|h| h.shorthand().ok().map(str::to_string));
             let oid = head
                 .and_then(|h| h.peel_to_commit().ok())
                 .map(|c| c.id().to_string());
@@ -61,7 +61,7 @@ pub fn info(repo: &Repository, name: &str, current: Option<&Path>) -> AppResult<
     let is_current = current.is_some_and(|c| same_path(c, &path));
 
     Ok(WorktreeInfo {
-        name: wt.name().unwrap_or(name).to_string(),
+        name: wt.name().ok().flatten().unwrap_or(name).to_string(),
         path: path.to_string_lossy().to_string(),
         branch,
         head_oid,
@@ -92,7 +92,7 @@ pub fn linked_worktree_heads(repo: &Repository) -> Vec<(String, String)> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for name in names.iter().flatten() {
+    for name in names.iter().flatten().flatten() {
         let Ok(wt) = repo.find_worktree(name) else {
             continue;
         };
@@ -103,7 +103,7 @@ pub fn linked_worktree_heads(repo: &Repository) -> Vec<(String, String)> {
             .head()
             .ok()
             .filter(|h| h.is_branch())
-            .and_then(|h| h.shorthand().map(str::to_string));
+            .and_then(|h| h.shorthand().ok().map(str::to_string));
         if let Some(branch) = on {
             out.push((name.to_string(), branch));
         }

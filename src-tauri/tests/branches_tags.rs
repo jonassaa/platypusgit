@@ -16,7 +16,7 @@ fn checkout_moves_head_to_existing_branch() {
         .expect("checkout");
 
     let head = tr.repo.head().unwrap();
-    assert_eq!(head.shorthand(), Some("feature"));
+    assert_eq!(head.shorthand().ok(), Some("feature"));
 }
 
 #[test]
