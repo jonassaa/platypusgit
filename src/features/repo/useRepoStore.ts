@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { pgFlash } from "@/design";
 import type {
   AuthorOverride,
   BisectMark,
@@ -132,6 +133,20 @@ import {
   type RepoSlice,
 } from "./repoSlice";
 import type { ActivityKey } from "./repoActivity";
+import {
+  checkUndo,
+  pushUndo,
+  quoteSubject,
+  redoable,
+  shortOid,
+  undoable,
+  type HeadSnapshot,
+  type UndoDirection,
+  type UndoKind,
+} from "./undoStack";
+
+/** Ids for undo entries. Module-level so they are unique across repositories. */
+let undoSeq = 0;
 
 export type { RepoActivity } from "./repoActivity";
 
@@ -219,6 +234,21 @@ interface RepoStoreState extends RepoSlice {
    * `refreshAll` does but that these ops can't change.
    */
   refreshStatus: () => Promise<void>;
+  /**
+   * Undo (or redo) the last recorded operation (#242).
+   *
+   * Re-checks preconditions against the BACKEND first — `head_info` and a
+   * fresh status, never `s.commits`, which is only a prefix of history. On a
+   * mismatch it refuses with a message naming the operation, and changes
+   * nothing.
+   *
+   * Does NOT confirm, for the same reason `deleteUntracked` does not: this is
+   * the layer a keyboard shortcut reaches. `undoOp`/`redoOp` in ops.ts own the
+   * `pgConfirm` for the hard kinds — and the preconditions are re-checked
+   * HERE, after that dialog has been answered, because the world can move
+   * while it is open.
+   */
+  applyUndo: (direction: UndoDirection) => Promise<void>;
   refreshAllFiles: () => Promise<void>;
   /**
    * List every file in the tree at `revspec` (commit/branch/tag/revspec).
@@ -671,6 +701,42 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (get().current?.id !== repoId) return;
     if (isCancelledError(e)) return;
     set({ error: toAppError(e) });
+  };
+
+  /** Where HEAD is according to the last refresh, or null if it is unborn. */
+  const headSnapshot = (): HeadSnapshot | null => {
+    const h = get().headInfo;
+    return h?.headOid ? { ref: h.branch, oid: h.headOid } : null;
+  };
+
+  /**
+   * Record an operation that moved HEAD (#242).
+   *
+   * Called AFTER the op's `refreshAll()`, so `headInfo` is the new position —
+   * and guarded on the repository the way `setErrorFor` is, because an op that
+   * resolves after a tab switch must not push an entry onto the wrong stack.
+   *
+   * `pushUndo` drops an entry whose before and after are identical, so a
+   * checkout of the branch you are already on records nothing rather than an
+   * entry ⌘Z would appear to apply and then not.
+   */
+  const noteUndo = (
+    repoId: string,
+    kind: UndoKind,
+    label: string,
+    before: HeadSnapshot | null,
+  ) => {
+    if (!before) return;
+    if (get().current?.id !== repoId) return;
+    const after = headSnapshot();
+    if (!after) return;
+    undoSeq += 1;
+    set(
+      pushUndo(
+        { undoStack: get().undoStack, undoCursor: get().undoCursor },
+        { id: `undo-${undoSeq}`, kind, label, before, after },
+      ),
+    );
   };
   // `setActivity` is the module-level one above — shared with `withAuthRetry`,
   // which owns the indicator for every op that can raise a credential challenge.
@@ -1185,9 +1251,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async reset(target, mode) {
     const repo = get().current;
     if (!repo) return;
+    const before = headSnapshot();
     try {
       await resetFn(repo.id, target, mode);
       await get().refreshAll();
+      noteUndo(repo.id, "reset", `${mode.toLowerCase()} reset to ${shortOid(target)}`, before);
     } catch (e) {
       setErrorFor(repo.id, e);
     }
@@ -1206,6 +1274,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     // Clear the previous refusal first: a stale block sitting above a fresh
     // attempt reads as though the new attempt failed too.
     setFor(repo.id, { hookRejection: null, noSignature: false });
+    const before = headSnapshot();
     try {
       const result = await commitFn(
         repo.id,
@@ -1217,6 +1286,15 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         noVerify,
       );
       await get().refreshAll();
+      // An AMEND replaces the tip rather than adding one, so undoing it puts
+      // the ORIGINAL commit back — which is exactly what before/after already
+      // describes, with no special case needed.
+      noteUndo(
+        repo.id,
+        "commit",
+        amend ? "amend" : `commit ${quoteSubject(message)}`,
+        before,
+      );
       return result;
     } catch (e) {
       // A hook refusal is NOT a banner error. Its output needs a surface that
@@ -1242,6 +1320,62 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
+  async applyUndo(direction) {
+    const repo = get().current;
+    if (!repo) return;
+    const entry = direction === "undo" ? undoable(get()) : redoable(get());
+    if (!entry) {
+      pgFlash(direction === "undo" ? "Nothing to undo" : "Nothing to redo");
+      return;
+    }
+
+    // Ask the BACKEND where HEAD is, rather than trusting the last refresh.
+    // Something may have moved it since — a terminal, another window — and
+    // this whole check exists to notice exactly that. `s.commits` is a prefix
+    // of history and can never answer it.
+    let headOid: string | null;
+    try {
+      headOid = (await headInfoFn(repo.id)).headOid;
+      await get().refreshStatus();
+    } catch (e) {
+      setErrorFor(repo.id, e);
+      return;
+    }
+    if (get().current?.id !== repo.id) return;
+
+    const check = checkUndo(entry, direction, {
+      headOid,
+      dirty: get().status.length > 0,
+    });
+    if (!check.ok) {
+      // A precondition refusal is not a backend error — nothing was attempted.
+      // It must not become an `AppError`, whose union stays 1:1 with the Rust
+      // enum; a frontend-only condition has no variant there and inventing one
+      // would claim git refused something it was never asked.
+      pgFlash(check.reason);
+      return;
+    }
+
+    try {
+      if (entry.kind === "checkout") {
+        // Put HEAD back the way it was, on the branch it was on — not
+        // detached at the same commit, which would look identical in the log
+        // and be a different repository state.
+        await checkoutRef(repo.id, check.target.ref ?? check.target.oid);
+      } else {
+        await resetFn(repo.id, check.target.oid, "Hard");
+      }
+      await get().refreshAll();
+      set({
+        undoCursor:
+          direction === "undo" ? get().undoCursor - 1 : get().undoCursor + 1,
+      });
+    } catch (e) {
+      await get().refreshAll();
+      setErrorFor(repo.id, e);
+    }
+  },
+
   clearHookRejection() {
     const repo = get().current;
     if (!repo) return;
@@ -1257,6 +1391,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async checkoutBranch(name) {
     const repo = get().current;
     if (!repo) return;
+    const before = headSnapshot();
     setActivity(repo.id, "branch", `Switching to ${name}…`);
     try {
       // Carry over uncommitted work automatically: stash → checkout → pop.
@@ -1276,6 +1411,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         await stashPop(repo.id, 0);
       }
       await get().refreshAll();
+      noteUndo(repo.id, "checkout", `switch to ${name}`, before);
     } catch (e) {
       setErrorFor(repo.id, e);
       await get().refreshAll();
@@ -1287,9 +1423,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async checkoutRef(reference) {
     const repo = get().current;
     if (!repo) return;
+    const before = headSnapshot();
     try {
       await checkoutRef(repo.id, reference);
       await get().refreshAll();
+      noteUndo(repo.id, "checkout", `checkout of ${reference}`, before);
     } catch (e) {
       setErrorFor(repo.id, e);
     }
@@ -1298,9 +1436,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async mergeBranch(name) {
     const repo = get().current;
     if (!repo) return;
+    const before = headSnapshot();
     try {
       await mergeBranchFn(repo.id, name);
       await get().refreshAll();
+      noteUndo(repo.id, "merge", `merge of ${name}`, before);
     } catch (e) {
       // refreshAll clears `error` as its first act, so refresh before
       // recording the error — otherwise the two synchronous `set()` calls
@@ -1474,9 +1614,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async cherryPick(oid) {
     const repo = get().current;
     if (!repo) return;
+    const before = headSnapshot();
     try {
       await cherryPick(repo.id, oid);
       await get().refreshAll();
+      noteUndo(repo.id, "cherryPick", `cherry-pick of ${shortOid(oid)}`, before);
     } catch (e) {
       // See mergeBranch's catch: refresh first, error last, so it isn't
       // batched away by refreshAll's own `error: null` reset.
@@ -1488,6 +1630,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async cherryPickMany(oids) {
     const repo = get().current;
     if (!repo) return;
+    const before = headSnapshot();
     try {
       // Apply oldest→newest (the caller orders them). Each clean pick
       // auto-commits and moves HEAD; the next applies on top. A conflicting
@@ -1498,6 +1641,14 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         await cherryPick(repo.id, oid);
       }
       await get().refreshAll();
+      noteUndo(
+        repo.id,
+        "cherryPick",
+        oids.length === 1
+          ? `cherry-pick of ${shortOid(oids[0] ?? "")}`
+          : `cherry-pick of ${oids.length} commits`,
+        before,
+      );
     } catch (e) {
       // See mergeBranch's catch: refresh first, error last, so it isn't
       // batched away by refreshAll's own `error: null` reset.
@@ -1509,9 +1660,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
   async revert(oid) {
     const repo = get().current;
     if (!repo) return;
+    const before = headSnapshot();
     try {
       await revertFn(repo.id, oid);
       await get().refreshAll();
+      noteUndo(repo.id, "revert", `revert of ${shortOid(oid)}`, before);
     } catch (e) {
       // See mergeBranch's catch: refresh first, error last, so it isn't
       // batched away by refreshAll's own `error: null` reset.
