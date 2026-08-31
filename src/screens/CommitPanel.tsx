@@ -63,6 +63,11 @@ import {
 } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { NoSignaturePrompt } from "@/features/commits/identity/NoSignaturePrompt";
+import {
+  identityLine,
+  identityOrigin,
+  useIdentity,
+} from "@/features/commits/identity/useIdentity";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import {
   clickSelection,
@@ -146,6 +151,12 @@ export function CommitPanelScreen() {
   const hookRejection = useRepoStore((s) => s.hookRejection);
   const clearHookRejection = useRepoStore((s) => s.clearHookRejection);
   const noSignature = useRepoStore((s) => s.noSignature);
+  // Who the commit will be attributed to (#233), for the byline below the
+  // attribution fields. Reloaded after the NoSignaturePrompt saves, which is
+  // the one thing in this screen that can change it.
+  const { identity: committerIdentity, reload: reloadIdentity } = useIdentity(
+    repo?.id ?? null,
+  );
   const clearNoSignature = useRepoStore((s) => s.clearNoSignature);
   const activity = useRepoStore((s) => s.activity);
   const commits = useRepoStore((s) => s.commits);
@@ -1098,6 +1109,8 @@ export function CommitPanelScreen() {
   const canCommit =
     (amend || staged.length > 0) && !!composer.cleaned && !authorInvalid;
   const canCommitAndPush = canCommit && !!headBranch && !!defaultRemote;
+  const committerLine = identityLine(committerIdentity);
+  const committerFrom = identityOrigin(committerIdentity);
   // Guards against a second commit firing before the first resolves and clears
   // the message/staged state — key auto-repeat (holding ⌘↵) and double-taps
   // both re-dispatch the chord while canCommit is still true.
@@ -1746,6 +1759,7 @@ export function CommitPanelScreen() {
               repoId={repo.id}
               onSaved={() => {
                 clearNoSignature();
+                reloadIdentity();
                 void doCommit();
               }}
               onDismiss={clearNoSignature}
@@ -1848,12 +1862,35 @@ export function CommitPanelScreen() {
             }}
             data-testid="commit-attribution"
           >
-            <PGAvatar name={authorIdentity?.name ?? "you"} size={14} />
+            <PGAvatar
+              name={
+                authorIdentity?.name ??
+                committerIdentity?.name?.value ??
+                "you"
+              }
+              size={14}
+            />
+            {/*
+              With no author override this names the ACTUAL identity rather
+              than the fact that one exists somewhere. "(signature will come
+              from git config)" was true and useless: the whole point of #233
+              is that a user with a work and a personal address cannot tell
+              which one this repository is about to use, and the cost of
+              guessing wrong is a corporate address on a public commit that no
+              amount of later editing takes back.
+            */}
             {authorInvalid
               ? "Author must look like: Name <email@example.com>"
               : authorIdentity
                 ? `${authorIdentity.name} <${authorIdentity.email}> — you stay the committer`
-                : "(signature will come from git config)"}
+                : (committerLine ??
+                  "git has no identity configured — Commit will offer to set one")}
+            {!authorInvalid && !authorIdentity && committerLine && committerFrom && (
+              <span style={{ color: "var(--fg-3)" }} data-testid="commit-identity-origin">
+                {" "}
+                — from {committerFrom}
+              </span>
+            )}
             {coAuthorCount > 0 && !authorInvalid && (
               <span style={{ color: "var(--fg-3)" }}>
                 {" "}

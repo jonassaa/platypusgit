@@ -271,7 +271,13 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
 
-    fn set_global_identity(&self, _name: &str, _email: &str) -> AppResult<()> {
+    fn set_identity(
+        &self,
+        _repo_id: Option<&RepoId>,
+        _scope: super::signature::IdentityWriteScope,
+        _name: &str,
+        _email: &str,
+    ) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
     fn branches(&self, _repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {

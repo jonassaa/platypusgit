@@ -205,21 +205,29 @@ pub async fn get_identity(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
-/// Write `user.name` / `user.email` to the global git config (#212).
+/// Write `user.name` / `user.email` at `scope` — this repository or global
+/// (#212, #233).
 ///
 /// The remedy for `NoSignature`, and the only write in the app that touches the
-/// user's global git config — which is why it is deliberately explicit rather
-/// than something a commit does for you behind your back.
+/// user's git config — which is why it is deliberately explicit rather than
+/// something a commit does for you behind your back, and why the SCOPE is a
+/// required argument rather than a default. "Which config did that change?" is
+/// the question this whole feature exists to stop people having to ask.
 #[tauri::command]
 pub async fn set_identity(
     state: State<'_, AppState>,
+    repo_id: Option<String>,
+    scope: crate::git::signature::IdentityWriteScope,
     name: String,
     email: String,
 ) -> AppResult<()> {
     let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || backend.set_global_identity(&name, &email))
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
+    let repo_id = repo_id.map(RepoId);
+    tokio::task::spawn_blocking(move || {
+        backend.set_identity(repo_id.as_ref(), scope, &name, &email)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 /// Signature status of one commit (#61 D6). Called lazily for the selected

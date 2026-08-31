@@ -1003,9 +1003,28 @@ export interface ConfiguredValue {
 export interface GitIdentity {
   name: ConfiguredValue | null;
   email: ConfiguredValue | null;
-  /** The file a save would write to, so the UI can name it beforehand. */
+  /** The file a global save would write to, so the UI can name it beforehand. */
   globalConfigPath: string | null;
+  /**
+   * The file a repository-scoped save would write to (#233) — this
+   * repository's `.git/config`.
+   *
+   * `null` when the identity was read without a repository, which is also the
+   * UI's signal that "this repository" is not a scope it may offer.
+   */
+  localConfigPath: string | null;
 }
+
+/**
+ * Where an identity save is written (#233). Mirrors Rust
+ * `git/signature.rs::IdentityWriteScope`.
+ *
+ * Deliberately NOT `IdentityScope`, which has a `system` member: a value can be
+ * READ from `/etc/gitconfig`, but writing there needs root and would change
+ * every user on the machine. Two types keep "you cannot save to system" out of
+ * reach rather than merely unhandled.
+ */
+export type IdentityWriteScope = "repository" | "global";
 
 /**
  * Whether git could build a committer signature from this — both halves

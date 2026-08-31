@@ -29,6 +29,7 @@ import type {
   ForgeCheckoutRequest,
   ForgeDetection,
   GitIdentity,
+  IdentityWriteScope,
   ForgeIdentity,
   ForgeKind,
   ForgeRepo,
@@ -557,14 +558,31 @@ export async function getIdentity(repoId?: string | null): Promise<GitIdentity> 
 }
 
 /**
- * Write `user.name` / `user.email` to the global git config (#212) — the remedy
- * for `NoSignature`.
+ * Write `user.name` / `user.email` at `scope` (#212, #233) — the remedy for
+ * `NoSignature`, and the way a repository gets its own identity.
+ *
+ * `scope` is REQUIRED, with no default: "which config did that change?" is the
+ * question this feature exists to stop people having to ask, and a default here
+ * would answer it silently at the one call site that forgot to.
+ *
+ * `"repository"` needs `repoId`; the backend refuses it without one rather than
+ * falling back to global.
  *
  * Rejects with `InvalidArgument` for anything git would refuse, and writes
  * nothing in that case.
  */
-export async function setIdentity(name: string, email: string): Promise<void> {
-  return invoke<void>("set_identity", { name, email });
+export async function setIdentity(
+  name: string,
+  email: string,
+  scope: IdentityWriteScope,
+  repoId?: string | null,
+): Promise<void> {
+  return invoke<void>("set_identity", {
+    name,
+    email,
+    scope,
+    repoId: repoId ?? null,
+  });
 }
 
 export async function discardPaths(repoId: string, paths: string[]): Promise<void> {

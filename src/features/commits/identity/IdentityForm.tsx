@@ -11,18 +11,28 @@
 // would learn that a blank email is refused and the other would not. The
 // difference between them is framing, not behaviour, so it is a prop.
 //
-// Global, not per-repository, deliberately: the state being fixed is a machine
-// with no identity at all, and per-repository would ask the same question again
-// in every repository the user opens. Per-repository identities and multiple
-// accounts are #233; when that lands, this form grows a scope control rather
-// than a sibling.
+// It started global-only: the state #212 fixed is a machine with no identity at
+// all, where per-repository would ask the same question again in every
+// repository the user opens. #233 added the SCOPE control this file's earlier
+// note promised — a control, not a sibling form, so there is still exactly one
+// place that knows what git will accept.
+//
+// The scope is shown even when there is only one to pick, and named in the
+// button's own line, because "which config did that change?" is the question
+// the whole feature exists to stop people having to ask. A work identity
+// committed under a personal address — or worse, the reverse on a public
+// repository — is not fixable after the push.
 
 import * as React from "react";
 
-import { PGButton, PGIcon, PGInput } from "@/design";
+import { PGButton, PGIcon, PGInput, PGSelect } from "@/design";
 import { appErrorMessage } from "@/lib/errors";
 import { getIdentity, setIdentity } from "@/lib/tauri";
-import type { GitIdentity, IdentityScope } from "@/lib/types";
+import type {
+  GitIdentity,
+  IdentityScope,
+  IdentityWriteScope,
+} from "@/lib/types";
 
 /** Where a value came from, as a user reads it. */
 function scopeLabel(scope: IdentityScope): string {
@@ -37,23 +47,27 @@ function scopeLabel(scope: IdentityScope): string {
 }
 
 /**
- * The identity's current state as one line of prose, or null when there is
- * nothing worth saying.
+ * The warning that a global save will not do what the user expects, or null.
  *
- * A repo-local value is the one worth naming: saving here writes the GLOBAL
- * config, so a user whose repository overrides it would otherwise save, see no
- * change, and conclude the app is broken.
+ * Only for a GLOBAL save: a repository that overrides `user.email` wins, so a
+ * user who saves globally would otherwise see no change here and conclude the
+ * app is broken. Saving at repository scope writes exactly the value that
+ * wins, so there is nothing to warn about — and showing the warning there
+ * anyway would train people to ignore it.
  */
-function currentStateNote(identity: GitIdentity | null): string | null {
-  if (!identity) return null;
+function currentStateNote(
+  identity: GitIdentity | null,
+  scope: IdentityWriteScope,
+): string | null {
+  if (!identity || scope !== "global") return null;
   const overrides = [
     identity.name?.scope === "repository" ? "name" : null,
     identity.email?.scope === "repository" ? "email" : null,
   ].filter(Boolean) as string[];
   if (overrides.length === 0) return null;
-  // No issue number in prose a user reads — "#233" means nothing to them, and
-  // the sentence has to end with something they can act on instead.
-  return `This repository sets its own ${overrides.join(" and ")} in its .git/config, which wins over anything saved here. Saving will not change what this repository's commits are recorded as.`;
+  // No issue number in prose a user reads, and the sentence has to end with
+  // something they can act on — here, the scope control directly above it.
+  return `This repository sets its own ${overrides.join(" and ")} in its .git/config, which wins over anything saved globally. To change what this repository's commits are recorded as, save to this repository instead.`;
 }
 
 /**
@@ -79,6 +93,26 @@ function sourceNote(identity: GitIdentity): string | null {
   return `${half} read from ${scopeLabel(only.scope)}; the other is not set.`;
 }
 
+/**
+ * Which scope the form opens on.
+ *
+ * `"repository"` when this repository ALREADY overrides either half — someone
+ * who has a repo-local identity is managing that repository's identity, and
+ * opening on "global" would invite them to edit the value that is being
+ * overridden. Otherwise `"global"`, which is both #212's fresh-machine case and
+ * the right default for the great majority of repositories.
+ *
+ * A default, not a lock: the control is right there, and the button names the
+ * file either way.
+ */
+function defaultScope(identity: GitIdentity): IdentityWriteScope {
+  if (!identity.localConfigPath) return "global";
+  const overridden =
+    identity.name?.scope === "repository" ||
+    identity.email?.scope === "repository";
+  return overridden ? "repository" : "global";
+}
+
 export interface IdentityFormProps {
   /** Read the effective identity for this repository; omit for global only. */
   repoId?: string | null;
@@ -101,6 +135,7 @@ export function IdentityForm({
   const [identity, setLoaded] = React.useState<GitIdentity | null>(null);
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
+  const [scope, setScope] = React.useState<IdentityWriteScope>("global");
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [saved, setSaved] = React.useState(false);
@@ -116,6 +151,7 @@ export function IdentityForm({
         setLoaded(next);
         setName(next.name?.value ?? "");
         setEmail(next.email?.value ?? "");
+        setScope(defaultScope(next));
       } catch (e) {
         if (!alive) return;
         // Reading the config failed, which is not the same as having no
@@ -140,7 +176,7 @@ export function IdentityForm({
     setError(null);
     setSaved(false);
     try {
-      await setIdentity(name, email);
+      await setIdentity(name, email, scope, repoId ?? null);
       setSaved(true);
       // Re-read rather than assume: this is what proves the write landed where
       // the form said it would, and it picks up a repo-local override that is
@@ -159,8 +195,18 @@ export function IdentityForm({
     }
   }
 
-  const note = currentStateNote(identity);
-  const target = identity?.globalConfigPath;
+  const note = currentStateNote(identity, scope);
+  // Where THIS save lands, not where a save lands in general. Naming the file
+  // is the honest version of "Save": it is a write to the user's own git
+  // config, outside the app's settings.
+  const target =
+    scope === "repository"
+      ? identity?.localConfigPath
+      : identity?.globalConfigPath;
+  // "This repository" is offered only when there is one. Without a repo open
+  // the backend refuses the scope outright, so showing it would be an option
+  // that cannot work.
+  const canScopeToRepo = !!identity?.localConfigPath;
 
   return (
     <div
@@ -197,6 +243,28 @@ export function IdentityForm({
         </label>
       </div>
 
+      {/*
+        The scope, rendered whenever a repository is open — including when the
+        answer looks obvious. A save that silently picks a config file is the
+        failure this control exists to prevent, and the cost of showing it is
+        one row.
+      */}
+      {canScopeToRepo && (
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ ...fieldLabel, marginBottom: 0 }}>Save to</span>
+          <PGSelect
+            value={scope}
+            onChange={(v) => setScope(v as IdentityWriteScope)}
+            size="sm"
+            data-testid="identity-scope"
+            options={[
+              { value: "repository", label: "This repository" },
+              { value: "global", label: "All repositories (global)" },
+            ]}
+          />
+        </label>
+      )}
+
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <PGButton
           size="sm"
@@ -208,7 +276,9 @@ export function IdentityForm({
           {saving ? "Saving…" : saveLabel}
         </PGButton>
         {/* Naming the file is the honest version of "Save": this is a write to
-            the user's own git config, outside the app's own settings. */}
+            the user's own git config, outside the app's own settings — and with
+            two scopes to choose between, the filename is what distinguishes
+            them concretely. */}
         {target && (
           <span
             style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
