@@ -70,7 +70,11 @@ export function WorktreesScreen() {
           testId="worktrees-list"
           style={{ flex: 1, minHeight: 0, padding: 16 }}
         >
-          <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          {/*
+            Full width, no centred 1100px column: every row is a long absolute
+            path, and the width capped off exactly the space the paths needed.
+          */}
+          <div>
             <PGSectionHeader
               actions={
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>

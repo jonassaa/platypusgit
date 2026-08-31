@@ -922,6 +922,28 @@ update checks back on for someone who turned them off.
   does NOT (forwards `title` only). Row components need explicit prop threading
   for new attributes.
 
+### A row's trailing action buttons get FIXED slots
+
+`PGWorktreeRow` is the worked example (`git-components.worktreeRow.test.tsx`
+pins it). A list row whose trailing buttons are auto-sized has an action column
+that moves *down the list*, because one of the labels is state-dependent —
+Lock/Unlock differ by 30px, so Open and Remove sat at a different x on exactly
+the locked rows. Put the actions in a grid of identical fixed tracks
+(`84px 84px 84px`, `flexShrink: 0`), make each button `fullWidth`, and
+`justifyContent: "flex-start"` inside the slot — centring re-centres the label
+when the state flips and the icon column jitters instead.
+
+The other half of the same fix: **one fact per line, every line clipped.** The
+worktree list is a dozen near-identical absolute paths, so name / branch+sha /
+path / lock reason each get their own line, each `overflow: hidden` +
+`textOverflow: ellipsis` + `whiteSpace: nowrap` + `minWidth: 0`, each with a
+`title` so the clipped tail survives on hover. A long value must never reach a
+`PGBadge` — the badge is a fixed-height uppercase pill and a 79-character lock
+reason wrapped inside it, giving every locked row its own height. Badges stay
+one word (`locked`) with the variable text as a sibling span, `flexShrink: 0`
+on the badge. Screens that are all-path (`Worktrees`) skip the centred
+`maxWidth: 1100` column — the cap ate exactly the width the paths needed.
+
 ## No native `<select>` (issue 146)
 
 - **`PGSelect`** renders a `role="combobox"` trigger + a portalled
