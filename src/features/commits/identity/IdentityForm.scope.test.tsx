@@ -42,11 +42,28 @@ const saves = () => getInvokeCalls().filter((c) => c.cmd === "set_identity");
 const pickScope = (value: string) =>
   pgPickOption(screen.getByTestId("identity-scope"), value);
 
+/**
+ * Render and wait until the identity has actually LOADED — not merely until
+ * the form has mounted.
+ *
+ * The form renders immediately and seeds its fields from an async
+ * `get_identity`. Waiting only for `identity-form` therefore returns while
+ * Name and Email are still empty, which leaves Save disabled — so a test that
+ * clicks it straight away silently does nothing and asserts on zero calls.
+ * That raced: it passed locally and failed on CI, which is the worst version
+ * of the bug.
+ *
+ * `identity-target` is the right thing to wait on: it renders from the loaded
+ * `identity`, so its presence means the seeding has happened.
+ */
 function renderForm(identity: GitIdentity, repoId: string | null = "repo-1") {
   mockInvoke("get_identity", () => identity);
   mockInvoke("set_identity", () => null);
   render(<IdentityForm repoId={repoId} />);
-  return waitFor(() => expect(screen.getByTestId("identity-form")).toBeTruthy());
+  return waitFor(() => {
+    expect(screen.getByTestId("identity-form")).toBeTruthy();
+    expect(screen.getByTestId("identity-target")).toBeTruthy();
+  });
 }
 
 beforeEach(() => {
