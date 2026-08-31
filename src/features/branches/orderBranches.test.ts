@@ -143,3 +143,113 @@ describe("compareBranches", () => {
     expect(compareBranches(head, other)).toBeGreaterThan(0);
   });
 });
+
+describe("user pins (#238)", () => {
+  const pins = (...names: string[]) => new Set(names);
+
+  it("lifts a pinned branch above the recency block", () => {
+    const rows = orderBranches(
+      [
+        b({ name: "fresh", tipTime: 9000 }),
+        b({ name: "feat/foo", tipTime: 1 }),
+        b({ name: "stale", tipTime: 2 }),
+      ],
+      pins("feat/foo"),
+    );
+    expect(names(rows)).toEqual(["feat/foo", "fresh", "stale"]);
+  });
+
+  it("lifts a pin above the default branch", () => {
+    // #135's pin is a DEFAULT — the app guessing. A user pin is an instruction,
+    // and an instruction that loses to a guess is not a pin. It also has to
+    // rank first for the comparator and the Branches screen (which hoists pins
+    // out of the folder tree, above it) to agree about one list.
+    const rows = orderBranches(
+      [
+        b({ name: "feat/foo", tipTime: 1 }),
+        b({ name: "main", tipTime: 0, isDefault: true }),
+        b({ name: "fresh", tipTime: 9000 }),
+      ],
+      pins("feat/foo"),
+    );
+    expect(names(rows)).toEqual(["feat/foo", "main", "fresh"]);
+  });
+
+  it("keeps the default branch above everything unpinned", () => {
+    const rows = orderBranches(
+      [
+        b({ name: "feat/foo", tipTime: 1 }),
+        b({ name: "main", tipTime: 0, isDefault: true }),
+        b({ name: "fresh", tipTime: 9000 }),
+      ],
+      pins("feat/foo"),
+    );
+    expect(names(rows).slice(1)).toEqual(["main", "fresh"]);
+  });
+
+  it("pinning the default branch changes nothing", () => {
+    const rows = orderBranches(
+      [b({ name: "fresh", tipTime: 9000 }), b({ name: "main", isDefault: true })],
+      pins("main"),
+    );
+    expect(names(rows)).toEqual(["main", "fresh"]);
+  });
+
+  it("orders several pins among themselves by the ordinary rules", () => {
+    const rows = orderBranches(
+      [
+        b({ name: "a", tipTime: 1 }),
+        b({ name: "b", tipTime: 500 }),
+        b({ name: "loose", tipTime: 9000 }),
+      ],
+      pins("a", "b"),
+    );
+    // Newest pin first — pinning is a tier, not a hand-ordered list.
+    expect(names(rows)).toEqual(["b", "a", "loose"]);
+  });
+
+  it("matches a pin by exact name, so a remote copy is not pinned with it", () => {
+    const rows = orderBranches(
+      [
+        b({ name: "origin/feat/foo", isRemote: true, tipTime: 1 }),
+        b({ name: "origin/zzz", isRemote: true, tipTime: 9000 }),
+      ],
+      pins("feat/foo"),
+    );
+    expect(names(rows)).toEqual(["origin/zzz", "origin/feat/foo"]);
+  });
+
+  it("is still only a permutation — a pin cannot resurrect a filtered-out row", () => {
+    const input = [b({ name: "x", tipTime: 3 }), b({ name: "y", tipTime: 4 })];
+    const rows = orderBranches(input, pins("gone"));
+    expect(names(rows).sort()).toEqual(["x", "y"]);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("with no pins orders exactly as it did before", () => {
+    const input = [
+      b({ name: "old", tipTime: 1 }),
+      b({ name: "new", tipTime: 9 }),
+    ];
+    expect(names(orderBranches(input, pins()))).toEqual(names(orderBranches(input)));
+  });
+
+  it("carries pins through the grouped ordering", () => {
+    const rows = orderBranchesGrouped(
+      [
+        b({ name: "origin/pinned", isRemote: true, tipTime: 1 }),
+        b({ name: "origin/fresh", isRemote: true, tipTime: 9000 }),
+        b({ name: "local", tipTime: 5 }),
+      ],
+      pins("origin/pinned"),
+    );
+    expect(names(rows)).toEqual(["local", "origin/pinned", "origin/fresh"]);
+  });
+
+  it("compareBranches reads the pin set it is given", () => {
+    const a = b({ name: "a", tipTime: 1 });
+    const z = b({ name: "z", tipTime: 9000 });
+    expect(compareBranches(a, z, pins("a"))).toBeLessThan(0);
+    expect(compareBranches(a, z)).toBeGreaterThan(0);
+  });
+});

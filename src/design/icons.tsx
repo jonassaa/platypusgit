@@ -13,7 +13,7 @@ export type IconName =
   | "dot" | "circle" | "warn" | "error" | "info" | "clock"
   | "user" | "eye" | "terminal" | "history" | "kbd"
   | "download" | "upload" | "link" | "lock"
-  | "play" | "pause" | "star" | "copy" | "external"
+  | "play" | "pause" | "star" | "copy" | "external" | "pin"
   | "edit" | "trash" | "conflict" | "squash" | "drag" | "bell"
   | "diff" | "undo" | "fix" | "expandAll" | "collapseAll"
   | "viewTree" | "viewList"
@@ -219,6 +219,10 @@ const ICONS: Record<IconName, ReactNode> = {
     <rect x="9" y="3" width="3" height="10" />
   </>,
   star: <path d="M8 1l2 5 5 .5-4 3.5 1 5-4-2.5-4 2.5 1-5-4-3.5 5-.5z" />,
+  pin: <>
+    <path d="M6 2h4l-.5 4 2 2.5H4.5L6.5 6z" />
+    <path d="M8 8.5V14" />
+  </>,
   copy: <>
     <rect x="4" y="4" width="10" height="10" />
     <path d="M2 10V2h8v2" />

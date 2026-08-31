@@ -1,6 +1,12 @@
 import { browser, $, $$, expect } from "@wdio/globals";
 import { basicRepo, manyRefsRepo, TempRepo } from "../support/tempRepo";
-import { openRepo, resetApp, switchScreen } from "../support/app";
+import {
+  jsClickMenuItem,
+  jsContextMenu,
+  openRepo,
+  resetApp,
+  switchScreen,
+} from "../support/app";
 
 describe("branches", () => {
   let repo: TempRepo;
@@ -54,6 +60,49 @@ describe("branches", () => {
       { timeout: 20_000, timeoutMsg: "chip did not update back to main" },
     );
     expect(repo.git("branch", "--show-current").trim()).toBe("main");
+  });
+  // #238: a user pin outranks the recency order AND is hoisted out of its
+  // folder, so it is the first row on the Branches screen even when the folder
+  // it belongs to is collapsed.
+  it("pins a branch to the top of the Branches screen", async () => {
+    repo.git("branch", "feat/alpha");
+    repo.git("branch", "feat/beta");
+    await openRepo(repo.path);
+    await switchScreen("branches");
+
+    await browser.waitUntil(
+      async () => [...(await $$('[data-testid="branch-row"]'))].length > 1,
+      { timeout: 20_000, timeoutMsg: "branch rows never appeared" },
+    );
+
+    const labels = () =>
+      browser.execute(() =>
+        Array.from(document.querySelectorAll('[data-testid="branch-row"]')).map(
+          (r) => r.querySelector("[data-branch-label]")?.textContent ?? "",
+        ),
+      );
+
+    // `feat/beta` sits inside the `feat` folder, labelled by its segment.
+    expect(await labels()).not.toContain("feat/beta");
+
+    await jsContextMenu('[data-testid="branch-row"]', { text: "beta" });
+    await jsClickMenuItem("Pin to top");
+
+    await browser.waitUntil(async () => (await labels())[0] === "feat/beta", {
+      timeout: 20_000,
+      timeoutMsg: "the pinned branch never reached the top row",
+    });
+
+    // Hoisted under its FULL name, and exactly once — not duplicated into the
+    // folder it came from.
+    const rows = await labels();
+    expect(rows.filter((l) => l === "feat/beta")).toHaveLength(1);
+
+    // Persisted per repository, so a reload keeps it on top.
+    const stored = await browser.execute(() =>
+      localStorage.getItem("pg-branch-pins-v1"),
+    );
+    expect(stored).toContain("feat/beta");
   });
 });
 

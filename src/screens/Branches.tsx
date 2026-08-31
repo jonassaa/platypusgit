@@ -35,6 +35,7 @@ import {
   type BranchTreeRow,
 } from "@/features/branches/branchTree";
 import { useBranchFolders } from "@/features/branches/useBranchFolders";
+import { usePinSet } from "@/features/branches/usePinSet";
 import {
   deleteMergedCandidates,
   findMergedBranches,
@@ -88,6 +89,7 @@ export function BranchesScreen() {
   const [selection, setSelection] = React.useState<Selection | null>(null);
   const [filter, setFilter] = React.useState("");
   const folders = useBranchFolders(repoPath);
+  const pins = usePinSet();
   const [view, setView] = React.useState<
     "all" | "local" | "remote" | "tags" | "stashes"
   >("all");
@@ -287,12 +289,12 @@ export function BranchesScreen() {
     // is ordered WITHIN its group so the `all` view still lists locals before
     // remotes rather than interleaving them by tip time.
     const filtered = list.filter((b) => b.name.includes(filter));
-    const locals = orderBranches(filtered.filter((b) => b.kind === "local"));
-    const remotes = orderBranches(filtered.filter((b) => b.kind === "remote"));
+    const locals = orderBranches(filtered.filter((b) => b.kind === "local"), pins);
+    const remotes = orderBranches(filtered.filter((b) => b.kind === "remote"), pins);
     if (view === "local") return locals;
     if (view === "remote") return remotes;
     return [...locals, ...remotes];
-  }, [branches, filter, view]);
+  }, [branches, filter, view, pins]);
 
   // Grouping is the LAST step (#244): filter, order (#135), then group. It only
   // moves rows into folders, so the pinned default and the newest-first order
@@ -304,16 +306,29 @@ export function BranchesScreen() {
   // it names nothing.
   const filtering = filter.length > 0;
   const displayRows = React.useMemo<BranchTreeRow<BranchRow>[]>(() => {
-    if (filtering)
-      return rows.map((b) => ({
-        kind: "branch" as const,
-        path: b.name,
-        label: b.name,
-        depth: 0,
-        branch: b,
-      }));
-    return branchTreeRows(rows, folders.collapsed);
-  }, [rows, filtering, folders.collapsed]);
+    const flat = (b: BranchRow) => ({
+      kind: "branch" as const,
+      path: b.name,
+      label: b.name,
+      depth: 0,
+      branch: b,
+    });
+    if (filtering) return rows.map(flat);
+    // Pinned branches are HOISTED OUT of the tree (#238), not just sorted to
+    // the front of it. Grouping only moves ordered rows into folders, so a
+    // pinned `feat/foo` would otherwise be the first row INSIDE `feat` — and
+    // invisible whenever that folder is collapsed, which is the case pinning
+    // exists for. The default branch escapes this today only because `main`
+    // has no `/` and is therefore already a root-level leaf.
+    //
+    // They render at depth 0 under their FULL names (a bare `foo` with no
+    // `feat/` above it names nothing) and are REMOVED from the tree rather
+    // than duplicated into it. `rows` is already ordered pins-first, so the
+    // hoisted block and the tree below it are in one continuous order.
+    const pinned = rows.filter((b) => pins.has(b.name));
+    const rest = rows.filter((b) => !pins.has(b.name));
+    return [...pinned.map(flat), ...branchTreeRows(rest, folders.collapsed)];
+  }, [rows, filtering, folders.collapsed, pins]);
 
   const visibleTags = React.useMemo(() => {
     if (view === "stashes") return [];
@@ -760,6 +775,16 @@ export function BranchesScreen() {
                   }}
                   title={b.name}
                 >
+                  {pins.has(b.name) && (
+                    // Says WHY this row is at the top, and where the verb that
+                    // put it there lives. Without it a hoisted branch is just a
+                    // row in a surprising place.
+                    <PGIcon
+                      name="pin"
+                      size={10}
+                      style={{ color: "var(--fg-2)", flexShrink: 0 }}
+                    />
+                  )}
                   <span
                     data-branch-label=""
                     style={{

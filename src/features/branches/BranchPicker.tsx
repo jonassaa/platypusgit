@@ -11,6 +11,7 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import type { BranchInfo } from "@/lib/types";
 import { orderBranches } from "./orderBranches";
+import { usePinSet } from "./usePinSet";
 
 interface BranchPickerProps {
   anchor: HTMLElement | null;
@@ -25,6 +26,7 @@ const MAX_HEIGHT = 480;
 
 export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
   const branches = useRepoStore((s) => s.branches);
+  const pins = usePinSet();
   const checkoutBranch = useRepoStore((s) => s.checkoutBranch);
   const createAndSwitchBranch = useRepoStore((s) => s.createAndSwitchBranch);
   const [query, setQuery] = React.useState("");
@@ -45,16 +47,18 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
       remoteBranchMenuItems({ name: b?.name }),
     );
 
-  // Filter FIRST, order SECOND (#135). `orderBranches` only permutes, so the
-  // pinned default can never come back once the query has excluded it.
+  // Filter FIRST, order SECOND (#135). `orderBranches` only permutes, so
+  // neither the pinned default nor a user pin (#238) can come back once the
+  // query has excluded it.
   const local: Row[] = React.useMemo(
     () =>
       orderBranches(
         branches
           .filter((b) => !b.isRemote && b.name.includes(query))
           .map((b) => ({ ...b, kind: "local" as const })),
+        pins,
       ),
-    [branches, query],
+    [branches, query, pins],
   );
   const remote: Row[] = React.useMemo(
     () =>
@@ -62,8 +66,9 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
         branches
           .filter((b) => b.isRemote && b.name.includes(query))
           .map((b) => ({ ...b, kind: "remote" as const })),
+        pins,
       ),
-    [branches, query],
+    [branches, query, pins],
   );
 
   const flat = React.useMemo(() => [...local, ...remote], [local, remote]);

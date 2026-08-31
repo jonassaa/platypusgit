@@ -19,6 +19,7 @@ import type {
 } from "@/lib/types";
 import { fileDiffToText, selectedLinesToText } from "@/lib/diffCopy";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
+import { activePins, pinItem } from "@/features/branches/pins";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import {
   markedRefFor,
@@ -723,7 +724,7 @@ function branchesAtCommit(oid: string | null | undefined): BranchInfo[] {
   const at = useRepoStore.getState().branches.filter((b) => !!b.tip && b.tip === oid);
   // Locals ahead of remotes, each group in the ONE branch ordering (#135).
   // This renders as an undivided list, so the grouping has to happen here.
-  const ordered = orderBranchesGrouped(at);
+  const ordered = orderBranchesGrouped(at, activePins());
   // A remote ref whose local counterpart is at this very commit adds nothing:
   // the local branch is already offered and checking it out lands on the same
   // tree, while the remote entry would only prompt for a name already taken.
@@ -1339,6 +1340,7 @@ export function branchMenuItems(
           .setUpstream(name, trimmed === "" ? null : trimmed);
       },
     },
+    pinItem(name),
     {
       icon: "copy",
       label: "Copy name",
@@ -1469,6 +1471,7 @@ export function remoteBranchMenuItems(branch: { name?: string } | null): Context
       },
     },
     { divider: true },
+    pinItem(name),
     {
       icon: "fetch",
       label: "Fetch remote",

@@ -545,13 +545,38 @@ that is only partly here — which is the whole reason the notice exists.
   included, resets on a closed→open transition — a `--depth 1` chosen for one
   enormous repository must not quietly truncate the next.
 
+## Branch pins (#238)
+
+- **A pin is a TIER in `orderBranches`, and it outranks the default branch.**
+  #135's default-branch pin is the app guessing what belongs on top; a user pin
+  is an instruction, and an instruction that loses to a guess is not a pin. With
+  no pins the order is exactly #135's, which is why its tests are untouched.
+- **Pins are HOISTED OUT of the folder tree, not sorted to the front of it.**
+  Grouping runs after ordering and only moves rows into folders, so a pinned
+  `feat/foo` would otherwise be the first row INSIDE `feat` — invisible whenever
+  that folder is collapsed, which is the case pinning exists for. Hoisted rows
+  render at depth 0 under their FULL names and are removed from the tree rather
+  than duplicated into it. This is also why the tier has to outrank the default:
+  otherwise the comparator and this screen would disagree about one list.
+- **The pin set is a STORE, not the folds' React hook** (`useBranchPins`,
+  `pg-branch-pins-v1`, keyed by repository path, entry pruned when empty). Two
+  of the four surfaces that order branches are not components —
+  `design/context-menu.tsx` and `features/palette/commands.ts` reach state
+  through `getState()` — and a hook cannot serve them. `usePinSet` is the React
+  side; it subscribes to the stored ARRAY so the memoized `Set` is rebuilt only
+  when a pin actually changes.
+- **A pin matches the branch name exactly.** Pinning `feat/foo` does not pin
+  `origin/feat/foo`: two rows, two sections, and the user pinned one of them.
+
 ## Branch folders (#244)
 
 - **Filter, then order, then group — in that order.** `orderBranches` (#135) is
   still THE branch ordering; `features/branches/branchTree.ts` only moves the
   ordered rows into folders, so the pinned default branch stays the first row on
   the screen and the newest-first order holds inside every folder. A folder
-  ranks where its first (freshest) branch was. Grouping never sorts.
+  ranks where its first (freshest) branch was. Grouping never sorts. Since #238
+  the hoisted pins sit above that whole tree, and are the one thing removed from
+  it before grouping runs.
 - **A prefix that groups nothing is not a folder.** Single-child chains compress
   (`feat/foo/bar` alone is ONE row reading `feat/foo/bar`, not three), the same
   rule `lib/tree.ts::compactNode` applies to file paths. So a folder row always
