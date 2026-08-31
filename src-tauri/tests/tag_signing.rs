@@ -107,13 +107,13 @@ fn a_signed_tag_is_reachable_and_carries_a_signature_block() {
         .find_tag(reference.target().unwrap())
         .expect("must be an annotated tag OBJECT, not a lightweight ref");
 
-    assert_eq!(tag.name(), Some("v1.0.0"));
+    assert_eq!(tag.name().ok(), Some("v1.0.0"));
     assert_eq!(
         tag.target_id().to_string(),
         oid,
         "must point at the commit it was asked to tag"
     );
-    let message = tag.message().unwrap_or("");
+    let message = tag.message().ok().flatten().unwrap_or("");
     assert!(
         message.starts_with("release 1.0.0\n"),
         "the message must survive intact: {message:?}"

@@ -112,7 +112,7 @@ fn signed_commit_is_reachable_from_head_and_has_a_gpgsig_header() {
     let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(head.id().to_string(), oid, "signed commit must be HEAD");
     assert_eq!(head.parent_count(), 1, "must keep its parent");
-    assert_eq!(head.summary(), Some("signed"));
+    assert_eq!(head.summary().unwrap(), Some("signed"));
 
     let header = head
         .header_field_bytes("gpgsig")
@@ -178,7 +178,7 @@ fn signed_amend_replaces_head_and_stays_signed() {
 
     let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(head.id().to_string(), amended, "amend must move HEAD");
-    assert_eq!(head.summary(), Some("amended"));
+    assert_eq!(head.summary().unwrap(), Some("amended"));
     assert_eq!(
         head.parent(0).unwrap().id(),
         parent_before,

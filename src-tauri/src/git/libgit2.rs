@@ -166,7 +166,7 @@ impl Libgit2Backend {
                     .unwrap_or(0);
                 let summary = commit
                     .as_ref()
-                    .and_then(|c| c.summary().map(String::from))
+                    .and_then(|c| c.summary().ok().flatten().map(String::from))
                     .unwrap_or_default();
                 let short = oid.to_string()[..7].to_string();
                 let start = hunk.final_start_line();
@@ -675,7 +675,7 @@ impl Libgit2Backend {
                 .revparse_single(oid)
                 .ok()
                 .and_then(|o| o.peel_to_commit().ok())
-                .and_then(|c| c.summary().map(str::to_string))
+                .and_then(|c| c.summary().ok().flatten().map(str::to_string))
                 .unwrap_or_default())
         })
         .unwrap_or_default()
@@ -1044,7 +1044,7 @@ fn is_embedded_repo(repo: &Repository, path: &Path) -> bool {
 fn is_registered_submodule(repo: &Repository, rel: &Path) -> bool {
     repo.find_submodule(&rel.to_string_lossy())
         .ok()
-        .and_then(|sm| sm.url().map(|url| !url.is_empty()))
+        .and_then(|sm| sm.url().ok().flatten().map(|url| !url.is_empty()))
         .unwrap_or(false)
 }
 
@@ -1296,12 +1296,15 @@ fn commit_signed(
     let ref_name = match head {
         Some(h) => h
             .name()
+            .ok()
             .ok_or_else(|| AppError::Internal("HEAD has no reference name".into()))?
             .to_string(),
         // Unborn HEAD: create the branch it symbolically points at.
         None => repo
             .find_reference("HEAD")?
             .symbolic_target()
+            .ok()
+            .flatten()
             .ok_or(AppError::Unborn)?
             .to_string(),
     };
@@ -2262,8 +2265,8 @@ fn collect_ref_map(repo: &Repository) -> HashMap<git2::Oid, Vec<String>> {
     if let Ok(refs) = repo.references() {
         for r in refs.flatten() {
             let name = match r.shorthand() {
-                Some(n) => n.to_string(),
-                None => continue,
+                Ok(n) => n.to_string(),
+                Err(_) => continue,
             };
             // Peel annotated tags to the commit they point at. Only TAGS: a
             // branch or remote ref's target already IS the commit oid, and
@@ -2457,7 +2460,7 @@ const DEFAULT_BRANCH_CANDIDATES: [&str; 3] = ["main", "master", "trunk"];
 /// nothing to explain why.
 pub fn detect_default_branch(repo: &Repository) -> Option<String> {
     let mut remotes: Vec<String> = match repo.remotes() {
-        Ok(list) => list.iter().flatten().map(String::from).collect(),
+        Ok(list) => list.iter().flatten().flatten().map(String::from).collect(),
         Err(_) => Vec::new(),
     };
     // `false` sorts before `true`, so `origin` leads and the rest follow
@@ -2470,7 +2473,7 @@ pub fn detect_default_branch(repo: &Repository) -> Option<String> {
         let Ok(reference) = repo.find_reference(&head_ref) else {
             continue;
         };
-        let Some(target) = reference.symbolic_target() else {
+        let Ok(Some(target)) = reference.symbolic_target() else {
             continue;
         };
         if let Some(name) = target.strip_prefix(&prefix) {
@@ -2635,7 +2638,7 @@ fn reject_checked_out(repo: &Repository, branch: &str) -> AppResult<()> {
     let head = repo
         .head()
         .ok()
-        .and_then(|h| h.shorthand().map(String::from));
+        .and_then(|h| h.shorthand().ok().map(String::from));
     let linked = crate::git::worktree::linked_worktree_heads(repo);
     match checked_out_at(branch, head.as_deref(), &linked) {
         None => Ok(()),
@@ -2665,7 +2668,7 @@ impl GitBackend for Libgit2Backend {
         let repo = Repository::open(path).map_err(|e| ownership::map_open_error(path, &e))?;
 
         let head = match repo.head() {
-            Ok(r) => r.shorthand().map(|s| s.to_string()),
+            Ok(r) => r.shorthand().ok().map(|s| s.to_string()),
             Err(e)
                 if e.code() == git2::ErrorCode::UnbornBranch
                     || e.code() == git2::ErrorCode::NotFound =>
@@ -4505,7 +4508,10 @@ impl GitBackend for Libgit2Backend {
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
         self.with_repo(repo_id, |repo| {
             let head_ref = repo.head().ok();
-            let head_name = head_ref.as_ref().and_then(|r| r.shorthand()).map(String::from);
+            let head_name = head_ref
+                .as_ref()
+                .and_then(|r| r.shorthand().ok())
+                .map(String::from);
 
             // Detected once per listing, not per branch: it walks the remotes.
             let default_branch = detect_default_branch(repo);
@@ -4602,7 +4608,7 @@ impl GitBackend for Libgit2Backend {
                 let signed = obj
                     .as_ref()
                     .and_then(|o| o.as_tag())
-                    .and_then(|t| t.message().map(crate::git::tag::has_signature_block))
+                    .and_then(|t| t.message().ok().flatten().map(crate::git::tag::has_signature_block))
                     .unwrap_or(false);
                 let oid_str = tip_oid.to_string();
                 out.push(TagInfo {
@@ -4653,11 +4659,11 @@ impl GitBackend for Libgit2Backend {
     fn remotes(&self, repo_id: &RepoId) -> AppResult<Vec<RemoteInfo>> {
         self.with_repo(repo_id, |repo| {
             let mut out = Vec::new();
-            for name in repo.remotes()?.iter().flatten() {
+            for name in repo.remotes()?.iter().flatten().flatten() {
                 let url = repo
                     .find_remote(name)
                     .ok()
-                    .and_then(|r| r.url().map(String::from));
+                    .and_then(|r| r.url().ok().map(String::from));
                 out.push(RemoteInfo {
                     name: name.to_string(),
                     url,
@@ -4730,7 +4736,7 @@ impl GitBackend for Libgit2Backend {
         self.with_repo(repo_id, |repo| {
             // Refuse to delete the currently checked-out branch.
             if let Ok(head) = repo.head() {
-                if head.shorthand() == Some(name) {
+                if head.shorthand().ok() == Some(name) {
                     return Err(AppError::InvalidRef(
                         "cannot delete the currently checked-out branch".into(),
                     ));
@@ -4836,7 +4842,7 @@ impl GitBackend for Libgit2Backend {
             let head = repo
                 .head()
                 .ok()
-                .and_then(|h| h.shorthand().map(String::from));
+                .and_then(|h| h.shorthand().ok().map(String::from));
             // Walked once, not once per branch: each entry costs a repository
             // open.
             let linked = crate::git::worktree::linked_worktree_heads(repo);
@@ -5019,7 +5025,10 @@ impl GitBackend for Libgit2Backend {
             let tree = repo.find_tree(tree_oid)?;
             let parent = repo.head()?.peel_to_commit()?;
 
-            let msg = format!("Revert \"{}\"", commit.summary().unwrap_or("commit"));
+            let msg = format!(
+                "Revert \"{}\"",
+                commit.summary().ok().flatten().unwrap_or("commit")
+            );
             repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &[&parent])?;
             repo.cleanup_state()?;
             Ok(())
@@ -5298,13 +5307,18 @@ impl GitBackend for Libgit2Backend {
             // thing that stops a repository rendering.
             let mut per_remote: Vec<Vec<String>> = Vec::new();
             if let Ok(names) = repo.remotes() {
-                for name in names.iter().flatten() {
+                for name in names.iter().flatten().flatten() {
                     if let Ok(remote) = repo.find_remote(name) {
                         per_remote.push(
                             remote
                                 .fetch_refspecs()
                                 .map(|specs| {
-                                    specs.iter().flatten().map(|s| s.to_string()).collect()
+                                    specs
+                                        .iter()
+                                        .flatten()
+                                        .flatten()
+                                        .map(|s| s.to_string())
+                                        .collect()
                                 })
                                 .unwrap_or_default(),
                         );
@@ -5453,7 +5467,7 @@ impl GitBackend for Libgit2Backend {
             let head_name = if repo.head_detached()? {
                 None
             } else {
-                head_ref.name().map(|s| s.to_string())
+                head_ref.name().ok().map(|s| s.to_string())
             };
             let orig_head = head_ref.peel_to_commit()?.id().to_string();
             // Same escape hatch git leaves before rewriting history:
@@ -5777,7 +5791,7 @@ impl GitBackend for Libgit2Backend {
             Ok(repo
                 .find_tag(oid)
                 .ok()
-                .and_then(|t| t.message().map(crate::git::tag::has_signature_block))
+                .and_then(|t| t.message().ok().flatten().map(crate::git::tag::has_signature_block))
                 .unwrap_or(false))
         })?;
         if !signed {
@@ -5817,7 +5831,7 @@ impl GitBackend for Libgit2Backend {
             let mut out = Vec::with_capacity(reflog.len());
             for entry in reflog.iter() {
                 let oid = entry.id_new();
-                let raw_msg = entry.message().unwrap_or("");
+                let raw_msg = entry.message().ok().flatten().unwrap_or("");
                 let (op, message) = parse_reflog_op(raw_msg);
                 out.push(ReflogEntry {
                     oid: oid.to_string(),
@@ -5868,7 +5882,7 @@ impl GitBackend for Libgit2Backend {
             let branch = head
                 .as_ref()
                 .filter(|h| h.is_branch())
-                .and_then(|h| h.shorthand().map(str::to_string));
+                .and_then(|h| h.shorthand().ok().map(str::to_string));
             let head_oid = head
                 .and_then(|h| h.peel_to_commit().ok())
                 .map(|c| c.id().to_string());
@@ -6287,7 +6301,7 @@ impl GitBackend for Libgit2Backend {
             let current = repo.workdir().map(|p| p.to_path_buf());
             let names = repo.worktrees()?;
             let mut out = Vec::new();
-            for name in names.iter().flatten() {
+            for name in names.iter().flatten().flatten() {
                 // One unreadable worktree must not take the whole list with it.
                 if let Ok(info) = crate::git::worktree::info(repo, name, current.as_deref()) {
                     out.push(info);
@@ -6383,7 +6397,7 @@ impl GitBackend for Libgit2Backend {
         self.with_repo(repo_id, |repo| {
             let names = repo.worktrees()?;
             let mut pruned = Vec::new();
-            for name in names.iter().flatten() {
+            for name in names.iter().flatten().flatten() {
                 let Ok(wt) = repo.find_worktree(name) else {
                     continue;
                 };
@@ -6598,10 +6612,10 @@ fn commit_to_info(commit: &git2::Commit<'_>) -> CommitInfo {
     // only to slice it.
     let oid = commit.id().to_string();
     let short_oid = oid[..7].to_string();
-    let summary = commit.summary().unwrap_or("").to_string();
+    let summary = commit.summary().ok().flatten().unwrap_or("").to_string();
     let body = commit
         .message()
-        .unwrap_or("")
+        .unwrap_or_default()
         .split_once("\n\n")
         .map(|(_, rest)| rest.trim_end().to_string())
         .filter(|s| !s.is_empty());

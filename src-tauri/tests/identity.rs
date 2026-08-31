@@ -178,8 +178,8 @@ fn a_machine_with_no_identity_can_be_told_who_it_is() {
     let commit = repo
         .find_commit(git2::Oid::from_str(&result.oid).unwrap())
         .unwrap();
-    assert_eq!(commit.author().name(), Some("Ada Lovelace"));
-    assert_eq!(commit.author().email(), Some("ada@example.com"));
+    assert_eq!(commit.author().name().ok(), Some("Ada Lovelace"));
+    assert_eq!(commit.author().email().ok(), Some("ada@example.com"));
 
     // --- 5. Rewriting it overwrites rather than appending a second pair — a
     // duplicated key in a git config is legal and the LAST one wins, so an

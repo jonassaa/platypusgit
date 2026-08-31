@@ -70,7 +70,7 @@ pub fn declared_submodule_paths(repo: &Repository) -> HashSet<String> {
         return HashSet::new();
     };
     subs.iter()
-        .filter(|sm| sm.url().is_some_and(|u| !u.is_empty()))
+        .filter(|sm| sm.url().ok().flatten().is_some_and(|u| !u.is_empty()))
         .map(|sm| sm.path().to_string_lossy().to_string())
         .collect()
 }
@@ -81,6 +81,7 @@ pub fn list(repo: &Repository) -> AppResult<Vec<SubmoduleInfo>> {
     for sm in repo.submodules()? {
         let name = sm
             .name()
+            .ok()
             .map(str::to_string)
             .unwrap_or_else(|| String::from_utf8_lossy(sm.name_bytes()).to_string());
         let path = sm.path().to_string_lossy().to_string();
@@ -93,8 +94,8 @@ pub fn list(repo: &Repository) -> AppResult<Vec<SubmoduleInfo>> {
         out.push(SubmoduleInfo {
             name,
             path,
-            url: sm.url().map(str::to_string),
-            branch: sm.branch().map(str::to_string),
+            url: sm.url().ok().flatten().map(str::to_string),
+            branch: sm.branch().ok().flatten().map(str::to_string),
             head_oid: sm.head_id().map(|o| o.to_string()),
             workdir_oid: sm.workdir_id().map(|o| o.to_string()),
             state: state_from_status(status),

@@ -111,7 +111,7 @@ fn bisect_refs(repo: &Repository, prefix: &str) -> Vec<String> {
     let Ok(refs) = repo.references_glob(&glob) else {
         return Vec::new();
     };
-    refs.filter_map(|r| r.ok().and_then(|r| r.name().map(str::to_string)))
+    refs.filter_map(|r| r.ok().and_then(|r| r.name().ok().map(str::to_string)))
         .collect()
 }
 

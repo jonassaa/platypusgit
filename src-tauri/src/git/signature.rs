@@ -79,7 +79,7 @@ fn configured(cfg: &git2::Config, key: &str) -> Option<ConfiguredValue> {
     // commit would use, and the only one whose scope is worth reporting.
     let entry = cfg.get_entry(key).ok()?;
     Some(ConfiguredValue {
-        value: entry.value()?.to_string(),
+        value: entry.value().ok()?.to_string(),
         scope: scope_of(entry.level()),
     })
 }

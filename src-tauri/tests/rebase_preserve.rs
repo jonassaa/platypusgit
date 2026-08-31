@@ -46,9 +46,9 @@ fn onto_replays_a_step_at_its_own_branch_point() {
     assert!(!status.in_progress);
 
     let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
-    assert_eq!(head.summary().unwrap(), "C on main");
+    assert_eq!(head.summary().unwrap().unwrap(), "C on main");
     assert_eq!(
-        head.parent(0).unwrap().summary().unwrap(),
+        head.parent(0).unwrap().summary().unwrap().unwrap(),
         "A on main",
         "C must sit on the rewritten A, not on F"
     );
@@ -133,12 +133,12 @@ fn a_merge_is_recreated_from_its_rewritten_parents() {
         2,
         "the merge must be recreated as a merge"
     );
-    assert_eq!(head.summary().unwrap(), "Merge branch 'feature'");
+    assert_eq!(head.summary().unwrap().unwrap(), "Merge branch 'feature'");
 
     let first = head.parent(0).unwrap();
     let second = head.parent(1).unwrap();
-    assert_eq!(first.summary().unwrap(), "C on main");
-    assert_eq!(second.summary().unwrap(), "F on feature");
+    assert_eq!(first.summary().unwrap().unwrap(), "C on main");
+    assert_eq!(second.summary().unwrap().unwrap(), "F on feature");
 
     // Both sides' content is present, and the worktree is clean.
     assert!(tr.path().join("f.txt").exists());
@@ -349,7 +349,7 @@ fn a_conflicting_recreated_merge_pauses_and_resumes() {
         2,
         "the resumed step must still be a merge"
     );
-    assert_eq!(head.summary().unwrap(), "Merge branch 'feature'");
+    assert_eq!(head.summary().unwrap().unwrap(), "Merge branch 'feature'");
     assert_eq!(
         std::fs::read_to_string(tr.path().join("shared.txt")).unwrap(),
         "resolved by hand\n",
