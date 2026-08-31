@@ -1388,6 +1388,20 @@ export function getUpdateCapability(): Promise<UpdateCapability> {
   return invoke<UpdateCapability>("get_update_capability");
 }
 
+/**
+ * Watch this repository's working directory for changes (#239), replacing any
+ * existing watch. Only the ACTIVE repository is watched — a second call is a
+ * swap, not an addition, so a tab switch needs no matching stop.
+ */
+export function watchRepo(repoId: string): Promise<void> {
+  return invoke<void>("watch_repo", { repoId });
+}
+
+/** Stop watching. Idempotent — safe to call without knowing whether a watch is running. */
+export function watchStop(): Promise<void> {
+  return invoke<void>("watch_stop");
+}
+
 export function openUrl(url: string): Promise<void> {
   return invoke("open_url", { url });
 }

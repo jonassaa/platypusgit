@@ -879,6 +879,17 @@ interface PersistedState {
    * would want to import. It lives beside `dismissedVersion` in the update
    * store's own localStorage key.
    */
+  /**
+   * Whether the app watches the working copy so it stays live (#239).
+   *
+   * Default ON: the app being right without being asked is the point, and the
+   * watcher is ignore-aware so a `target/` or `node_modules/` write costs
+   * nothing. Off is for the cases where an OS watch is genuinely the wrong
+   * tool — a network mount where recursive watching is expensive or
+   * unsupported, or a repository large enough that the user would rather
+   * refresh by hand than pay for it.
+   */
+  watchFilesystem: boolean;
   updateCheckMode: UpdateCheckMode;
   /**
    * Which releases update checks consider — see UpdateChannel.
@@ -979,6 +990,7 @@ const DEFAULTS: PersistedState = {
   diffContextMode: "wholeFile",
   ignoreWhitespaceInDiff: false,
   externalDiffTool: "",
+  watchFilesystem: true,
   updateCheckMode: "auto",
   updateChannel: "stable",
   lastCreateDir: "",

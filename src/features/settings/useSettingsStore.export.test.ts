@@ -87,6 +87,11 @@ const PORTABLE = [
   // `updateCheckMode` beside it made.
   "updateChannel",
   "updateCheckMode",
+  // The filesystem watcher (#239). Portable: whether you want the app to
+  // notice outside edits is a preference, not a fact about this machine.
+  // Someone who turns it off for a network mount will want it off on the
+  // next network mount too.
+  "watchFilesystem",
 ];
 
 /** Machine-specific, so deliberately absent from an export. */

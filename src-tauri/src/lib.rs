@@ -13,6 +13,7 @@ pub mod reveal;
 pub mod ssh;
 pub mod state;
 pub mod update;
+pub mod watcher;
 
 use std::sync::{Arc, Mutex};
 
@@ -205,6 +206,8 @@ pub fn run() {
         // git-transport credential path — see forge/token.rs for why the two
         // must never share storage.
         .manage(commands::forge::ForgeTokens::default())
+        // One live filesystem watch, on the active repository (#239).
+        .manage(watcher::WatchState::default())
         .manage(commands::cli::CliLaunchState(Mutex::new(initial_intent)))
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
@@ -343,6 +346,8 @@ pub fn run() {
             commands::ssh::ssh_key_generate,
             commands::update::check_for_update,
             commands::update::get_update_capability,
+            commands::watch::watch_repo,
+            commands::watch::watch_stop,
             commands::update::open_url,
             commands::forge::forge_detect,
             commands::forge::forge_sign_in,

@@ -149,6 +149,17 @@ export function SettingsScreen() {
             }
           />
           <Row
+            label="Watch the working copy"
+            hint="Notice edits made outside the app — in your editor or a terminal — and keep the file list and history up to date without a manual refresh. Ignored files are skipped, so a build directory costs nothing."
+            control={
+              <PGToggle
+                data-testid="watch-filesystem"
+                checked={s.watchFilesystem}
+                onChange={(v) => s.set("watchFilesystem", v)}
+              />
+            }
+          />
+          <Row
             label="Auto-fetch"
             hint="Periodically run fetch in the background so ahead/behind counts stay fresh."
             control={

@@ -632,6 +632,25 @@ export interface CliInstallOutcome {
  */
 export type UpdateChannel = "stable" | "prerelease";
 
+/**
+ * One coalesced filesystem change (#239). Mirrors Rust `watcher.rs::FsChange`.
+ *
+ * One event per debounce batch, never per file, and always tagged with the
+ * repository it came from — a watch is swapped on tab switch, but an event can
+ * already be in flight when that happens, so the listener drops anything that
+ * is not the active tab's.
+ */
+export interface FsChange {
+  repoId: string;
+  /**
+   * A ref moved, so the log and branch list need re-reading too. `false` means
+   * a status refresh is enough — the distinction is the whole reason the
+   * backend classifies rather than just saying "something changed": repainting
+   * history on every file save would make the feature cost more than it saves.
+   */
+  refsMoved: boolean;
+}
+
 export interface UpdateInfo {
   available: boolean;
   currentVersion: string;
