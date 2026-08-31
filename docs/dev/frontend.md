@@ -446,6 +446,46 @@ const composer = useCommitComposer({ repoId, branch, ticketPattern, message, set
 - Composes with what was already there: sign-off, co-author / author-override
   and recent-message recall all still read and write the same box.
 
+## The filesystem watcher's refresh policy (#239)
+
+The backend decides WHETHER an event is interesting (`watcher.rs`, and the
+architecture doc's entry for it); the frontend decides **how much to refresh**,
+in `features/repo/fsWatchPlan.ts`. It is pure and separate from the
+subscription because the four ways it can be wrong are all real bugs:
+
+- **Another repository's event.** `useRepoStore` holds exactly ONE repository's
+  state — the active tab's — so applying another tab's event writes its status
+  over the open one. The backend watches only the active repo, but an event can
+  already be in flight when the tab switches, which is exactly why the payload
+  carries `repoId`. Both halves of the guard are needed; they fail differently.
+- **An operation in flight.** A rebase or a merge writes to `.git/` in a storm,
+  and a refresh landing mid-transition can read a half-applied state. The plan
+  returns `none` whenever `RepoActivity` is non-empty. Skipping loses nothing:
+  every operation refreshes on completion anyway, so only the flicker of
+  intermediate states is dropped.
+- **A file save repainting history.** `refsMoved` is the whole reason the
+  backend classifies instead of just saying "something changed": a status
+  refresh is cheap and a log refresh is not.
+- **An event after the setting is off.** Otherwise "off" is off with
+  exceptions.
+
+`useFsWatch` mounts two effects with deliberately different lifetimes: the
+`fs://changed` **subscription** is app-global and mounted once (like
+`net://progress` — re-subscribing per repository opens a window on every tab
+switch where events are silently dropped), while the **watch** follows the
+active repository and the setting. `watch_repo` is a swap on the backend, so a
+tab switch needs no matching stop, and `watch_stop` is idempotent so the caller
+never has to track whether one was running.
+
+Refreshes coalesce rather than queue: a burst produces at most one more refresh
+after the current one, and `mergeRefresh` keeps a queued `status` from
+downgrading a pending `all`.
+
+The watcher's refresh deliberately does **not** join `RepoActivity`. That is
+for operations the user started and can cancel; this is background upkeep, and
+a status line that flickered on every keystroke in someone's editor would be
+noise. It *reads* `RepoActivity` instead, to know when to stay out of the way.
+
 ## Undo the last operation (#242)
 
 `features/repo/undoStack.ts` is the whole model, and it is deliberately small:

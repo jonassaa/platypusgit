@@ -37,6 +37,7 @@ import {
   applyRebaseProgress,
   useRepoStore,
 } from "@/features/repo/useRepoStore";
+import { useFsWatch } from "@/features/repo/useFsWatch";
 import { ActivityStatus } from "@/features/repo/ActivityStatus";
 import { LoadingStatus } from "@/features/repo/LoadingStatus";
 import { primaryActivity } from "@/features/repo/repoActivity";
@@ -229,6 +230,10 @@ export function AppShell() {
       for (const sub of subs) void sub.then((un) => un()).catch(() => {});
     };
   }, []);
+
+  // The working copy stays live while the user is in another window (#239).
+  // App-global subscription inside; the watch itself follows this repository.
+  useFsWatch(repo?.id ?? null);
 
   const autoFetchEnabled = useSettingsStore((s) => s.autoFetchEnabled);
   const autoFetchMinutes = useSettingsStore((s) => s.autoFetchMinutes);

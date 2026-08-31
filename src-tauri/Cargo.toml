@@ -59,6 +59,7 @@ base64 = "0.23"
 # lets the SSH panel list N keys with zero subprocesses. Already in the tree
 # transitively, so this declares it rather than adding it.
 sha2 = "0.11"
+notify-debouncer-mini = "0.7.0"
 
 # `setsid()` between fork and exec, for the detached `pgit` launch (#163) —
 # nothing in std reaches it (`Command::process_group` only makes a new process

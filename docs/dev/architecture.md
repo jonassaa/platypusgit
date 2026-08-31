@@ -24,6 +24,26 @@ opener.rs        URLs/paths → OS default handler. SECURITY-critical: safe_url
 update.rs        Update discovery: semver compare, dev-build (0.0.0) short-circuit
                  before any network call, GitHub release parsing, ureq w/ timeout +
                  https_only. Logic only — handlers live in commands/update.rs
+watcher.rs       Filesystem watching so the working copy is live (#239).
+                 notify-debouncer-mini around a RecommendedWatcher, ONE live
+                 watch (WatchState) on the ACTIVE repository — a second
+                 watch_repo REPLACES rather than stacks. The value is in what
+                 it DROPS: classify() sorts each path into Noise / Ref / State
+                 / Worktree, and only Ref asks for the expensive log refresh,
+                 so a file save cannot repaint history. `.lock` files are
+                 Noise (git STARTING work, not finishing it — honouring them
+                 doubles every event and fires the first mid-write), and so
+                 are objects/, logs/, COMMIT_EDITMSG and FETCH_HEAD.
+                 classify() takes BOTH the gitdir and the commondir and tries
+                 them in that order: in a linked worktree HEAD and index live
+                 in the worktree's gitdir while refs live in the shared
+                 commondir, and the gitdir is INSIDE the commondir, so
+                 matching the commondir first would miss every worktree branch
+                 switch. Ignore filtering uses the watcher's OWN libgit2
+                 handle, not the shared per-repo mutex — see the module's own
+                 note for why (the mutex is held by exactly the rebase/merge
+                 that produces the storm this has to filter). Emits one
+                 fs://changed per debounce batch, tagged with repoId
 cancel.rs        Cancelling an in-flight network git subprocess (#234, #263). A
                  process-wide registry keyed by SCOPE (the clone / one
                  repository), not by op id — the auto-fetch pile has no id a
@@ -354,6 +374,14 @@ commands/        Thin Tauri handlers, one file per area:
 │                stalled clone/fetch/pull/push (#234). See backend.md
 ├── update.rs    check_for_update, get_update_capability, open_url — thin
 │                handlers for src-tauri/src/update.rs (same basename, two files)
+├── watch.rs     watch_repo, watch_stop (#239) — thin over src-tauri/src/
+│                watcher.rs. watch_repo resolves the workdir through the
+│                backend rather than taking a path argument: a path from the
+│                frontend would be a second source of truth for where a
+│                repository lives, and this one registers an OS-level
+│                recursive watch on whatever it is handed. watch_stop is
+│                idempotent, so the frontend can call it on a setting change
+│                without tracking whether anything was running
 ├── history.rs   reset, cherry_pick, revert
 ├── ssh.rs       ssh_key_status, ssh_key_generate (#248) — thin over
 │                src-tauri/src/ssh.rs. Take NO repository: an SSH key belongs to
