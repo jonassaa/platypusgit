@@ -18,6 +18,7 @@ const AVAILABLE: UpdateInfo = {
   notes: "rebase fixes",
   releaseUrl: "https://github.com/jonassaa/platypusgit/releases/tag/v0.1.0",
   publishedAt: "2026-07-08T10:00:00Z",
+  prerelease: false,
 };
 
 function reset() {

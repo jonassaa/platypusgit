@@ -23,6 +23,7 @@ import {
   type ThemeColors,
   type ThemeDef,
   type ThemeFollowMode,
+  type UpdateChannel,
   type UpdateCheckMode,
 } from "@/features/settings/useSettingsStore";
 import {
@@ -753,6 +754,37 @@ function UpdatesSection() {
                 { value: "auto", label: "Automatically" },
                 { value: "manual", label: "Only when I ask" },
                 { value: "never", label: "Never" },
+              ]}
+            />
+          }
+        />
+        <Row
+          label="Release channel"
+          hint={
+            <>
+              <strong>Stable</strong> offers published releases only.{" "}
+              <strong>Include prereleases</strong> also offers release
+              candidates — newer, and not yet shipped to everyone. It adds
+              prereleases to what you are offered rather than restricting you to
+              them, so a stable release still wins whenever it is the newest
+              thing published. Switching back to Stable does not downgrade an
+              install; it just stops offering the next candidate.
+              {/*
+                Left enabled when checks are off. The preference is still real —
+                it persists and travels in a settings export — and a control
+                that appeared and disappeared as the row above changed would be
+                worse than one that is simply not consulted right now.
+              */}
+            </>
+          }
+          control={
+            <PGSelect
+              data-testid="update-channel"
+              value={settings.updateChannel}
+              onChange={(v) => settings.set("updateChannel", v as UpdateChannel)}
+              options={[
+                { value: "stable", label: "Stable" },
+                { value: "prerelease", label: "Include prereleases" },
               ]}
             />
           }

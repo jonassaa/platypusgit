@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { PullMode } from "@/lib/tauri";
+import type { UpdateChannel } from "@/lib/types";
 import {
   DEFAULT_HEAD_WEIGHT,
   HEAD_WEIGHTS,
@@ -765,6 +766,15 @@ export const UPDATE_CHECK_MODES: readonly UpdateCheckMode[] = [
   "never",
 ];
 
+/**
+ * Re-exported so the Settings screen imports its preference types from one
+ * place; the definition lives in `@/lib/types` with the other Rust mirrors,
+ * because the backend is what has to agree with it.
+ */
+export type { UpdateChannel };
+
+export const UPDATE_CHANNELS: readonly UpdateChannel[] = ["stable", "prerelease"];
+
 // ═════════════════════════════════════════════════════════════════════════════
 // STORE
 // ═════════════════════════════════════════════════════════════════════════════
@@ -870,6 +880,19 @@ interface PersistedState {
    * store's own localStorage key.
    */
   updateCheckMode: UpdateCheckMode;
+  /**
+   * Which releases update checks consider — see UpdateChannel.
+   *
+   * A preference rather than machine state, so it belongs in the portable bag
+   * and travels with an export: "this team tests the prereleases" is exactly
+   * the kind of thing a shared settings file should carry.
+   *
+   * Switching back to `"stable"` while running a prerelease does NOT offer a
+   * downgrade. The stable release is older, `compute_available` says no, and
+   * the panel says up to date — which is honest: the app cannot un-install a
+   * version, and pretending otherwise would produce a prompt that fails.
+   */
+  updateChannel: UpdateChannel;
   /** Parent directory last used for Clone/Init, prefilled next time. */
   lastCreateDir: string;
 }
@@ -957,6 +980,7 @@ const DEFAULTS: PersistedState = {
   ignoreWhitespaceInDiff: false,
   externalDiffTool: "",
   updateCheckMode: "auto",
+  updateChannel: "stable",
   lastCreateDir: "",
 };
 

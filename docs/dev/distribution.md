@@ -141,6 +141,46 @@ Two things are load-bearing about *where* this lives:
 The per-version snooze (`dismissedVersion` / `shouldNag`) is orthogonal and
 unchanged — that is "not this release", not "not ever".
 
+### The channel is two endpoints, not one endpoint plus a filter
+
+`updateChannel` (`PersistedState`, default `"stable"`) selects which releases a
+check considers, and the two channels hit **different GitHub endpoints**
+(`update.rs::fetch_for_channel`):
+
+- `stable` → `GET /releases/latest`. This is GitHub's own answer to "what is the
+  current release": it excludes prereleases and drafts server-side and honours
+  `make_latest`. Re-deriving that by filtering the full list would mean
+  re-implementing a rule GitHub already applies — and getting it wrong in
+  exactly the place the release process already has traps (see the prerelease
+  promote notes: clearing `prerelease` does **not** move `releases/latest`).
+- `prerelease` → `GET /releases?per_page=30`, then `pick_newest`, which takes the
+  **semver-highest** entry rather than the first. GitHub orders that list by
+  creation date, so list order is the wrong answer whenever a patch on an older
+  line is published after a newer candidate. Precedence is also what makes
+  `0.3.0` correctly beat its own `0.3.0-rc.2`.
+
+`prerelease` means "offer me prereleases **as well**", never "only prereleases" —
+so someone on that channel still gets a stable release when it is the newest
+thing published. One page is enough because the list is newest-first by date, so
+the newest release under any ordering is on it.
+
+Two consequences worth knowing before changing this:
+
+- **Switching back to `stable` does not downgrade.** The stable release is older
+  than the running prerelease, `compute_available` says no, and the panel says
+  up to date. That is honest — the app cannot un-install a version, and offering
+  a "downgrade" would produce a prompt whose install fails.
+- **`UpdateInfo.prerelease` is GitHub's flag, not a re-parse of the tag.** The
+  two disagree in both directions: a `-rc.1` tag can be published as a full
+  release, and a plain `v0.3.0` tag can be flagged prerelease. The panel's
+  badge reads the flag, so the label cannot contradict the channel that found
+  the release.
+
+The channel is portable (it travels in a #254 settings export): "this team
+tracks the prereleases" is a team decision, not a fact about one machine — the
+same call `updateCheckMode` made. The check-mode gate still outranks it: `never`
+makes no request whatever the channel is set to.
+
 ## Permissions (Tauri 2)
 
 - Shared permissions in `src-tauri/capabilities/default.json`: `core:default`,

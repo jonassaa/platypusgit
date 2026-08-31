@@ -74,6 +74,26 @@ export function UpdatePanel() {
       >
         <span style={{ fontWeight: 600, color: "var(--fg-0)" }}>
           Update available — {info.latestVersion}
+          {/*
+            Only reachable from the prerelease channel, and worth saying out
+            loud there: the whole reason to name it is that the user opted into
+            being offered something not yet shipped to everyone, and the
+            version string alone does not always show it (a release flagged
+            prerelease can carry a plain tag).
+          */}
+          {info.prerelease && (
+            <span
+              data-testid="update-prerelease-badge"
+              style={{
+                marginLeft: 6,
+                fontWeight: 500,
+                fontSize: "var(--fs-10)",
+                color: "var(--fg-2)",
+              }}
+            >
+              prerelease
+            </span>
+          )}
         </span>
         <PGIconButton
           icon="x"
