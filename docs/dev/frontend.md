@@ -446,6 +446,54 @@ const composer = useCommitComposer({ repoId, branch, ticketPattern, message, set
 - Composes with what was already there: sign-off, co-author / author-override
   and recent-message recall all still read and write the same box.
 
+## Undo the last operation (#242)
+
+`features/repo/undoStack.ts` is the whole model, and it is deliberately small:
+an entry is a **before/after pair of HEAD snapshots** plus what produced them.
+Undo moves HEAD from `after` back to `before`; redo moves it forward. It does
+not replay operations backwards, it moves a ref — git keeps the old commits
+reachable through the reflog, so undoing a commit costs and loses nothing.
+
+`undoStack` + `undoCursor` live in `RepoSlice`, so the stack is per repository
+and a tab switch cannot carry it. Session-scoped rather than persisted on
+purpose: an entry is only meaningful while the recorded HEAD is still where the
+operation left it, so a stack restored from disk would mostly be entries that
+refuse. The reflog is the durable answer, and the refusals say so.
+
+**What pushes an entry:** the operations that move HEAD — commit (including
+amend), checkout, merge, cherry-pick, revert, reset. `noteUndo` is called after
+the op's own `refreshAll()`, and is guarded on the repository the way
+`setErrorFor` is, so an op resolving after a tab switch writes nothing.
+`pushUndo` drops an entry whose before and after are identical, so a checkout
+of the branch you are already on records nothing rather than an entry ⌘Z would
+appear to apply and then not.
+
+**What does not, and why the absence is the safe failure:** a push (the remote
+has it, and rewriting someone else's history is not an undo), a dropped stash,
+branch create/delete/rename (they move a ref that is not HEAD and need their own
+inverse), and rebase (its own engine, its own retained summary; folding it in
+without thinking through an interrupted plan would be an undo that lies).
+Anything absent simply records nothing, so ⌘Z undoes the last thing that *is*
+undoable.
+
+**Preconditions are re-read from the backend at undo time**, never from cached
+state: `head_info` plus a fresh status. The paged log can never answer "is HEAD
+still where I left it". On a mismatch it refuses and changes nothing, with a
+message that names the operation and points at the reflog.
+
+A refusal is **not** an `AppError`. Nothing was attempted, the TS union stays
+1:1 with the Rust enum, and there is no variant for a frontend-only condition —
+so it is a `pgFlash`, the way `ops.ts` already refuses "no upstream".
+
+**The confirmation lives in `ops.ts`, not the store**, matching
+`deleteUntracked`: the store is also the layer a keyboard shortcut reaches, so
+it performs and does not ask. The store then re-checks preconditions *after*
+the dialog is answered, because the world can move while it is open.
+
+`undoOp`/`redoOp` answer **synchronously** and return `false` when the stack is
+empty — that is what keeps `Mod+Z` from being stolen from every text field in
+the app; the chord falls through and still undoes typing.
+
 ## The log is paged (#68 G11)
 
 - **`s.commits` is a PREFIX of history** (`PAGE_SIZE = 500`, appended;

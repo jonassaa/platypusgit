@@ -5,7 +5,7 @@
 
 import { open } from "@tauri-apps/plugin-dialog";
 import { error as logError } from "@tauri-apps/plugin-log";
-import { pgFlash } from "@/design";
+import { pgConfirm, pgFlash } from "@/design";
 import { describeError } from "@/lib/errors";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -13,6 +13,14 @@ import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { currentBranch, isConflicted, isStaged, isUnstaged } from "@/lib/derive";
 import type { FileStatus } from "@/lib/types";
 import { useRepoStore } from "./useRepoStore";
+import {
+  describeUndo,
+  needsConfirm,
+  redoable,
+  shortOid,
+  undoable,
+  type UndoDirection,
+} from "./undoStack";
 import { useTabsStore } from "./useTabsStore";
 
 /** Derive the [remote, branch] pair from the HEAD branch's upstream tracking ref. */
@@ -182,5 +190,64 @@ export function resolveConflictsOp(): boolean {
     return true;
   }
   void openMergeWindow(repo.current.id);
+  return true;
+}
+
+/**
+ * Undo (or redo) the last recorded operation (#242).
+ *
+ * The confirmation lives HERE rather than in the store, matching
+ * `deleteUntracked`: the store is also the layer a keyboard shortcut reaches,
+ * so it performs and does not ask. The store re-checks preconditions after
+ * this dialog is answered, because the world can move while it is open.
+ *
+ * The dialog names the operation — "Undo merge of feat/x?", never a bare
+ * "Undo". Knowing what is about to happen is the entire point of the feature:
+ * an undo you cannot predict is another way to lose work.
+ */
+async function applyUndoOp(direction: UndoDirection): Promise<void> {
+  const s = useRepoStore.getState();
+  const entry = direction === "undo" ? undoable(s) : redoable(s);
+  // The synchronous runners above already established there is one; this
+  // re-read is what makes the function safe to call on its own.
+  if (!s.current || !entry) return;
+
+  if (needsConfirm(entry)) {
+    const verb = direction === "undo" ? "Undo" : "Redo";
+    const target = direction === "undo" ? entry.before : entry.after;
+    const ok = await pgConfirm({
+      title: `${describeUndo(entry, direction)}?`,
+      body:
+        `This moves the branch to ${shortOid(target.oid)} and resets the working ` +
+        `copy to match. Nothing is deleted — the commits stay reachable through ` +
+        `the reflog.`,
+      confirmLabel: verb,
+      danger: true,
+    });
+    if (!ok) return;
+  }
+
+  await useRepoStore.getState().applyUndo(direction);
+}
+
+/**
+ * Both runners answer SYNCHRONOUSLY, like every other op here: the dispatcher
+ * needs to know immediately whether the action was claimed.
+ *
+ * Declining when the stack is empty is what keeps `Mod+Z` from being stolen
+ * from text fields — the chord falls through to the browser and still undoes
+ * typing, which is the behaviour anyone pressing it in a message box expects.
+ */
+export function undoOp(): boolean {
+  const s = useRepoStore.getState();
+  if (!s.current || !undoable(s)) return false;
+  void applyUndoOp("undo");
+  return true;
+}
+
+export function redoOp(): boolean {
+  const s = useRepoStore.getState();
+  if (!s.current || !redoable(s)) return false;
+  void applyUndoOp("redo");
   return true;
 }

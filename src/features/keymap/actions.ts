@@ -21,9 +21,11 @@ import {
   openRepoOp,
   pullCurrentOp,
   pushCurrentOp,
+  redoOp,
   refreshOp,
   resolveConflictsOp,
   stageAllOp,
+  undoOp,
   unstageAllOp,
 } from "@/features/repo/ops";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -82,6 +84,8 @@ export type ActionId =
   | "repo.fetch"
   | "repo.pull"
   | "repo.push"
+  | "repo.undo"
+  | "repo.redo"
   | "repo.refresh"
   | "repo.stageAll"
   | "repo.unstageAll"
@@ -402,6 +406,13 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
   "repo.fetch": { id: "repo.fetch", title: "Fetch all remotes", category: "Repository", scope: "global", run: fetchAllOp },
   "repo.pull": { id: "repo.pull", title: "Pull (update project)", category: "Repository", scope: "global", run: pullCurrentOp },
   "repo.push": { id: "repo.push", title: "Push", category: "Repository", scope: "global", run: pushCurrentOp },
+  // Undo/redo name the operation at DISPATCH time (the ops read the stack), so
+  // the palette row here carries the generic title and the confirmation says
+  // "Undo merge of feat/x?". Both runners return false when there is nothing to
+  // undo, which lets Mod+Z fall through to the browser and still undo typing in
+  // a text field — the behaviour anyone would expect from that chord.
+  "repo.undo": { id: "repo.undo", title: "Undo last operation", category: "Repository", scope: "global", run: undoOp },
+  "repo.redo": { id: "repo.redo", title: "Redo last undone operation", category: "Repository", scope: "global", run: redoOp },
   "repo.refresh": { id: "repo.refresh", title: "Refresh repository", category: "Repository", scope: "global", run: refreshOp },
   "repo.stageAll": { id: "repo.stageAll", title: "Stage all changes", category: "Repository", scope: "global", run: stageAllOp },
   "repo.unstageAll": { id: "repo.unstageAll", title: "Unstage all changes", category: "Repository", scope: "global", run: unstageAllOp },

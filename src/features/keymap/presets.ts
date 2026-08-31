@@ -28,6 +28,11 @@ const POWER_SHORTCUTS = {
   "commit.commit": ["Mod+Enter"],
   "commit.commitAndPush": ["Mod+Shift+Enter"],
   "commit.toggleAmend": ["Mod+Shift+M"],
+  // The chord everyone already reaches for when they have just done the wrong
+  // thing. Both runners decline when the stack is empty, so this does not steal
+  // Mod+Z from text fields.
+  "repo.undo": ["Mod+Z"],
+  "repo.redo": ["Mod+Shift+Z"],
   "repo.stageAll": ["Mod+Shift+S"],
   "repo.unstageAll": ["Mod+Shift+U"],
   "branch.createNew": ["Mod+N"],

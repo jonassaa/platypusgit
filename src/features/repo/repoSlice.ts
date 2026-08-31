@@ -41,6 +41,7 @@ import { LOG_REF_ALL } from "@/lib/types";
 import type { AppError, HookRejection } from "@/lib/errors";
 import type { RepoActivity } from "./repoActivity";
 import type { LoadingTask } from "./loadingTasks";
+import { emptyUndo, type UndoEntry } from "./undoStack";
 
 export const DEFAULT_REBASE_STATUS: RebaseStatus = {
   inProgress: false,
@@ -192,6 +193,22 @@ export interface RepoSlice {
    * banner reading "NoSignature" and no way to fix it from inside the app.
    */
   noSignature: boolean;
+  /**
+   * Operations that can be undone in this repository (#242), oldest first.
+   *
+   * Per-repo, and therefore here: ⌘Z in one tab must never undo something that
+   * happened in another. Session-scoped by design rather than persisted — an
+   * entry is only meaningful while the recorded HEAD is still where the
+   * operation left it, and a stack restored from disk would mostly be entries
+   * that refuse. The reflog is the durable answer, and the refusals point at
+   * it.
+   */
+  undoStack: UndoEntry[];
+  /**
+   * How many entries are still "done" — the index of the next one to undo.
+   * Equal to `undoStack.length` when nothing has been undone. See undoStack.ts.
+   */
+  undoCursor: number;
 }
 
 /**
@@ -231,6 +248,7 @@ export function emptySlice(): RepoSlice {
     cancelRequested: false,
     hookRejection: null,
     noSignature: false,
+    ...emptyUndo(),
   };
 }
 
