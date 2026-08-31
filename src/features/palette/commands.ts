@@ -13,6 +13,7 @@ import { useTabsStore } from "@/features/repo/useTabsStore";
 import { openCompare } from "@/features/compare/useCompareStore";
 import { WORKDIR } from "@/features/compare/compareSides";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
+import { activePins } from "@/features/branches/pins";
 import { summarizeFastForward } from "@/features/branches/fastForward";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { usePaletteStore } from "./usePaletteStore";
@@ -85,7 +86,10 @@ export function branchItems({
   // outranks the pinned default there. The pin is honoured in the picker, the
   // Branches screen and the pick steps; the root step is a relevance ranking
   // and deliberately stays one.
-  return orderBranchesGrouped(filter ? rows.filter(filter) : rows).map((b) => ({
+  return orderBranchesGrouped(
+    filter ? rows.filter(filter) : rows,
+    activePins(),
+  ).map((b) => ({
     type: "branch" as const,
     id: `${idPrefix}:${b.isRemote ? "r" : "l"}:${b.name}`,
     search: b.name,

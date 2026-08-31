@@ -6,14 +6,42 @@
 
 import type { BranchInfo } from "@/lib/types";
 
+/** Shared empty set, so the no-pins path allocates nothing. */
+const NO_PINS: ReadonlySet<string> = new Set();
+
 /**
- * Default branch first, then newest tip first, then name ascending.
+ * USER PINS first, then the default branch, then newest tip first, then name
+ * ascending.
  *
  * `isHead` is deliberately NOT read: the current branch is already accent-
  * coloured and badged, it is the one branch the picker exists to leave, and
  * pinning it would push the actual default down for no navigational gain.
+ *
+ * Pins rank ABOVE the default branch (#238). Two reasons, and the second is the
+ * load-bearing one:
+ *
+ *  - #135's pin is a DEFAULT — the app guessing what you want on top. A user
+ *    pin is an instruction. An instruction that loses to a guess is not a pin,
+ *    and the default branch is the one row nobody has trouble finding anyway.
+ *  - The Branches screen hoists pinned branches OUT of the folder tree, above
+ *    it. Ranking pins second here would put the comparator (default first) and
+ *    that screen (pins first) in permanent disagreement about the same list.
+ *
+ * With nothing pinned this is exactly #135's order, which is why its tests are
+ * untouched — and pinning the default branch alone still changes nothing.
+ *
+ * A pin matches `name` exactly, so pinning `feat/foo` does not also pin
+ * `origin/feat/foo` — they are two rows in two sections, and the user pinned
+ * one of them.
  */
-export function compareBranches(a: BranchInfo, b: BranchInfo): number {
+export function compareBranches(
+  a: BranchInfo,
+  b: BranchInfo,
+  pins: ReadonlySet<string> = NO_PINS,
+): number {
+  const aPinned = pins.has(a.name);
+  const bPinned = pins.has(b.name);
+  if (aPinned !== bPinned) return aPinned ? -1 : 1;
   if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
   if (a.tipTime !== b.tipTime) return b.tipTime - a.tipTime;
   // Plain comparison, not localeCompare: branches cut from one commit all share
@@ -32,8 +60,11 @@ export function compareBranches(a: BranchInfo, b: BranchInfo): number {
  * filter first and order second, so a query that excludes the default branch
  * keeps excluding it.
  */
-export function orderBranches<T extends BranchInfo>(rows: readonly T[]): T[] {
-  return [...rows].sort(compareBranches);
+export function orderBranches<T extends BranchInfo>(
+  rows: readonly T[],
+  pins: ReadonlySet<string> = NO_PINS,
+): T[] {
+  return [...rows].sort((a, b) => compareBranches(a, b, pins));
 }
 
 /**
@@ -48,9 +79,10 @@ export function orderBranches<T extends BranchInfo>(rows: readonly T[]): T[] {
  */
 export function orderBranchesGrouped<T extends BranchInfo>(
   rows: readonly T[],
+  pins: ReadonlySet<string> = NO_PINS,
 ): T[] {
   return [
-    ...orderBranches(rows.filter((r) => !r.isRemote)),
-    ...orderBranches(rows.filter((r) => r.isRemote)),
+    ...orderBranches(rows.filter((r) => !r.isRemote), pins),
+    ...orderBranches(rows.filter((r) => r.isRemote), pins),
   ];
 }
