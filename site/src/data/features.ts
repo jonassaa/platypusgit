@@ -144,19 +144,89 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '0.1.2',
-    date: '2026-08-27',
-    status: 'improvements & fixes',
+    version: '0.2.0',
+    date: '2026-08-31',
+    status: 'features & a fourth Windows channel',
     summary:
-      'A log that can describe a hang instead of falling silent, and that you can find from Settings without knowing a per-platform path. The Windows installer also stops telling Add/Remove Programs that GitHub published it.',
+      'platypusgit is packaged for the Microsoft Store, so Windows users can install it without a SmartScreen warning and let the Store keep it updated. Alongside it: find in diff, image previews, commit-message help that honours your repository conventions, branch folders, fast-forward without checking out, and an SSH key you can generate from the failure that needed it.',
     sections: [
       {
         title: 'New features',
         items: [
           {
-            title: 'Settings → Diagnostics: find the log, and hand it to someone',
+            title: 'On the Microsoft Store, as an MSIX package',
             detail:
-              'The log path, a Show file button that opens it in your file manager, and Copy last 500 lines. The copy puts the version, the environment line and the path on the clipboard alongside the tail, because 500 lines may not reach back to the startup header — so a pasted report describes itself even when the interesting part scrolled that header away. Until now the log lived at a per-platform path documented nowhere a user could see.',
+              'A fourth Windows channel beside the `.msi`, the Scoop bucket and winget — the same binary, packaged so the Store signs it and delivers its updates. That removes the SmartScreen warning a new user meets on first download, which until now could only be bought away with a code-signing certificate. A Store install stands its own updater down and says so: the update panel names the Store rather than offering an install that could not work, because the package is read-only and Windows refuses to launch one whose files were changed. `pgit` still works, through a Windows app execution alias instead of a PATH entry.',
+          },
+          {
+            title: 'Find in diff (Mod+F)',
+            detail:
+              'A find bar on every diff surface, searching the whole file rather than what happens to be on screen. Diffs are windowed, so the browser\'s own find would only ever have searched a few dozen rows. Matches are highlighted in place and jumping to one scrolls to it precisely. This REPLACES the old "Find in diff" button, which filtered lines away rather than finding them — it could never say where in the file a match was, which is the actual question.',
+          },
+          {
+            title: 'Changed images are previewed, not declared binary',
+            detail:
+              'Old beside new, each with pixel dimensions and byte size, and the delta of both — on all five surfaces that previously printed the same dead-end sentence. Format is detected from the file\'s own bytes rather than its extension. SVG is recognised and refused by name, out loud: it is the one format on the list that can carry script, and rendering it would put that inside the app. Images above 4 MiB are skipped without ever being read.',
+          },
+          {
+            title: 'Commit messages that follow your repository\'s conventions',
+            detail:
+              '`commit.template` seeds the box, a ticket prefix is derived from the branch name, a conventional-commit type and scope picker writes the prefix for you, and 72-character subject guidance shows while you type. `commit.cleanup` is honoured in full, including scissors, and `core.commentChar` including `auto`. Comment stripping follows git\'s actual rule rather than a simplification: a hand-typed `#123 fix` commits as written, exactly as `git commit -m` would, while a template-seeded box strips its comments.',
+          },
+          {
+            title: 'Fast-forward a branch without checking it out',
+            detail:
+              'An action on any local branch row, a "Fast-forward all" button, and a palette entry. `main` falling behind while you work on a feature branch used to cost a stash, two working-copy rewrites and a checkout back. Refusals are states rather than errors: a diverged branch says so and does not move, already-current reports no change instead of failing, and a branch checked out in another worktree is refused — moving that ref would make every file look deleted in the other checkout.',
+          },
+          {
+            title: 'The branch list groups into folders',
+            detail:
+              'Branches group into a collapsible tree on `/`, arbitrarily deep, with single-child chains compressed — a lone `feat/foo/bar` stays one row rather than three nested ones, because a prefix that groups nothing is part of the name. Folds are remembered per repository. Remote branches group under their remote for free.',
+          },
+          {
+            title: 'Open any diff in your own diff tool',
+            detail:
+              'On file rows in the commit panel, the repo browser, and every read-only diff surface. It shells out to `git difftool`, so `diff.guitool`, `diff.tool` and `difftool.<tool>.cmd` are honoured with no configuration here; a Settings field overrides the tool for anyone who has none configured. Console tools like vimdiff keep the terminal they render in. Until now a merge conflict could be handed to your tool and nothing else could.',
+          },
+          {
+            title: 'Generate an SSH key from the dialog that needed it',
+            detail:
+              'A `git@` remote failing with "Permission denied (publickey)" used to be answered with a passphrase box — a prompt for a problem a passphrase almost never fixes. The credential dialog now lists the keys on the machine, says whether the host rejected one or there was never one to offer, copies the public half, links to the host\'s add-key page, and can generate an ed25519 key. If a requested passphrase does not take, the pair is deleted rather than reported as encrypted when it is not.',
+          },
+          {
+            title: 'Shallow, blobless and single-branch clone — and a notice saying so',
+            detail:
+              'An Advanced section on the Clone dialog: depth, `--filter=blob:none`, single branch, submodules. The app then tells the truth about what that left behind, with a strip on History, File history, Blame and Compare and one-click `git fetch --unshallow`. A shallow clone does not fail — History simply has fewer rows and Blame attributes everything old to one commit, which reads as a repository with a strange past rather than one that is only partly here.',
+          },
+          {
+            title: 'git notes, and blame.ignoreRevsFile',
+            detail:
+              'Notes attached to commits are shown, read per selected commit so the paged log pays nothing for a feature most repositories never use. Every `refs/notes/*` is shown and labelled — hiding one somebody attached is undiscoverable in a GUI. Blame now honours `blame.ignoreRevsFile`, so a repository-wide reformat stops attributing every line to whoever ran the formatter. Where such a file is configured both toggle states go through git itself, so the comparison is like with like.',
+          },
+          {
+            title: 'Follow the system light/dark appearance',
+            detail:
+              'Pair a light theme with a dark one and the window switches with the OS. On a machine that changes at sunset this was the one window that did not. Existing installs keep the theme they had and land on "fixed"; the matching half of the pairing is seeded, so switching to "Follow system" later keeps the theme you were already using. The merge resolver window follows on its own.',
+          },
+          {
+            title: 'Export and import all settings, not just a theme',
+            detail:
+              'A versioned JSON export of every preference, and an import that validates it. Preferences live in browser storage, which is the least durable place they could be — clearing site data or moving machines lost them silently. The exported set is derived from the schema rather than hand-listed, so a preference added later travels by default instead of being forgotten. Import merges onto your current settings, so an older file cannot silently switch update checks back on.',
+          },
+          {
+            title: 'Update checks: automatic, manual, or never',
+            detail:
+              '"Never" makes genuinely no request from any path — the check button is disabled and the update chip is hidden — for a locked-down or offline machine where an accidental click must produce no traffic. "Only when I ask" keeps the button live for people who just want to control the timing. The last-checked timestamp is deliberately per-machine and does not travel in an exported settings file.',
+          },
+          {
+            title: 'Settings → Diagnostics: find the log and hand it to someone',
+            detail:
+              'The log path, a Show file button that opens it in your file manager, and Copy last 500 lines. The copy puts the version, the environment line and the path on the clipboard alongside the tail, because 500 lines may not reach back to the startup header — so a pasted report describes itself even when the interesting part scrolled away. Until now the log lived at a per-platform path documented nowhere a user could see.',
+          },
+          {
+            title: 'Delete an untracked file',
+            detail:
+              'On single rows and multi-select, behind a confirmation. A file that git has any index entry for is refused, including one at a conflict stage, so a merge in progress cannot be deleted as though it were untracked. Containment is checked against the real filesystem rather than the text of the path, because a symlinked directory makes an innocent-looking relative path point outside the worktree. A batch containing one bad path leaves everything untouched.',
           },
         ],
       },
@@ -164,14 +234,34 @@ export const changelog: ChangelogEntry[] = [
         title: 'Improvements',
         items: [
           {
-            title: 'A hung call now leaves a trace instead of a void',
+            title: 'Network operations and rebases say how far along they are',
             detail:
-              'Calls into the backend were logged only once they finished, so one that hung and one that was never dispatched wrote exactly the same thing: nothing. A watchdog now warns when a call is still outstanding after 10 seconds — the only line written *while* a call is in flight, which turns the missing completion line afterwards into evidence rather than an absence. The threshold sits deliberately far above the slow-call mark: a repository on a Windows drive under WSL legitimately spends around ten seconds on the startup fan-out, and a warning that fires every launch is one nobody reads.',
+              'Clone was the only operation that could answer "how far?" — everything else showed the same indeterminate spinner, so a 300 MB fetch and a fetch stalled on a dead host looked identical for their whole duration. Fetch, pull and push now stream real progress, rebase reports step N of M as it goes, and the bar carries an elapsed clock past three seconds plus a Cancel button on the operations that can actually be cancelled. Tag push and remote-branch delete had no indicator at all; LFS, submodule update and forge checkout were cancellable with no button.',
+          },
+          {
+            title: 'A slow refresh names what it is waiting on',
+            detail:
+              'Opening a repository runs ten backend reads at once, and one boolean described all of them — so a nine-second launch said only "syncing…". The status bar now names the longest-running read, and clicking expands the full list with a clock each. It waits 400 ms before appearing: a refresh runs on every tab switch and almost always finishes inside 100 ms, and a corner of the screen that strobes all day is one nobody reads.',
+          },
+          {
+            title: 'F7 leaves a cursor where it lands',
+            detail:
+              '"Go to next change" moved a highlight and a scroll position and nothing else, so the next arrow key started over at the top of the file and the hint about the keypress appeared at the far edge of the window. The caret now lands on the hunk it jumped to, in all four diff surfaces, and the hint renders at the caret. Arrows and Home/End in the read-only diff panes now move that caret instead of scrolling by a fixed amount — consistent with the commit panel, which has behaved this way for some time.',
+          },
+          {
+            title: '"Copy path" means one thing now',
+            detail:
+              'Four of the six Copy path actions were copying a repository-relative path under an absolute label, while two copied an absolute one — the same label meaning two things depending on where you right-clicked. Copy path is now always absolute and Copy relative path is always workdir-relative, beside it. This is a behaviour change: those four actions now copy an absolute path where they previously copied a relative one, and the relative value is one entry away.',
+          },
+          {
+            title: 'A hung call leaves a trace instead of a void',
+            detail:
+              'Calls into the backend were logged only once they finished, so one that hung and one that was never dispatched wrote the same thing: nothing. A warning is now written while a call is still outstanding after ten seconds — the only line written mid-flight, which turns a missing completion line into evidence rather than an absence.',
           },
           {
             title: 'Every launch records what it is running on',
             detail:
-              'One line per start naming the OS, the kernel, whether this is WSL, and the `git` the app will actually spawn — written after the PATH probe, so it names the real one rather than a guess. A missing `git` is spelled out rather than omitted, because it pre-explains every git failure below it. Opening a repository now logs the path on the way in and the outcome on the way out, so three failures that used to produce identical silence now read differently. A repository under `/mnt` on WSL additionally warns that every file check crosses the VM boundary there — not an error, but an unexplained nine-second launch reads as a broken app.',
+              'One line naming the OS, the kernel, whether this is WSL, and the `git` the app will actually spawn — written after the path probe, so it names the real one. Opening a repository logs the path going in and the outcome coming out, so three failures that used to produce identical silence now read differently. A repository under `/mnt` on WSL additionally warns that every file check crosses the VM boundary there: not an error, but an unexplained nine-second launch reads as a broken app.',
           },
         ],
       },
@@ -179,9 +269,24 @@ export const changelog: ChangelogEntry[] = [
         title: 'Fixes',
         items: [
           {
+            title: 'Cancelling a network operation could strand git\'s lock files',
+            detail:
+              'A cancelled fetch or push killed git outright, which could leave `index.lock` or a ref lock behind and make the next operation fail for a reason that had nothing to do with it. The process group is now asked to stop first and only killed if it does not, so git gets the chance to clean up after itself.',
+          },
+          {
             title: 'The folder picker could fail completely silently',
             detail:
-              'Choosing a repository folder went through a call the app was not watching, invoked in a way that discarded its failure — so on a system without a desktop portal, which is the environment most likely to hit this, the dialog simply never appeared and nothing anywhere said why. It now reports the failure. Cancelling still says nothing, as it should.',
+              'Choosing a repository folder went through a call the app was not watching, invoked in a way that discarded its failure — so on a system without a desktop portal, which is the environment most likely to hit it, the dialog simply never appeared and nothing said why. It now reports the failure. Cancelling still says nothing, as it should.',
+          },
+          {
+            title: 'A finished operation could clear another tab\'s spinner',
+            detail:
+              'Activity was written to whichever tab was open rather than to the repository that started the operation, so an operation finishing after a tab switch cleared the wrong tab\'s indicator and left its own frozen on the parked one forever. Separately, fetch, push and fast-forward cleared their label the moment a password prompt appeared, so the retried operation ran with no spinner and no Cancel button.',
+          },
+          {
+            title: 'Reveal on a folder row opened the wrong folder',
+            detail:
+              '"Reveal in file manager" on a directory selected that folder inside its parent instead of opening it, because the action assumed its target was always a file. "Open in terminal" had the same fault and would open a folder\'s parent.',
           },
           {
             title: 'The Windows installer claimed GitHub published it',
@@ -196,7 +301,17 @@ export const changelog: ChangelogEntry[] = [
           {
             title: 'The `.msi` upgrade identity is pinned',
             detail:
-              'The value that tells Windows "this installer replaces that install" was being derived from the product name, so renaming the app would have quietly stopped upgrades from working and left two copies installed side by side. It is now written down explicitly — at the value it already had, so nothing changes for anyone already on 0.1.x.',
+              'The value that tells Windows "this installer replaces that install" was derived from the product name, so renaming the app would have quietly stopped upgrades working and left two copies side by side. It is now written down explicitly, at the value it already had, so nothing changes for anyone already on 0.1.x.',
+          },
+          {
+            title: 'winget submission is wired up',
+            detail:
+              'A wizard for the steps that live outside this repository, and a release job that publishes the manifest — self-disabling until the first submission has been made by hand, because the tooling needs an existing manifest as its template. Pinned to the `.msi`: the release also attaches a portable zip, and winget must never be pointed at that.',
+          },
+          {
+            title: 'The Store package is built and checked by CI',
+            detail:
+              'The release builds x64 and arm64, combines them into one bundle, and gates on its shape — the executable, the `pgit` entry point, the app execution alias, and that each package declares the architecture it claims. The Store identity comes from repository variables and the job fails outright if they are missing, rather than attaching a bundle stamped with a development identity that installs fine everywhere and is rejected only at submission.',
           },
         ],
       },
@@ -204,14 +319,19 @@ export const changelog: ChangelogEntry[] = [
         title: 'Known limitations',
         items: [
           {
-            title: '`winget` is next, and it does not need a certificate after all',
+            title: 'The Store listing is not live yet, and the package is not yet proven on Windows',
             detail:
-              '0.1.1 named a code-signing certificate as the blocker. Reading winget\'s published rules rather than assuming: signing is required for MSIX packages, not for the `.msi` we ship, and the reputation check behind SmartScreen warnings applies to the download URL — ours is GitHub — rather than to an unsigned installer. The groundwork is in this release, because a manifest has to declare the publisher the installer actually writes, and until now that was `github`. The submission itself is the next step. A certificate is still worth having; just not for this.',
+              'This release produces the package; submitting it is a separate, manual step. Six behaviours specific to the packaged form have not been observed on a real Windows machine — most importantly whether git can invoke the app as its credential helper from inside a package directory, which if it fails would break authenticated operations quietly rather than loudly. Everything testable without Windows is covered by the test suite and CI. Stated here rather than discovered later.',
+          },
+          {
+            title: 'Markdown commit bodies are still plain text',
+            detail:
+              'Notes and blame ignore-revs landed from the same issue; rendering markdown in commit bodies needs a dependency whose size and sanitisation are a separate decision, so it is deliberately not here.',
           },
           {
             title: 'The startup fan-out still queues behind one lock',
             detail:
-              'The new logging made this legible rather than fixing it: on a slow filesystem the dozen calls a launch makes all finish in one cluster instead of spreading out, because reads of the same repository take turns. That is why a repository on a Windows drive under WSL takes so long to open. Tracked separately.',
+              'The named loading tasks make this legible rather than fixing it: on a slow filesystem the dozen reads a launch makes finish in one cluster instead of spreading out, because reads of the same repository take turns. That is why a repository on a Windows drive under WSL takes so long to open. Tracked separately.',
           },
         ],
       },
