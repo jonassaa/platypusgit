@@ -712,6 +712,19 @@ cancellable in the backend but unstoppable from the UI for two releases.
   `cancel::Scope::Repo`, so it is the precise set `cancel_network_op` can reach.
   A rebase replay cannot be interrupted at all yet — offering a button that does
   nothing is worse than offering none.
+- **Cancel is a two-click affordance, and the first click MUST be visible**
+  (#263). The backend sends `SIGTERM` on the first cancel of an op and escalates
+  to `SIGKILL` only on a second — and only the `SIGTERM` lets git run its own
+  lock-file cleanup, so an accidental escalation strands `.git/FETCH_HEAD.lock`
+  and breaks the NEXT fetch. That makes the second click load-bearing, which is
+  only safe if the first one changed something on screen: `cancelRequested` (in
+  `RepoSlice`, and its own field on `useCreateStore`) turns the line into
+  "Cancelling…", drops the percentage — a bar still climbing after the click is
+  the clearest way to say "nothing happened" — and relabels the button "Force
+  stop". Neither surface may become disabled: a git that ignores `SIGTERM` is
+  escapable only by clicking again. `cancelRequested` clears when the last
+  `activity` entry goes, so the next stalled op starts from the polite signal.
+  See `docs/dev/backend.md` for the signal half.
 - **`setActivity` is guarded on the repository, like `setFor`.** `activity` is a
   per-repo slice field and an op outlives a tab switch: a fetch on A finishing
   after the user moved to B used to clear B's entry, taking B's spinner and

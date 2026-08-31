@@ -82,6 +82,7 @@ function ActivityLine({ state }: { state: ActivityState }) {
 
 export function ActivityStatus() {
   const activity = useRepoStore((s) => s.activity);
+  const cancelRequested = useRepoStore((s) => s.cancelRequested);
   const primary = primaryActivity(activity);
   if (!primary) return null;
 
@@ -95,7 +96,20 @@ export function ActivityStatus() {
       <PGStatusItem
         icon="sync"
         tone="accent"
-        label={<ActivityLine state={primary.state} />}
+        label={
+          <ActivityLine
+            state={
+              // Once Cancel has been clicked the transfer is being torn down,
+              // so the label says that and the bar goes (#263). A percentage
+              // still climbing after the click is the clearest possible way to
+              // tell the user their click did nothing — which is what makes
+              // them click again, and the second click is SIGKILL.
+              cancelRequested
+                ? { ...primary.state, label: "Cancelling…", percent: undefined }
+                : primary.state
+            }
+          />
+        }
       />
       {others > 0 && (
         <PGStatusItem
@@ -117,10 +131,20 @@ export function ActivityStatus() {
           LFS, submodule and forge ops — which were cancellable in the backend
           all along and simply had no button — while a rebase replay, which
           cannot be interrupted, does not get one it could not honour.
+
+          Two labels, because there are two signals (#263). The first click
+          SIGTERMs, which is what lets git remove its own lock files; a second
+          escalates to SIGKILL, which does not. So the first click MUST visibly
+          change something — otherwise the honest reading of a status line that
+          still says "Fetching…" next to a button that still says "Cancel" is
+          "nothing happened", and the user double-clicks their way to the
+          stranded-lock-file bug the SIGTERM was added to avoid. Never
+          disabled, either: a git that ignores SIGTERM is escapable only by
+          clicking again.
         */
         <PGStatusItem
           icon="x"
-          label="Cancel"
+          label={cancelRequested ? "Force stop" : "Cancel"}
           tone="danger"
           onClick={() => void useRepoStore.getState().cancelNetworkOps()}
         />

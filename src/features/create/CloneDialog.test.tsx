@@ -15,6 +15,7 @@ describe("CloneDialog", () => {
     useCreateStore.setState({
       open: "clone",
       busy: false,
+      cancelRequested: false,
       progress: null,
       error: null,
     });
@@ -105,6 +106,25 @@ describe("CloneDialog", () => {
     await waitFor(() => expect(cancelled).toBe(1));
     // And it does NOT close the dialog out from under the clone being reaped.
     expect(useCreateStore.getState().open).toBe("clone");
+  });
+
+  // #263: the backend escalates SIGTERM to SIGKILL on the second cancel of the
+  // same clone, and only the SIGTERM lets git clean up after itself. So the
+  // first click has to move the label — otherwise the button looks like it did
+  // nothing and the user double-clicks past the signal that matters.
+  it("relabels itself once the cancel has been asked for", async () => {
+    mockInvoke("cancel_network_op", () => 1);
+    useCreateStore.setState({ open: "clone", busy: true, progress: null });
+    render(<CloneDialog />);
+
+    const cancel = screen.getByTestId("clone-cancel");
+    expect(cancel).toHaveTextContent("Cancel clone");
+
+    fireEvent.click(cancel);
+
+    await waitFor(() => expect(cancel).toHaveTextContent("Force stop"));
+    // Still live: the second click is the escalation, so it must stay clickable.
+    expect(cancel).not.toBeDisabled();
   });
 
   it("closes the dialog with the same button when no clone is running", () => {

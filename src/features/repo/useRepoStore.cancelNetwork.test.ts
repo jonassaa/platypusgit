@@ -23,6 +23,8 @@ function mockRefreshAll() {
 }
 
 const calls = (cmd: string) => getInvokeCalls().filter((c) => c.cmd === cmd);
+/** #299 made every activity entry an object; these tests only care about the label. */
+const act = (label: string) => ({ label, startedAt: Date.now() });
 const cancelled = () => {
   throw { kind: "Cancelled" };
 };
@@ -33,6 +35,7 @@ beforeEach(() => {
     current: { id: "repo-1", path: "/tmp/repo-1", head: "main" },
     error: null,
     activity: {},
+    cancelRequested: false,
   });
   mockRefreshAll();
   // `pull` auto-stashes first when the setting is on (it is, by default). null
@@ -108,4 +111,74 @@ it("still reports a genuine network failure", async () => {
   await useRepoStore.getState().fetch("origin");
 
   expect(useRepoStore.getState().error).toMatchObject({ kind: "Network" });
+});
+
+// The escalation is a two-click affordance on the backend (#263): the first
+// cancel SIGTERMs, so git can remove its own lock files; a second SIGKILLs, so
+// it cannot. The store has to carry that state, because a Cancel button that
+// looks identical after the first click is one an impatient user double-clicks
+// straight past the polite signal — re-creating the stranded `FETCH_HEAD.lock`
+// the SIGTERM was added to prevent.
+describe("the cancel is visible after the first click", () => {
+  it("marks the repository as cancelling", async () => {
+    mockInvoke("cancel_network_op", () => 1);
+    useRepoStore.setState({ activity: { fetch: act("Fetching origin…") } });
+
+    await useRepoStore.getState().cancelNetworkOps();
+
+    expect(useRepoStore.getState().cancelRequested).toBe(true);
+  });
+
+  it("marks it even when the signal reached nothing", async () => {
+    // 0 means the op finished between the user reading the status line and
+    // clicking. The label still has to move: the click DID happen, and any
+    // op still in flight under this scope was still marked on the backend.
+    mockInvoke("cancel_network_op", () => 0);
+    useRepoStore.setState({ activity: { fetch: act("Fetching origin…") } });
+
+    await useRepoStore.getState().cancelNetworkOps();
+
+    expect(useRepoStore.getState().cancelRequested).toBe(true);
+  });
+
+  it("clears once the last op has unwound, so the next click starts over", async () => {
+    mockInvoke("cancel_network_op", () => 1);
+    mockInvoke("fetch", cancelled);
+
+    await useRepoStore.getState().cancelNetworkOps();
+    expect(useRepoStore.getState().cancelRequested).toBe(true);
+
+    await useRepoStore.getState().fetch("origin");
+
+    // Activity is empty again, so the escalation state must be too — otherwise
+    // the FIRST click of the next stalled fetch would read "Force stop" and
+    // send SIGKILL to a git that had never been asked politely.
+    expect(useRepoStore.getState().activity).toEqual({});
+    expect(useRepoStore.getState().cancelRequested).toBe(false);
+  });
+
+  it("stays set while another op in the same scope is still running", async () => {
+    mockInvoke("cancel_network_op", () => 1);
+    useRepoStore.setState({
+      activity: {
+        fetch: act("Fetching origin…"),
+        push: act("Pushing origin/main…"),
+      },
+    });
+
+    await useRepoStore.getState().cancelNetworkOps();
+    // One of the two unwinds; the other is the one still stuck.
+    useRepoStore.setState({ activity: { push: act("Pushing origin/main…") } });
+
+    expect(useRepoStore.getState().cancelRequested).toBe(true);
+  });
+
+  it("does nothing when there is no repository to cancel for", async () => {
+    useRepoStore.setState({ current: null });
+    mockInvoke("cancel_network_op", () => 1);
+
+    await useRepoStore.getState().cancelNetworkOps();
+
+    expect(useRepoStore.getState().cancelRequested).toBe(false);
+  });
 });

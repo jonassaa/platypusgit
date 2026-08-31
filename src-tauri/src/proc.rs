@@ -290,6 +290,7 @@ pub fn git_async(workdir: &Path) -> tokio::process::Command {
     let mut cmd = program_async("git");
     cmd.arg("-C").arg(workdir);
     prompt_less_async(&mut cmd);
+    own_process_group(&mut cmd);
     cmd
 }
 
@@ -301,8 +302,32 @@ pub fn git_async_in(dir: &Path) -> tokio::process::Command {
     let mut cmd = program_async("git");
     cmd.current_dir(dir);
     prompt_less_async(&mut cmd);
+    own_process_group(&mut cmd);
     cmd
 }
+
+/// Put the child in its own process group (issue 263).
+///
+/// `cancel::kill_tree` signals a cancelled network op's WHOLE process group,
+/// which is what reaches `git-remote-https`/`ssh` — git's own child for the
+/// actual transfer, not ours, and invisible to a kill of `git` alone. Without
+/// its own group, that signal would land on OUR process group, i.e. the app.
+///
+/// No-op off unix: `tokio::process::Command::process_group` is unix-only, and
+/// Windows' tree-kill goes through `taskkill /T` instead, which addresses the
+/// process by pid and needs no group.
+///
+/// Applied only to the two ordinary git constructors above, deliberately NOT
+/// to [`git_async_keeping_console`]: that one child is an INTERACTIVE console
+/// mergetool, and moving it out of the terminal's foreground process group is
+/// what gets an unsuspecting process stopped by `SIGTTIN`/`SIGTTOU`.
+#[cfg(unix)]
+fn own_process_group(cmd: &mut tokio::process::Command) {
+    cmd.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn own_process_group(_cmd: &mut tokio::process::Command) {}
 
 /// `git -C <workdir>` **keeping its console**, and inheriting stdio.
 ///
@@ -405,6 +430,53 @@ mod tests {
         let std = cmd.as_std();
         assert_eq!(std.get_current_dir(), Some(Path::new("/tmp/parent")));
         assert_eq!(std.get_args().count(), 0, "no -C for the clone path");
+    }
+
+    /// Issue 263: `cancel::kill_tree` signals a whole process group, which only
+    /// reaches `git-remote-https`/`ssh` if the `git` we spawned actually leads
+    /// one. Asserted against a REAL spawn — `Command`'s builder exposes no
+    /// getter for `process_group`, so the only way to see the decision take
+    /// effect is to look at the child's own `getpgid`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_async_and_git_async_in_spawn_their_own_process_group() {
+        for mut cmd in [git_async(Path::new(".")), git_async_in(Path::new("."))] {
+            let child = cmd
+                .arg("--version")
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("spawn git --version");
+            let pid = child.id().expect("pid") as libc::pid_t;
+            assert_eq!(
+                unsafe { libc::getpgid(pid) },
+                pid,
+                "the child must be the leader of its own process group"
+            );
+            let mut child = child;
+            let _ = child.wait().await;
+        }
+    }
+
+    /// The interactive exception: moving `git mergetool`'s child OUT of the
+    /// terminal's foreground process group is what gets it stopped by
+    /// `SIGTTIN`/`SIGTTOU` the moment it tries to read or write the terminal.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_async_keeping_console_does_not_get_its_own_process_group() {
+        let mut cmd = git_async_keeping_console(Path::new("."));
+        let child = cmd
+            .arg("--version")
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn git --version");
+        let pid = child.id().expect("pid") as libc::pid_t;
+        assert_eq!(
+            unsafe { libc::getpgid(pid) },
+            unsafe { libc::getpgid(0) },
+            "an interactive child must stay in OUR process group, not get its own"
+        );
+        let mut child = child;
+        let _ = child.wait().await;
     }
 
     #[test]
