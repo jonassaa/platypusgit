@@ -73,10 +73,24 @@
                  uap10:RuntimeBehavior="packagedClassicApp"
                  uap10:TrustLevel="mediumIL">
       <!--
-        No Wide310x150Logo: src-tauri/icons/ holds only square renders (the set
-        `tauri icon` generates from app-icon.svg, #206), and the slot is
-        optional. Pointing it at a square image would letterbox or be rejected,
-        which is worse than omitting a tile size the Store does not require.
+        NO Square310x310Logo, AND NO Wide310x150Logo, and the two facts are one
+        decision: makeappx refuses a manifest that names the large square tile
+        without also naming the wide one —
+
+          error 80080204: The DefaultTile element must specify the
+          Wide310x150Logo attribute if the Square310x310Logo attribute is
+          specified.
+
+        `src-tauri/icons/` holds only SQUARE renders — it is the set `tauri icon`
+        generates from app-icon.svg (#206), and that directory is generated
+        output with exactly two hand-authored files in it. Producing a wide
+        310x150 asset means a new render step and a new hand-authored source, so
+        the cheaper correct answer is to name neither tile. Windows falls back to
+        the 150x150.
+
+        If the large tile is ever wanted, BOTH attributes have to arrive
+        together, along with the asset and its entry in msix-pack.sh's LOGOS
+        list. Re-adding just the square one puts the release back where it was.
       -->
       <uap:VisualElements
         DisplayName="platypusgit"
@@ -84,8 +98,7 @@
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">
-        <uap:DefaultTile Square71x71Logo="Assets\Square71x71Logo.png"
-                         Square310x310Logo="Assets\Square310x310Logo.png" />
+        <uap:DefaultTile Square71x71Logo="Assets\Square71x71Logo.png" />
       </uap:VisualElements>
       <Extensions>
         <!--

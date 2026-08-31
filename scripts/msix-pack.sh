@@ -33,7 +33,11 @@ set -eu
 # src-tauri/tests/msix_identity.rs asserts the manifest references nothing that
 # is missing from icons/, so a regeneration that drops a size fails the build
 # rather than producing a package with blank tiles.
-LOGOS="Square44x44Logo Square71x71Logo Square150x150Logo Square310x310Logo StoreLogo"
+# Square310x310Logo is deliberately ABSENT: the manifest cannot name it without
+# also naming a Wide310x150Logo we do not render (see Package.appxmanifest), so
+# copying it would put an unreferenced file in the package. If the large tile is
+# ever added, it comes back here together with the wide asset.
+LOGOS="Square44x44Logo Square71x71Logo Square150x150Logo StoreLogo"
 
 VERSION=
 ARCH=
@@ -168,5 +172,23 @@ fi
 # No signing here, deliberately: the Microsoft Store re-signs the package, which
 # is the entire economics of this channel (spec §Problem). Signing locally is for
 # the winapp debug loop, not for submission.
+# MSYS_NO_PATHCONV / MSYS2_ARG_CONV_EXCL ARE LOAD-BEARING, not belt-and-braces.
+# Under Git Bash — which is what `shell: bash` is on a Windows runner — the MSYS
+# runtime rewrites arguments that look like POSIX absolute paths before a native
+# Windows binary sees them. `/d` becomes `D:/`, and `/p` and `/o` become paths
+# under the Git installation. The v0.2.0 re-run failed exactly here:
+#
+#   MakeAppx : error: Unknown command line option: "D:/"
+#
+# makeappx takes DOS-style switches, so every flag it has is affected. Both
+# variables are set because the name differs between Git for Windows
+# (MSYS_NO_PATHCONV) and MSYS2 proper (MSYS2_ARG_CONV_EXCL); on a non-MSYS host
+# they are simply ignored.
+# Exported rather than prefixed onto the command: the conversion is done by the
+# MSYS runtime of the SPAWNING shell, so putting it in this shell's own
+# environment leaves no doubt about which process reads it.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
 makeappx.exe pack /d "$OUT" /p "$OUT.msix" /o
 echo "packed $OUT.msix"
