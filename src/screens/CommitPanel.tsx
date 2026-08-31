@@ -62,6 +62,7 @@ import {
   statusMark,
 } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
+import { NoSignaturePrompt } from "@/features/commits/identity/NoSignaturePrompt";
 import { EMBEDDED_REPO_HELP, appErrorMessage } from "@/lib/errors";
 import {
   clickSelection,
@@ -144,6 +145,8 @@ export function CommitPanelScreen() {
   const pushAction = useRepoStore((s) => s.push);
   const hookRejection = useRepoStore((s) => s.hookRejection);
   const clearHookRejection = useRepoStore((s) => s.clearHookRejection);
+  const noSignature = useRepoStore((s) => s.noSignature);
+  const clearNoSignature = useRepoStore((s) => s.clearNoSignature);
   const activity = useRepoStore((s) => s.activity);
   const commits = useRepoStore((s) => s.commits);
   const setNavIntent = useNavStore((s) => s.setIntent);
@@ -1227,12 +1230,18 @@ export function CommitPanelScreen() {
   // that reformats and restages can leave the tree clean while its refusal is
   // still the most important thing on screen. Without this the block would be
   // unmounted by the very hook that produced it.
+  //
+  // `!noSignature` for the same reason (#212): a refused commit leaves the tree
+  // exactly as it was, so this cannot fire on the attempt itself — but an
+  // external change that empties the tree while the identity form is open must
+  // not swallow the form the user is typing into.
   if (
     !loading &&
     staged.length === 0 &&
     unstaged.length === 0 &&
     !amend &&
-    !hookRejection
+    !hookRejection &&
+    !noSignature
   ) {
     return (
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
@@ -1723,6 +1732,23 @@ export function CommitPanelScreen() {
               // Retry with hooks off. Deliberately does NOT tick the checkbox:
               // this is one commit, not a new default.
               onCommitAnyway={() => void doCommit(true)}
+            />
+          )}
+
+          {/*
+            git has no committer identity (#212) — the one refusal a brand-new
+            user is guaranteed to hit, in the same place and the same shape as
+            the hook block. Saving retries the commit, so the message the user
+            already typed still becomes the commit they asked for.
+          */}
+          {noSignature && repo && (
+            <NoSignaturePrompt
+              repoId={repo.id}
+              onSaved={() => {
+                clearNoSignature();
+                void doCommit();
+              }}
+              onDismiss={clearNoSignature}
             />
           )}
 

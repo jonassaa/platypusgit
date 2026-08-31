@@ -188,6 +188,40 @@ pub async fn get_commit_template(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// The committer identity a commit would use, and where each half is
+/// configured (#212).
+///
+/// `repo_id` is optional so Settings can answer before a repository is open —
+/// the global + system chain is the effective identity there.
+#[tauri::command]
+pub async fn get_identity(
+    state: State<'_, AppState>,
+    repo_id: Option<String>,
+) -> AppResult<crate::git::signature::GitIdentity> {
+    let backend = state.backend.clone();
+    let repo_id = repo_id.map(RepoId);
+    tokio::task::spawn_blocking(move || backend.identity(repo_id.as_ref()))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Write `user.name` / `user.email` to the global git config (#212).
+///
+/// The remedy for `NoSignature`, and the only write in the app that touches the
+/// user's global git config — which is why it is deliberately explicit rather
+/// than something a commit does for you behind your back.
+#[tauri::command]
+pub async fn set_identity(
+    state: State<'_, AppState>,
+    name: String,
+    email: String,
+) -> AppResult<()> {
+    let backend = state.backend.clone();
+    tokio::task::spawn_blocking(move || backend.set_global_identity(&name, &email))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 /// Signature status of one commit (#61 D6). Called lazily for the selected
 /// commit, never per log row.
 #[tauri::command]

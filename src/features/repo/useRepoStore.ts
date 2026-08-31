@@ -22,6 +22,7 @@ import {
   isAuthError,
   isCancelledError,
   isDubiousOwnershipError,
+  isNoSignatureError,
   toAppError,
 } from "@/lib/errors";
 import { useAuthStore } from "@/features/auth/useAuthStore";
@@ -274,6 +275,11 @@ interface RepoStoreState extends RepoSlice {
   ) => Promise<CommitResult | null>;
   /** Dismiss the hook refusal on display (#232). */
   clearHookRejection: () => void;
+  /**
+   * Dismiss the "no committer identity" prompt (#212). Called after the
+   * identity is saved, and by the prompt's own Dismiss.
+   */
+  clearNoSignature: () => void;
   reset: (target: string, mode: ResetMode) => Promise<void>;
   checkoutBranch: (name: string) => Promise<void>;
   checkoutRef: (reference: string) => Promise<void>;
@@ -1199,7 +1205,7 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return null;
     // Clear the previous refusal first: a stale block sitting above a fresh
     // attempt reads as though the new attempt failed too.
-    setFor(repo.id, { hookRejection: null });
+    setFor(repo.id, { hookRejection: null, noSignature: false });
     try {
       const result = await commitFn(
         repo.id,
@@ -1223,6 +1229,14 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         setFor(repo.id, { hookRejection: e.message as HookRejection });
         return null;
       }
+      // Nor is a missing identity (#212). It is not a failure to report but a
+      // question to answer, and the panel can answer it in place — so it gets
+      // its own field rather than a banner, the same split the hook refusal
+      // above makes. Nothing was created, so nothing needs refreshing.
+      if (isNoSignatureError(e)) {
+        setFor(repo.id, { noSignature: true });
+        return null;
+      }
       setErrorFor(repo.id, e);
       return null;
     }
@@ -1232,6 +1246,12 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     const repo = get().current;
     if (!repo) return;
     setFor(repo.id, { hookRejection: null });
+  },
+
+  clearNoSignature() {
+    const repo = get().current;
+    if (!repo) return;
+    setFor(repo.id, { noSignature: false });
   },
 
   async checkoutBranch(name) {

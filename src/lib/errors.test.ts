@@ -24,9 +24,27 @@ describe("describeError", () => {
   });
 
   it("renders a kind whose message is absent as just the kind", () => {
-    expect(describeError({ kind: "Unborn" })).toBe("Unborn");
+    // The two examples here have to be variants that carry no prose AND are
+    // never shown to a user — i.e. members of `NEVER_RENDERED` in
+    // `test/appErrors.test.ts`, which is the list that keeps the two in step.
+    // This case used to use `Unborn`, until #212 gave it prose: a user who ran
+    // an op on a freshly-initialised repository was being shown git's internal
+    // word for "a branch with no commits on it".
+    expect(describeError({ kind: "NoBisect" })).toBe("NoBisect");
     expect(describeError({ kind: "NotImplemented", message: undefined })).toBe(
       "NotImplemented",
+    );
+  });
+
+  it("leads a payload-less variant that HAS prose with its kind (#212)", () => {
+    // A log line keeps the discriminant — it is the greppable half — so prose
+    // for a unit variant adds to the line rather than replacing it. A banner,
+    // by contrast, gets the prose alone (`appErrorMessage`).
+    expect(describeError({ kind: "Unborn" })).toMatch(
+      /^Unborn: This repository has no commits yet/,
+    );
+    expect(describeError({ kind: "NoSignature" })).toMatch(
+      /^NoSignature: git needs a name and an email/,
     );
   });
 

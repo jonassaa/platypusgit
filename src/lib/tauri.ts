@@ -28,6 +28,7 @@ import type {
   FileStatus,
   ForgeCheckoutRequest,
   ForgeDetection,
+  GitIdentity,
   ForgeIdentity,
   ForgeKind,
   ForgeRepo,
@@ -542,6 +543,28 @@ export async function verifyCommit(
  */
 export async function getCommitTemplate(repoId: string): Promise<CommitTemplate> {
   return invoke<CommitTemplate>("get_commit_template", { repoId });
+}
+
+/**
+ * The committer identity a commit would use, and where each half is configured
+ * (#212).
+ *
+ * `repoId` is optional because Settings is reachable before a repository is
+ * open, and the global + system chain is the effective identity there.
+ */
+export async function getIdentity(repoId?: string | null): Promise<GitIdentity> {
+  return invoke<GitIdentity>("get_identity", { repoId: repoId ?? null });
+}
+
+/**
+ * Write `user.name` / `user.email` to the global git config (#212) — the remedy
+ * for `NoSignature`.
+ *
+ * Rejects with `InvalidArgument` for anything git would refuse, and writes
+ * nothing in that case.
+ */
+export async function setIdentity(name: string, email: string): Promise<void> {
+  return invoke<void>("set_identity", { name, email });
 }
 
 export async function discardPaths(repoId: string, paths: string[]): Promise<void> {

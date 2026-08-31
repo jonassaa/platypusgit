@@ -126,7 +126,9 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
 
 - **Errors:** every IPC-crossing fn returns `AppResult<T>`; add `AppError`
   variants, never stringify. TS `AppError` union stays 1:1 with the Rust enum,
-  updated in the same commit. (`docs/dev/backend.md`)
+  updated in the same commit — and a UNIT variant needs prose in
+  `appErrorDetail`, or a banner shows the enum's own spelling.
+  `test/appErrors.test.ts` fails the build for both. (`docs/dev/backend.md`)
 - **Never `Command::new` outside `src-tauri/src/proc.rs`** — a guard test
   fails the build. Use the `proc::git*`/`proc::program*` constructors.
   (`docs/dev/backend.md`)
@@ -180,6 +182,12 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   whether Commit is enabled, and nothing overwrites what the user typed.
   Comment stripping is SCOPED the way git scopes it: the box is `git commit -m`
   (a typed `#123 fix` commits as written) until `commit.template` seeds it.
+  (`docs/dev/frontend.md`)
+- **One committer-identity surface** — `features/commits/identity/`, rendered by
+  Settings and by the commit panel. `NoSignature` is a FORM, not a banner: it
+  lands in `useRepoStore`'s per-repo `noSignature`, and saving retries the
+  commit. The write is global and the form names the file; per-repo identities
+  (#233) add a scope control there, never a second form.
   (`docs/dev/frontend.md`)
 - **The log is paged** — `s.commits` is a prefix of history, never the answer
   to "does X exist / is X an ancestor"; ask the backend.

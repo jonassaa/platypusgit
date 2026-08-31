@@ -354,6 +354,40 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   TOOL exits, which is minutes — and `refreshAll()`s afterwards, because a
   working-tree side is handed to the tool as the REAL file, not a copy.
 
+## The committer identity (#212)
+
+`src/features/commits/identity/` is **THE** identity surface: `IdentityForm`
+(the fields plus the save) and `NoSignaturePrompt` (the same form, framed as an
+answer to a refused commit). `screens/Settings.tsx`'s `IdentitySection` and
+`screens/CommitPanel.tsx` both render it; a third place to type a name and an
+email joins this one rather than growing beside it.
+
+- **`NoSignature` is a form, not a banner.** It lands in `useRepoStore`'s
+  per-repo `noSignature` field, exactly the split `hookRejection` makes, and for
+  the same reason: an error is something you acknowledge, and this is something
+  you answer. Saving RETRIES the commit — the user already typed a message and
+  pressed Commit, and making them press it again is a second failure with extra
+  steps.
+- **It is the first thing a brand-new user hits**, because git refuses to record
+  a commit until `user.name` and `user.email` are set — and before #212 that
+  refusal reached them as a banner reading the literal string `NoSignature`,
+  with nowhere in the app to set an identity. `test/appErrors.test.ts` now fails
+  the build for any unit variant that could do the same thing again.
+- **The write is GLOBAL, and the form says so on screen** (`identity-target`
+  names the file). `set_identity` is the only place the app writes the user's own
+  git config, so it is deliberately explicit rather than something a commit does
+  for you. Per-repository identities and multiple accounts are #233 — that lands
+  as a scope control on this form, not a second one.
+- **A repo-local override is called out** (`identity-scope-note`). Saving writes
+  the global config, so a repository that sets its own `user.email` would
+  otherwise leave the user watching a successful save change nothing.
+- **The fields seed from `get_identity` ONCE per mount.** Re-seeding on every
+  read would wipe what is being typed the moment anything refreshed.
+- **Blankness is checked in the UI; every other rule is the backend's.**
+  `validate_identity` (Rust) is the single authority on what git accepts, and its
+  refusal names the offending character — so the button gates on "both fields
+  non-empty" and nothing more.
+
 ## The commit-message composer (#252)
 
 `src/features/commits/message/` is **THE** commit-message composition surface —

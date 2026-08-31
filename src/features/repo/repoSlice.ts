@@ -182,6 +182,16 @@ export interface RepoSlice {
    * scrolls, and the user is about to act on it rather than dismiss it.
    */
   hookRejection: HookRejection | null;
+  /**
+   * A commit that was refused because git has no committer identity it will
+   * accept (#212).
+   *
+   * Per-repo for the same reason `hookRejection` is, and kept out of `error`
+   * for the same reason too: the remedy is a form, not an acknowledgement. A
+   * fresh machine hits this on its very first commit, and before #212 it got a
+   * banner reading "NoSignature" and no way to fix it from inside the app.
+   */
+  noSignature: boolean;
 }
 
 /**
@@ -220,6 +230,7 @@ export function emptySlice(): RepoSlice {
     loadingTasks: [],
     cancelRequested: false,
     hookRejection: null,
+    noSignature: false,
   };
 }
 

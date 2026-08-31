@@ -210,6 +210,21 @@ Rules that keep the gates honest:
   `js` does not match `src-tauri/` and `rust` does not match `README.md`.
   Both files self-test their matchers — a guard that cannot fail reads like
   coverage.
+- **`test/appErrors.test.ts`** makes the error enum's two written promises
+  mechanical (#212). It parses `pub enum AppError` out of
+  `src-tauri/src/error.rs` and asserts (a) every variant has a `kind: "Name"`
+  case in `src/lib/errors.ts` — the 1:1 rule CLAUDE.md states as prose and
+  nothing checked — and (b) no UNIT variant renders as its own enum spelling
+  through `appErrorMessage`. (b) is the one that had already been broken: a unit
+  variant carries no payload, so it fell through the `|| e.kind` fallback, and
+  `NoSignature` — the ONE error every brand-new user hits, because git will not
+  record a commit without `user.name`/`user.email` — put the literal string
+  "NoSignature" on screen in the commit panel, and in merge, cherry-pick,
+  revert, rebase, tag and stash besides. `NEVER_RENDERED` is the escape hatch:
+  an allow-list of unit variants no user can see, each with a written reason, in
+  the shape `privacy.test.ts` uses for hostnames — so adding one is a decision
+  somebody made rather than an assertion quietly weakened. Node env, because it
+  reads `src-tauri/`.
 - **`test/comparison.test.ts`** keeps the competitor comparison (#210) from
   existing twice. `site/src/data/comparison.json` is the source of truth; the
   site renders it through `comparison.ts`, and the test parses the README's

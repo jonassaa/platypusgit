@@ -168,6 +168,21 @@ function appErrorDetail(e: AppError): string {
   if (e.kind === "BranchExists" && typeof message === "string") {
     return `A local branch named ${message} already exists.`;
   }
+  // NoSignature carries NO payload — a unit variant in Rust. Without a case
+  // here `appErrorMessage` fell through to its `|| e.kind` fallback and a
+  // fresh machine's first commit put the literal string "NoSignature" on
+  // screen (#212). It is the ONE error every brand-new user hits, so it is the
+  // last one that should have read like an enum.
+  if (e.kind === "NoSignature") {
+    return NO_SIGNATURE_MESSAGE;
+  }
+  // Unborn is a unit variant too, and had the same problem: an op run on a
+  // freshly-initialised repository put the word "Unborn" on screen, which is
+  // git's internal vocabulary for a branch with no commits on it (#212's
+  // empty-repository box).
+  if (e.kind === "Unborn") {
+    return "This repository has no commits yet, so there is nothing to show here. Make the first commit and this fills in.";
+  }
   // SshKeyExists carries a PATH. Rendered raw the banner would be a file name
   // with no hint that the app refused on purpose rather than failed.
   if (e.kind === "SshKeyExists" && typeof message === "string") {
@@ -398,6 +413,32 @@ export function isLfsUnavailableError(e: unknown): boolean {
 
 export const LFS_UNAVAILABLE_HELP =
   "Install git-lfs and run `git lfs install` once, then reopen the repository. Large files stay as pointer text until their objects are fetched.";
+
+/**
+ * What a banner says when git has no committer identity it will accept (#212).
+ *
+ * Names the two config keys, because that is what every git answer on the
+ * internet names — a user who has seen `git config --global user.email` before
+ * recognises this instantly, and one who has not is told the app can do it.
+ */
+export const NO_SIGNATURE_MESSAGE =
+  "git needs a name and an email address before it can record a commit (user.name and user.email are not set).";
+
+/**
+ * Narrow to "there is no committer identity" (#212), so a surface can offer to
+ * SET one instead of reporting a failure.
+ *
+ * The shape `isLfsUnavailableError` and `isSshKeygenUnavailableError` already
+ * use: a state with a specific remedy, not an error to acknowledge. Raised for
+ * a missing identity, a blank one, and one git refuses to parse — all three
+ * have the same fix, and the prompt shows the offending value back.
+ */
+export function isNoSignatureError(e: unknown): boolean {
+  return isAppError(e) && e.kind === "NoSignature";
+}
+
+export const NO_SIGNATURE_HELP =
+  "Every commit records who made it. git reads that from user.name and user.email in your git config, and refuses to commit without them — this machine has none set yet. Saving here writes them to your global git config, so every repository on this machine gets them.";
 
 /** Narrow to "there is already a key at that path" (#248). */
 export function isSshKeyExistsError(e: unknown): boolean {

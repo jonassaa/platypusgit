@@ -534,6 +534,23 @@ pub trait GitBackend: Send + Sync {
     /// `git/commit_template.rs`.
     fn commit_template(&self, repo_id: &RepoId) -> AppResult<commit_template::CommitTemplate>;
 
+    // === identity ===
+    /// The committer identity a commit would use, and which config file each
+    /// half came from (#212).
+    ///
+    /// `repo_id` is optional because Settings is reachable with no repository
+    /// open, and the answer is still meaningful there: without a repository the
+    /// global + system chain IS the effective identity.
+    fn identity(&self, repo_id: Option<&RepoId>) -> AppResult<signature::GitIdentity>;
+
+    /// Write `user.name` / `user.email` to the global git config, creating the
+    /// file when there is none (#212).
+    ///
+    /// Takes no `repo_id`: the state this exists to fix is a machine with no
+    /// identity at all, so the fix has to outlive the repository the user
+    /// happened to be in. Per-repository identities are #233.
+    fn set_global_identity(&self, name: &str, email: &str) -> AppResult<()>;
+
     // === refs ===
     fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
     fn create_branch(&self, repo_id: &RepoId, name: &str, from: Option<&str>) -> AppResult<()>;

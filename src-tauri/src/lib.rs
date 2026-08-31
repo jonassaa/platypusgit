@@ -239,6 +239,8 @@ pub fn run() {
             commands::commits::verify_commit,
             commands::commits::commit_notes,
             commands::commits::get_commit_template,
+            commands::commits::get_identity,
+            commands::commits::set_identity,
             commands::create::init_repo,
             commands::create::default_init_branch,
             commands::create::clone_repo,
