@@ -397,7 +397,13 @@ features/            Components + Zustand store colocated per feature:
 │                    (repoState-driven bar), ownership (safe.directory confirm)
 ├── nav/             useNavStore — cross-screen intents + DeepViewHeader
 ├── branches/        BranchChip, BranchPicker, orderBranches (PURE, #135 — THE
-│                    one branch ordering; every branch list goes through it)
+│                    one branch ordering; every branch list goes through it),
+│                    branchTree (PURE, #244 — grouping on `/` AFTER ordering:
+│                    compressed folder rows + flat depth-carrying rows,
+│                    parentFolderPath, branchesInFolder), useBranchFolders
+│                    (per-repo collapsed set in localStorage), deleteMerged
+│                    (candidates + `ahead_behind` merge check + summary),
+│                    fastForward (#246)
 ├── commits/         Pure log logic, all tested: graphLayout, laneColors,
 │                    graphAncestry, rowIdentity, buildRebasePlan /
 │                    buildPreservePlan / withPlanBase / runRebasePlan /

@@ -27,6 +27,19 @@ import {
 import { useElementSize } from "@/lib/useElementSize";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { orderBranches } from "@/features/branches/orderBranches";
+import {
+  branchFolderPaths,
+  branchTreeRows,
+  branchesInFolder,
+  parentFolderPath,
+  type BranchTreeRow,
+} from "@/features/branches/branchTree";
+import { useBranchFolders } from "@/features/branches/useBranchFolders";
+import {
+  deleteMergedCandidates,
+  findMergedBranches,
+  summarizeDeleteMerged,
+} from "@/features/branches/deleteMerged";
 import { summarizeFastForward } from "@/features/branches/fastForward";
 import { TagSignatureBadge } from "@/features/signing/TagSignatureBadge";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
@@ -36,8 +49,23 @@ import { shortSha } from "@/lib/derive";
 
 type Selection =
   | { kind: "branch"; name: string }
+  | { kind: "folder"; path: string }
   | { kind: "tag"; name: string }
   | { kind: "stash"; index: number };
+
+/** Two selections pointing at the same row. */
+function sameRef(a: Selection, b: Selection): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "stash") return b.kind === "stash" && a.index === b.index;
+  if (a.kind === "folder") return b.kind === "folder" && a.path === b.path;
+  return b.kind !== "stash" && b.kind !== "folder" && a.name === b.name;
+}
+
+/** Row = one branch, carrying which list it came from. */
+type BranchRow = BranchInfo & { kind: "local" | "remote" };
+
+/** Pixels a nesting level indents the NAME cell by. */
+const INDENT = 14;
 
 const COLS = [
   { key: "icon", label: "", initial: 20, min: 20, resizable: false },
@@ -50,6 +78,7 @@ const COLS = [
 
 export function BranchesScreen() {
   const branches = useRepoStore((s) => s.branches);
+  const repoPath = useRepoStore((s) => s.current?.path ?? null);
   const tags = useRepoStore((s) => s.tags);
   const stashes = useRepoStore((s) => s.stashes);
   const activity = useRepoStore((s) => s.activity);
@@ -58,6 +87,7 @@ export function BranchesScreen() {
   const createAndSwitchBranch = useRepoStore((s) => s.createAndSwitchBranch);
   const [selection, setSelection] = React.useState<Selection | null>(null);
   const [filter, setFilter] = React.useState("");
+  const folders = useBranchFolders(repoPath);
   const [view, setView] = React.useState<
     "all" | "local" | "remote" | "tags" | "stashes"
   >("all");
@@ -89,6 +119,64 @@ export function BranchesScreen() {
     setSelection(null);
   }, [view]);
 
+  /**
+   * The bulk delete the flat list made tedious (#244). "Merged" is git's own
+   * definition — contained in HEAD, like `git branch --merged` — and the
+   * confirm says so, because it is the one thing that decides what goes.
+   *
+   * The merge check runs on demand, never per render: it is one `ahead_behind`
+   * per candidate, and the list of forty branches this exists for would pay
+   * for it on every refresh.
+   */
+  const deleteMergedInFolder = async (path: string) => {
+    const repo = useRepoStore.getState().current;
+    if (!repo) return;
+    const candidates = deleteMergedCandidates(branches, path);
+    if (candidates.length === 0) {
+      pgFlash(`No deletable local branches in ${path}/`);
+      return;
+    }
+    const merged = await findMergedBranches(repo.id, "HEAD", candidates);
+    if (merged.length === 0) {
+      pgFlash(`Nothing in ${path}/ is merged into HEAD`);
+      return;
+    }
+    const names = merged.map((b) => b.name);
+    const ok = await pgConfirm({
+      title:
+        names.length === 1
+          ? `Delete ${names[0]}?`
+          : `Delete ${names.length} merged branches in ${path}/?`,
+      // Named in full and scrolled, never counted: this deletes refs, and
+      // "8 branches" is not something anyone can check before clicking Delete.
+      body: (
+        <>
+          <div>
+            Every commit on {names.length === 1 ? "it is" : "them is"} already
+            contained in HEAD.
+          </div>
+          <div
+            className="mono"
+            style={{
+              marginTop: 8,
+              maxHeight: 180,
+              overflow: "auto",
+              whiteSpace: "pre",
+              fontSize: "var(--fs-12)",
+            }}
+          >
+            {names.join("\n")}
+          </div>
+        </>
+      ),
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    const report = await useRepoStore.getState().deleteBranches(names);
+    pgFlash(summarizeDeleteMerged(report.deleted, report.failed));
+  };
+
   const { onContextMenu: onBranchCtx, menu: branchMenu } = useContextMenu<
     BranchInfo & { kind: "local" | "remote" }
   >((b) =>
@@ -100,6 +188,48 @@ export function BranchesScreen() {
           upstream: b?.upstream,
         }),
   );
+  // Built here rather than in `design/context-menu.tsx` like the ref menus: the
+  // useful folder actions are fold state and a bulk delete scoped to the rows
+  // ON SCREEN, none of which exist outside this screen.
+  const { onContextMenu: onFolderCtx, menu: folderMenu } = useContextMenu<{
+    path: string;
+    count: number;
+  }>((f) => {
+    const path = f?.path ?? "";
+    // The folder itself comes back from the walk — drop it, so "Expand all"
+    // can tell "nothing nested here" from "there is more to open".
+    const inside = branchFolderPaths(branchesInFolder(rows, path)).filter(
+      (p) => p !== path,
+    );
+    return [
+      { __menuTitle: `${path}/` },
+      {
+        icon: "chevronDown",
+        label: "Expand all",
+        disabled: !inside.length && !folders.collapsed.has(path),
+        onClick: () => folders.expand([path, ...inside]),
+      },
+      {
+        icon: "chevronRight",
+        label: "Collapse all",
+        onClick: () => {
+          folders.collapse([path, ...inside]);
+          if (
+            selection?.kind === "branch" &&
+            selection.name.startsWith(`${path}/`)
+          )
+            setSelection({ kind: "folder", path });
+        },
+      },
+      { divider: true },
+      {
+        icon: "trash",
+        label: "Delete merged branches…",
+        danger: true,
+        onClick: () => deleteMergedInFolder(path),
+      },
+    ];
+  });
   const { onContextMenu: onTagCtx, menu: tagMenu } = useContextMenu<TagInfo>(
     (t) => tagMenuItems({ name: t?.name, sha: t?.shortOid, oid: t?.oid }),
   );
@@ -146,9 +276,9 @@ export function BranchesScreen() {
     document.body.style.userSelect = "none";
   };
 
-  const rows = React.useMemo(() => {
+  const rows = React.useMemo<BranchRow[]>(() => {
     if (view === "tags" || view === "stashes") return [];
-    const list = branches.map((b) => ({
+    const list: BranchRow[] = branches.map((b) => ({
       ...b,
       kind: b.isRemote ? ("remote" as const) : ("local" as const),
     }));
@@ -163,6 +293,27 @@ export function BranchesScreen() {
     if (view === "remote") return remotes;
     return [...locals, ...remotes];
   }, [branches, filter, view]);
+
+  // Grouping is the LAST step (#244): filter, order (#135), then group. It only
+  // moves rows into folders, so the pinned default and the newest-first order
+  // both survive — and a filtered-out branch cannot reappear inside a folder.
+  //
+  // A filter flattens the tree to its matches, as filters should: hiding a hit
+  // behind a folded folder is the one thing a search box must never do. Rows
+  // then show their FULL names, because a bare `bar` with no `feat/foo` above
+  // it names nothing.
+  const filtering = filter.length > 0;
+  const displayRows = React.useMemo<BranchTreeRow<BranchRow>[]>(() => {
+    if (filtering)
+      return rows.map((b) => ({
+        kind: "branch" as const,
+        path: b.name,
+        label: b.name,
+        depth: 0,
+        branch: b,
+      }));
+    return branchTreeRows(rows, folders.collapsed);
+  }, [rows, filtering, folders.collapsed]);
 
   const visibleTags = React.useMemo(() => {
     if (view === "stashes") return [];
@@ -184,11 +335,15 @@ export function BranchesScreen() {
   // stashes). Enter checks out the selected local branch.
   const flatRefs = React.useMemo<Selection[]>(
     () => [
-      ...rows.map((b) => ({ kind: "branch" as const, name: b.name })),
+      ...displayRows.map((r) =>
+        r.kind === "folder"
+          ? ({ kind: "folder", path: r.path } as const)
+          : ({ kind: "branch", name: r.path } as const),
+      ),
       ...visibleTags.map((t) => ({ kind: "tag" as const, name: t.name })),
       ...visibleStashes.map((s) => ({ kind: "stash" as const, index: s.index })),
     ],
-    [rows, visibleTags, visibleStashes],
+    [displayRows, visibleTags, visibleStashes],
   );
   // -1 when nothing is selected, and it must STAY -1: this used to clamp to 0,
   // so `list.activate` checked out row 0 while no row had ever appeared
@@ -197,14 +352,21 @@ export function BranchesScreen() {
   // whatever sorted first, which since #135 is the pinned default branch.
   // `usePaneList` handles -1: arrowing either way lands on row 0, and
   // `onActivate(-1)` reads past the end of `flatRefs` and no-ops.
-  const flatIndex = flatRefs.findIndex(
-    (r) =>
-      selection &&
-      r.kind === selection.kind &&
-      (r.kind === "stash"
-        ? selection.kind === "stash" && r.index === selection.index
-        : selection.kind !== "stash" && r.name === selection.name),
-  );
+  const flatIndex = flatRefs.findIndex((r) => selection && sameRef(r, selection));
+
+  // Collapsing a folder can hide the selected branch. Moving the selection onto
+  // the folder keeps `flatIndex` pointing at a rendered row — otherwise it goes
+  // to -1 and the next ArrowDown restarts at the top of the list.
+  const collapseFolder = (path: string) => {
+    folders.collapse([path]);
+    if (selection?.kind === "branch" && selection.name.startsWith(`${path}/`))
+      setSelection({ kind: "folder", path });
+  };
+  const toggleFolder = (path: string) => {
+    if (folders.collapsed.has(path)) folders.expand([path]);
+    else collapseFolder(path);
+  };
+
   usePaneList({
     paneId: "branches.list",
     count: flatRefs.length,
@@ -215,16 +377,36 @@ export function BranchesScreen() {
     },
     onActivate: (i) => {
       const r = flatRefs[i];
+      if (r?.kind === "folder") {
+        toggleFolder(r.path);
+        return;
+      }
       if (r?.kind !== "branch") return;
       const b = branches.find((x) => x.name === r.name);
       if (b && !b.isHead && !b.isRemote) {
         void useRepoStore.getState().checkoutBranch(b.name);
       }
     },
+    onExpand: (i) => {
+      const r = flatRefs[i];
+      if (r?.kind === "folder") folders.expand([r.path]);
+    },
+    // ← on an open folder folds it; on anything else it climbs to the folder
+    // the row sits in, which is what every other tree does.
+    onCollapse: (i) => {
+      const r = flatRefs[i];
+      if (r?.kind === "folder" && !folders.collapsed.has(r.path)) {
+        collapseFolder(r.path);
+        return;
+      }
+      const parent = parentFolderPath(displayRows, i);
+      if (parent) setSelection({ kind: "folder", path: parent });
+    },
     searchText: (i) => {
       const r = flatRefs[i];
       if (!r) return "";
-      return r.kind === "stash" ? `stash@{${r.index}}` : r.name;
+      if (r.kind === "stash") return `stash@{${r.index}}`;
+      return r.kind === "folder" ? r.path : r.name;
     },
   });
 
@@ -240,6 +422,29 @@ export function BranchesScreen() {
     selection?.kind === "stash"
       ? stashes.find((s) => s.index === selection.index) ?? null
       : null;
+  const selectedFolder = selection?.kind === "folder" ? selection.path : null;
+
+  // One click for the whole tree: forty rows become five folders, which is the
+  // point of grouping them at all. Hidden while a filter is flattening the
+  // tree, where there is nothing to fold.
+  const allFolders = React.useMemo(() => branchFolderPaths(rows), [rows]);
+  const allCollapsed =
+    allFolders.length > 0 && allFolders.every((p) => folders.collapsed.has(p));
+  const toggleAllFolders = () => {
+    if (allCollapsed) {
+      folders.expand(allFolders);
+      return;
+    }
+    folders.collapse(allFolders);
+    // The selected branch is about to be hidden — move up to the outermost
+    // folder holding it, which is the row that stays on screen.
+    if (selection?.kind === "branch") {
+      const holding = allFolders
+        .filter((p) => selection.name.startsWith(`${p}/`))
+        .sort((a, b) => a.length - b.length)[0];
+      setSelection(holding ? { kind: "folder", path: holding } : selection);
+    }
+  };
 
   const cellStyle: CSSProperties = {
     minWidth: 0,
@@ -264,6 +469,9 @@ export function BranchesScreen() {
           onFetchAll={fetchAllOp}
           onFastForwardAll={startFastForwardAll}
           fetching={!!activity.fetch}
+          folderCount={0}
+          allFoldersCollapsed={false}
+          onToggleAllFolders={toggleAllFolders}
         />
         <PGEmpty icon="branch" title="No branches, tags, or stashes">
           This repository doesn&apos;t have any branches, tags, or stashes yet.
@@ -283,6 +491,9 @@ export function BranchesScreen() {
         onFetchAll={fetchAllOp}
         onFastForwardAll={startFastForwardAll}
         fetching={!!activity.fetch}
+        folderCount={filtering ? 0 : allFolders.length}
+        allFoldersCollapsed={allCollapsed}
+        onToggleAllFolders={toggleAllFolders}
       />
       <div ref={layout.ref} style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <PGPane
@@ -347,7 +558,142 @@ export function BranchesScreen() {
                 </div>
               ))}
             </div>
-            {rows.map((b, i) => (
+            {displayRows.map((row, i) => {
+              if (row.kind === "folder") {
+                const selected =
+                  selection?.kind === "folder" && selection.path === row.path;
+                // Folding a folder must not hide WHERE YOU ARE. Marked only
+                // while collapsed: open, the HEAD row carries its own accent
+                // bar, and a second marker above it would just be noise.
+                const holdsHead =
+                  row.collapsed &&
+                  branchesInFolder(rows, row.path).some(
+                    (b) => b.isHead && !b.isRemote,
+                  );
+                const openFolderMenu = (e: React.MouseEvent) => {
+                  setSelection({ kind: "folder", path: row.path });
+                  onFolderCtx(e, { path: row.path, count: row.count });
+                };
+                return (
+                  <div
+                    key={`folder:${row.path}`}
+                    // The whole row folds, not just the chevron — unlike
+                    // `PGFileTreeRow`, where a folder row is a thing you select
+                    // and act on. A branch folder is not a git object; folding
+                    // is the only reason it is on screen, so it gets the
+                    // easiest target. Right-click and ⋯ select without folding.
+                    onClick={() => {
+                      setSelection({ kind: "folder", path: row.path });
+                      toggleFolder(row.path);
+                    }}
+                    onContextMenu={openFolderMenu}
+                    data-pg-row=""
+                    data-testid="branch-folder-row"
+                    data-folder={row.path}
+                    data-collapsed={row.collapsed ? "" : undefined}
+                    data-selected={selected ? "" : undefined}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: gridTemplate,
+                      alignItems: "center",
+                      height: "calc(28px + var(--row-step))",
+                      background: selected
+                        ? undefined
+                        : i % 2
+                          ? "var(--bg-1)"
+                          : "transparent",
+                      borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",
+                      cursor: "pointer",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "var(--fs-12)",
+                      // A folder row is a control, not text: a stray drag
+                      // across it must not select "feat (12)".
+                      userSelect: "none",
+                      position: "relative",
+                    }}
+                  >
+                    {holdsHead && (
+                      <span
+                        data-holds-head=""
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: 2,
+                          background: "var(--accent)",
+                          zIndex: 1,
+                        }}
+                      />
+                    )}
+                    <div
+                      style={{
+                        ...cellStyle,
+                        justifyContent: "center",
+                        padding: 0,
+                      }}
+                    >
+                      <PGIcon
+                        name={row.collapsed ? "folder" : "folderOpen"}
+                        size={12}
+                        style={{
+                          color: holdsHead ? "var(--accent)" : "var(--fg-2)",
+                        }}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        ...cellStyle,
+                        paddingLeft: 8 + row.depth * INDENT,
+                      }}
+                      title={
+                        holdsHead
+                          ? `${row.path}/ — holds the current branch`
+                          : `${row.path}/`
+                      }
+                    >
+                      <PGIcon
+                        name={row.collapsed ? "chevronRight" : "chevronDown"}
+                        size={10}
+                        style={{ color: "var(--fg-3)", flexShrink: 0 }}
+                      />
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {row.label}
+                      </span>
+                      <span style={{ color: "var(--fg-3)" }}>({row.count})</span>
+                    </div>
+                    <div style={cellStyle} />
+                    <div style={cellStyle} />
+                    <div style={cellStyle} />
+                    <div
+                      style={{
+                        ...cellStyle,
+                        justifyContent: "center",
+                        padding: 0,
+                      }}
+                    >
+                      <PGIconButton
+                        icon="more"
+                        size="sm"
+                        title="Folder actions"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openFolderMenu(e);
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+
+              const b = row.branch;
+              return (
               <div
                 key={`${b.kind}:${b.name}`}
                 onClick={() => setSelection({ kind: "branch", name: b.name })}
@@ -404,18 +750,25 @@ export function BranchesScreen() {
                 <div
                   style={{
                     ...cellStyle,
+                    // Indented in the NAME cell, never on the row: tip,
+                    // upstream and status stay on the grid at any depth. The
+                    // extra 10px is the width of the chevron a folder row
+                    // spends there, so nested labels line up under it.
+                    paddingLeft:
+                      8 + row.depth * INDENT + (row.depth > 0 ? 10 : 0),
                     color: b.isHead ? "var(--accent)" : "var(--fg-0)",
                   }}
                   title={b.name}
                 >
                   <span
+                    data-branch-label=""
                     style={{
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {b.name}
+                    {row.label}
                   </span>
                   {b.isHead && <PGBadge tone="accent">HEAD</PGBadge>}
                   {b.kind === "remote" && <PGBadge tone="muted">remote</PGBadge>}
@@ -471,7 +824,8 @@ export function BranchesScreen() {
                   />
                 </div>
               </div>
-            ))}
+              );
+            })}
 
             {visibleTags.length > 0 && (
               <div
@@ -685,6 +1039,12 @@ export function BranchesScreen() {
               {selection?.kind?.toUpperCase() ?? "REF"}
             </div>
             {selectedBranch && <BranchInspector branch={selectedBranch} />}
+            {selectedFolder !== null && (
+              <FolderInspector
+                path={selectedFolder}
+                branches={branchesInFolder(rows, selectedFolder)}
+              />
+            )}
             {selectedTag && <TagInspector tag={selectedTag} />}
             {selectedStash && <StashInspector stash={selectedStash} />}
             {!selection && (
@@ -695,12 +1055,21 @@ export function BranchesScreen() {
           </div>
           <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
             {selectedBranch && <BranchActions branch={selectedBranch} />}
+            {selectedFolder !== null && (
+              <FolderActions
+                path={selectedFolder}
+                collapsed={folders.collapsed.has(selectedFolder)}
+                onToggle={() => toggleFolder(selectedFolder)}
+                onDeleteMerged={() => void deleteMergedInFolder(selectedFolder)}
+              />
+            )}
             {selectedTag && <TagActions tag={selectedTag} />}
             {selectedStash && <StashActions stash={selectedStash} />}
           </div>
         </PGPane>
       </div>
       {branchMenu}
+      {folderMenu}
       {tagMenu}
       {stashMenu}
     </>
@@ -716,6 +1085,9 @@ function BranchesToolbar({
   onFetchAll,
   onFastForwardAll,
   fetching,
+  folderCount,
+  allFoldersCollapsed,
+  onToggleAllFolders,
 }: {
   filter: string;
   onFilter: (v: string) => void;
@@ -725,6 +1097,9 @@ function BranchesToolbar({
   onFetchAll: () => void;
   onFastForwardAll: () => void;
   fetching: boolean;
+  folderCount: number;
+  allFoldersCollapsed: boolean;
+  onToggleAllFolders: () => void;
 }) {
   return (
     <PGToolbar
@@ -747,6 +1122,17 @@ function BranchesToolbar({
               { value: "stashes", label: "Stashes" },
             ]}
           />
+          {folderCount > 0 && (
+            <PGIconButton
+              icon={allFoldersCollapsed ? "chevronDown" : "chevronRight"}
+              title={
+                allFoldersCollapsed
+                  ? "Expand all branch folders"
+                  : "Collapse all branch folders"
+              }
+              onClick={onToggleAllFolders}
+            />
+          )}
         </>
       }
       right={
@@ -946,6 +1332,88 @@ export async function promptUpstream(branch: BranchInfo) {
   await useRepoStore
     .getState()
     .setUpstream(branch.name, trimmed === "" ? null : trimmed);
+}
+
+/**
+ * A folder is a name prefix, not a git object — so the inspector says what the
+ * prefix holds rather than pretending there is an object to describe.
+ */
+function FolderInspector({
+  path,
+  branches,
+}: {
+  path: string;
+  branches: readonly BranchRow[];
+}) {
+  const local = branches.filter((b) => b.kind === "local").length;
+  return (
+    <>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 8,
+          minWidth: 0,
+        }}
+      >
+        <PGIcon
+          name="folderOpen"
+          size={14}
+          style={{ color: "var(--fg-2)", flexShrink: 0 }}
+        />
+        <span
+          title={`${path}/`}
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-14)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {path}/
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <KV k="Branches" v={String(branches.length)} />
+        <KV k="Local" v={String(local)} />
+        <KV k="Remote" v={String(branches.length - local)} />
+      </div>
+    </>
+  );
+}
+
+function FolderActions({
+  path,
+  collapsed,
+  onToggle,
+  onDeleteMerged,
+}: {
+  path: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  onDeleteMerged: () => void;
+}) {
+  return (
+    <>
+      <PGButton
+        variant="outline"
+        icon={collapsed ? "chevronDown" : "chevronRight"}
+        onClick={onToggle}
+      >
+        {collapsed ? "Expand" : "Collapse"}
+      </PGButton>
+      <PGButton
+        variant="outline"
+        icon="trash"
+        title={`Delete every local branch under ${path}/ already contained in HEAD`}
+        onClick={onDeleteMerged}
+      >
+        Delete merged branches…
+      </PGButton>
+    </>
+  );
 }
 
 function TagInspector({ tag }: { tag: TagInfo }) {

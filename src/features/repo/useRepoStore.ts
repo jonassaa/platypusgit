@@ -288,6 +288,14 @@ interface RepoStoreState extends RepoSlice {
     opts?: { from?: string; autoStash?: boolean },
   ) => Promise<boolean>;
   deleteBranch: (name: string, force?: boolean) => Promise<void>;
+  /**
+   * Delete several local branches, refreshing ONCE (#244). Best-effort: two
+   * refs that refuse do not decide the fate of the other six, so the report
+   * names both halves — see `summarizeDeleteMerged`.
+   */
+  deleteBranches: (
+    names: readonly string[],
+  ) => Promise<{ deleted: string[]; failed: string[] }>;
   renameBranch: (from: string, to: string) => Promise<void>;
   /** Set (`"origin/main"`) or clear (`null`) a local branch's upstream. */
   setUpstream: (branch: string, upstream: string | null) => Promise<void>;
@@ -1367,6 +1375,28 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       return;
     }
     await get().refreshAll();
+  },
+
+  async deleteBranches(names) {
+    const repo = get().current;
+    if (!repo) return { deleted: [], failed: [] };
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    let firstError: unknown = null;
+    for (const name of names) {
+      try {
+        await deleteBranch(repo.id, name);
+        deleted.push(name);
+      } catch (e) {
+        failed.push(name);
+        firstError ??= e;
+      }
+    }
+    // Refresh FIRST, then report — the branch list must already match reality
+    // by the time an error banner points at it.
+    await get().refreshAll();
+    if (firstError) setErrorFor(repo.id, firstError);
+    return { deleted, failed };
   },
 
   async renameBranch(from, to) {
