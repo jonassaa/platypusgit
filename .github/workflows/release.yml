@@ -107,17 +107,17 @@ jobs:
     outputs:
       sha256: ${{ steps.sha.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -186,17 +186,17 @@ jobs:
       msi_sig: ${{ steps.sig.outputs.msi_sig }}
       portable_sha256: ${{ steps.portable.outputs.portable_sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -341,17 +341,17 @@ jobs:
     needs: version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -525,7 +525,7 @@ jobs:
       appimage_sig: ${{ steps.sig.outputs.appimage_sig }}
       deb_sig: ${{ steps.sig.outputs.deb_sig }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
@@ -541,12 +541,12 @@ jobs:
             libgtk-3-dev
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -648,13 +648,13 @@ jobs:
     steps:
       # Needed for tauri.conf.json — the cask names the .app bundle and the
       # bundle name is productName, so the rewrite step below cross-checks them.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
       - name: Mint tap token from GitHub App
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
@@ -662,7 +662,7 @@ jobs:
           repositories: homebrew-platypusgit
 
       - name: Checkout tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: jonassaa/homebrew-platypusgit
           token: ${{ steps.app-token.outputs.token }}
@@ -734,13 +734,13 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
       - name: Mint bucket token from GitHub App
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
@@ -748,7 +748,7 @@ jobs:
           repositories: scoop-platypusgit
 
       - name: Checkout the bucket
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: jonassaa/scoop-platypusgit
           token: ${{ steps.app-token.outputs.token }}
@@ -1009,7 +1009,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
@@ -1024,7 +1024,7 @@ jobs:
 
       - name: Mint apt repo token from GitHub App
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
@@ -1032,7 +1032,7 @@ jobs:
           repositories: apt-platypusgit
 
       - name: Checkout the apt repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: jonassaa/apt-platypusgit
           token: ${{ steps.app-token.outputs.token }}
@@ -1177,7 +1177,7 @@ jobs:
     needs: [version, apt-publish]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 

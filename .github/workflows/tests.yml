@@ -35,7 +35,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust || 'true' }}
       msix: ${{ steps.filter.outputs.msix || 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -100,13 +100,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -134,7 +134,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Same package list e2e.yml installs, minus xvfb: linking the crate pulls
       # in the real Tauri stack, so the -dev packages are needed at BUILD time,
@@ -251,7 +251,7 @@ jobs:
     if: ${{ needs.changes.outputs.msix == 'true' }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Put the Windows SDK's makeappx on PATH
         shell: pwsh
