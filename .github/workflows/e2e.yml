@@ -58,7 +58,7 @@ jobs:
     outputs:
       app: ${{ steps.filter.outputs.app || 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # apt runs twice here, in this order, and the order is the point:
       #
@@ -127,7 +127,7 @@ jobs:
       # `include-hidden-files: false` and silently matches nothing under one, so
       # `.apt-runtime/*.deb` failed the upload with 57 staged .debs on disk.
       - name: Upload the shards' runtime libs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-runtime-libs
           path: apt-runtime/*.deb
@@ -136,11 +136,11 @@ jobs:
           # matched nothing, so fail where the cause is.
           if-no-files-found: error
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -158,7 +158,7 @@ jobs:
         run: pnpm test:e2e:build
 
       - name: Upload E2E binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-binary
           path: e2e/.bin/platypusgit
@@ -194,10 +194,10 @@ jobs:
         # disk lands in exactly one shard.
         shard: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download the runtime libs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: e2e-runtime-libs
           path: apt-runtime
@@ -217,11 +217,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends --allow-downgrades \
             ./apt-runtime/*.deb
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -230,7 +230,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download E2E binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: e2e-binary
           path: e2e/.bin
