@@ -33,7 +33,11 @@ set -eu
 # src-tauri/tests/msix_identity.rs asserts the manifest references nothing that
 # is missing from icons/, so a regeneration that drops a size fails the build
 # rather than producing a package with blank tiles.
-LOGOS="Square44x44Logo Square71x71Logo Square150x150Logo Square310x310Logo StoreLogo"
+# Square310x310Logo is deliberately ABSENT: the manifest cannot name it without
+# also naming a Wide310x150Logo we do not render (see Package.appxmanifest), so
+# copying it would put an unreferenced file in the package. If the large tile is
+# ever added, it comes back here together with the wide asset.
+LOGOS="Square44x44Logo Square71x71Logo Square150x150Logo StoreLogo"
 
 VERSION=
 ARCH=
