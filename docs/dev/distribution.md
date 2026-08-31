@@ -671,20 +671,43 @@ it at the first upload and fix the script and spec §E together if it disagrees.
 ### The manual setup
 
 `scripts/msstore-wizard.sh` walks the eight steps outside this repo.
-Interactive, `--dry-run`-able, run **by the user** — step 1 is a government ID
-check. It automates almost nothing by design; what it carries is the traps:
+Interactive, `--dry-run`-able, run **by the user** — a first account needs a
+government ID check. It automates almost nothing by design; what it carries is
+the traps:
 
-- **The fee-free account flow exists ONLY from `storedeveloper.microsoft.com`.**
-  Reaching Partner Center any other way serves the legacy flow, which still
-  charges $19.
+- **A first account must be created from `storedeveloper.microsoft.com`** — that
+  page states it is the only supported entry point for the fee-free flow, and
+  other paths "will show the legacy flow". The $19 registration fee is waived in
+  the new flow; Microsoft does not document what the legacy flow costs, so do not
+  assert that it charges. **An existing developer account skips this entirely** —
+  the same FAQ says the flow is "only for new individual developers creating
+  their account for the first time" — and goes straight to
+  `https://aka.ms/submitwindowsapp`.
 - `runFullTrust` is a **restricted** capability: Partner Center requires a
   written justification.
 - Policy **10.2.4** means the `git` dependency must be the **first line** of the
   Store description, not a footnote.
 - Policy **10.5.1** requires a privacy policy URL for a Win32/Desktop Bridge
   product regardless of what it collects — hence `site/src/pages/privacy.astro`,
-  served at `https://www.platypusgit.com/privacy`.
+  served at `https://www.platypusgit.com/privacy/` (the site 301s the unslashed
+  form; paste the canonical one).
 
-The one thing it does automate is the step where a typo is silent: it turns the
-assigned identity values into the exact `msix-pack.sh` invocation. Those values
-are never written to disk.
+### The Store identity lives in repository variables
+
+Partner Center assigns `Identity/Name` and `Identity/Publisher`, and the manifest
+carries them only as `__MSIX_…__` tokens. The release job reads them from
+**repository variables** `MSIX_IDENTITY_NAME` and `MSIX_PUBLISHER` — `vars`, not
+`secrets`, because both ship inside every installed package and neither is
+sensitive.
+
+```bash
+gh variable set MSIX_IDENTITY_NAME --body 'JonasAasberg.platypusgit'
+gh variable set MSIX_PUBLISHER     --body 'CN=<guid>'
+```
+
+**The `msix` job fails if either is unset**, and the shape gate additionally
+rejects a bundle carrying the development identity. Both guards exist because
+`msix-pack.sh` deliberately falls back to `platypusgit.dev` /
+`CN=platypusgit-development` so a local pack works without Partner Center — and
+that fallback is exactly what would otherwise be attached to a public release,
+install fine everywhere, and be rejected only at upload.
