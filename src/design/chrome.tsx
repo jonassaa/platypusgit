@@ -145,12 +145,24 @@ export function PGTabStrip({
   onClose,
   onNew,
   onTabContextMenu,
+  reorder,
 }: {
   tabs: PGTabItem[];
   onSelect?: (id: string) => void;
   onClose?: (id: string) => void;
   onNew?: () => void;
   onTabContextMenu?: (id: string, e: React.MouseEvent) => void;
+  /**
+   * Drag-to-reorder wiring (#238). The strip stays dumb: the caller owns the
+   * order and hands back `useRowReorder`'s handle plus the ref of the scroller
+   * to autoscroll. Absent, the strip renders exactly as it did before.
+   */
+  reorder?: {
+    registerTab: (id: string) => (el: HTMLElement | null) => void;
+    onTabPointerDown: (id: string, e: React.PointerEvent) => void;
+    draggingId: string | null;
+    scrollRef: React.RefObject<HTMLDivElement | null>;
+  };
 }) {
   const activeRef = React.useRef<HTMLDivElement | null>(null);
   const newRef = React.useRef<HTMLButtonElement | null>(null);
@@ -188,6 +200,7 @@ export function PGTabStrip({
       }}
     >
       <div
+        ref={reorder?.scrollRef}
         style={{
           flex: 1,
           minWidth: 0,
@@ -201,7 +214,12 @@ export function PGTabStrip({
         {tabs.map((t) => (
           <div
             key={t.id}
-            ref={t.active ? activeRef : undefined}
+            // Two claims on one ref: the scroll-into-view effect wants the
+            // active tab, the reorder hook wants every tab's box.
+            ref={(el) => {
+              if (t.active) activeRef.current = el;
+              reorder?.registerTab(t.id)(el);
+            }}
             data-testid="repo-tab"
             data-path={t.id}
             data-active={t.active ? "true" : "false"}
@@ -213,6 +231,9 @@ export function PGTabStrip({
               if (e.button === 1) onClose?.(t.id);
             }}
             onContextMenu={(e) => onTabContextMenu?.(t.id, e)}
+            onPointerDown={
+              reorder ? (e) => reorder.onTabPointerDown(t.id, e) : undefined
+            }
             style={{
               flexShrink: 0,
               maxWidth: 220,
@@ -220,7 +241,10 @@ export function PGTabStrip({
               alignItems: "center",
               gap: 6,
               padding: "0 8px",
-              cursor: "pointer",
+              cursor: reorder?.draggingId === t.id ? "grabbing" : "pointer",
+              // Only where a drag can actually start, so a strip without the
+              // gesture keeps touch-scrolling.
+              touchAction: reorder ? "none" : undefined,
               position: "relative",
               background: t.active ? "var(--bg-0)" : "transparent",
               color: t.active ? "var(--fg-0)" : "var(--fg-2)",

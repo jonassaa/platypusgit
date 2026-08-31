@@ -45,6 +45,7 @@ import {
   indexOfTab,
   labelTabs,
   loadOpenRepos,
+  moveTab,
   newTab,
   patchTab,
   removeTab,
@@ -82,6 +83,8 @@ interface TabsState {
   closeAll: () => Promise<void>;
   /** Cycle to the next/previous tab (wrapping). */
   step: (delta: 1 | -1) => Promise<void>;
+  /** Move the tab at `from` to index `to`, persisting the new order (#238). */
+  reorder: (from: number, to: number) => void;
   /** Activate the 1-based nth tab; no-op when there are fewer. */
   selectIndex: (oneBased: number) => Promise<void>;
   /** Record the screen the ACTIVE tab is on (session-only). */
@@ -347,6 +350,18 @@ export const useTabsStore = create<TabsState>((set, get) => {
     async step(delta) {
       const next = cycle(get().tabs, get().activePath, delta);
       if (next) await get().activate(next);
+    },
+
+    reorder(from, to) {
+      const next = moveTab(get().tabs, from, to);
+      // `moveTab` returns the input array for a move that changes nothing, so a
+      // drag that lands where it started, or an out-of-range index, costs no
+      // re-render and no localStorage write.
+      if (next === get().tabs) return;
+      set({ tabs: next });
+      // Reordering never activates: the live repository must not change under a
+      // drag, and `saveOpenRepos` re-reads `activePath` unchanged.
+      persist();
     },
 
     async selectIndex(oneBased) {

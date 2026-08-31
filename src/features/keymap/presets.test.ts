@@ -250,6 +250,14 @@ describe("repository tabs (#90)", () => {
       }
     });
 
+    it(`${preset.id}: moving a tab is the horizontal Move-Statement chord`, () => {
+      // The drag's keyboard equivalent (#238), and the horizontal analogue of
+      // rebase.moveStepUp/Down. Free because that pair is pane-scoped to the
+      // rebase plan while these two are global.
+      expect(preset.bindings["tab.moveLeft"]).toEqual(["Mod+Shift+ArrowLeft"]);
+      expect(preset.bindings["tab.moveRight"]).toEqual(["Mod+Shift+ArrowRight"]);
+    });
+
     it(`${preset.id}: tab.switch is Rider's recent-files chord`, () => {
       expect(preset.bindings["tab.switch"]).toEqual(["Mod+E"]);
     });

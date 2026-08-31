@@ -131,6 +131,24 @@ export function removeTab(tabs: RepoTab[], path: string): RepoTab[] {
 }
 
 /**
+ * Move the tab at `from` to index `to` (#238). Splice, not swap: a drag can
+ * travel several tabs, and for the adjacent case the menu items and the chords
+ * use, splice and swap are the same move.
+ *
+ * Returns the input array unchanged for a move that changes nothing, so the
+ * store can skip a `persist()` it does not owe.
+ */
+export function moveTab(tabs: RepoTab[], from: number, to: number): RepoTab[] {
+  if (from === to) return tabs;
+  if (from < 0 || from >= tabs.length) return tabs;
+  if (to < 0 || to >= tabs.length) return tabs;
+  const next = [...tabs];
+  const [tab] = next.splice(from, 1);
+  next.splice(to, 0, tab);
+  return next;
+}
+
+/**
  * Which tab becomes active when the one at `closedIndex` goes away: the tab to
  * its right, else the one to its left, else none. `remaining` is the list AFTER
  * the removal, so the right-hand neighbour has already slid into `closedIndex`.

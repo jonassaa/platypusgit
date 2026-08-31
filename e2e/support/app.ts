@@ -871,12 +871,23 @@ export async function jsPickOption(
  *
  * Two moves: the first clears the 4px slop and arms the drag, the second lands
  * on the target so a resolution is computed before the release.
+ *
+ * `offset` nudges the landing point off the target's centre. A REORDER surface
+ * (`useRowReorder`) resolves by STRICT midpoint crossing, so releasing exactly
+ * on a same-sized neighbour's centre lands precisely on its midpoint and moves
+ * nothing — pass a few pixels past it to express "put it after this one".
+ * Transfer drops (`useDropZone`) hit-test the element under the pointer and
+ * need no offset.
  */
-export async function jsDrag(fromSel: string, toSel: string): Promise<void> {
+export async function jsDrag(
+  fromSel: string,
+  toSel: string,
+  offset: { dx?: number; dy?: number } = {},
+): Promise<void> {
   // executeOnce: a driver-retry re-run would perform the drag twice — a second
   // stage/unstage or, on the graph, a second confirm.
   const ok = await executeOnce(
-    (from: string, to: string) => {
+    (from: string, to: string, dx: number, dy: number) => {
       const src = document.querySelector(from) as HTMLElement | null;
       const dst = document.querySelector(to) as HTMLElement | null;
       if (!src || !dst) return false;
@@ -885,7 +896,8 @@ export async function jsDrag(fromSel: string, toSel: string): Promise<void> {
         return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       };
       const a = centre(src);
-      const b = centre(dst);
+      const c = centre(dst);
+      const b = { x: c.x + dx, y: c.y + dy };
       const fire = (el: HTMLElement, type: string, p: { x: number; y: number }) => {
         const Ctor =
           typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
@@ -909,6 +921,8 @@ export async function jsDrag(fromSel: string, toSel: string): Promise<void> {
     },
     fromSel,
     toSel,
+    offset.dx ?? 0,
+    offset.dy ?? 0,
   );
   if (!ok) throw new Error(`jsDrag: element not found (${fromSel} -> ${toSel})`);
 }
