@@ -59,6 +59,7 @@ import type {
   SubmoduleInfo,
   TagInfo,
   UpdateCapability,
+  UpdateChannel,
   UpdateInfo,
   WorkdirDiff,
   WorktreeBranch,
@@ -1361,8 +1362,8 @@ export async function revealLogFile(): Promise<void> {
   return invoke<void>("reveal_log_file");
 }
 
-export function checkForUpdate(): Promise<UpdateInfo> {
-  return invoke<UpdateInfo>("check_for_update");
+export function checkForUpdate(channel: UpdateChannel): Promise<UpdateInfo> {
+  return invoke<UpdateInfo>("check_for_update", { channel });
 }
 
 export function getUpdateCapability(): Promise<UpdateCapability> {

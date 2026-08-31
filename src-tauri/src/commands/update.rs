@@ -3,20 +3,32 @@ use std::ffi::OsStr;
 use crate::{
     error::{AppError, AppResult},
     opener,
-    update::{self, UpdateCapability, UpdateInfo},
+    update::{self, UpdateCapability, UpdateChannel, UpdateInfo},
 };
 
-/// Query GitHub for the latest release and compare to the running version.
-/// Drives the update prompt only — never installs anything.
+/// Query GitHub for the newest release on `channel` and compare to the running
+/// version. Drives the update prompt only — never installs anything.
 ///
 /// `update::discover` short-circuits dev/e2e builds (`0.0.0`) BEFORE the fetch,
 /// so no network request leaves a `pnpm tauri dev` or e2e process.
+///
+/// The channel is a PARAMETER rather than something the backend reads for
+/// itself: the preference lives in the frontend's persisted settings, which is
+/// also where the "should this check happen at all" gate lives
+/// (`useUpdateStore.check`). Keeping both on the same side of the IPC boundary
+/// means there is one place to read to know what any given check will do.
 #[tauri::command]
-pub async fn check_for_update() -> AppResult<UpdateInfo> {
+pub async fn check_for_update(channel: Option<UpdateChannel>) -> AppResult<UpdateInfo> {
     let current = env!("CARGO_PKG_VERSION").to_string();
-    tokio::task::spawn_blocking(move || update::discover(&current, update::fetch_latest_release))
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
+    // Absent means stable. The frontend always sends one; the default is here so
+    // that a caller which does not — an older webview against a newer binary, or
+    // a hand-issued invoke — gets the conservative channel rather than an error.
+    let channel = channel.unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        update::discover(&current, || update::fetch_for_channel(channel))
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 /// Whether this install can self-update or should notify + defer to a package

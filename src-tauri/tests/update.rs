@@ -3,7 +3,8 @@ use std::cell::Cell;
 use platypusgit_lib::error::AppError;
 use platypusgit_lib::update::{
     capability, compute_available, discover, is_msix_packaged, is_newer, is_scoop_layout,
-    parse_release, InstallEnv, ReleaseMeta, UpdateCapability,
+    parse_release, parse_releases, pick_newest, InstallEnv, ReleaseMeta, UpdateCapability,
+    UpdateChannel,
 };
 
 #[test]
@@ -75,6 +76,7 @@ fn meta(version: &str) -> ReleaseMeta {
         notes: "notes".into(),
         url: "https://example.com/r".into(),
         published_at: "2026-07-08T10:00:00Z".into(),
+        prerelease: false,
     }
 }
 
@@ -419,5 +421,171 @@ fn capability_ignores_msix_off_windows() {
             ..InstallEnv::new("linux")
         }),
         UpdateCapability::SelfUpdate
+    );
+}
+
+
+// ---------------------------------------------------------------------------
+// Update channel (#237)
+// ---------------------------------------------------------------------------
+
+/// A `/releases` list page, newest-by-date first — the order GitHub returns.
+const RELEASES_JSON: &str = r#"[
+    {
+        "tag_name": "v0.3.0-rc.2",
+        "body": "second candidate",
+        "html_url": "https://example.com/rc2",
+        "published_at": "2026-08-30T10:00:00Z",
+        "prerelease": true,
+        "draft": false
+    },
+    {
+        "tag_name": "v0.2.1",
+        "body": "patch",
+        "html_url": "https://example.com/021",
+        "published_at": "2026-08-20T10:00:00Z",
+        "prerelease": false,
+        "draft": false
+    },
+    {
+        "tag_name": "v0.3.0-rc.1",
+        "body": "first candidate",
+        "html_url": "https://example.com/rc1",
+        "published_at": "2026-08-10T10:00:00Z",
+        "prerelease": true,
+        "draft": false
+    }
+]"#;
+
+#[test]
+fn parse_releases_maps_a_list_page() {
+    let rels = parse_releases(RELEASES_JSON).unwrap();
+    assert_eq!(rels.len(), 3);
+    assert_eq!(rels[0].version, "0.3.0-rc.2");
+    assert!(rels[0].prerelease);
+    assert_eq!(rels[1].version, "0.2.1");
+    assert!(!rels[1].prerelease, "a full release is not flagged");
+    assert_eq!(rels[0].notes, "second candidate");
+    assert_eq!(rels[0].url, "https://example.com/rc2");
+}
+
+#[test]
+fn parse_releases_drops_drafts() {
+    // A draft's release page 404s for anyone but its author, so offering one
+    // would be a dead link. Unauthenticated requests don't see drafts, but this
+    // is the one place an authenticated one would flow through.
+    let json = r#"[
+        {"tag_name":"v0.4.0","draft":true,"prerelease":false},
+        {"tag_name":"v0.3.0","draft":false,"prerelease":false}
+    ]"#;
+    let rels = parse_releases(json).unwrap();
+    assert_eq!(rels.len(), 1);
+    assert_eq!(rels[0].version, "0.3.0");
+}
+
+#[test]
+fn parse_releases_skips_a_malformed_entry_rather_than_failing() {
+    // One odd payload must not turn the updater off for the whole channel.
+    let json = r#"[
+        {"name":"no tag here","draft":false},
+        {"tag_name":"v0.3.0","draft":false}
+    ]"#;
+    let rels = parse_releases(json).unwrap();
+    assert_eq!(rels.len(), 1);
+    assert_eq!(rels[0].version, "0.3.0");
+}
+
+#[test]
+fn parse_releases_rejects_a_non_array_body() {
+    // The shape GitHub returns on error — an object, not a list.
+    assert!(parse_releases(r#"{"message":"Not Found"}"#).is_err());
+    assert!(parse_releases("not json at all").is_err());
+}
+
+#[test]
+fn pick_newest_uses_precedence_not_list_order() {
+    let rels = parse_releases(RELEASES_JSON).unwrap();
+    let newest = pick_newest(&rels).unwrap();
+    assert_eq!(newest.version, "0.3.0-rc.2");
+}
+
+#[test]
+fn pick_newest_prefers_a_release_over_a_stale_prerelease_of_it() {
+    // The case that makes date order wrong: 0.3.0 ships, then a hotfix branch
+    // publishes nothing newer — 0.3.0 must still win over its own candidates,
+    // which sort BELOW it under semver precedence.
+    let rels = vec![meta("0.3.0-rc.1"), meta("0.3.0"), meta("0.3.0-rc.2")];
+    assert_eq!(pick_newest(&rels).unwrap().version, "0.3.0");
+}
+
+#[test]
+fn pick_newest_can_return_a_stable_release_on_the_prerelease_channel() {
+    // "Prerelease" means "offer me prereleases as well", never "only
+    // prereleases": the newest thing published wins whatever it is flagged.
+    let rels = vec![meta("0.3.0-rc.1"), meta("0.4.0")];
+    let newest = pick_newest(&rels).unwrap();
+    assert_eq!(newest.version, "0.4.0");
+    assert!(!newest.prerelease);
+}
+
+#[test]
+fn pick_newest_skips_unparseable_tags() {
+    let rels = vec![meta("nightly"), meta("0.2.0"), meta("v")];
+    assert_eq!(pick_newest(&rels).unwrap().version, "0.2.0");
+}
+
+#[test]
+fn pick_newest_is_none_when_nothing_is_comparable() {
+    assert!(pick_newest(&[]).is_none());
+    assert!(pick_newest(&[meta("nightly")]).is_none());
+}
+
+#[test]
+fn parse_release_reads_the_prerelease_flag() {
+    // A release flagged prerelease can still carry a plain tag; the flag is
+    // what the panel labels, so it must survive parsing rather than being
+    // re-derived from the version string.
+    let json = r#"{"tag_name":"v0.3.0","prerelease":true,"draft":false}"#;
+    assert!(parse_release(json).unwrap().prerelease);
+    // Absent means false — /releases/latest omits nothing, but be explicit.
+    let json = r#"{"tag_name":"v0.3.0"}"#;
+    assert!(!parse_release(json).unwrap().prerelease);
+}
+
+#[test]
+fn discover_carries_the_prerelease_flag_to_the_frontend() {
+    let mut rc = meta("0.3.0-rc.1");
+    rc.prerelease = true;
+    let info = discover("0.2.0", || Ok(rc)).unwrap();
+    assert!(info.available);
+    assert!(info.prerelease, "the panel needs to be able to say so");
+
+    // ...and a dev build reports the flag false rather than leaving it stale.
+    let info = discover("0.0.0", || unreachable!()).unwrap();
+    assert!(!info.prerelease);
+}
+
+#[test]
+fn the_default_channel_is_stable() {
+    // The conservative default matters: it is what an absent `channel` argument
+    // resolves to in `check_for_update`, so a caller that forgets cannot
+    // silently put a user on prereleases.
+    assert_eq!(UpdateChannel::default(), UpdateChannel::Stable);
+}
+
+#[test]
+fn the_channel_serialises_as_the_frontend_spells_it() {
+    // 1:1 with the TS `UpdateChannel` union in src/lib/types.ts.
+    assert_eq!(
+        serde_json::to_string(&UpdateChannel::Stable).unwrap(),
+        "\"stable\""
+    );
+    assert_eq!(
+        serde_json::to_string(&UpdateChannel::Prerelease).unwrap(),
+        "\"prerelease\""
+    );
+    assert_eq!(
+        serde_json::from_str::<UpdateChannel>("\"prerelease\"").unwrap(),
+        UpdateChannel::Prerelease
     );
 }

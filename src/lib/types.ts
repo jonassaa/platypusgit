@@ -619,6 +619,19 @@ export interface CliInstallOutcome {
   pathState: CliPathState;
 }
 
+/**
+ * Which releases update checks consider (#237). Mirrors Rust `UpdateChannel`
+ * (update.rs) 1:1.
+ *
+ * `"prerelease"` means "offer me prereleases AS WELL", not "only prereleases":
+ * the backend takes the semver-highest of everything published, so someone on
+ * this channel still gets a stable release when that is the newest thing there
+ * is. The two channels are different ENDPOINTS, not one endpoint plus a filter —
+ * `/releases/latest` is GitHub's own answer to "what is current", and
+ * re-deriving it by filtering the list would mean re-implementing `make_latest`.
+ */
+export type UpdateChannel = "stable" | "prerelease";
+
 export interface UpdateInfo {
   available: boolean;
   currentVersion: string;
@@ -626,6 +639,14 @@ export interface UpdateInfo {
   notes: string;
   releaseUrl: string;
   publishedAt: string;
+  /**
+   * Whether the offered release is flagged prerelease on GitHub (#237).
+   *
+   * GitHub's flag, not something derived from `latestVersion`: the two can
+   * disagree in both directions, and the label has to agree with the channel
+   * that found the release rather than with the shape of its tag.
+   */
+  prerelease: boolean;
 }
 
 /**

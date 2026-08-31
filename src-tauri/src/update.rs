@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use semver::Version;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
@@ -23,6 +23,26 @@ pub const DEV_VERSION: &str = "0.0.0";
 /// becomes a permanently disabled spinner with no cancel.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Which releases this install is willing to be offered (#237).
+///
+/// `Stable` is the default and is not merely "filter out prereleases" — it is a
+/// DIFFERENT endpoint. `GET /releases/latest` is GitHub's own answer to "what is
+/// the current release", which excludes prereleases and drafts server-side and
+/// respects `make_latest`; reproducing that by filtering the list would mean
+/// re-deriving a rule GitHub already applies.
+///
+/// `Prerelease` means "offer me prereleases *as well*", never "only
+/// prereleases": it takes the semver-highest of every published release, so a
+/// user on the prerelease channel still gets a stable release when that is the
+/// newest thing there is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Prerelease,
+}
+
 /// Discovery result handed to the frontend.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +53,14 @@ pub struct UpdateInfo {
     pub notes: String,
     pub release_url: String,
     pub published_at: String,
+    /// Whether the release being offered is marked prerelease on GitHub.
+    ///
+    /// Reported rather than inferred from the version string: GitHub's flag is
+    /// what decides which channel a release belongs to, and the two can
+    /// disagree in both directions — a `-rc.1` tag published as a full release,
+    /// or a plain `v0.3.0` tag flagged prerelease. The flag is what the panel
+    /// labels, so the label cannot contradict the channel that found it.
+    pub prerelease: bool,
 }
 
 /// Whether this install can swap its own binary or should defer to a package
@@ -131,6 +159,8 @@ pub struct ReleaseMeta {
     pub notes: String,
     pub url: String,
     pub published_at: String,
+    /// GitHub's `prerelease` flag. See `UpdateInfo::prerelease`.
+    pub prerelease: bool,
 }
 
 /// Parse a release tag or crate version into a semver `Version`.
@@ -192,6 +222,7 @@ pub fn discover(
             notes: String::new(),
             release_url: String::new(),
             published_at: String::new(),
+            prerelease: false,
         });
     }
     let rel = fetch()?;
@@ -202,6 +233,7 @@ pub fn discover(
         notes: rel.notes,
         release_url: rel.url,
         published_at: rel.published_at,
+        prerelease: rel.prerelease,
     })
 }
 
@@ -309,10 +341,16 @@ pub fn capability(env: InstallEnv<'_>) -> UpdateCapability {
     }
 }
 
-/// Parse the JSON body of `GET /repos/:slug/releases/latest`.
-pub fn parse_release(json: &str) -> AppResult<ReleaseMeta> {
-    let v: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| AppError::Network(format!("parse release json: {e}")))?;
+/// How many releases the prerelease channel considers.
+///
+/// GitHub returns `/releases` newest-first by creation date, so the newest
+/// release by *any* ordering is in the first page. One page is therefore enough
+/// to answer "what is the newest thing published", and asking for more would
+/// spend bandwidth to re-rank releases that are already known to be older.
+const RELEASES_PER_PAGE: u32 = 30;
+
+/// Map one release object from either endpoint.
+fn release_from_value(v: &serde_json::Value) -> AppResult<ReleaseMeta> {
     let tag = v["tag_name"]
         .as_str()
         .ok_or_else(|| AppError::Network("release json missing tag_name".into()))?
@@ -324,14 +362,63 @@ pub fn parse_release(json: &str) -> AppResult<ReleaseMeta> {
         notes: v["body"].as_str().unwrap_or("").to_string(),
         url: v["html_url"].as_str().unwrap_or("").to_string(),
         published_at: v["published_at"].as_str().unwrap_or("").to_string(),
+        // Absent means false: `/releases/latest` never returns a prerelease, so
+        // a missing flag there is the truth rather than a gap.
+        prerelease: v["prerelease"].as_bool().unwrap_or(false),
     })
 }
 
-/// Blocking GET of the latest published release from GitHub. Call inside
-/// `spawn_blocking`. Unauthenticated (60 req/hr/IP is ample for our cadence —
-/// and dev/e2e builds never get here, see `discover`).
-pub fn fetch_latest_release() -> AppResult<ReleaseMeta> {
-    let url = format!("https://api.github.com/repos/{REPO_SLUG}/releases/latest");
+/// Parse the JSON body of `GET /repos/:slug/releases/latest`.
+pub fn parse_release(json: &str) -> AppResult<ReleaseMeta> {
+    let v: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| AppError::Network(format!("parse release json: {e}")))?;
+    release_from_value(&v)
+}
+
+/// Parse the JSON body of `GET /repos/:slug/releases` — the prerelease channel.
+///
+/// Drafts are dropped here rather than relied on being absent. An
+/// unauthenticated request does not see them, which is what we make, but this
+/// function is also the one place a future authenticated request would flow
+/// through, and offering a draft would point every user at a release page that
+/// 404s for them.
+///
+/// A single malformed entry does not fail the whole check — it is skipped. The
+/// alternative is that one release published with an odd payload turns the
+/// updater off for everyone on the channel until it is fixed.
+pub fn parse_releases(json: &str) -> AppResult<Vec<ReleaseMeta>> {
+    let v: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| AppError::Network(format!("parse releases json: {e}")))?;
+    let arr = v
+        .as_array()
+        .ok_or_else(|| AppError::Network("releases json is not an array".into()))?;
+    Ok(arr
+        .iter()
+        .filter(|r| !r["draft"].as_bool().unwrap_or(false))
+        .filter_map(|r| release_from_value(r).ok())
+        .collect())
+}
+
+/// The semver-highest release in the list, or `None` if none has a usable tag.
+///
+/// By PRECEDENCE, not by list order, and that is the whole point of the
+/// prerelease channel. GitHub orders `/releases` by creation date, so a patch
+/// cut on an old line after a newer prerelease would otherwise win — and the
+/// same ordering is what makes `1.0.0` correctly beat a stale `1.1.0-rc.1`
+/// only when precedence, not dates, decides. Unparseable tags are skipped for
+/// the reason `is_newer` refuses them: no comparison is better than a wrong one.
+pub fn pick_newest(releases: &[ReleaseMeta]) -> Option<&ReleaseMeta> {
+    releases
+        .iter()
+        .filter_map(|r| parse_version(&r.version).map(|v| (v, r)))
+        .max_by(|(a, _), (b, _)| a.cmp_precedence(b))
+        .map(|(_, r)| r)
+}
+
+/// Blocking GET returning the response body. Call inside `spawn_blocking`.
+/// Unauthenticated (60 req/hr/IP is ample for our cadence — and dev/e2e builds
+/// never get here, see `discover`).
+fn get_body(url: &str) -> AppResult<String> {
     // `https_only` matters because the agent follows up to 5 redirects by
     // default — without it a redirect could downgrade us to plaintext http.
     let agent = ureq::AgentBuilder::new()
@@ -339,13 +426,37 @@ pub fn fetch_latest_release() -> AppResult<ReleaseMeta> {
         .https_only(true)
         .build();
     let resp = agent
-        .get(&url)
+        .get(url)
         .set("User-Agent", "platypusgit-updater")
         .set("Accept", "application/vnd.github+json")
         .call()
         .map_err(|e| AppError::Network(e.to_string()))?;
-    let body = resp
-        .into_string()
-        .map_err(|e| AppError::Network(e.to_string()))?;
-    parse_release(&body)
+    resp.into_string()
+        .map_err(|e| AppError::Network(e.to_string()))
+}
+
+/// Blocking GET of the latest published release from GitHub (stable channel).
+pub fn fetch_latest_release() -> AppResult<ReleaseMeta> {
+    let url = format!("https://api.github.com/repos/{REPO_SLUG}/releases/latest");
+    parse_release(&get_body(&url)?)
+}
+
+/// Blocking GET of the newest release including prereleases.
+pub fn fetch_newest_release() -> AppResult<ReleaseMeta> {
+    let url = format!(
+        "https://api.github.com/repos/{REPO_SLUG}/releases?per_page={RELEASES_PER_PAGE}"
+    );
+    let releases = parse_releases(&get_body(&url)?)?;
+    pick_newest(&releases)
+        .cloned()
+        .ok_or_else(|| AppError::Network("no published releases".into()))
+}
+
+/// The fetch for a channel. The one place the two endpoints are chosen between,
+/// so no caller can pair a channel with the wrong URL.
+pub fn fetch_for_channel(channel: UpdateChannel) -> AppResult<ReleaseMeta> {
+    match channel {
+        UpdateChannel::Stable => fetch_latest_release(),
+        UpdateChannel::Prerelease => fetch_newest_release(),
+    }
 }

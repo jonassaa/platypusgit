@@ -82,6 +82,10 @@ const PORTABLE = [
   "themePreference",
   "uiDensity",
   "uiZoom",
+  // The release channel (#237). Portable: "we track the prereleases" is a
+  // team decision, not a fact about one machine — the same call
+  // `updateCheckMode` beside it made.
+  "updateChannel",
   "updateCheckMode",
 ];
 

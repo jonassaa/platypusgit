@@ -132,7 +132,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     // remembering at each one, and the one that forgets spends a request the
     // user switched off. Silent rather than an error: a check the user disabled
     // is not a failure, and the Settings panel already says checks are off.
-    if (!checkAllowed(useSettingsStore.getState().updateCheckMode, manual)) {
+    const settings = useSettingsStore.getState();
+    if (!checkAllowed(settings.updateCheckMode, manual)) {
       set({ status: "idle" });
       return;
     }
@@ -143,7 +144,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       if (!capability) {
         capability = await getUpdateCapability();
       }
-      const info = await checkForUpdate();
+      // Read from the same snapshot the gate used, so a channel switch
+      // mid-check cannot produce a result attributed to the other channel.
+      const info = await checkForUpdate(settings.updateChannel);
       const lastCheckedAt = Date.now();
       try {
         localStorage.setItem(LAST_CHECKED_KEY, String(lastCheckedAt));
