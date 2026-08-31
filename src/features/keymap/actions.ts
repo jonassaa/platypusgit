@@ -109,6 +109,8 @@ export type ActionId =
   | "tab.next"
   | "tab.prev"
   | "tab.close"
+  | "tab.moveLeft"
+  | "tab.moveRight"
   | "tab.select"
   | "tab.switch";
 
@@ -160,6 +162,22 @@ function onInteractiveElement(): boolean {
 function stepTab(delta: 1 | -1): boolean {
   if (useTabsStore.getState().tabs.length < 2) return false;
   void useTabsStore.getState().step(delta);
+  return true;
+}
+
+/**
+ * Move the ACTIVE tab one place (#238) — the drag's keyboard equivalent.
+ *
+ * Declines at either end rather than wrapping: a drag cannot wrap either, and a
+ * silently-wrapping chord on a strip the user is looking at reads as a bug.
+ * Declining also lets the chord fall through instead of doing nothing.
+ */
+function moveActiveTab(delta: 1 | -1): boolean {
+  const { tabs, activePath } = useTabsStore.getState();
+  const from = tabs.findIndex((t) => t.path === activePath);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= tabs.length) return false;
+  useTabsStore.getState().reorder(from, to);
   return true;
 }
 
@@ -475,6 +493,20 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
       void useTabsStore.getState().close(path);
       return true;
     },
+  },
+  "tab.moveLeft": {
+    id: "tab.moveLeft",
+    title: "Move repository tab left",
+    category: "Repository",
+    scope: "global",
+    run: () => moveActiveTab(-1),
+  },
+  "tab.moveRight": {
+    id: "tab.moveRight",
+    title: "Move repository tab right",
+    category: "Repository",
+    scope: "global",
+    run: () => moveActiveTab(1),
   },
   "tab.select": {
     id: "tab.select",

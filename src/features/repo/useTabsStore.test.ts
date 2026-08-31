@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
 import { REPO_SLICE_KEYS, emptySlice } from "./repoSlice";
-import { OPEN_REPOS_KEY } from "./tabs";
+import { OPEN_REPOS_KEY, newTab } from "./tabs";
 import { useRepoStore } from "./useRepoStore";
 import { useTabsStore } from "./useTabsStore";
 
@@ -386,6 +386,64 @@ describe("useTabsStore — switching", () => {
     expect(useTabsStore.getState().activePath).toBe("/dev/api");
     await useTabsStore.getState().selectIndex(9);
     expect(useTabsStore.getState().activePath).toBe("/dev/api");
+  });
+});
+
+describe("useTabsStore — reordering (#238)", () => {
+  const seed = (paths: string[], active = paths[0]) =>
+    useTabsStore.setState({ tabs: paths.map((p) => newTab(p)), activePath: active });
+
+  const persisted = () =>
+    JSON.parse(localStorage.getItem(OPEN_REPOS_KEY) ?? "null") as {
+      paths: string[];
+      active: string | null;
+    } | null;
+
+  it("moves a tab and persists the new order", () => {
+    seed(["/dev/api", "/dev/web", "/dev/cli"]);
+    useTabsStore.getState().reorder(0, 2);
+    expect(useTabsStore.getState().tabs.map((t) => t.path)).toEqual([
+      "/dev/web",
+      "/dev/cli",
+      "/dev/api",
+    ]);
+    // The order IS the persistence — `saveOpenRepos` writes the array as it
+    // stands, so a restart restores the strip the user arranged.
+    expect(persisted()?.paths).toEqual(["/dev/web", "/dev/cli", "/dev/api"]);
+  });
+
+  it("keeps the same tab active when its neighbours move around it", () => {
+    seed(["/dev/api", "/dev/web", "/dev/cli"], "/dev/web");
+    useTabsStore.getState().reorder(0, 2);
+    // Reordering is not switching: the live repository must not change under a
+    // drag, or every reorder would pay a full slice swap.
+    expect(useTabsStore.getState().activePath).toBe("/dev/web");
+    expect(persisted()?.active).toBe("/dev/web");
+  });
+
+  it("writes nothing for a move that changes nothing", () => {
+    seed(["/dev/api", "/dev/web"]);
+    useTabsStore.getState().reorder(1, 1);
+    expect(persisted()).toBeNull();
+  });
+
+  it("ignores an out-of-range move", () => {
+    seed(["/dev/api", "/dev/web"]);
+    useTabsStore.getState().reorder(0, 5);
+    expect(useTabsStore.getState().tabs.map((t) => t.path)).toEqual([
+      "/dev/api",
+      "/dev/web",
+    ]);
+    expect(persisted()).toBeNull();
+  });
+
+  it("makes Alt+<n> follow the strip the user arranged", async () => {
+    seed(["/dev/api", "/dev/web"]);
+    useTabsStore.getState().reorder(0, 1);
+    // `selectIndex` indexes the array, so the tab dragged to the front becomes
+    // Alt+1. That is the point of dragging it there.
+    await useTabsStore.getState().selectIndex(1);
+    expect(useTabsStore.getState().activePath).toBe("/dev/web");
   });
 });
 

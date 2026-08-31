@@ -8,6 +8,7 @@
 import {
   activeRepoTabPath,
   jsChord,
+  jsDrag,
   jsKey,
   openPalette,
   paletteDialog,
@@ -64,6 +65,28 @@ function stripGeometry() {
       plusFullyVisible: p.left >= box.left - 1 && p.right <= box.right + 1,
       overflowing: scroller.scrollWidth > scroller.clientWidth,
     };
+  });
+}
+
+/** The strip's tab paths, left to right — the order under test. */
+function tabOrder(): Promise<string[]> {
+  return browser.execute(() =>
+    Array.from(document.querySelectorAll('[data-testid="repo-tab"]')).map(
+      (t) => t.getAttribute("data-path") ?? "",
+    ),
+  );
+}
+
+/** What `pg-open-repos` holds right now, which is what a restart would restore. */
+function persistedOrder(): Promise<string[]> {
+  return browser.execute(() => {
+    try {
+      const raw = localStorage.getItem("pg-open-repos");
+      const parsed = raw ? (JSON.parse(raw) as { paths?: string[] }) : null;
+      return parsed?.paths ?? [];
+    } catch {
+      return [];
+    }
   });
 }
 
@@ -129,6 +152,71 @@ describe("multi-repo tabs", () => {
     // Repo truth: that commit really is beta's and really is not alpha's.
     expect(beta.git("log", "--oneline")).toContain("merge feature");
     expect(alpha.git("log", "--oneline")).not.toContain("merge feature");
+  });
+
+  it("drags a tab to a new position, and the order survives a reload", async () => {
+    await resetApp();
+    await seedOpenRepos([alpha.path, beta.path], alpha.path);
+    await waitShowing(alpha, "before the reorder");
+
+    const before = await tabOrder();
+    expect(before).toHaveLength(2);
+
+    // A few pixels PAST the second tab's centre: `useRowReorder` resolves by
+    // strict midpoint crossing, so landing exactly on the centre of an
+    // equal-width neighbour moves nothing.
+    await jsDrag(
+      `[data-testid="repo-tab"][data-path="${before[0]}"]`,
+      `[data-testid="repo-tab"][data-path="${before[1]}"]`,
+      { dx: 24 },
+    );
+
+    await browser.waitUntil(
+      async () => (await tabOrder())[0] === before[1],
+      {
+        timeout: 20_000,
+        timeoutMsg: "the dragged tab never took its new position",
+      },
+    );
+    expect(await tabOrder()).toEqual([before[1], before[0]]);
+
+    // Dragging is not switching — the repository on screen is untouched.
+    await waitShowing(alpha, "after the reorder");
+    expect(await activeRepoTabPath()).toContain(
+      alpha.path.split("/").filter(Boolean).pop() as string,
+    );
+
+    // The order IS the persistence: nothing else is written for it.
+    expect(await persistedOrder()).toEqual([before[1], before[0]]);
+
+    await refreshAndSettle(() =>
+      repoTab(beta.path).waitForDisplayed({
+        timeout: 20_000,
+        timeoutMsg: "no tabs after reloading a reordered strip",
+      }),
+    );
+    expect(await tabOrder()).toEqual([before[1], before[0]]);
+  });
+
+  it("moves the active tab with the keyboard, and declines at the end", async () => {
+    await resetApp();
+    await seedOpenRepos([alpha.path, beta.path], alpha.path);
+    await waitShowing(alpha, "before the chord");
+
+    const before = await tabOrder();
+    await jsChord("Mod+Shift+ArrowRight");
+
+    await browser.waitUntil(
+      async () => (await tabOrder())[1] === before[0],
+      {
+        timeout: 20_000,
+        timeoutMsg: "Mod+Shift+Right never moved the active tab",
+      },
+    );
+
+    // Already last: the chord declines rather than wrapping to the front.
+    await jsChord("Mod+Shift+ArrowRight");
+    expect(await tabOrder()).toEqual([before[1], before[0]]);
   });
 
   it("cycles tabs with the next/prev chords", async () => {

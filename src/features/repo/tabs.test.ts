@@ -6,6 +6,7 @@ import {
   cycle,
   labelTabs,
   loadOpenRepos,
+  moveTab,
   newTab,
   findTab,
   indexOfTab,
@@ -82,6 +83,43 @@ describe("tabs — list reducers", () => {
     it("is null with no tabs", () => {
       expect(cycle([], null, 1)).toBeNull();
     });
+  });
+});
+
+describe("tabs — moveTab (#238)", () => {
+  it("splices a tab to a later position", () => {
+    const tabs = moveTab([t("/a"), t("/b"), t("/c")], 0, 2);
+    expect(tabs.map((x) => x.path)).toEqual(["/b", "/c", "/a"]);
+  });
+
+  it("splices a tab to an earlier position", () => {
+    const tabs = moveTab([t("/a"), t("/b"), t("/c")], 2, 0);
+    expect(tabs.map((x) => x.path)).toEqual(["/c", "/a", "/b"]);
+  });
+
+  it("moves a tab one step, the case the menu and the chords use", () => {
+    const tabs = moveTab([t("/a"), t("/b"), t("/c")], 1, 2);
+    expect(tabs.map((x) => x.path)).toEqual(["/a", "/c", "/b"]);
+  });
+
+  it("returns the same array for a move that changes nothing", () => {
+    const tabs = [t("/a"), t("/b")];
+    // Identity, not a copy: the store persists on every reorder and a fresh
+    // array for a no-op move would write localStorage for nothing.
+    expect(moveTab(tabs, 1, 1)).toBe(tabs);
+  });
+
+  it("returns the same array when either end is out of range", () => {
+    const tabs = [t("/a"), t("/b")];
+    expect(moveTab(tabs, -1, 0)).toBe(tabs);
+    expect(moveTab(tabs, 0, 2)).toBe(tabs);
+    expect(moveTab(tabs, 2, 0)).toBe(tabs);
+  });
+
+  it("does not mutate its input", () => {
+    const tabs = [t("/a"), t("/b"), t("/c")];
+    moveTab(tabs, 0, 2);
+    expect(tabs.map((x) => x.path)).toEqual(["/a", "/b", "/c"]);
   });
 });
 

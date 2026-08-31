@@ -13,6 +13,8 @@ import {
   type ContextMenuItem,
   type PGTabItem,
 } from "@/design";
+import { useRowReorder } from "@/features/dnd";
+import { chordFor } from "@/features/keymap/chordFor";
 import { openRepoDialog } from "./ops";
 import { labelTabs } from "./tabs";
 import { useTabsStore } from "./useTabsStore";
@@ -49,6 +51,17 @@ export function RepoTabs() {
     failed: t.status === "failed",
   }));
 
+  // Drag to reorder (#238). Keys are the tab paths — the strip's identity — so
+  // the hook's FLIP signature changes exactly when the order does.
+  const stripRef = React.useRef<HTMLDivElement | null>(null);
+  const paths = React.useMemo(() => tabs.map((t) => t.path), [tabs]);
+  const { registerRow, onRowPointerDown, draggingKey } = useRowReorder(
+    paths,
+    (from, to) => useTabsStore.getState().reorder(from, to),
+    stripRef,
+    "x",
+  );
+
   const platform = usePlatform();
   const menu = useContextMenu<string>((path) =>
     tabMenuItems(path, tabs.length, platform),
@@ -64,6 +77,12 @@ export function RepoTabs() {
         onClose={(id) => void useTabsStore.getState().close(id)}
         onNew={() => void openRepoDialog()}
         onTabContextMenu={(id, e) => menu.onContextMenu(e, id)}
+        reorder={{
+          registerTab: registerRow,
+          onTabPointerDown: onRowPointerDown,
+          draggingId: draggingKey,
+          scrollRef: stripRef,
+        }}
       />
       {menu.menu}
     </>
@@ -85,8 +104,30 @@ export function tabMenuItems(
   // nothing on the backend to resolve a directory from, so reveal/terminal
   // stay disabled rather than firing at a repo that isn't there.
   const repoId = tabs().tabs.find((t) => t.path === path)?.repoId;
+  // The drag's visible equivalent (#238), the way the rebase plan pairs its
+  // drag with chevrons. Indices are read at click time, not menu-build time.
+  const move = (delta: 1 | -1) => () => {
+    const from = tabs().tabs.findIndex((t) => t.path === path);
+    if (from >= 0) tabs().reorder(from, from + delta);
+  };
+  const index = tabs().tabs.findIndex((t) => t.path === path);
   return [
     { __menuTitle: "Repository" },
+    {
+      label: "Move left",
+      icon: "chevronLeft",
+      shortcut: chordFor("tab.moveLeft"),
+      disabled: index <= 0,
+      onClick: move(-1),
+    },
+    {
+      label: "Move right",
+      icon: "chevronRight",
+      shortcut: chordFor("tab.moveRight"),
+      disabled: index < 0 || index >= total - 1,
+      onClick: move(1),
+    },
+    { divider: true },
     {
       label: "Close",
       icon: "x",

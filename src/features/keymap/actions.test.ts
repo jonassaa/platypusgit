@@ -5,6 +5,8 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { useOverlayStore } from "./useOverlayStore";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
+import { useTabsStore } from "@/features/repo/useTabsStore";
+import { newTab } from "@/features/repo/tabs";
 
 describe("action catalog", () => {
   it("every action has a title and category", () => {
@@ -124,5 +126,49 @@ describe("default runners", () => {
     expect(ACTIONS["repo.pull"].run?.()).toBe(false);
     expect(ACTIONS["repo.push"].run?.()).toBe(false);
     expect(ACTIONS["repo.refresh"].run?.()).toBe(false);
+  });
+});
+
+describe("moving the active repository tab (#238)", () => {
+  const seed = (paths: string[], active: string | null) =>
+    useTabsStore.setState({
+      tabs: paths.map((p) => newTab(p)),
+      activePath: active,
+    } as never);
+
+  const order = () => useTabsStore.getState().tabs.map((t) => t.path);
+
+  beforeEach(() => {
+    localStorage.clear();
+    seed([], null);
+  });
+
+  it("moves the active tab right", () => {
+    seed(["/a", "/b", "/c"], "/a");
+    expect(ACTIONS["tab.moveRight"].run?.()).toBe(true);
+    expect(order()).toEqual(["/b", "/a", "/c"]);
+  });
+
+  it("moves the active tab left", () => {
+    seed(["/a", "/b", "/c"], "/c");
+    expect(ACTIONS["tab.moveLeft"].run?.()).toBe(true);
+    expect(order()).toEqual(["/a", "/c", "/b"]);
+  });
+
+  it("declines at either end rather than wrapping", () => {
+    // A drag cannot wrap either, and a chord that silently teleports a tab from
+    // one end of the strip to the other reads as a bug. Declining also lets the
+    // chord fall through instead of doing nothing.
+    seed(["/a", "/b"], "/a");
+    expect(ACTIONS["tab.moveLeft"].run?.()).toBe(false);
+    seed(["/a", "/b"], "/b");
+    expect(ACTIONS["tab.moveRight"].run?.()).toBe(false);
+    expect(order()).toEqual(["/a", "/b"]);
+  });
+
+  it("declines when there is no active tab", () => {
+    seed([], null);
+    expect(ACTIONS["tab.moveLeft"].run?.()).toBe(false);
+    expect(ACTIONS["tab.moveRight"].run?.()).toBe(false);
   });
 });

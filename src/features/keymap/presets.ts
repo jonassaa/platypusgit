@@ -170,6 +170,11 @@ const COMMON = {
   // modifier (Alt+Arrow moves panes).
   "tab.select": ["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6", "Alt+7", "Alt+8", "Alt+9"],
   // Rider's ⌘E ("Recent files") — the palette's repository switcher.
+  // Move the active tab within the strip (#238) — the drag's keyboard
+  // equivalent, and the horizontal form of rebase.moveStepUp/Down. Those are
+  // pane-scoped to the rebase plan, so the arrow pair is free here.
+  "tab.moveLeft": ["Mod+Shift+ArrowLeft"],
+  "tab.moveRight": ["Mod+Shift+ArrowRight"],
   "tab.switch": ["Mod+E"],
 } satisfies Partial<Record<ActionId, string[]>>;
 

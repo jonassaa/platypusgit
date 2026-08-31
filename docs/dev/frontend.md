@@ -1167,5 +1167,15 @@ update checks back on for someone who turned them off.
   HEAD, cherry-pick only onto HEAD (the only ops the backend has). A refused
   drop returns a reason (shown on the ghost), never silence.
 - **Every drag has a keyboard equivalent** — staging → Space/checkbox, reorder →
-  Mod+Shift+↑/↓ and chevrons, graph ops → menus/palette/Branches. A new gesture
-  without one is not done. Escape cancels, from one capture-phase listener.
+  Mod+Shift+↑/↓ and chevrons, repository tabs → Mod+Shift+←/→ and the tab menu's
+  Move left/right, graph ops → menus/palette/Branches. A new gesture without one
+  is not done. Escape cancels, from one capture-phase listener.
+- **`useRowReorder` takes an `axis`** (`"y"` default, `"x"` for the repository
+  tab strip, #238). The axis is a table of accessors — `clientX`/`clientY`,
+  `left`/`top`, `width`/`height`, `offsetLeft`/`offsetTop`,
+  `scrollLeft`/`scrollTop`, `translateX`/`translateY` — resolved once per hook,
+  so the gesture (slop, midpoint crossing, edge autoscroll, settle, the
+  FLIP hand-off) has exactly one implementation. A horizontal sibling hook would
+  be the second, which is what the dnd spec exists to prevent. FLIP still
+  measures `offset*` rather than rects: those are immune to both scrolling and
+  the transforms the hook itself applies.
