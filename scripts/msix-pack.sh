@@ -150,8 +150,18 @@ if [ "$STAGE_ONLY" -eq 1 ]; then
 fi
 
 if ! command -v makeappx.exe >/dev/null 2>&1; then
-    echo "makeappx.exe is not on PATH — it ships with the Windows SDK." >&2
-    echo "On a non-Windows host, use --stage-only." >&2
+    echo "makeappx.exe is not on PATH." >&2
+    echo >&2
+    echo "It ships with the Windows 10 SDK, but the SDK's bin directory is NOT" >&2
+    echo "on PATH by default — including on GitHub's windows runners, which is" >&2
+    echo "how the v0.2.0 release failed here. Add it:" >&2
+    echo >&2
+    # printf, not echo: POSIX `echo` interprets backslash escapes, so this path
+    # printed as `10in\<version>d` — `\b` became a backspace and `\x64` became
+    # the character 0x64. A Windows path is nothing but backslashes.
+    printf '  "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\<version>\\x64"\n' >&2
+    echo >&2
+    echo "On a non-Windows host, use --stage-only instead." >&2
     exit 1
 fi
 
