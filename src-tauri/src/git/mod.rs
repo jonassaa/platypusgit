@@ -12,6 +12,7 @@ pub mod notes;
 pub mod ownership;
 pub mod rebase_plan;
 pub mod rebase_state;
+pub mod update_refs;
 pub mod shallow;
 pub mod signature;
 pub mod signing;
@@ -736,16 +737,35 @@ pub trait GitBackend: Send + Sync {
     /// The whole plan runs inside this ONE call — it returns only when the plan
     /// is exhausted or a step pauses — so without a sink there is no way to
     /// render progress for the part of a long rebase that actually takes time.
+    /// `update_refs` moves local branches whose tips sit inside the replayed
+    /// range (#240) — git's `rebase --update-refs`, implemented here because we
+    /// replay ourselves rather than shelling out. `None` means "ask the
+    /// repository's `rebase.updateRefs`", so a user who already set it globally
+    /// gets it without configuring the app too.
     fn rebase_start_with_progress(
         &self,
         repo_id: &RepoId,
         plan: Vec<RebaseStep>,
+        update_refs: Option<bool>,
         on_progress: RebaseProgressSink<'_>,
     ) -> AppResult<RebaseStatus>;
+
+    /// Local branches whose tips are among `oids` — the refs an
+    /// `--update-refs` rebase of that plan would move (#240).
+    ///
+    /// Read-only, and separate from starting a rebase on purpose: the valuable
+    /// half of this feature is telling the user "this will also move `feat/b`
+    /// and `feat/c`" BEFORE they confirm, which needs an answer while nothing
+    /// has happened yet.
+    fn stacked_refs(
+        &self,
+        repo_id: &RepoId,
+        oids: Vec<String>,
+    ) -> AppResult<Vec<update_refs::StackedRef>>;
     /// [`Self::rebase_start_with_progress`] for a caller that has nowhere to put
     /// the ticks — every test, and `resolve_and_continue`'s internal resume.
     fn rebase_start(&self, repo_id: &RepoId, plan: Vec<RebaseStep>) -> AppResult<RebaseStatus> {
-        self.rebase_start_with_progress(repo_id, plan, &|_| {})
+        self.rebase_start_with_progress(repo_id, plan, None, &|_| {})
     }
     fn rebase_continue_with_progress(
         &self,

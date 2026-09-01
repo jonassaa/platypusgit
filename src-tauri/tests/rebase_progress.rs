@@ -64,7 +64,7 @@ fn every_step_ticks_once_in_plan_order_before_it_is_applied() {
 
     let ticks = Ticks::default();
     let done = backend
-        .rebase_start_with_progress(&handle.id, pick_all(&oids), &ticks.sink())
+        .rebase_start_with_progress(&handle.id, pick_all(&oids), None, &ticks.sink())
         .unwrap();
     assert!(!done.in_progress, "a plain pick plan runs to completion");
 
@@ -116,7 +116,7 @@ fn a_dropped_step_still_ticks() {
     ];
     let ticks = Ticks::default();
     backend
-        .rebase_start_with_progress(&handle.id, plan, &ticks.sink())
+        .rebase_start_with_progress(&handle.id, plan, None, &ticks.sink())
         .unwrap();
 
     let seen = ticks.taken();
@@ -147,7 +147,7 @@ fn a_pause_stops_the_ticks_and_continue_resumes_them() {
     ];
     let start = Ticks::default();
     let paused = backend
-        .rebase_start_with_progress(&handle.id, plan, &start.sink())
+        .rebase_start_with_progress(&handle.id, plan, None, &start.sink())
         .unwrap();
     assert!(paused.in_progress, "an Edit step pauses the replay");
 

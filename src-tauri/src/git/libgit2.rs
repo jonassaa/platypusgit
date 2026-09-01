@@ -68,6 +68,11 @@ pub struct RebaseState {
     /// skipped step maps to the HEAD it left behind, so a later step that has
     /// to sit on top of it still resolves to a real commit.
     pub rewritten: HashMap<String, String>,
+    /// Local branches whose tips sat inside the replayed range when this rebase
+    /// STARTED (#240), captured before anything moved — afterwards the commits
+    /// they point at no longer exist in the new history and the question cannot
+    /// be asked again. Empty when update-refs is off for this run.
+    pub stacked: Vec<crate::git::update_refs::StackedRef>,
 }
 
 pub struct Libgit2Backend {
@@ -536,6 +541,7 @@ impl Libgit2Backend {
                         .iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect(),
+                    stacked: s.stacked.clone(),
                 })
         };
 
@@ -577,6 +583,7 @@ impl Libgit2Backend {
                 head_name: p.head_name,
                 onto: p.onto,
                 rewritten: p.rewritten.into_iter().collect(),
+                stacked: p.stacked,
             },
         );
         Ok(true)
@@ -653,6 +660,34 @@ impl Libgit2Backend {
         })
     }
 
+    /// Point every dependent branch at its replayed commit (#240).
+    ///
+    /// Called once, straight after `finish_rebase`, and only for refs captured
+    /// when the rebase STARTED — a branch created mid-rebase is not part of the
+    /// stack that was agreed to in the confirmation, and moving it would be a
+    /// surprise rather than a service.
+    fn move_stacked_refs(
+        &self,
+        repo_id: &RepoId,
+    ) -> AppResult<Vec<crate::git::update_refs::MovedRef>> {
+        let (stacked, rewritten) = {
+            let rebases = self
+                .rebases
+                .lock()
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            match rebases.get(repo_id) {
+                Some(s) => (s.stacked.clone(), s.rewritten.clone()),
+                None => return Ok(Vec::new()),
+            }
+        };
+        if stacked.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.with_repo(repo_id, |repo| {
+            crate::git::update_refs::move_refs(repo, &stacked, &rewritten)
+        })
+    }
+
     fn mark_paused(&self, repo_id: &RepoId, reason: &str) -> AppResult<RebaseStatus> {
         let mut rebases = self
             .rebases
@@ -722,6 +757,12 @@ impl Libgit2Backend {
                 // reattach HEAD before reporting, so the caller's refresh sees
                 // the finished state.
                 self.finish_rebase(repo_id)?;
+                // ...and the dependent branches (#240), immediately after, so
+                // the two ref moves are one logical step: a stack is either
+                // rebased or it is not. Reads the same `rewritten` map the
+                // replay filled in, which is why this costs nothing beyond the
+                // ref writes themselves.
+                let moved_refs = self.move_stacked_refs(repo_id)?;
                 // Rebase complete. Capture the final status
                 // before dropping the in-memory state so this call's caller
                 // still sees the completed count, but remove the entry so a
@@ -747,6 +788,7 @@ impl Libgit2Backend {
                 let summary = RebaseSummary {
                     total: status.total,
                     completed: status.next_index,
+                    moved_refs,
                 };
                 self.with_repo(repo_id, |repo| {
                     crate::git::rebase_state::save_summary(repo, &summary)
@@ -5439,10 +5481,29 @@ impl GitBackend for Libgit2Backend {
         Ok(())
     }
 
+    fn stacked_refs(
+        &self,
+        repo_id: &RepoId,
+        oids: Vec<String>,
+    ) -> AppResult<Vec<crate::git::update_refs::StackedRef>> {
+        let wanted: std::collections::HashSet<String> = oids.into_iter().collect();
+        self.with_repo(repo_id, |repo| {
+            // The branch being rebased is HEAD's own, and `finish_rebase` moves
+            // that one itself.
+            let head_name = repo
+                .head()
+                .ok()
+                .filter(|_| !repo.head_detached().unwrap_or(false))
+                .and_then(|h| h.name().ok().map(str::to_string));
+            crate::git::update_refs::stacked_refs(repo, &wanted, head_name.as_deref())
+        })
+    }
+
     fn rebase_start_with_progress(
         &self,
         repo_id: &RepoId,
         plan: Vec<RebaseStep>,
+        update_refs: Option<bool>,
         on_progress: RebaseProgressSink<'_>,
     ) -> AppResult<RebaseStatus> {
         // Validate BEFORE touching anything. An unexecutable step used to be
@@ -5466,6 +5527,28 @@ impl GitBackend for Libgit2Backend {
         // there. The branch ref is moved exactly once, when the plan completes:
         // committing to an attached HEAD advanced the branch step by step,
         // which left it mid-replay whenever a step failed or paused.
+        // Captured BEFORE the detach-and-reset below: afterwards these branches
+        // still point at the old commits, but "which refs are in the range" is
+        // a question about the pre-rebase history, so it has to be asked while
+        // that history is still what HEAD describes.
+        let plan_oids: std::collections::HashSet<String> =
+            plan.iter().map(|s| s.oid.clone()).collect();
+        let stacked = self.with_repo(repo_id, |repo| {
+            let on = match update_refs {
+                Some(v) => v,
+                None => crate::git::update_refs::config_enabled(repo),
+            };
+            if !on {
+                return Ok(Vec::new());
+            }
+            let head_name = repo
+                .head()
+                .ok()
+                .filter(|_| !repo.head_detached().unwrap_or(false))
+                .and_then(|h| h.name().ok().map(str::to_string));
+            crate::git::update_refs::stacked_refs(repo, &plan_oids, head_name.as_deref())
+        })?;
+
         let (orig_head, head_name, onto) = self.with_repo(repo_id, |repo| {
             let statuses = repo.statuses(None)?;
             if statuses.iter().any(|s| {
@@ -5542,6 +5625,7 @@ impl GitBackend for Libgit2Backend {
                 head_name,
                 onto,
                 rewritten: HashMap::new(),
+                stacked,
             },
         );
         drop(rebases);

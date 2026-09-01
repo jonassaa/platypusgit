@@ -1,4 +1,6 @@
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { confirmStackedRefs, resolveUpdateRefs } from "./stackedRefs";
 import type { RebaseStep } from "@/lib/types";
 
 export type RebaseRunOutcome = "done" | "paused" | "failed";
@@ -21,6 +23,17 @@ export type RebaseRunOutcome = "done" | "paused" | "failed";
  * - "failed" — it errored; `rebaseStart` has already set the error banner.
  */
 export async function runRebasePlanNow(plan: RebaseStep[]): Promise<RebaseRunOutcome> {
+  const repo = useRepoStore.getState().current;
+  if (!repo) return "failed";
+  // "This will also move feat/b and feat/c" (#240), before anything runs. The
+  // dialog is silent when nothing points into the range, which is the ordinary
+  // case — a confirmation on every rebase would be trained away in a week.
+  const ok = await confirmStackedRefs(
+    repo.id,
+    plan,
+    resolveUpdateRefs(useSettingsStore.getState().rebaseUpdateRefs),
+  );
+  if (!ok) return "failed";
   const status = await useRepoStore.getState().rebaseStart(plan);
   if (!status) return "failed";
   return status.inProgress ? "paused" : "done";

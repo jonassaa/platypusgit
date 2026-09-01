@@ -738,7 +738,8 @@ pub struct RebaseStep {
 /// frontend used to cache the final status for the "N steps completed" line,
 /// which meant every abort and every start path had to remember to clear that
 /// cache (#47). The backend retains this instead, until `rebase_acknowledge`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// No longer `Copy`: the summary now owns the list of refs it moved (#240).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RebaseSummary {
     /// Steps the completed plan contained.
@@ -746,6 +747,14 @@ pub struct RebaseSummary {
     /// Steps that ran, drops included — equal to `total` for a plan that
     /// reached its end, which is the only way a summary is recorded.
     pub completed: usize,
+    /// Dependent branches this rebase moved (#240), empty when update-refs was
+    /// off or nothing pointed into the range.
+    ///
+    /// Reported because moving someone else's branch is a consequence they
+    /// agreed to in the confirmation and should be able to verify afterwards —
+    /// and because each one now needs a force-push.
+    #[serde(default)]
+    pub moved_refs: Vec<crate::git::update_refs::MovedRef>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -315,6 +315,7 @@ pub fn run() {
             commands::conflict::run_mergetool,
             commands::conflict::restart_conflict,
             commands::rebase::rebase_start,
+            commands::rebase::stacked_refs,
             commands::rebase::rebase_continue,
             commands::rebase::rebase_abort,
             commands::rebase::rebase_status,

@@ -76,6 +76,9 @@ const PORTABLE = [
   "headWeight",
   "ignoreWhitespaceInDiff",
   "pruneOnFetch",
+  // Whether a rebase carries dependent branches along (#240). Portable: it
+  // describes how you want the app to rebase, not anything about this machine.
+  "rebaseUpdateRefs",
   "signCommits",
   // A pairing of a light and a dark theme plus which one to follow (#236). A
   // preference like any other — it says what the person likes, not what the

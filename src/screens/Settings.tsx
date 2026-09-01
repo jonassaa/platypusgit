@@ -24,12 +24,14 @@ import {
   type ThemeDef,
   type ThemeFollowMode,
   type UpdateChannel,
+
   type UpdateCheckMode,
 } from "@/features/settings/useSettingsStore";
 import {
   DEFAULT_TICKET_PATTERN,
   isValidTicketPattern,
 } from "@/features/commits/message";
+import type { UpdateRefsMode } from "@/lib/types";
 import { IdentityForm } from "@/features/commits/identity/IdentityForm";
 import { SavedIdentities } from "@/features/commits/identity/SavedIdentities";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -183,6 +185,22 @@ export function SettingsScreen() {
                 }}
                 style={{ width: 72 }}
                 disabled={!s.autoFetchEnabled}
+              />
+            }
+          />
+          <Row
+            label="Move dependent branches"
+            hint="When rebasing, also move branches whose tips sit inside the range being replayed — git's rebase --update-refs, the thing that keeps a stack of small PRs from being orphaned. Follow git config uses this repository's own rebase.updateRefs. You are always asked first, and told which branches will move."
+            control={
+              <PGSelect
+                data-testid="rebase-update-refs"
+                value={s.rebaseUpdateRefs}
+                onChange={(v) => s.set("rebaseUpdateRefs", v as UpdateRefsMode)}
+                options={[
+                  { value: "config", label: "Follow git config" },
+                  { value: "always", label: "Always" },
+                  { value: "never", label: "Never" },
+                ]}
               />
             }
           />

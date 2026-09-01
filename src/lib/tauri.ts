@@ -46,6 +46,7 @@ import type {
   PullRequest,
   PushForce,
   RebaseStatus,
+  StackedRef,
   RebaseStep,
   ReflogEntry,
   RemoteInfo,
@@ -1217,11 +1218,28 @@ export async function restartConflict(
 
 // ─── Interactive rebase ───────────────────────────────────────────────────────
 
+/**
+ * Local branches whose tips are among `oids` — the refs an update-refs rebase
+ * would move (#240). Read-only, asked before the rebase so the user can still
+ * say no.
+ */
+export async function stackedRefs(
+  repoId: string,
+  oids: string[],
+): Promise<StackedRef[]> {
+  return invoke<StackedRef[]>("stacked_refs", { repoId, oids });
+}
+
 export async function rebaseStart(
   repoId: string,
   plan: RebaseStep[],
+  /**
+   * Move dependent branches whose tips are inside the replayed range (#240).
+   * `null` defers to the repository's own `rebase.updateRefs`.
+   */
+  updateRefs: boolean | null = null,
 ): Promise<RebaseStatus> {
-  return invoke<RebaseStatus>("rebase_start", { repoId, plan });
+  return invoke<RebaseStatus>("rebase_start", { repoId, plan, updateRefs });
 }
 
 export async function rebaseContinue(repoId: string): Promise<RebaseStatus> {

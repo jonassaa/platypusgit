@@ -58,6 +58,12 @@ pub struct PersistedRebase {
     /// The step whose apply conflicted and is awaiting resolution, if any.
     pub current: Option<PersistedCurrent>,
     pub rewritten: BTreeMap<String, String>,
+    /// Branches whose tips sat inside the replayed range when this rebase
+    /// started (#240). Persisted with everything else so a rebase resumed in a
+    /// later session still moves them — the question cannot be re-asked once
+    /// the old commits are gone from the branch.
+    #[serde(default)]
+    pub stacked: Vec<super::update_refs::StackedRef>,
 }
 
 pub fn path(repo: &Repository) -> PathBuf {
@@ -131,7 +137,7 @@ pub fn save_summary(repo: &Repository, summary: &RebaseSummary) -> AppResult<()>
     let tmp = target.with_extension("json.tmp");
     let json = serde_json::to_vec_pretty(&PersistedSummary {
         version: VERSION,
-        summary: *summary,
+        summary: summary.clone(),
     })
     .map_err(|e| AppError::Internal(format!("serialising rebase summary: {e}")))?;
     std::fs::write(&tmp, json)?;
