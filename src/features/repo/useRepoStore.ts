@@ -169,6 +169,25 @@ const PAGE_SIZE = 500;
  *   - every fetch/error write goes through `setFor`/`setErrorFor`, which drop a
  *     response that resolved after the user moved to another repository.
  */
+/**
+ * Options for the two refreshes.
+ *
+ * `preserveError` exists for exactly one caller: the filesystem watcher (#239).
+ * A refresh nobody asked for must not clear a banner the user has not read.
+ *
+ * The bug it fixes: a failed `--ff-only` pull sets `error`, but the fetch half
+ * of that same pull moved `refs/remotes/…`, so the watcher's DEBOUNCED event
+ * lands a few hundred milliseconds later — after the operation has cleared
+ * `activity`, so `fsRefreshPlan`'s busy guard no longer suppresses it — and
+ * `refreshAll`'s opening `set({ error: null })` wipes the message. The user
+ * sees a pull that silently did nothing, which is the worst possible reading of
+ * a failure.
+ */
+export interface RefreshOptions {
+  /** Leave `error` alone. For refreshes the user did not ask for. */
+  preserveError?: boolean;
+}
+
 interface RepoStoreState extends RepoSlice {
   /**
    * Open `path` into the ACTIVE slice and refresh it, returning the handle (or
@@ -226,14 +245,22 @@ interface RepoStoreState extends RepoSlice {
    * the store; the previous list is kept.
    */
   setLogRef: (refspec: string | null) => Promise<void>;
-  refreshAll: () => Promise<void>;
+  /**
+   * Re-read everything about the repository.
+   *
+   * Clears `error` first, because a refresh the USER asked for means "show me
+   * where things stand now" and a stale banner from a previous action is not
+   * that. A BACKGROUND refresh must pass `preserveError` — see
+   * `RefreshOptions`.
+   */
+  refreshAll: (opts?: RefreshOptions) => Promise<void>;
   /**
    * Lightweight refresh for index-only mutations (stage/unstage/discard and
    * the hunk ops): re-fetches just `status` + `repoState`, skipping the full
    * branch/tag/stash/remote enumeration and the ≤500-commit log walk that
    * `refreshAll` does but that these ops can't change.
    */
-  refreshStatus: () => Promise<void>;
+  refreshStatus: (opts?: RefreshOptions) => Promise<void>;
   /**
    * Undo (or redo) the last recorded operation (#242).
    *
@@ -936,10 +963,10 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
-  async refreshAll() {
+  async refreshAll(opts) {
     const repo = get().current;
     if (!repo) return;
-    set({ loading: true, error: null });
+    set({ loading: true, ...(opts?.preserveError ? {} : { error: null }) });
     const logRef = get().logRef;
     try {
       const [
@@ -1037,10 +1064,10 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     }
   },
 
-  async refreshStatus() {
+  async refreshStatus(opts) {
     const repo = get().current;
     if (!repo) return;
-    set({ error: null });
+    if (!opts?.preserveError) set({ error: null });
     try {
       // `bisect_status` joins the pair here because the operation bar's bisect
       // actions must stay live after an index op too. The backend short-circuits

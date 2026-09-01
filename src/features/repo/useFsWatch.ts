@@ -45,8 +45,14 @@ export function useFsWatch(repoId: string | null): void {
     running.current = true;
     try {
       const store = useRepoStore.getState();
-      if (what === "all") await store.refreshAll();
-      else await store.refreshStatus();
+      // `preserveError` because this refresh is not one the user asked for.
+      // Without it, the debounced event from a failed operation's own writes
+      // arrives just after that operation clears `activity` — past the busy
+      // guard — and wipes the error banner it just set. A pull that failed
+      // then looks like a pull that silently did nothing.
+      const opts = { preserveError: true };
+      if (what === "all") await store.refreshAll(opts);
+      else await store.refreshStatus(opts);
     } catch {
       // A background refresh must not raise a banner. The user did not ask for
       // this one, and whatever is wrong will surface loudly the moment they do
