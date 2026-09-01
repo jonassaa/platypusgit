@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { PullMode } from "@/lib/tauri";
 import type { UpdateChannel } from "@/lib/types";
+import type { SavedIdentity } from "@/features/commits/identity/identityList";
 import {
   DEFAULT_HEAD_WEIGHT,
   HEAD_WEIGHTS,
@@ -899,6 +900,20 @@ interface PersistedState {
    * one line and is not markdown.
    */
   commitBodyMarkdown: boolean;
+  /**
+   * Saved commit identities to pick between (#233) — a work address and a
+   * personal one.
+   *
+   * A PALETTE, not an assignment: which identity a repository uses is
+   * `user.name`/`user.email` in that repository's own config, where git, the
+   * CLI and every hook already read it. Storing that mapping here as well
+   * would drift the moment someone ran `git config` in a terminal. Applying an
+   * entry WRITES the local config; "which one is active" is answered by
+   * reading it back and matching.
+   *
+   * NOT portable — see NON_PORTABLE_KEYS.
+   */
+  identities: SavedIdentity[];
   updateCheckMode: UpdateCheckMode;
   /**
    * Which releases update checks consider — see UpdateChannel.
@@ -1001,6 +1016,7 @@ const DEFAULTS: PersistedState = {
   externalDiffTool: "",
   watchFilesystem: true,
   commitBodyMarkdown: true,
+  identities: [],
   updateCheckMode: "auto",
   updateChannel: "stable",
   lastCreateDir: "",
@@ -1046,6 +1062,15 @@ const SETTINGS_SCHEMA_URL = "https://platypusgit.dev/settings.schema.json";
  */
 export const NON_PORTABLE_KEYS: readonly (keyof PersistedState)[] = [
   "lastCreateDir",
+  /**
+   * Saved identities (#233). Denied because an export is a file people SHARE:
+   * every other preference in the bag describes how the app should behave, and
+   * this one is a list of someone's name and email addresses. Carrying it into
+   * a colleague's install would leak personal data through a feature nobody
+   * expects to carry any — and the receiving machine has no use for it anyway,
+   * since identities are per-person by definition.
+   */
+  "identities",
 ];
 
 /** `DEFAULTS`' keys minus the deny-list — exactly what an export carries. */

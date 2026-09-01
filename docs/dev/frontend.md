@@ -388,6 +388,44 @@ email joins this one rather than growing beside it.
   refusal names the offending character — so the button gates on "both fields
   non-empty" and nothing more.
 
+## Named identities (#233)
+
+`features/commits/identity/identityList.ts` + `SavedIdentities.tsx`: a small set
+of saved `{label, name, email}` entries, and a one-click "Use here" that applies
+one to the open repository.
+
+**There is deliberately no `repoId → identityId` map.** git already stores which
+identity a repository uses — `user.name`/`user.email` in that repository's own
+config, where the CLI, every hook and every other git tool read it. A second
+store of the same fact drifts the moment anyone runs `git config` in a terminal,
+and then the app confidently names an identity the next commit will not use.
+
+So the saved list is a **palette, not an assignment**. Applying an entry writes
+the repository's local config (through the same scoped `setIdentity` from #233's
+first half), and "which one is active here" is answered by reading git config
+back and matching on the name/email pair — never on the label, so a repository
+configured by hand still lights up the entry it corresponds to. The email
+compares case-insensitively, because addresses are.
+
+The consequence worth knowing, and the UI says it: **editing or removing an entry
+does not change any repository already using it.** Deleting a bookmark does not
+move the page.
+
+Applying always writes the REPOSITORY scope, never global — that is the feature
+(work address on work repositories), and it is the safe direction: a mis-click
+changes one repository rather than every repository on the machine. The global
+identity stays `IdentityForm`'s job, where the scope control makes it explicit.
+
+`identities` is in `NON_PORTABLE_KEYS`. A settings export is a file people share,
+and every other key in the bag describes how the app should behave; this one is a
+list of someone's email addresses, and it is useless on the receiving machine
+anyway.
+
+**Signing keys are not attached yet.** #233 lists one as optional and it is the
+right shape, but `signCommits` is a global tri-state (#61 D6) and the signing
+chain resolves its key from git config — a field nothing reads would be dead
+weight that later needs migrating.
+
 ## The commit-message composer (#252)
 
 `src/features/commits/message/` is **THE** commit-message composition surface —
