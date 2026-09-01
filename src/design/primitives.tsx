@@ -145,6 +145,14 @@ export interface PGIconButtonProps {
   active?: boolean;
   tone?: string;
   style?: CSSProperties;
+  /**
+   * Threaded onto the button, matching `PGSelect` and `PGInput`.
+   *
+   * Without it the only handle a test has on an icon button is its `title`,
+   * which is user-facing prose — so rewording a tooltip silently breaks tests
+   * that have nothing to do with the wording.
+   */
+  "data-testid"?: string;
 }
 
 export function PGIconButton({
@@ -155,6 +163,7 @@ export function PGIconButton({
   active,
   tone,
   style,
+  "data-testid": testId,
 }: PGIconButtonProps) {
   const sizes = { sm: 20, md: 24, lg: 28 } as const;
   const sz = sizes[size];
@@ -163,6 +172,7 @@ export function PGIconButton({
     <button
       onClick={onClick}
       title={title}
+      data-testid={testId}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       className="focusable"

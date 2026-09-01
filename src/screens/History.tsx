@@ -36,6 +36,7 @@ import { headAncestryOf } from "@/features/commits/headAncestry";
 import { buildRebasePlan } from "@/features/commits/buildRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
+import { CommitBody } from "@/features/commits/body";
 import { CommitNotes } from "@/features/commits/CommitNotes";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { ShallowNotice } from "@/features/repo/ShallowNotice";
@@ -893,7 +894,9 @@ export function HistoryScreen() {
           sha={current.shortOid}
           fullSha={current.oid}
           subject={current.summary}
-          body={current.body ?? undefined}
+          bodyContent={
+            current.body ? <CommitBody text={current.body} /> : undefined
+          }
           author={current.author || "unknown"}
           email={current.email}
           date={relativeTime(current.timestamp)}

@@ -890,6 +890,15 @@ interface PersistedState {
    * refresh by hand than pay for it.
    */
   watchFilesystem: boolean;
+  /**
+   * Whether the commit BODY is rendered as restrained markdown (#253).
+   *
+   * A preference rather than a per-visit toggle, for the reason `diffViewMode`
+   * is: people who want the raw object want it every time, and people who want
+   * it readable want that every time. Never applies to the subject — that is
+   * one line and is not markdown.
+   */
+  commitBodyMarkdown: boolean;
   updateCheckMode: UpdateCheckMode;
   /**
    * Which releases update checks consider — see UpdateChannel.
@@ -991,6 +1000,7 @@ const DEFAULTS: PersistedState = {
   ignoreWhitespaceInDiff: false,
   externalDiffTool: "",
   watchFilesystem: true,
+  commitBodyMarkdown: true,
   updateCheckMode: "auto",
   updateChannel: "stable",
   lastCreateDir: "",

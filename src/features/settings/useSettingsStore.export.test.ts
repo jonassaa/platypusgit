@@ -57,6 +57,9 @@ const PORTABLE = [
   // The branch-name → ticket regex (#252). Portable: it describes a TEAM's
   // ticket convention, which is exactly the kind of thing a settings file is
   // carried between machines to keep in step.
+  // Whether commit bodies render as markdown (#253). Portable: it is a
+  // reading preference, not a fact about this machine.
+  "commitBodyMarkdown",
   "commitTicketPattern",
   "confirmForcePush",
   "customThemes",
