@@ -226,6 +226,21 @@ git/
 │                what the branch contains and deleting it would destroy a ref
 │                nobody asked us to touch. config_enabled reads
 │                rebase.updateRefs, and the default is git's own `false`
+custom_action.rs SECURITY-critical, and pure (#225). A user-supplied command
+                 string is NOT a shell line: parse_command splits it into argv
+                 (quotes group; `| > ; && $ *` are ORDINARY CHARACTERS because
+                 nothing interprets them), then `substitute` expands
+                 $REPO/$FILE/$FILES/$SHA/$BRANCH INTO INDIVIDUAL ARGV ENTRIES.
+                 So a value can never introduce a new argument — a branch named
+                 `main; rm -rf ~` stays one argument, and branch names come from
+                 anyone who ever pushed. Two traps the tests pin: substitution
+                 is ONE left-to-right pass, because chained str::replace
+                 re-scans text it just wrote (a file named `$SHA` would pull in
+                 the sha — values are DATA, not templates); and placeholders are
+                 tried LONGEST NAME FIRST, because `$FILE` is a prefix of
+                 `$FILES`. Spawned through proc::program_async only, with no
+                 token, credential or askpass — a custom action is a USER
+                 program, not a trusted one
 ├── auth.rs      PURE: classify_auth_failure (stderr → AuthKind; host-key
 │                failure deliberately not auth), AuthChallenge, scrub_credentials
 ├── hooks.rs     The ONE place a git hook is executed (#232). `git hook run`,
@@ -385,6 +400,14 @@ commands/        Thin Tauri handlers, one file per area:
 │                commands: remember_credential — stored only after the
 │                credential worked — and cancel_network_op, which stops a
 │                stalled clone/fetch/pull/push (#234). See backend.md
+├── custom_action.rs run_custom_action (#225) — thin over
+│                src-tauri/src/custom_action.rs, which decides WHAT runs. The
+│                workdir is resolved through the backend, never taken from the
+│                frontend: it is about to become a child process's cwd, and a
+│                path argument would be a second source of truth for where a
+│                repository lives. Output is captured and truncated with a
+│                marker, so a command that prints a gigabyte cannot become a
+│                gigabyte-sized IPC message
 ├── update.rs    check_for_update, get_update_capability, open_url — thin
 │                handlers for src-tauri/src/update.rs (same basename, two files)
 ├── watch.rs     watch_repo, watch_stop (#239) — thin over src-tauri/src/
@@ -475,6 +498,15 @@ features/            Components + Zustand store colocated per feature:
 │                    activate/close/cycle + session restore), RepoTabs,
 │                    useRecentsStore, ops (shared runners), OperationBar
 │                    (repoState-driven bar), ownership (safe.directory confirm)
+├── actions/         User-defined commands (#225): customActions (the list, its
+│                    validation, and how a result is reported — a FAILURE is
+│                    always shown whatever the setting says, because an action
+│                    that exits non-zero silently is indistinguishable from one
+│                    that never ran), runAction (spawn → report → refresh, with
+│                    a RepoActivity entry so a slow user program is visible),
+│                    CustomActionsSettings. Deliberately does NOT re-implement
+│                    the command parser — that lives beside the spawn in Rust,
+│                    and a second one would be a second place to drift
 ├── nav/             useNavStore — cross-screen intents + DeepViewHeader
 ├── branches/        BranchChip, BranchPicker, orderBranches (PURE, #135 — THE
 │                    one branch ordering; every branch list goes through it),

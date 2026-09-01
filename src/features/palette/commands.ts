@@ -16,6 +16,7 @@ import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { activePins } from "@/features/branches/pins";
 import { summarizeFastForward } from "@/features/branches/fastForward";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
+import { runAction } from "@/features/actions/runAction";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
@@ -283,6 +284,25 @@ export function buildCommands(): PaletteItem[] {
       actionId,
       run: direct(() => nav.setIntent({ kind: "switch-screen", screen: id })),
     });
+  }
+
+  // -- user-defined commands (#225) --
+  //
+  // In the palette like everything else, which is the point: an action the
+  // team runs fifty times a day should be reachable the same way `Fetch all
+  // remotes` is, not buried in a menu. Only with a repository open — every
+  // placeholder is about one.
+  if (repo.current) {
+    for (const action of useSettingsStore.getState().customActions) {
+      items.push({
+        type: "command",
+        id: `custom-action:${action.id}`,
+        search: `${action.name} custom action ${action.command}`,
+        label: action.name,
+        icon: "terminal",
+        run: direct(() => void runAction(action)),
+      });
+    }
   }
 
   // -- direct actions --

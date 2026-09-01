@@ -685,6 +685,34 @@ export interface FsChange {
   refsMoved: boolean;
 }
 
+/**
+ * The values a custom action's placeholders take (#225). Mirrors Rust
+ * `custom_action.rs::ActionContext`.
+ *
+ * `repo` is filled in by the BACKEND from the repository it resolves — the
+ * frontend sends an empty string — so a custom action's working directory can
+ * never be chosen by the caller.
+ */
+export interface ActionContext {
+  repo: string;
+  files: string[];
+  sha: string | null;
+  branch: string | null;
+}
+
+/** What a finished custom action reports (#225). Mirrors Rust `ActionOutput`. */
+export interface ActionOutput {
+  /** Exit status, or null when the process was killed by a signal. */
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  /**
+   * The argv actually spawned. Shown in the output panel so "what did it run"
+   * is answerable without guessing how the command string was parsed.
+   */
+  argv: string[];
+}
+
 export interface UpdateInfo {
   available: boolean;
   currentVersion: string;

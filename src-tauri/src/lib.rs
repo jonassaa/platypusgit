@@ -1,5 +1,6 @@
 pub mod cancel;
 pub mod cli;
+pub mod custom_action;
 pub mod commands;
 pub mod detach;
 pub mod diagnostics;
@@ -347,6 +348,7 @@ pub fn run() {
             commands::ssh::ssh_key_generate,
             commands::update::check_for_update,
             commands::update::get_update_capability,
+            commands::custom_action::run_custom_action,
             commands::watch::watch_repo,
             commands::watch::watch_stop,
             commands::update::open_url,
