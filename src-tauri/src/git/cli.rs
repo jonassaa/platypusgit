@@ -449,8 +449,16 @@ impl GitBackend for CliBackend {
         &self,
         _repo_id: &RepoId,
         _plan: Vec<RebaseStep>,
+        _update_refs: Option<bool>,
         _on_progress: RebaseProgressSink<'_>,
     ) -> AppResult<RebaseStatus> {
+        Err(AppError::NotImplemented)
+    }
+    fn stacked_refs(
+        &self,
+        _repo_id: &RepoId,
+        _oids: Vec<String>,
+    ) -> AppResult<Vec<super::update_refs::StackedRef>> {
         Err(AppError::NotImplemented)
     }
     fn rebase_continue_with_progress(

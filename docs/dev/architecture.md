@@ -213,6 +213,19 @@ git/
 │                summary in a second file. Deliberately NOT git's own
 │                rebase-merge/ dir — a half-compatible one would let git claim
 │                a rebase it cannot drive
+├── update_refs.rs  Stacked branches (#240) — git's `rebase --update-refs`,
+│                IMPLEMENTED not passed through, because our rebase is our own
+│                libgit2 replay with no `git rebase` process to hand a flag to.
+│                It is small because the engine already keeps
+│                `RebaseState::rewritten` (original → new oid per step): this is
+│                "which local branch TIPS are inside the plan" (stacked_refs,
+│                captured BEFORE the detach — afterwards the old commits are
+│                gone from the branch and the question cannot be re-asked) plus
+│                "look each one up in that map" (move_refs). A ref whose commit
+│                was DROPPED is left alone: retargeting it would silently change
+│                what the branch contains and deleting it would destroy a ref
+│                nobody asked us to touch. config_enabled reads
+│                rebase.updateRefs, and the default is git's own `false`
 ├── auth.rs      PURE: classify_auth_failure (stderr → AuthKind; host-key
 │                failure deliberately not auth), AuthChallenge, scrub_credentials
 ├── hooks.rs     The ONE place a git hook is executed (#232). `git hook run`,
@@ -393,7 +406,13 @@ commands/        Thin Tauri handlers, one file per area:
 ├── conflict.rs  repo_state, conflict_sides, accept_ours/theirs, mark_resolved,
 │                save_resolution, abort/continue_operation, run_mergetool,
 │                restart_conflict
-├── rebase.rs    rebase_start/continue/abort/status/acknowledge (interactive)
+├── rebase.rs    rebase_start/continue/abort/status/acknowledge (interactive).
+│                rebase_start takes `update_refs` (#240): None defers to the
+│                repository's rebase.updateRefs, so the app never turns it on
+│                for someone who did not ask. stacked_refs answers "which
+│                branches would this plan move" WITHOUT starting anything —
+│                the confirmation needs it while the user can still say no,
+│                which the issue calls the valuable half of the feature
 ├── forge.rs     forge_detect, forge_sign_in/sign_out/token_status/validate_token,
 │                forge_list_pull_requests, forge_pull_request_checks,
 │                forge_create_pull_request, forge_checkout_pull_request. Owns

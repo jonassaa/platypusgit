@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { PullMode } from "@/lib/tauri";
-import type { UpdateChannel } from "@/lib/types";
+import type { UpdateChannel, UpdateRefsMode } from "@/lib/types";
 import type { SavedIdentity } from "@/features/commits/identity/identityList";
 import {
   DEFAULT_HEAD_WEIGHT,
@@ -914,6 +914,17 @@ interface PersistedState {
    * NOT portable — see NON_PORTABLE_KEYS.
    */
   identities: SavedIdentity[];
+  /**
+   * Whether a rebase moves dependent branches whose tips sit inside the
+   * replayed range (#240) — git's `rebase --update-refs`.
+   *
+   * `"config"` is the default and follows the repository's own
+   * `rebase.updateRefs`, the same shape `signCommits` uses for
+   * `commit.gpgsign`: someone who already set it globally gets it here without
+   * configuring the app, and the app never overrides a repository that has
+   * already decided.
+   */
+  rebaseUpdateRefs: UpdateRefsMode;
   updateCheckMode: UpdateCheckMode;
   /**
    * Which releases update checks consider — see UpdateChannel.
@@ -1017,6 +1028,7 @@ const DEFAULTS: PersistedState = {
   watchFilesystem: true,
   commitBodyMarkdown: true,
   identities: [],
+  rebaseUpdateRefs: "config",
   updateCheckMode: "auto",
   updateChannel: "stable",
   lastCreateDir: "",

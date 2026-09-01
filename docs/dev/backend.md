@@ -944,3 +944,38 @@ Two things about it that are easy to get wrong:
   `only_warm_child_path_resolves_the_probe` guards this at the source level,
   because a timing test in a parallel test binary gets warmed by a sibling and
   passes vacuously.
+
+## Stacked branches: `--update-refs` is implemented, not passed through (#240)
+
+Our rebase is our **own replay** — `rebase_start_with_progress` detaches at the
+base, cherry-picks each step, and moves the branch ref once in `finish_rebase`.
+There is no `git rebase` process to hand `--update-refs` to. The issue flagged
+that as the question deciding the feature's size; `git/update_refs.rs` is the
+answer, and it is small because the engine already keeps the one piece of state
+that makes it possible: `RebaseState::rewritten`, the original → new oid map
+maintained per step.
+
+Three decisions worth knowing before changing it:
+
+- **The stack is captured BEFORE the detach.** `stacked_refs` asks "which local
+  branch tips are inside this plan" while HEAD still describes the pre-rebase
+  history. Afterwards those commits are no longer what the branch contains and
+  the question cannot be asked again — which is also why the answer is persisted
+  in `rebase_state`, so a rebase resumed in a later session still moves them.
+- **Tips only**, which is git's own rule. A branch pointing into the middle of
+  the range is what stacking produces; a branch pointing elsewhere is not this
+  rebase's business.
+- **A ref whose commit was dropped is left alone.** There is no honest place to
+  move it: retargeting to a neighbour would silently change what the branch
+  contains, and deleting it would destroy a ref nobody asked us to touch.
+  Leaving it loses nothing, and the summary reports what *did* move so the
+  difference is visible.
+
+`move_stacked_refs` runs immediately after `finish_rebase`, so the branch and
+its dependants move as one logical step: a stack is either rebased or it is not.
+
+The default is git's own — `rebase.updateRefs`, read by `config_enabled`, off
+unless set. Turning it on for someone who did not ask is the same class of
+surprise as leaving their stack behind, just in the other direction. The
+frontend still confirms first and names every ref (`features/commits/stackedRefs.ts`),
+because the flag alone is a silent behaviour change.

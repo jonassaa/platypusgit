@@ -479,11 +479,45 @@ export interface RebaseStep {
  * (#47). Now `rebase_status` keeps reporting it until `rebaseAcknowledge`, and
  * starting or aborting a rebase drops it in the engine.
  */
+/**
+ * A local branch whose tip sits inside a range about to be replayed (#240).
+ * Mirrors Rust `git/update_refs.rs::StackedRef`.
+ */
+export interface StackedRef {
+  /** Full ref name, e.g. `refs/heads/feat/b`. */
+  name: string;
+  /** What the UI shows: `feat/b`. */
+  short: string;
+  oid: string;
+}
+
+/** A ref a rebase actually moved (#240). Mirrors Rust `MovedRef`. */
+export interface MovedRef {
+  name: string;
+  short: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Whether a rebase moves dependent branches (#240).
+ *
+ * `"config"` defers to the repository's own `rebase.updateRefs`, the same shape
+ * `signCommits` uses for `commit.gpgsign` — so the app never overrides a
+ * repository that has already made this decision.
+ */
+export type UpdateRefsMode = "config" | "always" | "never";
+
 export interface RebaseSummary {
   /** Steps the completed plan contained. */
   total: number;
   /** Steps that ran, drops included. Equal to `total` for a finished plan. */
   completed: number;
+  /**
+   * Dependent branches this rebase moved (#240). Optional only so existing
+   * fixtures need not restate it; the backend always sends it.
+   */
+  movedRefs?: MovedRef[];
 }
 
 export interface RebaseStatus {

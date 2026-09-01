@@ -49,7 +49,8 @@ fn a_completed_rebase_leaves_a_summary_that_survives_polling() {
         done.last_completed,
         Some(RebaseSummary {
             total: 3,
-            completed: 3
+            completed: 3,
+            moved_refs: Vec::new()
         }),
         "the call that finished the rebase reports its own summary"
     );
@@ -63,7 +64,8 @@ fn a_completed_rebase_leaves_a_summary_that_survives_polling() {
             polled.last_completed,
             Some(RebaseSummary {
                 total: 3,
-                completed: 3
+                completed: 3,
+                moved_refs: Vec::new()
             }),
             "the summary must outlive the state it summarises"
         );
@@ -133,7 +135,8 @@ fn starting_a_new_rebase_drops_the_previous_summary() {
         done.last_completed,
         Some(RebaseSummary {
             total: 1,
-            completed: 1
+            completed: 1,
+            moved_refs: Vec::new()
         })
     );
 }
@@ -232,7 +235,8 @@ fn a_summary_survives_a_backend_restart() {
         backend.rebase_status(&handle.id).unwrap().last_completed,
         Some(RebaseSummary {
             total: 2,
-            completed: 2
+            completed: 2,
+            moved_refs: Vec::new()
         })
     );
 }

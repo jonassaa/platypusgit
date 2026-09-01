@@ -15,6 +15,11 @@ import {
 } from "@/features/rebase/useRebaseMergeMode";
 import { buildPreservePlan } from "@/features/commits/buildPreservePlan";
 import { withPlanBase } from "@/features/commits/withPlanBase";
+import {
+  confirmStackedRefs,
+  resolveUpdateRefs,
+} from "@/features/commits/stackedRefs";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useRowReorder } from "@/features/dnd";
 import { PGPane, FocusableScroll, useAction, usePaneList } from "@/features/keymap";
 
@@ -190,6 +195,8 @@ export function RebaseScreen() {
   // screen from re-rendering on every unrelated store write (the selector-less
   // destructure subscribed to the whole store).
   const rebaseStart = useRepoStore((s) => s.rebaseStart);
+  const repo = useRepoStore((s) => s.current);
+  const settings = useSettingsStore();
   const rebaseContinue = useRepoStore((s) => s.rebaseContinue);
   const rebaseAbort = useRepoStore((s) => s.rebaseAbort);
   const rebaseAcknowledge = useRepoStore((s) => s.rebaseAcknowledge);
@@ -453,6 +460,15 @@ export function RebaseScreen() {
       })),
       baseRev,
     );
+    // Name the dependent branches before moving them (#240).
+    if (repo) {
+      const ok = await confirmStackedRefs(
+        repo.id,
+        steps,
+        resolveUpdateRefs(settings.rebaseUpdateRefs),
+      );
+      if (!ok) return;
+    }
     const status = await rebaseStart(steps);
     // The rebase consumed the plan — clear it so the completion summary (or
     // the in-progress banner) isn't hidden behind a stale plan builder. On
@@ -866,6 +882,19 @@ export function RebaseScreen() {
           }}
         >
           Last rebase: {doneSummary.total} steps completed.
+          {/*
+            Say which branches moved (#240): the user agreed to it in the
+            confirmation, and each of these now needs a force-push if it was
+            already pushed.
+          */}
+          {(doneSummary.movedRefs?.length ?? 0) > 0 && (
+            <span data-testid="rebase-moved-refs">
+              {" "}
+              Also moved{" "}
+              {doneSummary.movedRefs!.map((r) => r.short).join(", ")} — these
+              need a force-push if you have pushed them.
+            </span>
+          )}
         </div>
       )}
 

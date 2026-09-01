@@ -133,6 +133,7 @@ import {
   type RepoSlice,
 } from "./repoSlice";
 import type { ActivityKey } from "./repoActivity";
+import { resolveUpdateRefs } from "@/features/commits/stackedRefs";
 import {
   checkUndo,
   pushUndo,
@@ -2176,7 +2177,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     // `rebase://progress` relabels this entry per step as the replay advances.
     setActivity(repo.id, "rebase", `Rebasing ${plan.length} commit${plan.length === 1 ? "" : "s"}…`);
     try {
-      const status = await rebaseStartFn(repo.id, plan);
+      const status = await rebaseStartFn(
+        repo.id,
+        plan,
+        resolveUpdateRefs(useSettingsStore.getState().rebaseUpdateRefs),
+      );
       setFor(repo.id, { rebaseStatus: status });
       setActivity(repo.id, "rebase", "Refreshing…");
       await get().refreshAll();
