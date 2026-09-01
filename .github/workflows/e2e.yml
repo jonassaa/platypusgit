@@ -7,6 +7,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege for every job below (#345). Nothing in this file touches
+# GITHUB_TOKEN or `gh`: the change filter diffs locally after a full-depth
+# checkout, and upload/download-artifact authenticate with the Actions runtime
+# token, not this one. Declared explicitly so the scope is documented here
+# rather than inherited from a repository setting that can change under it.
+permissions:
+  contents: read
+
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
@@ -271,6 +279,8 @@ jobs:
     needs: [changes, build, e2e]
     if: always()
     runs-on: ubuntu-latest
+    # No checkout and no token use: this gate only reads `needs.*.result`.
+    permissions: {}
     steps:
       - name: Gate on the E2E result
         env:
