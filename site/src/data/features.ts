@@ -144,6 +144,45 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.3.1',
+    date: '2026-09-01',
+    status: 'feature',
+    summary:
+      'A built-in terminal: a real pty in a docked panel, one shell per repository tab, opened in that repository\'s working directory. vim, less, ssh and an interactive rebase all behave in it, because anything less is a text box that lies about being a terminal.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'A built-in terminal, opened where your repository is',
+            detail:
+              'The editor-standard terminal chord — Ctrl and the backtick key, or ⌘ and backtick — docks a terminal at the bottom of the window, one shell per repository tab, started in that tab\'s own working directory. It is a real pty rather than a command runner, which is the whole point: vim, less, ssh and `git rebase -i` all work, and anything less is a text box that lies about being a terminal. The shell is the one your own terminal uses — `$SHELL`, or PowerShell on Windows — and a Settings field overrides it, because a built-in terminal running a different shell from the one outside is a surprise nobody asked for.',
+          },
+          {
+            title: 'A command typed in the pane already updates the app',
+            detail:
+              'This needed no code of its own, because the filesystem watcher that shipped in 0.3.0 does it: a `git commit` or `git checkout` typed into the terminal moves the graph and the file list with no manual refresh, since the watcher classifies the change against the gitdir and asks for exactly the refresh it implies. Two features that were specified separately turned out to be one.',
+          },
+          {
+            title: 'The terminal writes nothing to the log',
+            detail:
+              'A terminal is where a sudo password gets typed, so the module that carries its bytes contains no logging call at all and a guard test fails the build if one is ever added — the traffic has exactly one destination. The lifecycle logging lives in the handlers instead, which never see the bytes. The configured shell is also held out of a settings export: it is a path to a binary on the machine that wrote it, not a preference that travels.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'The Microsoft Store listing is still not live',
+            detail:
+              'Unchanged from 0.2.0 through 0.3.0: the release produces a submittable package, and submitting it is a separate, manual step. Until the listing exists, install on Windows with the `.msi`, Scoop or winget. The packaged form has also still not been run on a real Windows machine.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.3.0',
     date: '2026-09-01',
     status: 'features',
