@@ -1258,6 +1258,77 @@ on the badge. Screens that are all-path (`Worktrees`) skip the centred
   the one mouse-event drag in the app (document listeners are registered by an
   effect the mousedown schedules, so the grab needs its own driver round trip).
 
+## The built-in terminal (#243)
+
+A real pty, docked in `AppBody`'s screen column below the routed screen, so it
+spans the screen's width and not the activity bar's. Height persisted, dragged
+with the shared `PGResizeHandle` (`orientation="vertical"`). **Closed by
+default** — a terminal nobody asked for should not spawn a shell for every
+repository they open, and a `.zshrc` that runs nvm would then be paid for on
+every tab, invisibly.
+
+Four rules that are easy to break:
+
+- **Sizing is MEASURED, never observed.** WebKitGTK has no `ResizeObserver`, so
+  xterm's `FitAddon` would leave the Linux build rendering 80×24 in a
+  200-column pane forever. `TerminalView` uses `lib/useElementSize` (read first,
+  observe second) and calls `term.resize` and `term_resize` together, so the
+  renderer and the pty can never disagree about the grid. **The addon is
+  deliberately not installed** — there is nothing to reach for by accident.
+- **Per-repo state is NOT in `RepoSlice`.** `useTerminalStore` holds a session
+  epoch for every open repository at once — the shape `useTabsStore` has, not
+  the shape `RepoSlice` has. `RepoSlice` is cleared on every tab switch, which
+  is right for a diff and would orphan the shells of every inactive tab.
+- **The global chord handler stands down inside the terminal.** xterm renders a
+  hidden `<textarea>`, so the keymap's `isEditable` already drops bare chords —
+  but *not* modifier chords, and those are exactly the set a shell needs
+  (`Ctrl+C`, `Ctrl+D`, `Ctrl+R`). `useKeymapStore`'s `inTerminal` guard lets
+  only `terminal.toggle` and `app.closeOverlay` through. A terminal that sends
+  `Ctrl+C` to the command palette instead of the foreground process is worse
+  than no terminal, and `allowInInput` is not a licence to take it.
+- **A view is HIDDEN, never unmounted, and that is load-bearing.** Unmounting
+  disposes the xterm instance and takes the SCROLLBACK with it. The shell would
+  survive — sessions live in the backend, not the view — so the user would
+  reopen the panel to a blank pane attached to a live shell, with the build
+  output they were reading gone. "Hiding leaves the shell running" would be
+  technically kept and practically broken. So every repository with a live
+  session keeps its view mounted and only the active one is visible; collapsing
+  the panel hides the container rather than dropping its children.
+  `TerminalPanel.test.tsx` counts MOUNTS (from an effect, not the component
+  body) so a refactor back to unmounting fails there.
+- **Ending a session is `useTabsStore`'s `evict()`** — the one place that calls
+  `termClose`, covering `close`, `closeOthers`, `closeAll` and the LRU
+  displacement path together. `forget()` then drops the view.
+
+Output arrives base64-encoded and is decoded to bytes before `term.write` —
+see `terminal.rs` in `architecture.md` for why a string payload would put
+U+FFFD inside filenames. Events carry an epoch and the view drops the ones that
+are not its own.
+
+**Three ordering rules in `TerminalView`, all three found by the e2e spec and
+invisible to every other layer:**
+
+1. **Listen BEFORE `term_open`.** That command spawns the shell *and* its reader
+   thread before it returns, so the prompt is on the wire while a listener
+   attached afterwards does not exist yet, and Tauri buffers nothing. The
+   terminal opened blank and stayed blank. Events that arrive before the epoch
+   is known go to a pending buffer, which is flushed — filtered by epoch —
+   the moment `term_open` resolves, with no `await` in between.
+2. **Keystrokes are chained, one IPC call at a time.** `onData` fires per
+   keystroke; firing an un-awaited `term_write` from each lets the invokes race
+   and the pty receives them in completion order. Measured: `echo ZZMARKER`
+   reached the shell as `ecoZARhR ZMKE`. A paste would hit it every time.
+3. **The event payload is the flat struct, not the Rust enum** — see the note on
+   `TermEvent`. An externally-tagged enum nests the fields under a variant key,
+   the view's `repoId` check then fails for every event, and nothing renders
+   with no error anywhere.
+
+**Refresh after a command is not this feature's job.** The filesystem watcher
+(#239) defaults on and classifies against `gitdir`/`commondir`, so a `git
+commit` typed into the pane moves the graph already. A user who turned the
+watcher off gets no automatic refresh from the terminal either — documented,
+not worked around: a second mechanism for the same job would also fire on `ls`.
+
 ## Dialogs
 
 - **Never `window.confirm`/`window.prompt`** — `pgConfirm`/`pgPrompt` from

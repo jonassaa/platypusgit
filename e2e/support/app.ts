@@ -1248,3 +1248,96 @@ export function waitForSelector(
     { timeout, timeoutMsg },
   );
 }
+
+/** The docked terminal panel's host element (#243). */
+export const TERMINAL_VIEW = '[data-testid="terminal-view"]';
+
+/**
+ * Everything the terminal has rendered, as text.
+ *
+ * Read from xterm's own rows rather than from the pty: this is the assertion
+ * that the whole chain worked — pty → base64 → IPC → decode → renderer. Reading
+ * anything closer to the backend would pass with the renderer broken.
+ *
+ * Read-only, so bare `browser.execute` (see `executeOnce`).
+ */
+export function terminalText(): Promise<string> {
+  return browser.execute((sel: string) => {
+    // `.xterm-rows` and NOT the host's textContent: xterm injects a <style>
+    // element into its own container, so reading the host returns hundreds of
+    // characters of CSS. A "did anything render yet?" wait against that passes
+    // instantly and vacuously — which it did, and it hid the real failure for
+    // a full debugging round.
+    const rows = document.querySelector(`${sel} .xterm-rows`);
+    return rows ? (rows.textContent ?? "") : "";
+  }, TERMINAL_VIEW);
+}
+
+/**
+ * Type into the terminal, as the user would.
+ *
+ * Goes through xterm's own hidden textarea → `term.onData` → `term_write` →
+ * the pty, which is the path under test. Writing to the pty directly would
+ * prove nothing about the frontend.
+ *
+ * # Why two different events
+ *
+ * xterm splits its keyboard handling, and sending the wrong half is silent —
+ * the first version of this helper dispatched only `keydown` and the shell
+ * received nothing at all, with the panel and the prompt working perfectly:
+ *
+ * - **Printable characters go through `keypress`**, whose handler reads
+ *   `charCode` (`_keyPress` in `xterm.js`; `keydown` deliberately declines them
+ *   so the browser can produce the keypress — which a SYNTHETIC keydown never
+ *   does). `charCode` and `which` are legacy read-only getters that
+ *   `KeyboardEventInit` cannot set, hence the `defineProperty`.
+ * - **Enter goes through `keydown`**, where `evaluateKeyboardEvent` turns it
+ *   into `\r`.
+ *
+ * `executeOnce` because a driver retry would type the command twice, and a
+ * shell runs whatever it is sent.
+ */
+export async function jsTypeInTerminal(text: string): Promise<void> {
+  const ok = await executeOnce(
+    (sel: string, s: string) => {
+      const host = document.querySelector(sel);
+      const area = host?.querySelector("textarea");
+      if (!area) return false;
+      area.focus();
+      for (const ch of s) {
+        if (ch === "\n" || ch === "\r") {
+          const enter = new KeyboardEvent("keydown", {
+            key: "Enter",
+            code: "Enter",
+            bubbles: true,
+            cancelable: true,
+          });
+          // xterm's key handling is `switch (ev.keyCode)`, and `keyCode` is a
+          // legacy read-only getter that `KeyboardEventInit` cannot set — it
+          // is 0 on a synthetic event, so without this the Enter matches
+          // nothing and the command is typed but never submitted. The symptom
+          // is maximally confusing: the text appears on screen (the pty echoes
+          // it) and the shell simply never runs it.
+          Object.defineProperty(enter, "keyCode", { get: () => 13 });
+          Object.defineProperty(enter, "which", { get: () => 13 });
+          area.dispatchEvent(enter);
+          continue;
+        }
+        const ev = new KeyboardEvent("keypress", {
+          key: ch,
+          bubbles: true,
+          cancelable: true,
+        });
+        const cc = ch.charCodeAt(0);
+        Object.defineProperty(ev, "charCode", { get: () => cc });
+        Object.defineProperty(ev, "which", { get: () => cc });
+        Object.defineProperty(ev, "keyCode", { get: () => cc });
+        area.dispatchEvent(ev);
+      }
+      return true;
+    },
+    TERMINAL_VIEW,
+    text,
+  );
+  if (!ok) throw new Error("jsTypeInTerminal: no terminal textarea on screen");
+}

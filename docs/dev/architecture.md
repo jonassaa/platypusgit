@@ -21,6 +21,26 @@ opener.rs        URLs/paths → OS default handler. SECURITY-critical: safe_url
                  cannot see a symlink or a path reached through one (#245).
                  contained_in compares components, not string prefixes:
                  /repository is not inside /repo
+terminal.rs      Live pty sessions for the built-in terminal (#243). Shape of
+                 watcher.rs: a Default state manage-d on the app, thin handlers
+                 in commands/terminal.rs. Sessions keyed by RepoId, which is
+                 what makes "one shell per repository tab" a property of the map
+                 rather than a rule the frontend remembers; a second open for a
+                 live repo returns the existing epoch instead of stacking a
+                 shell. Output leaves through an INJECTED EventSink, not an
+                 AppHandle — that is what lets tests/terminal.rs assert on the
+                 exact stream the frontend sees, and it keeps the reader thread
+                 free of the Tauri runtime. Data crosses as BASE64: an 8 KiB
+                 read splits a multi-byte character often enough that
+                 from_utf8_lossy would put U+FFFD inside filenames. Every event
+                 carries an epoch and the frontend drops the ones that are not
+                 its own — a reader still mid-read when the user reopened the
+                 terminal would otherwise paint the dead shell's tail into the
+                 new one. One blocking reader THREAD per session, because a pty
+                 read does not return while the shell lives; polling it with a
+                 deadline hangs inside the read. THIS FILE LOGS NOTHING —
+                 tests/terminal_privacy.rs fails the build if it starts to,
+                 because a terminal is where passwords get typed
 update.rs        Update discovery: semver compare, dev-build (0.0.0) short-circuit
                  before any network call, GitHub release parsing, ureq w/ timeout +
                  https_only. Logic only — handlers live in commands/update.rs
@@ -418,6 +438,19 @@ commands/        Thin Tauri handlers, one file per area:
 │                recursive watch on whatever it is handed. watch_stop is
 │                idempotent, so the frontend can call it on a setting change
 │                without tracking whether anything was running
+├── terminal.rs  term_open, term_write, term_resize, term_close (#243) — thin
+│                over src-tauri/src/terminal.rs (same basename, two files).
+│                term_open resolves the workdir through the backend rather than
+│                taking a path argument, for the reason watch.rs gives, and
+│                this one is about to become a shell's cwd. It also picks the
+│                shell: the Settings override when it is non-blank, else
+│                proc::default_shell. Returns the session's EPOCH, which the
+│                frontend filters events on. term_close is idempotent, so a tab
+│                that never opened a terminal costs one no-op invoke. The
+│                LIFECYCLE LOGGING lives here rather than in terminal.rs
+│                precisely because this file sees ids, sizes and exit codes and
+│                never a byte of traffic — term_write's payload is what the
+│                user typed, and a sudo password travels that way
 ├── history.rs   reset, cherry_pick, revert
 ├── ssh.rs       ssh_key_status, ssh_key_generate (#248) — thin over
 │                src-tauri/src/ssh.rs. Take NO repository: an SSH key belongs to
@@ -593,6 +626,22 @@ features/            Components + Zustand store colocated per feature:
 │                    because two call sites are not React components
 ├── lfs/             useLfsStore, LfsPanel (a Remote-screen section, not a
 │                    screen), LfsDiffNotice
+├── terminal/        The built-in terminal (#243). TerminalPanel docks below the
+│                    active screen and keeps one TerminalView per LIVE SESSION,
+│                    keyed by repository, showing only the active one — hidden,
+│                    never unmounted, because unmounting disposes xterm and
+│                    takes the scrollback with it, leaving the user a blank pane
+│                    attached to a live shell. Keyed rather than re-pointed for
+│                    the same reason: one instance moved between repos would put
+│                    the previous repo's scrollback under the new repo's prompt.
+│                    Per-repo session state lives in useTerminalStore and NOT in
+│                    RepoSlice: RepoSlice is cleared on every tab switch, which
+│                    is right for a diff and would orphan the shells of every
+│                    inactive tab. Sizing is MEASURED (useElementSize) rather
+│                    than observed — WebKitGTK has no ResizeObserver, so xterm's
+│                    FitAddon would leave Linux at 80x24 forever, which is why
+│                    the addon is not installed at all. Unmounting does not end
+│                    a session; useTabsStore's evict() does
 └── cli/             useCliLaunch — first-launch intent + forwarded cli-launch
                      events → useTabsStore.openRepo (never evicts current repo)
 

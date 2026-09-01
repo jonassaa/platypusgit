@@ -14,6 +14,7 @@ import { useCreateTagStore } from "@/features/tags/useCreateTagStore";
 import { useForgeStore } from "@/features/forge/useForgeStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
+import { useTerminalStore } from "@/features/terminal/useTerminalStore";
 import {
   cloneRepoOp,
   fetchAllOp,
@@ -64,6 +65,7 @@ export type ActionId =
   | "view.zoomIn"
   | "view.zoomOut"
   | "view.zoomReset"
+  | "terminal.toggle"
   | "app.closeOverlay"
   | "pane.focusLeft"
   | "pane.focusRight"
@@ -261,6 +263,21 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
     allowInInput: true,
     run: () => {
       useSettingsStore.getState().set("uiZoom", 1);
+      return true;
+    },
+  },
+
+  // The built-in terminal (#243). `allowInInput` because this is the ONE chord
+  // that must work from inside the terminal itself — it is the way back out,
+  // and xterm's textarea is an input as far as the dispatcher is concerned.
+  "terminal.toggle": {
+    id: "terminal.toggle",
+    title: "Toggle terminal",
+    category: "App",
+    scope: "global",
+    allowInInput: true,
+    run: () => {
+      useTerminalStore.getState().toggle();
       return true;
     },
   },

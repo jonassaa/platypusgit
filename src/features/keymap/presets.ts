@@ -59,6 +59,9 @@ const COMMON = {
   "view.zoomIn": ["Mod+=", "Mod++"],
   "view.zoomOut": ["Mod+-", "Mod+_"],
   "view.zoomReset": ["Mod+0"],
+  // The editor-standard terminal chord, and Mod+` as the second because a
+  // bare Ctrl+` is awkward on layouts where the backtick needs AltGr.
+  "terminal.toggle": ["Ctrl+`", "Mod+`"],
   "pane.focusLeft": ["Alt+ArrowLeft"],
   "pane.focusRight": ["Alt+ArrowRight"],
   "pane.focusUp": ["Alt+ArrowUp"],

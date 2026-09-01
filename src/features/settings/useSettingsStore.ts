@@ -893,6 +893,18 @@ interface PersistedState {
    */
   watchFilesystem: boolean;
   /**
+   * The shell the built-in terminal runs (#243). Blank means the backend
+   * decides: `$SHELL` then `/bin/sh` on unix, PowerShell on Windows.
+   *
+   * A free text field rather than a picker of installed shells. Enumerating
+   * them would mean probing the filesystem for a list that is never complete —
+   * nu, fish and a nix-store path are all reasonable answers — and the people
+   * who want one of those know where it lives. Blank is the honest default
+   * because the built-in terminal should be the SAME shell as the one outside
+   * the app, not a second opinion about it.
+   */
+  terminalShell: string;
+  /**
    * Whether the commit BODY is rendered as restrained markdown (#253).
    *
    * A preference rather than a per-visit toggle, for the reason `diffViewMode`
@@ -1036,6 +1048,7 @@ const DEFAULTS: PersistedState = {
   ignoreWhitespaceInDiff: false,
   externalDiffTool: "",
   watchFilesystem: true,
+  terminalShell: "",
   commitBodyMarkdown: true,
   identities: [],
   rebaseUpdateRefs: "config",
@@ -1094,6 +1107,19 @@ export const NON_PORTABLE_KEYS: readonly (keyof PersistedState)[] = [
    * since identities are per-person by definition.
    */
   "identities",
+  /**
+   * The terminal's shell (#243). Denied because it is a PATH to a binary on
+   * this machine: `/opt/homebrew/bin/fish` does not exist on a colleague's
+   * Linux box, and `pwsh.exe` does not exist anywhere but Windows. Importing
+   * one would replace a working default with a `TerminalUnavailable` on first
+   * open.
+   *
+   * The contrast with `externalDiffTool`, which IS portable, is the useful one:
+   * that field holds a tool NAME that git resolves per machine, this one holds
+   * an absolute path we hand straight to a spawn. Blank — the default — is the
+   * portable answer, and it is what an import leaves in place.
+   */
+  "terminalShell",
 ];
 
 /** `DEFAULTS`' keys minus the deny-list — exactly what an export carries. */

@@ -101,10 +101,11 @@ components (`features/*/`), an in-house design system (`design/`, NOT
 `components/ui/`), shared logic in `lib/` (typed `invoke` wrappers in
 `lib/tauri.ts` — never call `invoke` directly). `@/` → `src/` path alias; use it.
 
-**Three near-identical filename pairs do different jobs** — check before
+**Four near-identical filename pairs do different jobs** — check before
 editing: `git/signing.rs` (cryptography) vs `git/signature.rs` (identity/
 sign-off); `src-tauri/src/update.rs` (engine) vs `commands/update.rs`
-(handlers); `src-tauri/src/cli.rs` (pgit launch) vs `git/cli.rs` (CliBackend).
+(handlers); `src-tauri/src/cli.rs` (pgit launch) vs `git/cli.rs` (CliBackend);
+`src-tauri/src/terminal.rs` (pty sessions) vs `commands/terminal.rs` (handlers).
 
 The full annotated trees are in `docs/dev/architecture.md`.
 

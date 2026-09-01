@@ -31,7 +31,8 @@ import {
   closeMergeWindow,
   mergeWindowHoldsRepo,
 } from "@/features/merge/openMergeWindow";
-import { closeRepo as closeRepoIpc, getStatus } from "@/lib/tauri";
+import { closeRepo as closeRepoIpc, getStatus, termClose } from "@/lib/tauri";
+import { useTerminalStore } from "@/features/terminal/useTerminalStore";
 import type { RepoHandle } from "@/lib/types";
 import { isConflicted, isStaged, isUnstaged } from "@/lib/derive";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
@@ -210,6 +211,16 @@ export const useTabsStore = create<TabsState>((set, get) => {
 
   const evict = (tab: RepoTab | null) => {
     if (!tab?.repoId) return;
+    // The shell belongs to the tab (#243). Done HERE rather than in `close` so
+    // every eviction route is covered — `closeOthers` and `closeAll` delegate
+    // to `close`, but the displaced-tab path at the LRU cap does not, and an
+    // orphaned interactive shell is invisible except in a process list.
+    // `term_close` is idempotent, so a tab that never opened a terminal costs
+    // one no-op invoke.
+    void termClose(tab.repoId).catch((e) => {
+      logWarn(`term_close failed for ${tab.path}: ${describeError(e)}`);
+    });
+    useTerminalStore.getState().forget(tab.repoId);
     void closeRepoIpc(tab.repoId).catch((e) => {
       // The tab is going away either way; a failed eviction is a leak, not a
       // thing to interrupt the user about.

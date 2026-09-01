@@ -60,6 +60,12 @@ base64 = "0.23"
 # transitively, so this declares it rather than adding it.
 sha2 = "0.11"
 notify-debouncer-mini = "0.7.0"
+# The pty behind the built-in terminal (#243). Chosen because it is the one
+# cross-platform pty crate with a real ConPTY implementation — a Windows
+# terminal built on anything else either flashes a console or cannot resize.
+# Its spawn API is walled off inside `proc::spawn_pty_shell`; see the module
+# doc there and `tests/spawn_no_window.rs` for why that wall is load-bearing.
+portable-pty = "0.9"
 
 # `setsid()` between fork and exec, for the detached `pgit` launch (#163) —
 # nothing in std reaches it (`Command::process_group` only makes a new process

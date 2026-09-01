@@ -376,6 +376,111 @@ pub fn program_async_keeping_console(prog: impl AsRef<OsStr>) -> tokio::process:
     cmd
 }
 
+/// A live pty and the shell running on it.
+///
+/// Returned by [`spawn_pty_shell`] and owned by `crate::terminal`. The master
+/// is what resizes and what is read from and written to; the child is what gets
+/// killed.
+pub struct PtySession {
+    pub master: Box<dyn portable_pty::MasterPty + Send>,
+    pub child: Box<dyn portable_pty::Child + Send + Sync>,
+}
+
+/// The shell to run when the user has not named one in Settings.
+///
+/// `$SHELL` is what the user's own terminal runs, which is the whole point: the
+/// built-in terminal should not be a *different* shell from the one outside the
+/// app. `/bin/sh` exists on every unix and is the honest last resort.
+#[cfg(not(windows))]
+pub fn default_shell() -> std::ffi::OsString {
+    std::env::var_os("SHELL")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| std::ffi::OsString::from("/bin/sh"))
+}
+
+/// Windows has no `$SHELL`. PowerShell is the shell a Windows developer
+/// actually uses, and resolution is left to `PATH` — probing for `pwsh.exe`
+/// first would mean a second spawn just to decide what to spawn.
+#[cfg(windows)]
+pub fn default_shell() -> std::ffi::OsString {
+    std::ffi::OsString::from("powershell.exe")
+}
+
+/// Spawn an INTERACTIVE shell on a fresh pty, `cd`-ed to `workdir` (#243).
+///
+/// # Why the whole spawn lives here rather than in `crate::terminal`
+///
+/// The rule this module exists to enforce is "no process spawn outside
+/// `proc.rs`", and `tests/spawn_no_window.rs` enforces it by grepping for
+/// `Command::new`. `portable_pty` spawns through its **own** `CommandBuilder`,
+/// so a pty opened anywhere else would sail straight past that guard — the
+/// second spawn path the guard exists to prevent, and invisible. So this
+/// function owns `openpty`, the `CommandBuilder` and `spawn_command`, and the
+/// guard test allow-lists those three APIs here and nowhere else.
+///
+/// # What this child gets, and what it deliberately does not
+///
+/// * [`child_path`] — yes. A Dock-launched app inherits launchd's minimal
+///   environment (issue 232); without this the built-in terminal would be the
+///   one terminal on the machine where `node` is missing.
+/// * `TERM=xterm-256color` — the terminal we actually render.
+/// * `GIT_TERMINAL_PROMPT=0` — **no**, and this inverts [`prompt_less`], the
+///   standing policy for every other child in this module. That policy exists
+///   because a child of a GUI app has no terminal, so an auth prompt hangs
+///   forever behind a window nobody can see. This child *is* a terminal, on
+///   purpose, and the user is looking at it; suppressing the prompt here would
+///   turn a working `git push` into a mysterious failure. Inheriting the
+///   silence would have been the bug.
+/// * `CREATE_NO_WINDOW` — not applicable, which is why this does not go through
+///   [`program`]. ConPTY is not `CreateProcess` with an inherited console:
+///   `portable_pty` allocates a pseudoconsole, so no `conhost` window appears
+///   and issue 172's flash cannot happen here.
+///
+/// Nothing from the auth path goes near it — no forge token, no git credential,
+/// no askpass environment — exactly as `run_custom_action` does it.
+pub fn spawn_pty_shell(
+    shell: &OsStr,
+    workdir: &Path,
+    rows: u16,
+    cols: u16,
+) -> std::io::Result<PtySession> {
+    use portable_pty::{CommandBuilder, PtySize};
+
+    let pair = portable_pty::native_pty_system()
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| std::io::Error::other(format!("could not open a pty: {e}")))?;
+
+    let mut cmd = CommandBuilder::new(shell);
+    cmd.cwd(workdir);
+    cmd.env("TERM", "xterm-256color");
+    if let Some(p) = child_path() {
+        cmd.env("PATH", p);
+    }
+
+    let child = pair.slave.spawn_command(cmd).map_err(|e| {
+        std::io::Error::other(format!(
+            "could not start `{}`: {e}",
+            shell.to_string_lossy()
+        ))
+    })?;
+
+    // The slave is the CHILD's end of the pty. Holding it open here would mean
+    // our reader never sees EOF when the shell exits, so the reader thread
+    // would block forever on a dead session — the leaked thread per tab the
+    // issue warned about. Dropping it is what makes exit detectable at all.
+    drop(pair.slave);
+
+    Ok(PtySession {
+        master: pair.master,
+        child,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

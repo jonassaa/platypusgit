@@ -165,6 +165,19 @@ export function SettingsScreen() {
             }
           />
           <Row
+            label="Terminal shell"
+            hint="The shell the built-in terminal runs, opened in the active repository's working directory. Leave blank to use the same shell as your own terminal ($SHELL, or PowerShell on Windows)."
+            control={
+              <PGInput
+                data-testid="terminal-shell"
+                value={s.terminalShell}
+                placeholder="$SHELL"
+                onChange={(v) => s.set("terminalShell", v)}
+                style={{ width: 220 }}
+              />
+            }
+          />
+          <Row
             label="Auto-fetch"
             hint="Periodically run fetch in the background so ahead/behind counts stay fresh."
             control={
