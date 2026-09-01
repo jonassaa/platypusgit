@@ -98,7 +98,11 @@ const PORTABLE = [
 ];
 
 /** Machine-specific, so deliberately absent from an export. */
-const EXCLUDED = ["lastCreateDir"];
+// Saved commit identities (#233) are DENIED, not exported. An export is a file
+// people share, and every other key in the bag says how the app should behave —
+// this one is a list of someone's name and email addresses. It is also useless
+// on the receiving machine, since identities are per-person by definition.
+const EXCLUDED = ["lastCreateDir", "identities"];
 
 describe("the exported key set", () => {
   it("is exactly the schema minus the deny-list", async () => {

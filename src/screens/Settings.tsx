@@ -31,6 +31,7 @@ import {
   isValidTicketPattern,
 } from "@/features/commits/message";
 import { IdentityForm } from "@/features/commits/identity/IdentityForm";
+import { SavedIdentities } from "@/features/commits/identity/SavedIdentities";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { ForgeSettings } from "@/features/forge/ForgeSettings";
@@ -403,9 +404,15 @@ function IdentitySection() {
     >
       <Row
         label="Commit author"
-        hint="git refuses to record a commit without both. Saving writes them to your global git config, so every repository on this machine gets them."
+        hint="git refuses to record a commit without both. The scope control decides whether saving writes this repository's own config or your global one."
         stacked
         control={<IdentityForm repoId={repo?.id ?? null} />}
+      />
+      <Row
+        label="Saved identities"
+        hint="Keep the identities you switch between — a work address and a personal one. Applying one writes it to the OPEN repository's config, so git and every hook agree with what you see here. Editing or removing an entry does not change repositories that already use it."
+        stacked
+        control={<SavedIdentities repoId={repo?.id ?? null} />}
       />
     </Section>
   );
