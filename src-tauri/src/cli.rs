@@ -21,6 +21,16 @@ pub enum Parsed {
     Askpass(String),
     /// `None` = plain app launch (no CLI args at all).
     Launch(Option<LaunchIntent>),
+    /// `--debug`: the same launch, but staying in the foreground with the log
+    /// filter raised so the app's log streams to the invoking terminal (#344).
+    ///
+    /// This is a **separate variant and not a `debug` field on `Launch`** on
+    /// purpose. `detach::should_detach` is spelled
+    /// `matches!(parsed, Parsed::Launch(_))`, so a new variant is refused by
+    /// construction; a field would have left that pattern matching and detached
+    /// the very launch whose whole point is to keep the terminal — with the log
+    /// going to the child's `/dev/null` and nothing to say why.
+    DebugLaunch(Option<LaunchIntent>),
 }
 
 /// Env vars the parent process sets so the askpass shim can answer without any
@@ -79,6 +89,10 @@ pub fn askpass_answer(
     }
 }
 
+/// `--debug`. One spelling, no short form: `-d` is worth keeping free, and a
+/// flag that changes how the process is launched should be typed out.
+const DEBUG_FLAG: &str = "--debug";
+
 pub const USAGE: &str = "\
 PlatypusGit
 
@@ -100,6 +114,8 @@ Subcommands:
 Options:
   -h, --help         print this help and exit
   -V, --version      print the version and exit
+      --debug        keep the app in the foreground and stream its log, at
+                     debug level, to this terminal. Ctrl+C quits the app.
 
 With a path and no subcommand, opens the repo containing that path.
 With a subcommand and no path, uses the current directory.
@@ -156,9 +172,18 @@ pub fn parse_args(args: &[String], cwd: &Path) -> Parsed {
     if args.iter().any(|a| a == "--version" || a == "-V") {
         return Parsed::Version;
     }
+    // Stripped BEFORE the positional walk below, which only consults
+    // `screen_for` at index 0: left in place, `pgit --debug log` would put
+    // `log` at index 1 and open it as a *path* named "log".
+    let debug = args.iter().any(|a| a == DEBUG_FLAG);
+    let positional: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| *a != DEBUG_FLAG)
+        .collect();
     let mut screen: Option<String> = None;
     let mut path: Option<PathBuf> = None;
-    for (i, arg) in args.iter().enumerate() {
+    for (i, arg) in positional.iter().enumerate() {
         if i == 0 {
             if let Some(s) = screen_for(arg) {
                 screen = Some(s.to_string());
@@ -172,9 +197,29 @@ pub fn parse_args(args: &[String], cwd: &Path) -> Parsed {
     if screen.is_some() && path.is_none() {
         path = Some(cwd.to_path_buf());
     }
-    match (path, &screen) {
-        (None, None) => Parsed::Launch(None),
-        (path, _) => Parsed::Launch(Some(LaunchIntent { path, screen })),
+    let intent = match (path, screen) {
+        (None, None) => None,
+        (path, screen) => Some(LaunchIntent { path, screen }),
+    };
+    if debug {
+        Parsed::DebugLaunch(intent)
+    } else {
+        Parsed::Launch(intent)
+    }
+}
+
+/// The global log-level filter a launch installs.
+///
+/// The default is `Info`, which drops every *successful* webview invoke —
+/// `src/lib/tauri.ts` logs those at `debug()`. That is the exact silence #274
+/// ran into: at `Info` a call that hung and a call that was never dispatched
+/// produce the same (empty) log. `--debug` raises the floor so that sequence
+/// reaches the terminal.
+pub fn log_filter(debug: bool) -> log::LevelFilter {
+    if debug {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
     }
 }
 
@@ -768,6 +813,69 @@ mod tests {
     #[test]
     fn bare_launch_has_no_intent() {
         assert_eq!(parse_args(&[], Path::new("/w")), Parsed::Launch(None));
+    }
+
+    #[test]
+    fn the_debug_flag_marks_the_launch_and_is_not_read_as_a_path() {
+        assert_eq!(
+            parse_args(&s(&["--debug"]), Path::new("/w")),
+            Parsed::DebugLaunch(None)
+        );
+    }
+
+    #[test]
+    fn the_debug_flag_leaves_the_screen_and_path_intact() {
+        // Stripped BEFORE the positional walk, or `log` lands at index 1 and
+        // `screen_for` (index 0 only) reads it as a path instead of a screen.
+        assert_eq!(
+            parse_args(&s(&["--debug", "log", "sub/dir"]), Path::new("/w")),
+            Parsed::DebugLaunch(Some(LaunchIntent {
+                path: Some(PathBuf::from("/w/sub/dir")),
+                screen: Some("history".to_string()),
+            }))
+        );
+    }
+
+    #[test]
+    fn the_debug_flag_is_accepted_after_the_subcommand_too() {
+        assert_eq!(
+            parse_args(&s(&["commit", "--debug"]), Path::new("/w")),
+            Parsed::DebugLaunch(Some(LaunchIntent {
+                path: Some(PathBuf::from("/w")),
+                screen: Some("commit".to_string()),
+            }))
+        );
+    }
+
+    #[test]
+    fn help_still_wins_over_the_debug_flag() {
+        // `--debug` must not turn `pgit --debug --help` into a GUI launch.
+        assert_eq!(
+            parse_args(&s(&["--debug", "--help"]), Path::new("/w")),
+            Parsed::Help
+        );
+        assert_eq!(
+            parse_args(&s(&["--debug", "-V"]), Path::new("/w")),
+            Parsed::Version
+        );
+    }
+
+    #[test]
+    fn a_git_prompt_is_never_scanned_for_the_debug_flag() {
+        // Same contract as -h: the askpass prompt is arbitrary text from git and
+        // is returned verbatim, never parsed as one of our own flags.
+        assert_eq!(
+            parse_args(&s(&["--askpass", "--debug"]), Path::new("/w")),
+            Parsed::Askpass("--debug".to_string())
+        );
+    }
+
+    #[test]
+    fn debug_raises_the_global_log_filter() {
+        // Info drops every successful webview invoke (all `debug!()`), which is
+        // exactly the sequence a debug launch exists to show.
+        assert_eq!(log_filter(false), log::LevelFilter::Info);
+        assert_eq!(log_filter(true), log::LevelFilter::Debug);
     }
 
     #[test]

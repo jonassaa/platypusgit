@@ -100,6 +100,46 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   proxy: the same flag chooses `devUrl` over the embedded assets. `cargo run`
   stays in the foreground for the same reason; the e2e build sets
   `tauri/custom-protocol` and is unchanged (its stdio is a pipe anyway).
+## `pgit --debug` opts out of the detach to stream the log (#344)
+
+`--debug` is the escape hatch from the section above: the app stays attached to
+the invoking terminal and its log streams there at `debug` level. It is what you
+reach for when something fails at startup and the rotating log file cannot say
+why (#274) — or will not, because at the default `Info` every *successful*
+webview invoke is dropped.
+
+- **It is `Parsed::DebugLaunch`, a separate variant — not a `debug` field on
+  `Parsed::Launch`.** `should_detach` is spelled
+  `matches!(parsed, Parsed::Launch(_))`, so a new variant is refused **by
+  construction** and that function needed no edit at all. A field would have
+  left the pattern matching, detached the launch, and sent the log to the
+  child's `/dev/null` — the exact failure the flag exists to prevent, in the one
+  function whose wrong answer is invisible until somebody's push stops
+  authenticating. This is the extension shape `detach.rs`'s "Room left for
+  `--wait`" note describes; `--wait` should follow it too.
+- **`--debug` is stripped before the positional walk** in `parse_args`.
+  `screen_for` only consults index 0, so leaving the flag in place would make
+  `pgit --debug log` open a *path* named `log`.
+- **`--help` and `--version` still win**, and the askpass short-circuit in
+  `lib.rs::run` is still ahead of all of it — git's prompt is arbitrary text
+  arriving as argv[1] and is never scanned for our flags. Both are pinned by pty
+  tests in `tests/cli_detach.rs`: a prompt that literally reads `--debug` must
+  still be answered as a credential, not launched as a GUI.
+- **The level is raised globally, not just for `platypusgit_lib`**
+  (`cli::log_filter`). The lines that matter for a startup failure come from the
+  `webview:…` target, which the crate-specific `level_for` does not reach.
+- **The notice on stderr is unconditional, and says what silence means.** A
+  second `pgit --debug` against a running app is forwarded and exits *inside*
+  `Builder::run()` (tauri-plugin-single-instance), which is past the point where
+  this process could detect it — so rather than returning a silent, log-free 0,
+  the launch always prints that no following log lines means an instance was
+  already running. Quit it and retry to trace a fresh launch. stderr, because
+  stdout is where the log itself goes.
+- **Unix only, in practice.** The Windows binary is GUI-subsystem, so it has no
+  console to print to — `pgit --help` prints nothing there today for the same
+  reason. `--debug` still raises the file log's level on Windows; streaming it
+  to cmd/PowerShell needs `AttachConsole` and is not done.
+
 - `tests/cli_detach.rs` drives the real binary through a **pty** for the
   must-stay-synchronous paths and `git credential fill` (offline) for the
   credentialed one — a pure-function test cannot show git still gets its
