@@ -144,6 +144,125 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.3.0',
+    date: '2026-09-01',
+    status: 'features',
+    summary:
+      'The working copy is live — save a file in your editor, tab back, and the status is already right, with no refresh and no auto-fetch timer involved. The rest of the release is about undoing a mistake and being told what an operation is about to do: ⌘Z undoes the last operation, rebasing the bottom of a stack carries the branches above it and names them before it starts, and the commit panel says which identity it is about to commit as. The command palette also runs commands you define yourself.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'The working copy is live',
+            detail:
+              'Save a file in your editor, tab back, and the status is already right. Until now the app was only correct if you remembered to refresh: the sole self-starting refresh was the auto-fetch timer, which is a network fetch on a minutes-scale interval and does not run at all when auto-fetch is off. One watch follows the active repository, and the value is in what it drops — every path is classified, and only a change to a ref asks for the expensive history refresh, so a file save cannot repaint the log. `.lock` files are ignored on purpose: they are git STARTING work rather than finishing it, so honouring them would double every event and fire the first one while the index is still being written. Worktree paths are filtered against the repository\'s own ignore rules.',
+          },
+          {
+            title: 'Undo the last operation with ⌘Z',
+            detail:
+              'The reason people fear a git GUI is that a misclick is unrecoverable unless they already know the reflog well enough not to need the GUI. ⌘Z (Ctrl+Z) now undoes a commit — including an amend — a checkout, merge, cherry-pick, revert or reset, and ⌘⇧Z redoes it. It moves HEAD between a before and an after snapshot rather than replaying operations backwards, so undoing a commit loses nothing: git keeps the old commits reachable through the reflog. Preconditions are re-read from the backend at the moment you press it rather than trusted from cached state, so if HEAD moved underneath it, it refuses, changes nothing, names the operation and points at the reflog.',
+          },
+          {
+            title: 'Rebasing a stack carries the branches above it',
+            detail:
+              '`feat/a` → `feat/b` → `feat/c`, each a small reviewable PR on top of the last. Rebasing the bottom silently orphaned everything above it: the branches kept pointing at the old, abandoned commits, and recovering by hand is a chain of manual rebases — exactly where people give up on the GUI. They now follow, and the more valuable half is that you are told first. The confirmation names every branch it will move — "this will also move feat/b and feat/c" — rather than counting them, and says they will need a force-push. It stays silent when nothing points into the range, because a confirmation on every rebase is trained away in a week. A branch whose commit was DROPPED is left alone: there is no honest place to move it, since retargeting to a neighbour would silently change what the branch contains.',
+          },
+          {
+            title: 'Your own commands in the command palette',
+            detail:
+              'The one git-adjacent command a team runs fifty times a day, without it having to be something shipped here. Give an action a label and a command line using `$FILE`, `$FILES`, `$SHA`, `$BRANCH`, `$REPO`, `$LOCAL` or `$REMOTE`, and run it from the palette. A user-supplied command string is deliberately NOT a shell line: under `sh -c` a branch named `main; rm -rf ~` or a path containing `$(...)` stops being data and becomes code — and branch names and paths come from the repository, which means from anyone who has ever pushed to it. The string is split into arguments once, quotes group, and `| > ; && $ *` are ordinary characters because nothing interprets them. Placeholders expand into individual arguments, so a value can never introduce a new one. No secret reaches an action: no forge token, no git credential, no askpass. Output is truncated with a marker rather than silently.',
+          },
+          {
+            title: 'A repository can commit under an identity of its own',
+            detail:
+              'The commit panel\'s attribution line said "(signature will come from git config)" — true, and useless to the person with a work address and a personal one who needs to know which this repository is about to use. It now names the identity and which config file it came from, and when the two halves come from different files — `user.name` from /etc/gitconfig and `user.email` from ~/.gitconfig is ordinary on a managed machine — it names neither, because naming one would be a confident wrong answer about the other. Saving takes an explicit scope, and a save scoped to one repository is refused rather than quietly downgraded to global. On top of that sits a small list of saved identities with a one-click "Use here". It is a palette rather than an assignment: git already records which identity a repository uses, in that repository\'s own config where the CLI and every hook read it, so a second store of the same fact would drift the moment anyone ran `git config` in a terminal. "Which one is active here" is answered by reading the config back and matching on the name and email pair rather than the label, so a repository configured by hand still lights up the entry it corresponds to. Editing or removing an entry therefore does not change a repository already using it — deleting a bookmark does not move the page. The list never travels in a settings export, since every other preference says how the app should behave while this one is a list of someone\'s email addresses.',
+          },
+          {
+            title: 'Commit bodies render as restrained markdown',
+            detail:
+              'Long bodies with lists, links and code fences read badly as plain text, and every squashed PR body is one. The subset is parsed into a typed syntax tree and rendered as elements, so there is no HTML string anywhere in the path and the `dangerouslySetInnerHTML` class of bug is gone by construction — rather than pulling in a general-purpose markdown library, which renders arbitrary documents and needs a sanitiser that stays correctly configured forever. Deliberately outside the subset: headings, because a leading `#` in a commit body is far more likely to be an issue reference; images, so there is no image node a renderer could grow one from; raw HTML; and tables. Links are allow-listed to http, https and mailto and open in your browser rather than navigating, which in a webview would replace the app. `#123` renders as a styled token and NOT a link — linking it means guessing which forge and repository the number belongs to, and a link to the wrong issue is worse than none. The raw view is the original text rather than a re-serialisation of the parse.',
+          },
+          {
+            title: 'A release channel, so prereleases are opt-in',
+            detail:
+              'Beside the existing automatic / only-when-I-ask / never choice, a channel: Stable offers published releases only, Include prereleases also offers release candidates. Stable stays on GitHub\'s own answer to what is current, which excludes prereleases server-side; the prerelease channel reads the full list and takes the semver-highest entry rather than the newest-created, so a patch cut on an older line cannot beat a newer candidate. It adds prereleases to what you are offered rather than restricting you to them, so a stable release still wins whenever it is the newest thing published, and switching back to Stable does not offer a downgrade — the app cannot un-install a version.',
+          },
+          {
+            title: 'Pin branches to the top of the list',
+            detail:
+              'A fifty-branch repository ordered by recency gives no way to say "keep `feat/foo` on top". Branches now pin from the context menu, per repository, and a pinned branch is the first row wherever branches are listed. A pin outranks the default-branch pin, because that one is the app guessing what belongs on top while a user pin is an instruction — and an instruction that loses to a guess is not a pin. Pinned rows are lifted out of the folder tree and shown at the top under their full names, since a pinned `feat/foo` sitting inside a collapsed `feat` folder would be invisible in exactly the case pinning exists for. With nothing pinned the order is unchanged.',
+          },
+          {
+            title: 'Drag repository tabs to reorder them',
+            detail:
+              'Tab order was the order things were opened, and nothing moved them afterwards. Tabs now drag to a new position, with Mod+Shift+Left / Right and Move left / right in the tab menu as the keyboard and mouse equivalents. The arrangement survives a restart without any new storage, because the session already writes the tab array in order and rebuilds it in the order it reads back. ⌥1–⌥9 index that same array, so they follow the strip you arranged. The chords decline at either end rather than wrapping — a drag cannot wrap either, and declining lets the chord fall through instead of silently doing nothing.',
+          },
+          {
+            title: '`pgit --debug` launches attached and streams the log',
+            detail:
+              '`pgit .` detaches and sends the child\'s output nowhere, so the one launch shape that actually has a terminal was exactly the one that threw the log away — and the level filter was pinned high enough to drop every successful call from the webview besides. `pgit --debug` keeps the process in the foreground and raises the filter, so the whole sequence reaches the terminal you launched from. `--help` and `--version` still win, and the credential-helper short-circuit stays ahead of all of it, so a git prompt that literally reads `--debug` is still answered as a credential rather than treated as a flag. The notice it prints names the already-running case out loud, because a second launch is forwarded to the running app and exits before this code could detect it — which would otherwise be a silent, log-free success.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'A background refresh no longer wipes the error banner',
+            detail:
+              'A failing `--ff-only` pull on a diverged branch could show no error at all. The pull did fail and did set the banner — but the fetch half of that same pull had already moved a remote ref, so the new filesystem watcher\'s debounced event landed a few hundred milliseconds later, after the operation had finished and the busy guard had stopped suppressing it, and the refresh it triggered opened by clearing the error. What the user saw was a pull that silently did nothing, which is the worst possible reading of a failure. A refresh nobody asked for now preserves the banner. A refresh you asked for still clears it, because "show me where things stand now" is not compatible with a stale error from a previous action.',
+          },
+          {
+            title: 'A fresh machine could not commit, and the error said "NoSignature"',
+            detail:
+              'git refuses to record a commit until `user.name` and `user.email` are set, and on a machine with neither the app showed the error type\'s own spelling — `NoSignature` — and offered nothing to click. It had no prose written for it, so the same bare word reached the user from merge, cherry-pick, revert, rebase, tag and stash besides, all of which resolve a committer signature; `Unborn` had the same problem. Separately, a blank `user.email` was not classified as a missing signature at all and surfaced as the raw string "failed to parse signature", because libgit2 reports a missing name as not-found but a blank one as a generic error. Both paths now ask the config through the same identity validation the writer uses, so what the app saves and what it calls missing cannot drift apart.',
+          },
+          {
+            title: 'The worktree list stopped stepping down the page',
+            detail:
+              'Lock and Unlock differ by about 30px and the buttons were sized to their labels, so Open and Remove sat at a different x on exactly the locked rows and the action column visibly stepped down the list. A 79-character lock reason wrapped to a second line inside a fixed-height badge, giving every locked row its own height, and a centred maximum width capped off exactly the width the absolute paths needed. Now it is one fact per line — name, branch and sha, path, lock — each clipped with an ellipsis and carrying the full text on hover, the badge reduced to the single word `locked` with the reason beside it, and the three actions in three identical fixed tracks so the column cannot move. The screen itself goes full width.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'Twenty dev-only advisories closed, and a test that keeps them closed',
+            detail:
+              'Twenty of the twenty-two open npm advisories are cleared with dependency overrides. Dependabot could not open a PR for a single one — its security updater only bumps manifest entries and never writes an overrides block — so they sat open indefinitely with security updates enabled and unpaused, where a missing PR read as "handled" when it meant "unfixable automatically". Nothing vulnerable ever shipped: no affected package appears in the production dependencies, so the exposure was a developer machine or a CI runner, never a user install. The block also has a routine way to die, because a dependency PR that regenerates the lockfile drops it with nothing in the diff that looks like a security change — so a test now asserts every override key is still present, and the two advisories that stay open on purpose are written down rather than forgotten.',
+          },
+          {
+            title: 'TypeScript 7, git2 0.21, React 19.2',
+            detail:
+              'The dependency floor moved across both trees in one sweep: TypeScript 5.8 to 7.0, git2 0.20 to 0.21, React 19.1 to 19.2, Vite to 7.3 and the site\'s Astro to 7.2, plus grouped minor and patch updates across the rest of the crates, packages and CI actions. Dependabot is now configured for every ecosystem in the repository rather than some of them.',
+          },
+          {
+            title: 'CI workflows ask for the permissions they need',
+            detail:
+              'Neither test workflow declared a permissions block, at the root or on any job, so all ten jobs inherited the repository default and left ten open code-scanning alerts. Nothing was exposed, since that default is already read-only — but it is a repository *setting*: invisible in the tree, reversible in one click, and not carried along when a workflow is copied elsewhere, and ten permanently-open alerts bury the next real one. Both workflows now take `contents: read`, and the three gate jobs that only read another job\'s result take nothing at all.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Undo covers HEAD, not everything',
+            detail:
+              'Deliberately not recorded, and the absence is the safe failure: a push, since the remote already has it; a dropped stash; branch create, delete and rename, which move a ref that is not HEAD; and a rebase, which has its own engine and its own retained summary — folding it in without thinking through an interrupted plan would be an undo that lies. ⌘Z undoes the last thing that IS undoable rather than refusing outright.',
+          },
+          {
+            title: 'The Microsoft Store listing is still not live',
+            detail:
+              'Unchanged from 0.2.0 and 0.2.1: the release produces a submittable package, and submitting it is a separate, manual step. Until the listing exists, install on Windows with the `.msi`, Scoop or winget. The packaged form has also still not been run on a real Windows machine — the gate added in 0.2.1 proves the package can be BUILT, not that it works once installed.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.1',
     date: '2026-08-31',
     status: 'packaging fix',
