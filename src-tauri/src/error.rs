@@ -171,6 +171,15 @@ pub enum AppError {
     #[error("ssh-keygen is not available: {0}")]
     SshKeygenUnavailable(String),
 
+    /// The shell the built-in terminal tried to run is missing or not runnable
+    /// (#243). A **state**, not a failure — the same shape `LfsUnavailable` and
+    /// `SshKeygenUnavailable` use: the panel disables itself and names the
+    /// shell it tried, because the remedy is one field in Settings. Carries
+    /// that name; `Io` would put "No such file or directory" in a banner
+    /// without saying which file.
+    #[error("no usable shell: {0}")]
+    TerminalUnavailable(String),
+
     /// A git hook ran and refused (#232).
     ///
     /// Carries the hook's NAME and its OUTPUT as separate fields rather than one

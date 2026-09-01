@@ -1205,3 +1205,28 @@ export interface SshKeyGenerateRequest {
   comment?: string;
   passphrase?: string;
 }
+
+/**
+ * A chunk of terminal output (#243). Mirrors Rust `terminal.rs::TermEvent`.
+ *
+ * `data` is **base64**, not text. Pty output is arbitrary bytes and a read
+ * splits multi-byte characters at the chunk boundary; a string payload would
+ * mean `from_utf8_lossy` on the Rust side, putting U+FFFD inside filenames
+ * intermittently and only for non-ASCII. Decode it and hand xterm the bytes —
+ * it does incremental UTF-8 across chunks, which is the right place for it.
+ */
+export interface TermData {
+  repoId: string;
+  /** Which session this belongs to. Drop anything that is not the one you
+   *  opened: a reader still mid-read when the terminal was reopened would
+   *  otherwise paint the dead shell's last line into the new one. */
+  epoch: number;
+  data: string;
+}
+
+/** The shell exited (#243). `code` is null when it was signalled. */
+export interface TermExit {
+  repoId: string;
+  epoch: number;
+  code: number | null;
+}

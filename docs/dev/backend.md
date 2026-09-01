@@ -681,6 +681,48 @@ again. `commands/repo.rs::delete_untracked_files` is therefore thin.
   subprocess (same pre-check `verify_tag` has) — a cost win on every platform,
   and the question to ask of any new shell-out.
 
+## The pty carve-out (#243)
+
+`portable-pty` spawns through its **own** `CommandBuilder`, not
+`std::process::Command`, so a pty opened anywhere would sail straight past the
+`Command::new` guard above — a second spawn path with no guard on it, which is
+exactly the state issue 172 found the tree in, and invisible this time.
+
+So `proc::spawn_pty_shell` owns the **whole operation** — `openpty`, the
+builder, and `spawn_command` — and returns the master and the child.
+`crate::terminal` never touches `portable_pty`'s spawn API.
+`tests/spawn_no_window.rs` allow-lists those three symbols in `proc.rs` and
+counts zero everywhere else, so a future second pty fails the build the way a
+second `Command::new` does.
+
+Two properties of that child are deliberate inversions of what every other
+spawn in this codebase gets, and both are the kind of thing a later reader
+would "fix":
+
+- **`GIT_TERMINAL_PROMPT` is NOT set to 0.** The standing `prompt_less` policy
+  exists because a child of a GUI app has no terminal, so an auth prompt hangs
+  forever behind a window nobody can see. This child *is* a terminal, on
+  purpose, and the user is looking at it. Inheriting the silence would turn a
+  working `git push` into a mysterious failure.
+- **`CREATE_NO_WINDOW` does not apply**, which is why this does not go through
+  `program()`. ConPTY is not `CreateProcess` with an inherited console:
+  `portable-pty` allocates a pseudoconsole, so no `conhost` window appears and
+  #172's flash cannot happen here. *Reasoned, not yet measured on Windows* — if
+  a flash ever appears, the fix is in `spawn_pty_shell` and nowhere else, which
+  is the point of the carve-out.
+
+It does get `child_path()`: a Dock-launched app inherits launchd's minimal
+environment (#232), and without it the built-in terminal would be the one
+terminal on the machine where `node` is missing.
+
+**One more rule, with a test behind it: `src/terminal.rs` contains no logging
+call at all.** A terminal is where a `sudo` password gets typed. The bytes read
+from the pty have exactly one destination — the event sink — and the lifecycle
+logging worth having lives in `commands/terminal.rs`, which handles ids and exit
+codes and never sees traffic. `tests/terminal_privacy.rs` enforces the split;
+the rule is blunt (no logger, not "no logger near the buffer") because that is
+the version a grep can actually keep.
+
 ## Clone options, and what a shallow clone costs (#255)
 
 `--depth`, `--filter=blob:none`, `--single-branch` and `--recurse-submodules`

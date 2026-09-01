@@ -1436,6 +1436,52 @@ export function watchStop(): Promise<void> {
   return invoke<void>("watch_stop");
 }
 
+/**
+ * Start a shell for this repository, or adopt the one already running (#243).
+ *
+ * Returns the session's EPOCH. Every `term://data` and `term://exit` event
+ * carries one, and a view must drop the events whose epoch is not the one it
+ * opened — a reader still mid-read when the terminal was closed and reopened
+ * would otherwise paint the dead shell's last line into the new one.
+ *
+ * `shell` blank or omitted means the backend's default: `$SHELL` then `/bin/sh`
+ * on unix, PowerShell on Windows.
+ */
+export function termOpen(
+  repoId: string,
+  rows: number,
+  cols: number,
+  shell?: string,
+): Promise<number> {
+  return invoke<number>("term_open", {
+    repoId,
+    rows,
+    cols,
+    shell: shell?.trim() ? shell : null,
+  });
+}
+
+/** Send input to the shell. This is what the user typed — never log it. */
+export function termWrite(repoId: string, data: string): Promise<void> {
+  return invoke<void>("term_write", { repoId, data });
+}
+
+/** Tell the pty how big the renderer is, so the shell wraps where the user
+ *  sees the edge and a full-screen program fills the pane. */
+export function termResize(
+  repoId: string,
+  rows: number,
+  cols: number,
+): Promise<void> {
+  return invoke<void>("term_resize", { repoId, rows, cols });
+}
+
+/** Kill this repository's shell. Idempotent — safe on a tab that never opened
+ *  a terminal. */
+export function termClose(repoId: string): Promise<void> {
+  return invoke<void>("term_close", { repoId });
+}
+
 export function openUrl(url: string): Promise<void> {
   return invoke("open_url", { url });
 }

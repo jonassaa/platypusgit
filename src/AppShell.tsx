@@ -59,6 +59,7 @@ import {
   type ActionId,
 } from "@/features/keymap";
 import { CommandPalette } from "@/features/palette/CommandPalette";
+import { TerminalPanel } from "@/features/terminal";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { BranchChip } from "@/features/branches/BranchChip";
 import { CloneDialog } from "@/features/create/CloneDialog";
@@ -690,6 +691,11 @@ function AppBody({
           }}
         >
           {screens[screen]}
+          {/* The terminal docks BELOW the routed screen and inside the same
+              column, so it spans the screen's width and not the activity bar's
+              (#243). This div is already a flex column, so the panel's fixed
+              height composes with the screen's `flex: 1` on its own. */}
+          <TerminalPanel />
         </div>
       </div>
     </div>

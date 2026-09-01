@@ -109,7 +109,10 @@ const PORTABLE = [
 // people share, and every other key in the bag says how the app should behave —
 // this one is a list of someone's name and email addresses. It is also useless
 // on the receiving machine, since identities are per-person by definition.
-const EXCLUDED = ["lastCreateDir", "identities"];
+// `terminalShell` (#243) is a PATH to a binary on this machine, so it is denied
+// for the same reason `lastCreateDir` is — see NON_PORTABLE_KEYS for the
+// contrast with `externalDiffTool`, which holds a tool name and does travel.
+const EXCLUDED = ["lastCreateDir", "identities", "terminalShell"];
 
 describe("the exported key set", () => {
   it("is exactly the schema minus the deny-list", async () => {

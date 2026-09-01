@@ -17,6 +17,7 @@ pub mod repo;
 pub mod ssh;
 pub mod stash;
 pub mod submodule;
+pub mod terminal;
 pub mod update;
 pub mod watch;
 pub mod worktree;

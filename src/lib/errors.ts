@@ -82,6 +82,14 @@ export type AppError =
    */
   | { kind: "SshKeygenUnavailable"; message: string }
   /**
+   * The shell the built-in terminal tried to run is missing or not runnable
+   * (#243). A state the panel disables on, in the shape `LfsUnavailable`
+   * already uses. The payload is the SHELL and the reason, not prose —
+   * `appErrorDetail` turns it into a sentence that names the Settings field,
+   * because that is the only thing the user can do about it.
+   */
+  | { kind: "TerminalUnavailable"; message: string }
+  /**
    * A git hook ran and refused (#232). The payload is a STRUCT, and its
    * `output` is deliberately NOT rendered into the banner sentence: forty lines
    * of eslint belong in the dedicated output block, which scrolls. See
@@ -187,6 +195,12 @@ function appErrorDetail(e: AppError): string {
   // with no hint that the app refused on purpose rather than failed.
   if (e.kind === "SshKeyExists" && typeof message === "string") {
     return `${message} already exists. Nothing was overwritten — choose another name.`;
+  }
+  // TerminalUnavailable carries the SHELL and the reason it would not start.
+  // Rendered raw the banner would be "zsh: No such file or directory", which
+  // says what happened and nothing about the one field that fixes it.
+  if (e.kind === "TerminalUnavailable" && typeof message === "string") {
+    return `Could not start a shell (${message}). Set one in Settings ▸ Terminal, or leave that field blank to use $SHELL.`;
   }
   // StaleStash carries a LABEL (`stash@{1}`) — rendered raw the banner would
   // just read "stash@{1}" with no hint of what to do about it.

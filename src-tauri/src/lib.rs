@@ -13,6 +13,7 @@ pub mod progress;
 pub mod reveal;
 pub mod ssh;
 pub mod state;
+pub mod terminal;
 pub mod update;
 pub mod watcher;
 
@@ -232,6 +233,9 @@ pub fn run() {
         .manage(commands::forge::ForgeTokens::default())
         // One live filesystem watch, on the active repository (#239).
         .manage(watcher::WatchState::default())
+        // Every live pty, keyed by repository (#243). Behind an `Arc` because
+        // each session's reader thread holds one to retire itself on EOF.
+        .manage(Arc::new(terminal::TerminalState::default()))
         .manage(commands::cli::CliLaunchState(Mutex::new(initial_intent)))
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
@@ -384,7 +388,26 @@ pub fn run() {
             commands::forge::forge_pull_request_checks,
             commands::forge::forge_create_pull_request,
             commands::forge::forge_checkout_pull_request,
+            commands::terminal::term_open,
+            commands::terminal::term_write,
+            commands::terminal::term_resize,
+            commands::terminal::term_close,
         ])
+        // A shell must not outlive the window that hosts it (#243). Called
+        // explicitly rather than left to a `Drop`: the state is behind an `Arc`
+        // that every reader thread holds, so its drop runs at a time nobody
+        // controls — and an orphaned interactive shell is not a leak the user
+        // can see, only one their process list can.
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager as _;
+                if let Some(terminals) =
+                    window.app_handle().try_state::<Arc<terminal::TerminalState>>()
+                {
+                    terminals.close_all();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

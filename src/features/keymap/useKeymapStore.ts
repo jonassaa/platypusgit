@@ -35,6 +35,31 @@ function isEditable(t: EventTarget | null): boolean {
   );
 }
 
+/**
+ * Whether the event came from inside the built-in terminal (#243).
+ *
+ * xterm renders a hidden `<textarea>`, so `isEditable` already suppresses bare
+ * chords there. It does NOT suppress MODIFIER chords — and those are exactly
+ * the ones a shell needs: Ctrl+C to interrupt, Ctrl+D for EOF, Ctrl+R for
+ * history search, Ctrl+A/E to move. A terminal that sends Ctrl+C to the command
+ * palette instead of the foreground process is worse than no terminal.
+ *
+ * So everything typed in there belongs to the shell, with exactly two
+ * exceptions in [`TERMINAL_ESCAPES`]: the chord that hides the panel, which is
+ * the way back out, and the overlay escape, so a cheat sheet opened over the
+ * terminal can still be dismissed.
+ */
+function inTerminal(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  return !!el?.closest?.("[data-testid='terminal-view']");
+}
+
+/** The only actions a key press inside the terminal may reach. */
+const TERMINAL_ESCAPES: ReadonlySet<string> = new Set([
+  "terminal.toggle",
+  "app.closeOverlay",
+]);
+
 function hasRealModifier(chord: string): boolean {
   return (
     chord.startsWith("Mod+") ||
@@ -201,10 +226,15 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
 
       const editable = isEditable(e.target);
       const modChord = hasRealModifier(chord);
+      const terminal = inTerminal(e.target);
       const focusedPane = useFocusStore.getState().focused;
 
       for (const id of ids) {
         const def = ACTIONS[id];
+        // Inside the terminal the shell owns the keyboard — see `inTerminal`.
+        // This is checked BEFORE the input rules because it is stricter than
+        // them: `allowInInput` is not a licence to steal Ctrl+C from a shell.
+        if (terminal && !TERMINAL_ESCAPES.has(id)) continue;
         if (editable && def.suppressInInput) continue;
         if (editable && !modChord && !def.allowInInput) continue;
 

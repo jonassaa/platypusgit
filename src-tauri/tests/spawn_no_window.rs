@@ -219,6 +219,32 @@ fn the_console_keeping_exceptions_are_exactly_the_allow_listed_ones() {
     }
 }
 
+/// The pty half of the same rule (#243).
+///
+/// `portable_pty` spawns through its own `CommandBuilder`, not
+/// `std::process::Command`, so the `Command::new` guard above cannot see it at
+/// all. A pty opened anywhere but `proc.rs` would therefore be a second spawn
+/// path with NO guard on it — precisely the state issue 172 found the tree in,
+/// and the reason `spawn_pty_shell` owns the whole operation (openpty, the
+/// builder, and the spawn) rather than just handing out a builder.
+#[test]
+fn the_pty_spawn_lives_only_in_the_proc_module() {
+    const PTY_APIS: [&str; 3] = ["CommandBuilder::new", "openpty(", "spawn_command("];
+
+    for (rel, body) in sources() {
+        for api in PTY_APIS {
+            let found = count_code_occurrences(&body, api);
+            let expected = usize::from(rel == "src/proc.rs");
+            assert_eq!(
+                found, expected,
+                "{rel} uses `{api}` {found} time(s), expected {expected}. The \
+                 whole pty spawn belongs in src/proc.rs::spawn_pty_shell — a \
+                 second one would be covered by no guard in this file."
+            );
+        }
+    }
+}
+
 #[test]
 fn the_windows_creation_flag_is_set_in_one_place_only() {
     // The pre-172 state was one hand-rolled `creation_flags(0x0800_0000)` in
