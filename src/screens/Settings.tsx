@@ -32,6 +32,7 @@ import {
   isValidTicketPattern,
 } from "@/features/commits/message";
 import type { UpdateRefsMode } from "@/lib/types";
+import { CustomActionsSettings } from "@/features/actions/CustomActionsSettings";
 import { IdentityForm } from "@/features/commits/identity/IdentityForm";
 import { SavedIdentities } from "@/features/commits/identity/SavedIdentities";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -111,6 +112,7 @@ export function SettingsScreen() {
         </p>
 
         <IdentitySection />
+        <CustomActionsSection />
 
         <AppearanceSection active={active} />
 
@@ -413,6 +415,24 @@ export function SettingsScreen() {
  * way down: a user who lands in Settings before opening anything still gets a
  * true answer, from the global + system chain.
  */
+/**
+ * User-defined commands (#225).
+ *
+ * Its own section rather than a row under something else: it is the one
+ * Settings surface that spawns a process, and burying it would make the
+ * "not a shell line" explanation easy to miss.
+ */
+function CustomActionsSection() {
+  return (
+    <Section
+      title="Custom actions"
+      subtitle="Your own commands, available from the command palette."
+    >
+      <Row label="Actions" stacked control={<CustomActionsSettings />} />
+    </Section>
+  );
+}
+
 function IdentitySection() {
   const repo = useRepoStore((s) => s.current);
   return (

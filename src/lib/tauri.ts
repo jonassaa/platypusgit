@@ -2,6 +2,8 @@ import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { debug as logDebug, warn as logWarn, error as logError } from "@tauri-apps/plugin-log";
 import { describeError } from "./errors";
 import type {
+  ActionContext,
+  ActionOutput,
   AheadBehind,
   AuthorOverride,
   BisectMark,
@@ -1400,6 +1402,20 @@ export async function revealLogFile(): Promise<void> {
 
 export function checkForUpdate(channel: UpdateChannel): Promise<UpdateInfo> {
   return invoke<UpdateInfo>("check_for_update", { channel });
+}
+
+/**
+ * Run a user-defined command (#225).
+ *
+ * The command string is parsed into argv and the placeholders substituted BY
+ * THE BACKEND — never here, and never by a shell. See `custom_action.rs`.
+ */
+export function runCustomAction(
+  repoId: string,
+  command: string,
+  context: ActionContext,
+): Promise<ActionOutput> {
+  return invoke<ActionOutput>("run_custom_action", { repoId, command, context });
 }
 
 export function getUpdateCapability(): Promise<UpdateCapability> {

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { PullMode } from "@/lib/tauri";
 import type { UpdateChannel, UpdateRefsMode } from "@/lib/types";
 import type { SavedIdentity } from "@/features/commits/identity/identityList";
+import type { CustomAction } from "@/features/actions/customActions";
 import {
   DEFAULT_HEAD_WEIGHT,
   HEAD_WEIGHTS,
@@ -925,6 +926,15 @@ interface PersistedState {
    * already decided.
    */
   rebaseUpdateRefs: UpdateRefsMode;
+  /**
+   * User-defined commands (#225), shown in the command palette.
+   *
+   * Portable: "the command our team runs fifty times a day" is exactly the
+   * kind of thing a shared settings file should carry. It is also plain data —
+   * a name and a command string — with no secrets in it, because a custom
+   * action never receives any.
+   */
+  customActions: CustomAction[];
   updateCheckMode: UpdateCheckMode;
   /**
    * Which releases update checks consider — see UpdateChannel.
@@ -1029,6 +1039,7 @@ const DEFAULTS: PersistedState = {
   commitBodyMarkdown: true,
   identities: [],
   rebaseUpdateRefs: "config",
+  customActions: [],
   updateCheckMode: "auto",
   updateChannel: "stable",
   lastCreateDir: "",

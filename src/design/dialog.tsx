@@ -33,6 +33,14 @@ export interface PGConfirmOptions {
   /** Red primary button + warning glyph. */
   danger?: boolean;
   /**
+   * Hide the Cancel button — an acknowledgement rather than a question.
+   *
+   * Escape and the backdrop still dismiss, so there is always a way out; what
+   * goes away is the second button, which on a "here is the output" dialog
+   * offers a choice that does not exist. See `pgAlert`.
+   */
+  hideCancel?: boolean;
+  /**
    * Require typing this exact string before the primary button enables —
    * for the genuinely unrecoverable operations (GitKraken-style).
    */
@@ -102,6 +110,22 @@ export function pgConfirm(opts: PGConfirmOptions | string): Promise<boolean> {
 }
 
 /**
+ * Show something and wait for it to be acknowledged.
+ *
+ * `pgConfirm` with one button. It exists because the alternative at every call
+ * site is `window.alert`, which this codebase bans for the same reasons it bans
+ * `window.confirm`: unstyled, blocks the whole webview, and cannot show
+ * anything but a short string.
+ *
+ * Resolves when dismissed, however it was dismissed — there is no answer to
+ * report, so callers do not have one to handle.
+ */
+export async function pgAlert(opts: PGConfirmOptions | string): Promise<void> {
+  const o = typeof opts === "string" ? { title: opts } : opts;
+  await pgConfirm({ confirmLabel: "Close", ...o, hideCancel: true });
+}
+
+/**
  * Ask for a line of text. Resolves the string, or null if dismissed — same
  * contract as `window.prompt`, including "empty string" being a real answer
  * distinct from null (unless `requireValue`).
@@ -138,6 +162,8 @@ export function PGDialogHost() {
 function DialogView({ req }: { req: Request }) {
   const isConfirm = req.kind === "confirm";
   const danger = isConfirm && !!(req.opts as PGConfirmOptions).danger;
+  // An acknowledgement, not a question — see `pgAlert`.
+  const hideCancel = isConfirm && !!(req.opts as PGConfirmOptions).hideCancel;
   const requireText = isConfirm
     ? (req.opts as PGConfirmOptions).requireText
     : undefined;
@@ -315,9 +341,11 @@ function DialogView({ req }: { req: Request }) {
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <PGButton size="sm" variant="ghost" onClick={cancel} data-testid="dialog-cancel">
-            {cancelLabel}
-          </PGButton>
+          {!hideCancel && (
+            <PGButton size="sm" variant="ghost" onClick={cancel} data-testid="dialog-cancel">
+              {cancelLabel}
+            </PGButton>
+          )}
           <PGButton
             size="sm"
             variant={danger ? "danger" : "primary"}

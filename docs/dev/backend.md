@@ -979,3 +979,43 @@ unless set. Turning it on for someone who did not ask is the same class of
 surprise as leaving their stack behind, just in the other direction. The
 frontend still confirms first and names every ref (`features/commits/stackedRefs.ts`),
 because the flag alone is a silent behaviour change.
+## A user-supplied command string is not a shell line (#225)
+
+Custom actions let a user run their own program from the UI. The tempting
+implementation is `sh -c "<the string>"`, and it is wrong in a way that stays
+invisible until it bites: under a shell, a branch named `main; rm -rf ~` or a
+path containing `$(...)` stops being **data** and becomes **code**. Branch names
+and paths come from the repository, which means they can come from anyone who
+has ever pushed to it.
+
+`custom_action.rs` is therefore pure, and the whole design is three steps:
+
+1. **`parse_command`** splits the string into argv once. Quotes group; a
+   backslash escapes (except inside single quotes, so a Windows path survives).
+   `|`, `>`, `;`, `&&`, `$`, `*`, `~` are ordinary characters, because that is
+   all they can be when nothing interprets them.
+2. **`substitute`** expands `$REPO` / `$FILE` / `$FILES` / `$SHA` / `$BRANCH`
+   **into individual argv entries**, after splitting. A value can therefore
+   never introduce a new argument, however it is spelled.
+3. **`proc::program_async`** spawns it — the only sanctioned constructor (a
+   guard test fails the build on a bare `Command::new`), which also carries the
+   `CREATE_NO_WINDOW` treatment from #172 so an action never flashes a console.
+
+Two traps worth knowing before editing `substitute`, both pinned by tests:
+
+- **It is ONE left-to-right pass.** Chained `str::replace` calls re-scan text an
+  earlier call just substituted, so a file literally named `$SHA` would pull in
+  the commit sha. Values are data, not templates; emitting each expansion
+  straight into the output and never looking at it again makes that structural.
+- **Placeholders are tried LONGEST NAME FIRST**, because `$FILE` is a prefix of
+  `$FILES`. Anything else matches `$FILE` inside `$FILES` and leaves a stray
+  `S`.
+
+`$FILES` is the one placeholder that changes the *number* of arguments, and only
+when it is the whole entry — as whole entries, never by splitting a joined
+string. Inside a larger argument (`--files=$FILES`) it joins, because "become N
+arguments" cannot be expressed as a substring replacement.
+
+**No secrets, ever.** A custom action is a user program, not a trusted one:
+nothing from the auth path goes near it — no forge token, no git credential, no
+askpass wiring. It gets the ordinary child environment `proc.rs` builds.

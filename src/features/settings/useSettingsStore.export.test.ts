@@ -62,6 +62,10 @@ const PORTABLE = [
   "commitBodyMarkdown",
   "commitTicketPattern",
   "confirmForcePush",
+  // User-defined commands (#225). Portable: "the command our team runs
+  // fifty times a day" is what a shared settings file is for, and an action
+  // is plain data with no secrets in it.
+  "customActions",
   "customThemes",
   "defaultPullMode",
   "diffContextLines",

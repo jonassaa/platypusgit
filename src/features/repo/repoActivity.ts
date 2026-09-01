@@ -68,6 +68,14 @@ export interface RepoActivity {
    * click was swallowed.
    */
   difftool?: ActivityState;
+  /**
+   * A user-defined custom action (#225).
+   *
+   * It is here for the same reason `difftool` is: a user's own program can take
+   * as long as it likes, and one that pins nothing visible is indistinguishable
+   * from one that never started.
+   */
+  action?: ActivityState;
 }
 
 export type ActivityKey = keyof RepoActivity;
@@ -92,6 +100,9 @@ export const ACTIVITY_PRIORITY: readonly ActivityKey[] = [
   "branch",
   "forge",
   "difftool",
+  // Below difftool: like it, the app is not busy — someone else's program is —
+  // and any real git op running underneath is the more urgent thing to say.
+  "action",
   "lfs",
   "submodule",
 ];
