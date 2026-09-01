@@ -169,6 +169,54 @@ Rules that keep the gates honest:
   run`. With neither set, `specs` keeps its plain glob — byte-for-byte the old
   behaviour.
 
+## Dependency advisories in the dev toolchain (#346)
+
+Every Dependabot alert this repo has open against the root `pnpm` project is
+`development` scope and **transitive-only** — the vulnerable package is never a
+direct dependency of ours. That combination is why they pile up: the security
+updater can only bump a manifest entry, and it does not write `pnpm.overrides`.
+Security updates ARE enabled, so a missing PR is not a sign the alert is in
+hand; it means nothing can fix it automatically. Nothing outside the GitHub
+security tab reports on this either — no workflow runs `pnpm audit`.
+
+The remedy is the `pnpm.overrides` block in `package.json`, which carries two
+kinds of entry:
+
+- `@wdio/native-utils` pins a **broken** dep in `@wdio/tauri-service` (above).
+- everything else force-bumps a **vulnerable** transitive dep past its advisory.
+
+Where two majors of one package coexist in the tree, the override MUST use the
+`pkg@major` selector form (`undici@6` / `undici@7`, `brace-expansion@1` /
+`brace-expansion@2`). A bare `"undici": "^7"` would drag `webdriver`, which
+wants 6.x, across a major and break the runner.
+
+Two standing decisions, recorded so they are not re-litigated:
+
+- **`esbuild` is deliberately NOT overridden.** `vite` resolves it as a
+  tightly-coupled peer; forcing it across a minor is likelier to break the
+  bundle than to buy anything, since the advisory only affects `esbuild serve`
+  on Windows, which nothing here runs. The next `vite` bump carries it.
+- **`extract-zip` has no patched version at all**, and is dismissed as
+  tolerable risk. It arrives via `@puppeteer/browsers` ← `@wdio/utils` — a
+  Chrome/Edge downloader this repo never invokes, because `e2e/wdio.conf.ts`
+  sets `browserName: "tauri"`. Pruning that subtree would take `ip-address`
+  with it; worth measuring, not yet done.
+
+**The trap:** a Dependabot npm PR regenerates the lockfile and drops the whole
+`pnpm.overrides` block. Restore it before merging any such PR, or the merge
+silently un-fixes every advisory the block covers. That standing cost is the
+main reason to keep the block minimal rather than adding every override that
+would turn something green.
+
+One measurement worth keeping: changing the block re-resolves the whole graph,
+so read the lockfile diff before trusting it. Every version that moves should
+trace back to an override or to one of its own dependencies — anything else is
+opportunistic drift that does not belong in a security commit.
+
+And because these packages ARE the e2e runner (`ws`, `undici`,
+`serialize-javascript`, `js-yaml`, `fast-xml-parser`), a change here is not
+proven by `pnpm test`. It needs a real Docker e2e run.
+
 ## `test/` at the repo root — doc invariants (#147, #150)
 
 - **`test/docs.test.ts`** fails the build when the doc set (CLAUDE.md +

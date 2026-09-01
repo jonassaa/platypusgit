@@ -751,3 +751,37 @@ rejects a bundle carrying the development identity. Both guards exist because
 `CN=platypusgit-development` so a local pack works without Partner Center — and
 that fallback is exactly what would otherwise be attached to a public release,
 install fine everywhere, and be rejected only at upload.
+
+## One shipped advisory we cannot fix: `glib` 0.18.5 (#346)
+
+`glib` 0.18.5 carries GHSA-wrw7-89jp-8q8g — unsoundness in the `Iterator` and
+`DoubleEndedIterator` impls for `glib::VariantStrIter` — and unlike every other
+open advisory here it IS a genuine runtime dependency of the shipped **Linux**
+bundles (`.deb` / `.AppImage`):
+
+```
+glib 0.18.5 ← atk 0.18.2 ← gtk 0.18.2 ← {muda, tao ← tauri-runtime-wry} ← tauri
+```
+
+**No override on our side fixes it.** `gtk-rs` 0.18 pins `glib` 0.18, so glib
+moves to >= 0.20 only when `tauri`/`tao`/`muda` move to a newer gtk generation.
+Re-check when the grouped `tauri` Cargo PR lands; do not attempt a local patch
+or a `[patch.crates-io]` pin — the gtk generation is the thing that has to move.
+
+What keeps it tolerable meanwhile: it is an unsoundness rather than a directly
+exploitable bug, it needs `VariantStrIter` on the call path, and `src-tauri/`
+never references `glib` at all. macOS and Windows builds are unaffected.
+
+Two things that mislead when you go to check this:
+
+- `cargo tree -i glib` prints "nothing to print" on macOS. The crate is
+  Linux-target-only, so it needs
+  `cargo tree --target x86_64-unknown-linux-gnu -i glib@0.18.5`.
+- `Cargo.lock` also contains a **patched** `glib` 0.21.5. That one belongs to
+  `tauri-plugin-wdio-webdriver`, the e2e-only plugin that must never reach a
+  shipped binary. The vulnerable 0.18.5 is the one in the real chain, and
+  grepping the lockfile for a fixed version is how you talk yourself out of a
+  live finding.
+
+The dev-toolchain side of the same triage — the `pnpm.overrides` block, and why
+Dependabot cannot close those alerts on its own — is in `docs/dev/testing.md`.
