@@ -81,6 +81,27 @@ pub fn run() {
         return;
     }
 
+    // `--debug` (#344). `should_detach` above named `Parsed::Launch` and nothing
+    // else, so this variant already stayed in the foreground; what is left is to
+    // raise the log filter and say what is happening.
+    //
+    // The notice is printed unconditionally for a debug launch, and names the
+    // already-running case, because that case cannot be detected from here: the
+    // single-instance plugin forwards this invocation's intent and exits inside
+    // `Builder::run()` below, so a `pgit --debug` against a running app would
+    // otherwise return an immediate, silent, log-free 0. stderr, not stdout —
+    // stdout is where the log itself is about to go.
+    let debug_launch = matches!(parsed, cli::Parsed::DebugLaunch(_));
+    if debug_launch {
+        eprintln!(
+            "platypusgit: debug launch — log level raised to debug, streaming to this terminal."
+        );
+        eprintln!(
+            "platypusgit: Ctrl+C quits the app. If no log lines follow, an instance was already \
+             running and was focused instead — quit it and retry."
+        );
+    }
+
     let initial_intent = match parsed {
         cli::Parsed::Help => {
             print!("{}", cli::USAGE);
@@ -92,7 +113,9 @@ pub fn run() {
         }
         // Already handled above; unreachable in practice.
         cli::Parsed::Askpass(_) => return,
-        cli::Parsed::Launch(intent) => intent.map(cli::resolve_repo_root),
+        cli::Parsed::Launch(intent) | cli::Parsed::DebugLaunch(intent) => {
+            intent.map(cli::resolve_repo_root)
+        }
     };
 
     let backend = Arc::new(Libgit2Backend::new());
@@ -108,7 +131,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             use tauri::{Emitter, Manager};
             let args: Vec<String> = argv.into_iter().skip(1).collect();
-            if let cli::Parsed::Launch(Some(intent)) =
+            if let cli::Parsed::Launch(Some(intent)) | cli::Parsed::DebugLaunch(Some(intent)) =
                 cli::parse_args(&args, std::path::Path::new(&cwd))
             {
                 let intent = cli::resolve_repo_root(intent);
@@ -126,7 +149,7 @@ pub fn run() {
     let builder = builder
         .plugin(
             tauri_plugin_log::Builder::new()
-                .level(log::LevelFilter::Info)
+                .level(cli::log_filter(debug_launch))
                 .level_for("platypusgit_lib", log::LevelFilter::Debug)
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),

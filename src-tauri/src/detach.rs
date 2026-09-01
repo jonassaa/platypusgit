@@ -254,6 +254,24 @@ mod tests {
     }
 
     #[test]
+    fn a_debug_launch_never_detaches() {
+        // The whole point of `--debug`: the log has to reach the terminal that
+        // asked for it, and a detached child's stdout is /dev/null.
+        //
+        // Note this needs no change to `should_detach` — it names
+        // `Parsed::Launch` and nothing else, so a new variant is refused by
+        // construction. That is deliberate: a `debug` *field* on `Launch` would
+        // have kept `matches!(parsed, Parsed::Launch { .. })` true and detached
+        // anyway.
+        let d = Parsed::DebugLaunch(Some(LaunchIntent {
+            path: Some(PathBuf::from("/repo")),
+            screen: None,
+        }));
+        assert!(!should_detach(&d, env(true)));
+        assert!(!should_detach(&Parsed::DebugLaunch(None), env(true)));
+    }
+
+    #[test]
     fn help_never_detaches() {
         // USAGE must reach the terminal that asked for it.
         assert!(!should_detach(&Parsed::Help, env(true)));

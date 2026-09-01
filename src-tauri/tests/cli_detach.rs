@@ -185,6 +185,39 @@ fn help_prints_usage_and_exits_even_with_a_terminal_attached() {
     );
 }
 
+#[test]
+fn the_debug_flag_does_not_stop_help_reaching_the_terminal() {
+    // `--debug` is the one flag that makes a launch stay in the foreground, so
+    // a reordering that let it win over `--help` would open a window instead of
+    // printing USAGE — and the pty here is the condition that would hide it.
+    let mut cmd = Command::new(EXE);
+    clean_env(&mut cmd);
+    cmd.args(["--debug", "--help"]);
+
+    let run = run_in_pty(cmd);
+
+    assert_eq!(run.code, Some(0));
+    assert_eq!(run.output, USAGE);
+}
+
+#[test]
+fn askpass_answers_a_prompt_that_looks_like_the_debug_flag() {
+    // git's prompt is arbitrary text arriving as argv[1]. If it were ever
+    // scanned for `--debug`, this invocation would build a Tauri app and open a
+    // window instead of printing the credential — with git blocked on a read
+    // that never completes.
+    let mut cmd = Command::new(EXE);
+    clean_env(&mut cmd);
+    cmd.arg("Password for '--debug': ")
+        .env(ASKPASS_MODE_ENV, "1")
+        .env(ASKPASS_SECRET_ENV, "s3cr3t-despite-the-flag");
+
+    let run = run_in_pty(cmd);
+
+    assert_eq!(run.code, Some(0), "askpass output was: {:?}", run.output);
+    assert_eq!(run.output.trim_end(), "s3cr3t-despite-the-flag");
+}
+
 // ─────────────────────────────────────────────────────────────
 // The credentialed regression test: real git → the real binary
 // ─────────────────────────────────────────────────────────────

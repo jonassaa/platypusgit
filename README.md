@@ -161,6 +161,7 @@ pgit commit             # open the cwd repo, land on the Commit panel
 pgit log src/           # open the repo containing src/, land on History
 pgit --help             # print usage, no window
 pgit --version          # print version, no window
+pgit --debug .          # open it, but stay attached and stream the log here
 ```
 
 | subcommand | screen |
@@ -181,6 +182,15 @@ A bare path with no recognized subcommand opens that repository and keeps the
 current screen. If the app is already running, a second `pgit …` doesn't spawn
 another instance — it forwards the request to the running window, focuses it,
 and navigates there.
+
+**`--debug` when something goes wrong at startup.** It is the one flag that
+keeps the app in the foreground instead of handing the prompt back, and it
+raises the log level, so the app's log — including every call the window makes
+to the backend — streams into the terminal you launched it from. Ctrl+C quits
+the app. Because a second `pgit` forwards to the running window rather than
+starting anything, quit the app first if you want to trace a fresh launch.
+Unix only: the Windows binary has no console to print to, though `--debug` still
+raises the level of the log file it writes.
 
 **Most installs already have it.** The Homebrew cask, the `.deb` (via apt or by
 hand), the `.msi` and Scoop all install `pgit` alongside the app and remove it
