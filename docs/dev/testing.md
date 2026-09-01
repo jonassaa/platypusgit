@@ -243,6 +243,22 @@ proven by `pnpm test`. It needs a real Docker e2e run.
 - **`test/nativeSelect.test.ts`** is a SOURCE invariant: no `<select>`/`<option>`
   in shipped `src/` (issue 146) — the failure is invisible on macOS/Windows.
   Comments stripped first; test files out of scope.
+- **`test/depOverrides.test.ts`** guards the `pnpm.overrides` security block
+  (#346) against the one thing that routinely kills it: a Dependabot npm PR
+  regenerates the lockfile, drops the whole block, and 20 advisories come back
+  with nothing in the diff that looks like a security change. It asserts both
+  halves, because the block surviving is not the fix surviving — every security
+  override key is still in `package.json`, AND no version resolved in
+  `pnpm-lock.yaml` sits below its advisory floor, which is what catches a block
+  that was kept while the lockfile was never regenerated. It asserts a FLOOR,
+  never a ceiling, so ordinary bumps stay green; an unguarded new major is
+  allowed through on purpose (the advisory ranges are major-scoped, so
+  `undici` 8.x is a new question, not a regression of this one). Two traps if
+  you edit it: the lockfile records our own `undici@6` selector keys at the
+  same indentation as real packages, so the version pattern must demand a full
+  `major.minor.patch` or it reads a selector as a version; and `it.each`'s
+  `$major` renders as `undefined`, which is why the floor cases are a plain
+  loop.
 - **`test/privacy.test.ts`** pins the promise the README advertises (#226): no
   analytics package in `package.json` or anywhere in `pnpm-lock.yaml`
   (transitive is the arrival nobody reviews), no network call or analytics
