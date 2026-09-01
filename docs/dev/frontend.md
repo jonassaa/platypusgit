@@ -519,6 +519,16 @@ Refreshes coalesce rather than queue: a burst produces at most one more refresh
 after the current one, and `mergeRefresh` keeps a queued `status` from
 downgrading a pending `all`.
 
+A background refresh passes **`preserveError`**, and that is load-bearing. A
+failed `--ff-only` pull sets `error` — but the *fetch* half of that same pull
+already moved `refs/remotes/…`, so the watcher's debounced event lands a few
+hundred milliseconds later, **after** the operation cleared `activity` and
+therefore past the busy guard. `refreshAll` opens with `set({ error: null })`,
+so without `preserveError` it wipes the banner and the user sees a pull that
+silently did nothing — the worst possible reading of a failure. `settings.e2e.ts`
+caught this on CI. A refresh nobody asked for must not clear a message nobody
+has read.
+
 The watcher's refresh deliberately does **not** join `RepoActivity`. That is
 for operations the user started and can cancel; this is background upkeep, and
 a status line that flickered on every keystroke in someone's editor would be
