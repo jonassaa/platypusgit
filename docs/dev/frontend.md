@@ -534,6 +534,52 @@ the dialog is answered, because the world can move while it is open.
 empty — that is what keeps `Mod+Z` from being stolen from every text field in
 the app; the chord falls through and still undoes typing.
 
+## Markdown in commit bodies (#253)
+
+`features/commits/body/` renders the commit **body** — never the subject, which
+is one line and is not markdown — as a restrained subset, with a raw/rendered
+toggle (`commitBodyMarkdown`, a persisted preference).
+
+**Why a parser of our own rather than a dependency.** The issue's two hard
+constraints are *no remote content of any kind* and *a raw toggle*, and it asks
+for a bundle-size and sanitisation review of any markdown dependency. That
+review does not end well for the general-purpose libraries: they exist to render
+arbitrary documents, which means HTML passthrough, images, and a sanitiser you
+must keep configured correctly forever. `markdown.ts` parses the subset into a
+**typed AST**, and `CommitBody.tsx` turns AST nodes into React elements — so
+there is no HTML string anywhere in the path, and the whole
+`dangerouslySetInnerHTML` class of bug is gone by construction rather than by
+vigilance.
+
+**Deliberately not in the subset:**
+
+- **Headings.** `#` at the start of a line in a commit body is far more likely
+  to be an issue reference than an ATX heading.
+- **Images.** Nothing may fetch. `![alt](url)` parses to a LINK labelled with
+  its alt text — the useful non-fetching reading — and there is no image node in
+  the AST for a renderer to grow one from.
+- **Raw HTML**, tables, footnotes.
+
+**Links** are restricted to `http`, `https` and `mailto` by an allow-list
+(`isSafeHref`); anything else keeps its words and loses its destination. They
+open through `openUrl`, never by navigating — a plain navigation in a webview
+replaces the app.
+
+**`#123` is a styled token, not a link.** Linking it means guessing which forge
+and which repository the number belongs to, and there is no helper in the tree
+that resolves a remote to a web URL. A link to the wrong issue is worse than no
+link; building that resolver is the follow-up that unlocks it.
+
+Paragraphs are **joined across hard-wrapped lines** (commit bodies wrap at 72
+columns, and one visual line per physical line is the "reads badly" the issue is
+about), with markdown's two-trailing-spaces hard break honoured. The raw view is
+the original text, not a re-serialisation of the parse — that is the one
+guarantee it exists to give.
+
+`PGCommitDetail` stays presentational: it gained a `bodyContent` slot rather than
+importing the renderer, because the renderer reads a setting and opens URLs and
+therefore belongs in `features/`, not `design/`.
+
 ## The log is paged (#68 G11)
 
 - **`s.commits` is a PREFIX of history** (`PAGE_SIZE = 500`, appended;

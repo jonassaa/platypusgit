@@ -1787,6 +1787,15 @@ export interface PGCommitDetailProps {
   fullSha?: string;
   subject: string;
   body?: string;
+  /**
+   * Replaces the plain-text `body` block when given (#253).
+   *
+   * The markdown renderer is FEATURE code (`features/commits/body`), not design
+   * code — it reads a setting and opens URLs — so it is injected rather than
+   * imported here. This component stays presentational, and callers that just
+   * want the text keep passing `body`.
+   */
+  bodyContent?: ReactNode;
   author: string;
   email?: string;
   date: string;
@@ -1800,6 +1809,7 @@ export function PGCommitDetail({
   fullSha,
   subject,
   body,
+  bodyContent,
   author,
   email,
   date,
@@ -1865,7 +1875,8 @@ export function PGCommitDetail({
       >
         {subject}
       </div>
-      {body && (
+      {bodyContent}
+      {!bodyContent && body && (
         <div
           style={{
             color: "var(--fg-1)",
