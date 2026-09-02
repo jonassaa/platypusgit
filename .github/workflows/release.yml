@@ -173,7 +173,7 @@ jobs:
           echo "sha256=$sum" >> "$GITHUB_OUTPUT"
 
       - name: Attach .dmg to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/PlatypusGit_universal.dmg
@@ -301,7 +301,7 @@ jobs:
       # miss in the sig step aborts the job, and when that step ran first the
       # release ended up with no installer attached at all.
       - name: Attach installer to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           files: |
@@ -512,7 +512,7 @@ jobs:
           Write-Host 'msixbundle OK'
 
       - name: Attach msixbundle to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           files: PlatypusGit.msixbundle
@@ -587,7 +587,7 @@ jobs:
 
       # Attach BEFORE reading the signature — see the windows job for why.
       - name: Attach bundles to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           files: |
@@ -974,7 +974,7 @@ jobs:
           cat latest.json
 
       - name: Attach latest.json to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           files: latest.json
