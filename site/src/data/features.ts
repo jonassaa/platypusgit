@@ -144,6 +144,65 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.4.0',
+    date: '2026-09-02',
+    status: 'feature',
+    summary:
+      'Checking out a branch that another worktree is standing on used to leave the repository looking like you had staged the whole diff between the two branches — a refusal that arrived after the damage. It now refuses before touching anything, and then offers the thing you actually wanted: move the branch into this folder. The holder steps off the branch onto the same commit it was already on, which never opens its working tree, so uncommitted work over there survives untouched.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Take a branch from the worktree holding it',
+            detail:
+              'A branch can only be checked out in one worktree at a time, and until now hitting that wall left you with two bad options: go open that worktree, or delete it. The refusal now names the worktree and its path and offers a third — move the branch here. Accepting it detaches the holder at the commit it is already standing on, which is a rewrite of one HEAD file and nothing else: no checkout, no index write, its working tree never opened. Modified and untracked files in that worktree survive, which is what makes this safe to offer rather than a destructive action wearing a button. The offer is withheld, rather than shown and then failed, when the holder is locked — an explicit "leave me alone" — or is mid-rebase, merge, cherry-pick, revert, am or bisect, because git tracks those against HEAD and moving it out from under one leaves a half-finished operation nobody can explain. Dirtiness is reported to you, never used to refuse.',
+          },
+          {
+            title: 'The offer arrives wherever you check out from',
+            detail:
+              'The top menu, the log view, the branch chip and the command palette all funnel through one action, so the choice appears in all four without any of them knowing about it. If the checkout somehow fails after the holder has stepped off, the holder is put back on its branch — leaving it detached would cost it its branch for a checkout that never happened.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Checking out a branch held by another worktree no longer mangles the repository',
+            detail:
+              'Reported from the field, and worse than a failed operation: the checkout wrote the index and the working tree first and only then tried to move HEAD, where libgit2 correctly refused. HEAD stayed where it was while the files on disk became the other branch\'s tree — so `git status` showed the entire diff between the two branches as staged, with the current branch\'s own files deleted from disk. A refusal presented as data loss. Validation now runs before anything is written, the way git itself dies with `already used by worktree at …` before touching a file, and the one step that can still fail after the tree has been rewritten rolls back to the commit it started from.',
+          },
+          {
+            title: 'A declined checkout no longer leaves your work in a stash you never made',
+            detail:
+              'Found on the way into the feature above. A checkout auto-stashes uncommitted changes before it starts and pops them after it succeeds, so every path that ended without a completed checkout used to abandon them in an unexplained stash entry. Declining the offer, choosing to open the other worktree, and a take that is refused on re-validation all now pop your work back. Only the refusal raises a banner; declining is a choice, not a failure.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'What the version number promises, written down',
+            detail:
+              'This release is 0.4.0 rather than 0.3.2 because of a policy that landed with it. Pre-1.0 the minor is the major: any new user-visible capability, any new distribution channel, and any change to a persisted format or on-disk state is a minor bump, while patches are fixes, performance and packaging repairs with no new capability. The test is the `status` field on the entry you are reading — if it says "feature", the release is a minor. Everything published up to 0.3.1 is grandfathered and deliberately not rewritten, which matters because the old record is the counter-example rather than the pattern: fifteen of the first twenty-four releases were patch-numbered while their own changelog called them features, and 0.3.1 shipped an entire built-in terminal as a patch. The reasoning, the release runbook and the traps behind it are in `docs/dev/releasing.md`.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'The Microsoft Store listing is still not live',
+            detail:
+              'Unchanged from 0.2.0 through 0.3.1: the release produces a submittable package, and submitting it is a separate, manual step. Until the listing exists, install on Windows with the `.msi`, Scoop or winget. The packaged form has also still not been run on a real Windows machine.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.3.1',
     date: '2026-09-01',
     status: 'feature',
