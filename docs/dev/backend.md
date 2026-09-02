@@ -512,7 +512,7 @@ and `fast_forward_all` sweeps every local branch that can.
 - **A branch any working tree is standing on is refused**, HEAD here or a linked
   worktree's HEAD: moving the ref without touching the index and worktree leaves
   that checkout rendering every incoming change as a deletion. The frontend
-  routes HEAD to `pull` with the user's `defaultPullMode` instead. git2-rs 0.20
+  routes HEAD to `pull` with the user's `defaultPullMode` instead. git2-rs 0.21
   does not bind `git_branch_is_checked_out`, so `worktree::linked_worktree_heads`
   walks the linked worktrees — one repository open each, which is why only
   ref-moving ops pay it and a bulk sweep walks once.
@@ -531,6 +531,42 @@ and `fast_forward_all` sweeps every local branch that can.
   user-supplied and `--upload-pack=<program>` names a program git runs for the
   transport. Verified against git 2.50 — the fetch works normally, and a
   dash-leading value is refused as a strange pathname instead of honoured.
+
+## Checking out a branch another worktree holds (#356)
+
+`checkout_branch` used to be two statements — `checkout_tree` then `set_head` —
+and libgit2 refuses the second one when a linked worktree is standing on the
+target: *"cannot set HEAD to reference 'refs/heads/x' as it is the current HEAD
+of a linked repository"*. The refusal was correct and arrived too late. By then
+`checkout_tree` had rewritten the index and the working tree to the target's
+tree, so the user was left on an unmoved HEAD with **the entire difference
+between the two branches staged**, files from their own branch deleted off disk.
+A refusal had presented as data loss.
+
+- **Validate before you write, the way git does.** git dies with `'x' is already
+  used by worktree at '…'` before it touches anything;
+  `reject_held_by_linked_worktree` is that check, and it runs first in the
+  closure — ahead of the dirty check too, because "stash first" is the wrong
+  instruction for a branch that is checked out somewhere else and stashing will
+  not make the second attempt succeed.
+- **Only LINKED worktrees block a checkout.** It reuses `checked_out_at` from
+  #246 with `head: None`, which skips that helper's "this worktree" case on
+  purpose: re-checking-out the branch you are already on is `git checkout
+  <current>`, a no-op rather than an error. Passing `repo.head()` here — the
+  obvious reuse of `reject_checked_out` — would refuse an everyday operation.
+- **The tree write still rolls back if the ref move fails anyway.** `set_head`
+  is no longer expected to fail, but it is the one step that runs after the
+  worktree has been rewritten, so its error arm resets hard to the commit
+  captured before `checkout_tree`. The dirty check above it means that reset
+  restores the state we started from rather than discarding anybody's work.
+  Every other head-moving path in `libgit2.rs` (`checkout_detached`,
+  `stash_branch`, rebase finish and abort) already moves the ref *before* it
+  touches the tree; `checkout_branch` was the only inverted one.
+- **`checkout_tree` first is still the right order for checkout itself** — it is
+  git's order, and it is what lets libgit2's SAFE strategy refuse a checkout that
+  would overwrite untracked files while HEAD is still where the user left it.
+  Moving `set_head` up would just relocate the same class of bug to the conflict
+  path.
 
 ## Deleting an untracked file (#245)
 

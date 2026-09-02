@@ -2690,6 +2690,31 @@ fn reject_checked_out(repo: &Repository, branch: &str) -> AppResult<()> {
     }
 }
 
+/// The refusal a CHECKOUT gets when a linked worktree is standing on the target
+/// branch — git's own `'x' is already used by worktree at '…'`.
+///
+/// libgit2 refuses this too, but it refuses from `set_head`, which runs *after*
+/// `checkout_tree` has already rewritten the index and the working tree. That
+/// ordering is what turned this into a data bug rather than an error message:
+/// the tree became the target's, HEAD stayed put, and the entire difference
+/// between the two branches showed up staged. So the check happens here, before
+/// anything is written.
+///
+/// `checked_out_at`'s `head` argument is deliberately `None`, which skips its
+/// "this worktree" case: only LINKED worktrees block a checkout. The branch this
+/// repository is already on is a legal target — `git checkout <current>` is a
+/// no-op, not an error — so `reject_checked_out`, the obvious reuse, is the
+/// wrong helper here.
+fn reject_held_by_linked_worktree(repo: &Repository, branch: &str) -> AppResult<()> {
+    let linked = crate::git::worktree::linked_worktree_heads(repo);
+    match checked_out_at(branch, None, &linked) {
+        None => Ok(()),
+        Some(where_) => Err(AppError::InvalidArgument(format!(
+            "{branch} is checked out in {where_} — switch to it there, or remove that worktree first"
+        ))),
+    }
+}
+
 /// Local branch names, in listing order.
 fn local_branch_names(repo: &Repository) -> AppResult<Vec<String>> {
     let mut names = Vec::new();
@@ -4736,6 +4761,10 @@ impl GitBackend for Libgit2Backend {
 
     fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
+            // Before ANY of the checks that can write: a branch another worktree
+            // is standing on cannot be checked out here, and finding that out
+            // from `set_head` would be too late (see the helper).
+            reject_held_by_linked_worktree(repo, name)?;
             // Refuse only when tracked paths have pending modifications or staged
             // changes; untracked files are fine unless they would be overwritten by
             // the target tree (that's checked by checkout_tree's conflict detection).
@@ -4761,13 +4790,27 @@ impl GitBackend for Libgit2Backend {
             let obj = repo
                 .revparse_single(&refname)
                 .map_err(|_| AppError::InvalidRef(name.to_string()))?;
+            // Captured before the tree write, so a failed `set_head` can put the
+            // checkout back where it started. Unborn HEAD has nothing to restore.
+            let previous = repo.head().and_then(|h| h.peel(git2::ObjectType::Commit));
             repo.checkout_tree(&obj, None).map_err(|e| match e.code() {
                 git2::ErrorCode::Conflict => AppError::DirtyWorktree(
                     "untracked files would be overwritten by checkout".into(),
                 ),
                 _ => AppError::from(e),
             })?;
-            repo.set_head(&refname)?;
+            // `checkout_tree` has now rewritten the index and the working tree,
+            // and only the ref move is left. A failure here used to be left
+            // exactly as it fell — the target's tree under an unmoved HEAD, which
+            // reads as "the whole branch diff is staged". The worktree was
+            // verified clean above, so the reset restores where we started rather
+            // than discarding anyone's work.
+            if let Err(e) = repo.set_head(&refname) {
+                if let Ok(previous) = previous {
+                    let _ = repo.reset(&previous, git2::ResetType::Hard, None);
+                }
+                return Err(AppError::from(e));
+            }
             Ok(())
         })
     }

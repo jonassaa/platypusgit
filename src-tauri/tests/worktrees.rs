@@ -233,3 +233,83 @@ fn an_unknown_worktree_name_is_an_argument_error_not_a_panic() {
         assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
     }
 }
+
+/// Checking out a branch that a LINKED worktree is standing on (#356).
+///
+/// libgit2's `set_head` refuses this — "cannot set HEAD to reference '…' as it
+/// is the current HEAD of a linked repository" — but `checkout_branch` used to
+/// run `checkout_tree` FIRST, so the refusal arrived after the index and the
+/// working tree had already been rewritten to the target's tree. HEAD never
+/// moved, which left every difference between the two branches sitting in the
+/// index as staged changes. git validates this before it touches anything, and
+/// so must we.
+#[test]
+fn checkout_refuses_a_branch_held_by_a_linked_worktree_and_touches_nothing() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    // `held` is the OLDER branch: forked at the initial commit, while the main
+    // worktree moves on. That gap is what showed up staged in the bug report.
+    backend
+        .create_branch(&handle.id, "held", None)
+        .expect("create_branch");
+    tr.add_commit(
+        "only-on-main.txt",
+        "main moved on\n",
+        "feat: a commit only main has",
+    );
+
+    let (_hold, path) = worktree_target("held-elsewhere");
+    backend
+        .worktree_add(
+            &handle.id,
+            &path,
+            WorktreeBranch::Existing("held".to_string()),
+        )
+        .expect("worktree_add");
+
+    let head_before = git_in(tr.path(), &["rev-parse", "HEAD"]);
+
+    let err = backend
+        .checkout_branch(&handle.id, "held")
+        .expect_err("a branch held by a linked worktree cannot be checked out here");
+    match &err {
+        AppError::InvalidArgument(m) => assert!(
+            m.contains("held") && m.contains("worktree"),
+            "the refusal should name the branch and where it is checked out: {m}"
+        ),
+        other => panic!("expected InvalidArgument, got {other:?}"),
+    }
+
+    // The whole point: a refused checkout is a no-op.
+    assert_eq!(
+        head_before,
+        git_in(tr.path(), &["rev-parse", "HEAD"]),
+        "HEAD must not move"
+    );
+    let status = git_in(tr.path(), &["status", "--porcelain"]);
+    assert!(
+        status.trim().is_empty(),
+        "a refused checkout must leave the index and working tree untouched:\n{status}"
+    );
+    assert!(
+        tr.path().join("only-on-main.txt").exists(),
+        "main's own file must still be in the working tree"
+    );
+}
+
+/// The guard is about LINKED worktrees only. Re-checking-out the branch this
+/// repository is already on is what `git checkout <current>` does every day, and
+/// `checked_out_at` would otherwise report "this worktree" and refuse it.
+#[test]
+fn checkout_still_accepts_the_branch_this_worktree_is_already_on() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    let current = git_in(tr.path(), &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string();
+
+    backend
+        .checkout_branch(&handle.id, &current)
+        .expect("checking out the current branch is a no-op, not an error");
+}
