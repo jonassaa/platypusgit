@@ -30,7 +30,11 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
+import {
+  useDateFormat,
+  useDensityStep,
+  useSettingsStore,
+} from "@/features/settings/useSettingsStore";
 import { useWindowedList } from "@/lib/useWindowedList";
 import {
   currentBranch,
@@ -39,9 +43,9 @@ import {
   isTextualDiff,
   isUnstaged,
   isUntracked,
-  relativeTime,
   statusMark,
 } from "@/lib/derive";
+import { commitDateText, commitDateTitle } from "@/lib/commitDate";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { ImageDiffOrEmpty, ImageDiffView } from "@/features/diff/ImageDiffView";
 import { diffImageSides } from "@/features/diff/useImagePreviews";
@@ -161,6 +165,7 @@ export function RepoBrowserScreen() {
   const listFilesAtRev = useRepoStore((s) => s.listFilesAtRev);
   const readFileContentAtRev = useRepoStore((s) => s.readFileContentAtRev);
   const diffContextLines = useSettingsStore((s) => s.diffContextLines);
+  const dateFormat = useDateFormat();
   const ignoreWhitespace = useIgnoreWhitespace();
   const hunkActionsDisabled = useHunkActionsDisabledReason();
   const platform = usePlatform();
@@ -1441,13 +1446,14 @@ export function RepoBrowserScreen() {
                       {c.shortOid}
                     </span>
                     <span
+                      title={commitDateTitle(c.timestamp)}
                       style={{
                         color: "var(--fg-3)",
                         fontSize: "var(--fs-10)",
                         fontFamily: "var(--font-mono)",
                       }}
                     >
-                      {relativeTime(c.timestamp)}
+                      {commitDateText(c.timestamp, dateFormat)}
                     </span>
                   </div>
                   <div

@@ -67,6 +67,10 @@ const PORTABLE = [
   // is plain data with no secrets in it.
   "customActions",
   "customThemes",
+  // How a commit date is written (#354). Portable: it is a reading preference
+  // — the same reasoning as commitBodyMarkdown — and says nothing about this
+  // machine. The zone it renders in is the reader's own, not a stored value.
+  "dateFormat",
   "defaultPullMode",
   "diffContextLines",
   "diffContextMode",

@@ -17,7 +17,8 @@ import {
   DirtyTreeDialog,
   type DirtyChoice,
 } from "@/features/reflog/DirtyTreeDialog";
-import { relativeTime } from "@/lib/derive";
+import { commitDateText, commitDateTitle, preciseTime } from "@/lib/commitDate";
+import { useDateFormat } from "@/features/settings/useSettingsStore";
 import { appErrorMessage } from "@/lib/errors";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { FileDiff, ReflogOp } from "@/lib/types";
@@ -46,6 +47,7 @@ function opLabel(op: ReflogOp): string {
 }
 
 export function ReflogScreen() {
+  const dateFormat = useDateFormat();
   const repo = useRepoStore((s) => s.current);
   const status = useRepoStore((s) => s.status);
   const entries = useReflogStore((s) => s.entries);
@@ -254,7 +256,8 @@ export function ReflogScreen() {
               sha={e.shortOid}
               message={`${opLabel(e.op)}: ${e.message || "(no message)"}`}
               author=""
-              date={relativeTime(e.timestamp)}
+              date={commitDateText(e.timestamp, dateFormat)}
+              dateTitle={commitDateTitle(e.timestamp)}
               selected={selectedOid === e.oid}
               oid={e.oid}
               onRowClick={onRowClick}
@@ -290,7 +293,13 @@ export function ReflogScreen() {
                   }}
                 >
                   {selectedEntry.oid} &middot;{" "}
-                  {new Date(selectedEntry.timestamp * 1000).toLocaleString()}
+                  {/* Was `toLocaleString()`, which said something different
+                      from the row right beside it — and something different
+                      again per machine. Same stamp as History's commit detail
+                      now (#354); the zone is in the hover. */}
+                  <span title={commitDateTitle(selectedEntry.timestamp)}>
+                    {preciseTime(selectedEntry.timestamp)}
+                  </span>
                 </div>
               </div>
               <PGButton variant="primary" onClick={openActionDialog}>

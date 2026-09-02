@@ -47,6 +47,7 @@ import {
   type PullMode,
 } from "@/lib/tauri";
 import { relativeTime } from "@/lib/derive";
+import { commitDateText, type DateFormat } from "@/lib/commitDate";
 import { appErrorMessage } from "@/lib/errors";
 import { STORE_MANAGED_NOTE } from "@/features/update/packageHint";
 import {
@@ -1145,6 +1146,11 @@ function ImportReport({
 // APPEARANCE SECTION — theme picker + color editor + import/export
 // ═════════════════════════════════════════════════════════════════════════════
 
+// Three weeks ago, so the sample says something in every format: "now" would
+// preview the relative form as "0s ago" and teach nothing about the choice.
+const DATE_SAMPLE_NOW = Date.now();
+const DATE_SAMPLE_TS = Math.floor(DATE_SAMPLE_NOW / 1000) - 60 * 60 * 24 * 21;
+
 function AppearanceSection({ active }: { active: ThemeDef }) {
   const s = useSettingsStore();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -1367,6 +1373,36 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
             options={[
               { value: "compact", label: "Compact" },
               { value: "comfortable", label: "Comfortable" },
+            ]}
+          />
+        }
+      />
+
+      <Row
+        label="Date format"
+        hint={
+          <span data-testid="settings-date-format-hint">
+            How a commit date is written in History, Reflog, Compare and the
+            repository browser — right now:{" "}
+            <span
+              data-testid="settings-date-format-sample"
+              style={{ fontFamily: "var(--font-mono)", color: "var(--fg-1)" }}
+            >
+              {commitDateText(DATE_SAMPLE_TS, s.dateFormat, DATE_SAMPLE_NOW)}
+            </span>
+            . Hovering a date always shows the full timestamp, whichever format
+            you pick, and commit details always shows it in full.
+          </span>
+        }
+        control={
+          <PGButtonGroup
+            size="sm"
+            value={s.dateFormat}
+            onChange={(v) => s.set("dateFormat", v as DateFormat)}
+            options={[
+              { value: "relative", label: "Relative" },
+              { value: "absolute", label: "Absolute" },
+              { value: "both", label: "Both" },
             ]}
           />
         }

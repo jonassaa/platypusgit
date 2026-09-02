@@ -13,7 +13,10 @@ import {
   PGCheckbox,
   PGSelect,
 } from "./primitives";
-import { useDensityStep } from "@/features/settings/useSettingsStore";
+import {
+  useDateColumnWidth,
+  useDensityStep,
+} from "@/features/settings/useSettingsStore";
 import {
   NO_HEAD_DECOR,
   type HeadDecor,
@@ -1548,6 +1551,14 @@ export interface PGCommitRowProps {
   message: string;
   author: string;
   date: string;
+  /**
+   * Hover text for the date cell — the full timestamp (#354).
+   *
+   * On the CELL, not the row: a row-wide title would follow the pointer across
+   * the message and sha columns too, and would shadow the titles those columns
+   * use for their own truncated text.
+   */
+  dateTitle?: string;
   refs?: CommitRef[];
   selected?: boolean;
   /** Row identity, handed back to the shared handlers below. */
@@ -1602,6 +1613,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
   message,
   author,
   date,
+  dateTitle,
   refs,
   selected,
   oid,
@@ -1616,6 +1628,10 @@ export const PGCommitRow = React.memo(function PGCommitRow({
 }: PGCommitRowProps) {
   const [hover, setHover] = React.useState(false);
   const step = useDensityStep();
+  // Read here rather than passed in, for the same reason as the density step:
+  // every commit row in the app must agree with History's column header, and a
+  // prop threaded through two screens is a prop one of them forgets.
+  const dateW = useDateColumnWidth();
   const h = rowHeight ?? COMMIT_ROW_BASE_H + step;
   // One gate for every mark, so "this row is not HEAD" is checked once.
   const d = isHead && !headDecor.bare ? headDecor : NO_HEAD_DECOR;
@@ -1652,7 +1668,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
       onMouseLeave={() => setHover(false)}
       style={{
         display: "grid",
-        gridTemplateColumns: commitRowGrid(graphW),
+        gridTemplateColumns: commitRowGrid(graphW, dateW),
         alignItems: "center",
         height: h,
         background,
@@ -1777,7 +1793,21 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           {author}
         </span>
       </div>
-      <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-11)" }}>{date}</span>
+      <span
+        data-testid="commit-date"
+        title={dateTitle}
+        style={{
+          color: "var(--fg-3)",
+          fontSize: "var(--fs-11)",
+          // The stamp formats fill the column; clip rather than spill into the
+          // next column if a future format outgrows its width.
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {date}
+      </span>
     </div>
   );
 });
@@ -1799,6 +1829,8 @@ export interface PGCommitDetailProps {
   author: string;
   email?: string;
   date: string;
+  /** Hover text for the date — the full timestamp (#354). See PGCommitRowProps. */
+  dateTitle?: string;
   parents?: string[];
   branch?: string;
   tags?: string[];
@@ -1813,6 +1845,7 @@ export function PGCommitDetail({
   author,
   email,
   date,
+  dateTitle,
   parents = [],
   branch,
   tags = [],
@@ -1908,7 +1941,7 @@ export function PGCommitDetail({
           {author}
           {email && <span style={{ color: "var(--fg-3)" }}>&lt;{email}&gt;</span>}
         </span>
-        <span>
+        <span data-testid="commit-detail-date" title={dateTitle}>
           <PGIcon
             name="clock"
             size={10}

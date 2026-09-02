@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type { PullMode } from "@/lib/tauri";
+import { type DateFormat, isDateFormat } from "@/lib/commitDate";
+import { DATE_COL_W } from "@/design/graph-geometry";
 import type { UpdateChannel, UpdateRefsMode } from "@/lib/types";
 import type { SavedIdentity } from "@/features/commits/identity/identityList";
 import type { CustomAction } from "@/features/actions/customActions";
@@ -805,6 +807,16 @@ interface PersistedState {
   themePreference: ThemePreference;
   customThemes: ThemeDef[];
   uiDensity: "compact" | "comfortable";
+  /**
+   * How a commit date is written wherever one is shown (#354) — relative
+   * ("3w ago"), the absolute stamp, or both. The hover tooltip carries the
+   * full timestamp in every mode, so this is about what is on screen without
+   * hovering, not about whether the exact time is reachable at all.
+   *
+   * It also sizes the History/Reflog Date column (`DATE_COL_W`), which is why
+   * an unknown value has to normalize rather than pass through.
+   */
+  dateFormat: DateFormat;
   /** Webview zoom factor — 1 is 100%. See applyZoom. */
   uiZoom: number;
   /**
@@ -1030,6 +1042,7 @@ const DEFAULTS: PersistedState = {
   themePreference: { ...DEFAULT_THEME_PREFERENCE },
   customThemes: [],
   uiDensity: "compact",
+  dateFormat: "relative",
   uiZoom: 1,
   headMarks: ["bar", "tint", "ring"],
   headWeight: DEFAULT_HEAD_WEIGHT,
@@ -1402,6 +1415,10 @@ function coerceSettings(
   // invalid substitution makes every `calc(Npx + var(--row-step))` compute to
   // `auto` — collapsing the height of every row in the app at once.
   out.uiDensity = normalizeDensity(out.uiDensity);
+  // Same failure one column over: the date format picks the Date column's
+  // WIDTH as well as its text, so an unknown mode would emit `undefinedpx` in
+  // the row grid and collapse the column on every row at once.
+  if (!isDateFormat(out.dateFormat)) out.dateFormat = DEFAULTS.dateFormat;
   // HEAD marks: prefer a stored list, else carry over the pre-#118 single
   // `headIndicator` enum, else — if the payload spoke about marks at all but
   // said something unusable — the default, and otherwise whatever `base` had.
@@ -1985,4 +2002,26 @@ export type { Appearance } from "./systemAppearance";
  */
 export function useDensityStep(): number {
   return DENSITY_STEP_PX[normalizeDensity(useSettingsStore((s) => s.uiDensity))];
+}
+
+/**
+ * The user's date format (#354), for the surfaces that render a commit date.
+ *
+ * A hook rather than a `getState()` read so switching the format in Settings
+ * re-renders the log behind it, the same way density does.
+ */
+export function useDateFormat(): DateFormat {
+  const mode = useSettingsStore((s) => s.dateFormat);
+  return isDateFormat(mode) ? mode : DEFAULTS.dateFormat;
+}
+
+/**
+ * Width the Date column needs for the active format.
+ *
+ * PGCommitRow and History's column header both call this, then hand the SAME
+ * number to `commitRowGrid` — which is what keeps the header aligned with the
+ * rows under it when the format changes.
+ */
+export function useDateColumnWidth(): number {
+  return DATE_COL_W[useDateFormat()];
 }
