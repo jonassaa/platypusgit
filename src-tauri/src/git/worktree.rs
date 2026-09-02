@@ -78,7 +78,7 @@ pub fn info(repo: &Repository, name: &str, current: Option<&Path>) -> AppResult<
 /// Only linked worktrees: `git_worktree_list` never reports the main one, whose
 /// HEAD the caller already has from `repo.head()`.
 ///
-/// libgit2 has `git_branch_is_checked_out`, but git2-rs 0.20 does not bind it —
+/// libgit2 has `git_branch_is_checked_out`, but git2-rs 0.21 does not bind it —
 /// hence the walk. It costs one `Repository::open_from_worktree` per linked
 /// worktree, so only ref-MOVING ops pay it, never a listing; a bulk op walks
 /// once and looks branches up in the result.
