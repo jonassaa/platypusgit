@@ -27,6 +27,9 @@ to what you are reading. A new section here needs a reason a pointer cannot serv
   and credentials, signing, stash, spawning processes, bisect, async/threading.
 - `docs/dev/distribution.md` — `pgit` CLI packaging per channel, the launch
   detach, Tauri permissions.
+- `docs/dev/releasing.md` — what a version number means and when to bump which
+  part, the cut-a-release runbook (changelog lands on `main` FIRST), and the
+  prerelease-promotion traps. Read it before tagging anything.
 - `docs/superpowers/specs/` + `docs/superpowers/plans/` — approved design docs
   and implementation plans per feature (`ls` for the current set). New feature
   beyond MVP slice → write new spec + plan there first.
