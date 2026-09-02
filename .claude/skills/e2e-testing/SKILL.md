@@ -57,10 +57,15 @@ beyond headlessness.
 
 ## Suite-speed guards (wdio.conf.ts `before` hook — don't remove)
 
-Two conf-level guards eliminate the historical "suite suddenly takes minutes" flakes. Both live in the `before` hook; removing either brings a stall class back:
+Two conf-level guards eliminate the historical "suite suddenly takes minutes"
+flakes, and a third removes the dead-handle wait class (#364 — see
+`installStaleProofWaits`, and note it must be installed before the first `$()`).
+All three live in the `before` hook; removing any brings its failure class back:
 
 1. **`browser.tauri.switchWindow("main")`** — sets the service's session-wide "user switched windows" flag, which makes its per-command focus check (`ensureActiveWindowFocus`) skip forever. Unskipped, that check runs a direct-eval script before EVERY find/click that polls 5s for `window.__wdio_original_core__` whenever the page is unarmed. Single-window app: focus management has nothing to manage.
 2. **`browser.setTimeout({ script: … })` — 2.5s on macOS, 8s on Linux.** The driver's default W3C script timeout is 30s. An `execute()` that lands while a `browser.refresh()` navigation is mid-document-swap gets its completion handler silently dropped; the driver waits the FULL script timeout, then the caller retries — so a loss costs the TIMEOUT, not the work. The cap is only the belt: `refreshAndSettle` (below) removes the roll itself. Linux was uncapped until #194 because a timed-out-but-completed script gets retried and double-ran side-effectful helpers (merge-conflict desync); `executeOnce` closed that, so the cap is now safe there. 8s is measured — with the mid-swap executes gone the slowest in-page script anywhere in the suite is 12ms in local Docker and 190ms on a real CI runner (`E2E_SCRIPT_TIMING=1` prints the per-spec p50/p90/p99/max; `E2E_SCRIPT_TIMEOUT_MS` overrides the cap).
+
+3. **`installStaleProofWaits()`** — overwrites `waitForDisplayed` so each poll re-resolves the selector. `isDisplayed` caches `elementId` and never re-runs the selector, and a detached node answers "not displayed" without raising stale, so a re-render landing between the find and the visibility check leaves the wait polling a dead node for its whole budget with the element on screen. That is the #364 flake class, across every shard, and a bigger timeout cannot fix it. Element overrides attach at element-creation time, so this must run before the first `$()` — `test/e2eWaitGate.test.ts` pins that, `harness.e2e.ts` pins the behaviour.
 
 `armDriverBridge()` (`e2e/support/app.ts`) hands `window.__TAURI__.core` (e2e builds only, via `src-tauri/tauri.e2e.conf.json`) to the driver's direct-eval channel. With guard 1 active it's belt-and-braces (only `browser.tauri.*` calls need it), but keep the pattern: it doubles as the post-refresh settle gate.
 
@@ -156,7 +161,13 @@ Fixtures live in `e2e/support/tempRepo.ts` (`basicRepo`, `dirtyRepo`, `branchyRe
   several are mounted (the Rebase plan mounts one picker per row). It replaced
   `jsSelectValue`, which existed because WebKitGTK under xvfb accepted the
   `<option>` click WITHOUT firing a React-visible change event (bit PR #40 on
-  CI) — a trap that no longer has a subject.
+  CI) — a trap that no longer has a subject. **Both of its steps retry now
+  (#364)**: a React commit between "the option exists" and "click the option"
+  unmounts the portal (`option "…" vanished before the click`, 4 sightings) and
+  one between the trigger's mousedown and the portal mounting loses the open
+  (`… never appeared`, 2). Retrying is safe only because a miss dispatches
+  nothing — keep any new step in that helper side-effect-free on the
+  not-found path.
 - Root commit's "Interactive rebase from here" silently no-ops.
 - `remoteRepo()` pairs a work repo with a local bare `origin`. `makeBehind`
   rewinds `refs/remotes/origin/main` so fetch has something to discover —
@@ -228,6 +239,38 @@ follow-up selector unambiguous — pure CSS scoped to the destination's pane
 (`[data-pg-pane="commitDiff.files"] [data-pg-row][data-path="b.txt"]`), not
 `*=`-text that some other screen also satisfies.
 
+**The dead-handle half of that is now fixed for the whole suite (#364); the
+ambiguous-selector half is still yours.** `installStaleProofWaits()`
+(`e2e/support/app.ts`, installed by the conf's `before` hook) overwrites
+`waitForDisplayed` so every poll re-resolves the selector with a fresh
+WebDriver find — session-wide, because there are 227 call sites and a helper
+only fixes the ones that adopt it. It cost a whole table of specs before that:
+`commit.e2e`'s clean-state wait (its `PGEmpty` is unmounted and remounted by
+every refresh, since `CommitPanel` gates it on `!loading`), `remote.e2e`'s
+renamed-remote row, `settings.e2e` after a reload — all on a starved CI runner,
+never locally. What still needs care:
+
+- **Re-resolution rescues a swapped node, not a wrong selector.** A wait that
+  binds to the OUTGOING screen's row will now happily re-resolve to that same
+  row for as long as it exists. Scope to the destination anyway.
+- Three shapes stay on the original implementation and can still go dead:
+  `reverse` waits (a detached node reports what they want — fine), a non-string
+  selector, and an element taken out of a `$$` list (identified by INDEX, so
+  re-running the selector alone would silently wait on the first match).
+- Don't reach for `waitForSelector` just to dodge this — it polls in page,
+  which is the #194 stall after a navigation. `waitForDisplayed` is a legal
+  settle gate precisely because it is a find.
+- `test/e2eWaitGate.test.ts` pins the install; `harness.e2e.ts` pins the
+  behaviour, with a *control* test proving a raw handle still goes dead. A
+  failing control means webdriverio started refetching and the override can go.
+
+**Wait on state, not on rendered prose.** Six waits matched
+`div*=Working tree clean` — a `PGEmpty` title, so a copy edit could redden the
+required gate, and `div*=` resolves to whichever innermost div contains the
+phrase, which is never the element you meant. Use `WORKING_TREE_CLEAN`
+(`[data-testid="working-tree-clean"]`); add a testid rather than a phrase for
+the next one.
+
 **A readiness signal that is also true of "not started yet" is not a readiness
 signal.** `merge-window` waited for Apply to be *disabled* to mean "the next
 file's fresh model is unresolved", but `canApply`'s `allResolved` is
@@ -252,6 +295,46 @@ the seeded-and-unresolved model produces. Same fix, same reason, as the
    happens, check that the `before`/`beforeTest` hooks and the `e2e-focus`
    capability (`src-tauri/tauri.e2e.conf.json`) are intact, and that the
    binary was rebuilt after any capability change. CI (xvfb) is immune.
+
+## A red CI gate on a tree that looks fine (#364)
+
+**Two API calls settle "is it me?" before anything else costs you a merge
+window:**
+
+```bash
+gh run list --workflow e2e.yml --branch main --limit 12 \
+  --json databaseId,conclusion,createdAt
+gh run view <red-id> --log-failed | grep -E "✖|Error: "
+```
+
+A byte-identical failure on a recent red `main` run is proof it is not your
+diff — no scratch branch to push, nothing to clean up. `main` goes red
+intermittently (measured: 3 failures in 40 `push: main` runs; the `cancelled`
+ones are `concurrency` collapsing a merge burst, not a signal), so one is often
+already there. Only when main's recent runs are all green, fall back to pushing
+your exact tree to a scratch branch and `gh workflow run e2e.yml --ref <it>`.
+
+Then read the shape of the failure:
+
+- **A wait that gives up while the screen is right, on a sub-test that wanders
+  between runs**, is the #364 class — a real logic regression fails the same
+  assertion every time. That class is fixed at the command level now (see the
+  dead-handle section above), so a NEW sighting deserves the diff audit, not a
+  re-run.
+- `[e2e] <spec>: N driver scripts, M stalled` is a speed-INDEPENDENT diff of app
+  behaviour between two runs. Identical counts on the specs you did not touch is
+  strong evidence of no behavioural change — far better than comparing wall
+  clock on a noisy runner.
+- `[e2e] RETRY: <spec> failed on attempt 1` means `specFileRetries: 1` absorbed
+  a failure. **A green gate with that line in it is still a signal** — the
+  floor exists for a starved runner losing the app itself
+  (`app never rendered Welcome screen`), not to paper over your change. It is
+  also emitted as a `::warning` and into the job summary, so look there first.
+- Audit your own diff regardless of how confident you are it is a flake. Every
+  time that audit has been run here it found something real, usually somewhere
+  else entirely (a blocking call added to a startup or spawn path is the
+  classic). Also: `e2e/wdio.conf.ts` passes no `appArgs`, so the e2e binary gets
+  EMPTY argv — any CLI-parsing change is inert in e2e by construction.
 
 ## Before committing
 

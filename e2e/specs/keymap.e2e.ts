@@ -13,7 +13,7 @@ import {
 import {
   openRepo, resetApp, jsChord, jsDoubleShift, jsKey, jsPickOption,
   focusedPaneId, paletteDialog, paletteInput, changeRow, stagedRow,
-  scrollCommitListTo, switchScreen,
+  scrollCommitListTo, switchScreen, WORKING_TREE_CLEAN,
 } from "../support/app";
 
 const CHEAT_SHEET = "h2*=Keyboard shortcuts";
@@ -319,7 +319,7 @@ describe("keymap — rider preset (default)", () => {
     repo = basicRepo();
     await openRepo(repo.path);
     await jsChord("Mod+K");
-    await waitScreen("div*=Working tree clean", "Commit (clean)");
+    await waitScreen(WORKING_TREE_CLEAN, "Commit (clean)");
     repo.write("fresh.txt", "fresh\n");
     await jsChord("Mod+Alt+Y");
     await changeRow("fresh.txt").waitForDisplayed({
