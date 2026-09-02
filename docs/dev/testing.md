@@ -169,6 +169,88 @@ Rules that keep the gates honest:
   run`. With neither set, `specs` keeps its plain glob — byte-for-byte the old
   behaviour.
 
+## A red `e2e-linux` that is not a regression (#364)
+
+The required gate went red on trees that were provably fine, often enough that
+"look for the same failure on a recent `main` run, re-run CI, watch it go green"
+became routine — which is exactly how a real regression gets waved through.
+Measured over 40 `push: main` e2e runs at the time: 28 success, 3 failure, 9
+cancelled (the cancellations are `concurrency` collapsing a merge burst, not a
+signal). Specs across every shard were involved: `commit.e2e` (three different
+sub-tests on the clean-state wait), `settings.e2e` after a reload, `remote.e2e`'s
+renamed-remote row, `history-ops`'s ref selector.
+
+**It was one mechanism, not one bug per spec.** `waitForDisplayed` is
+`waitUntil(() => isDisplayed())` over an element HANDLE, and `isDisplayed`
+resolves its selector exactly once — the first poll caches `elementId`, and no
+later poll re-runs the selector (`hasElementId`, webdriverio 9.31.5). If a
+re-render detaches that node between the find and the visibility check (two
+separate round trips), every remaining poll interrogates a node that is no
+longer in the document: `checkVisibility()` answers `false`, the
+`getComputedStyle` probe returns an empty declaration instead of throwing, so no
+`stale element reference` is ever raised and WebdriverIO's error handler never
+refetches. The wait then burns its whole budget on a dead node with the element
+it wanted on screen the entire time — and a bigger timeout cannot help.
+`waitForExist` never had the bug: `isExisting` re-runs the selector every poll.
+
+Losing that race needs a re-render inside two round trips, so a starved CI
+runner loses it and a quiet laptop does not. **The tell is a wait that gives up
+while the screen is right, on a sub-test that wanders between runs** — a real
+logic regression fails the same assertion every time.
+
+What is in the tree now:
+
+- **`installStaleProofWaits()`** (`e2e/support/app.ts`, installed by the conf's
+  `before` hook) overwrites `waitForDisplayed` so each poll re-resolves the
+  selector with a fresh WebDriver find. Session-wide on purpose: there are 227
+  call sites and a helper only fixes the ones that adopt it. Re-resolution is a
+  find and NOT an in-page `querySelector` poll, or it would reinstate the #194
+  mid-document-swap stall in all 227 at once. `reverse` waits, non-string
+  selectors and `$$`-indexed handles stay on the original implementation — see
+  the helper's doc for why each would break.
+- **`test/e2eWaitGate.test.ts`** pins the install, the single override, and the
+  find-not-script rule as static facts; **`e2e/specs/harness.e2e.ts`** pins the
+  behaviour, including a *control* test proving a raw handle still goes dead. If
+  that control ever fails, a webdriverio release has started refetching and the
+  override can be deleted rather than carried.
+- **Waits are on state, not rendered prose.** Six waits matched
+  `div*=Working tree clean` — a `PGEmpty` title, so a copy edit could redden the
+  required gate, and a `div*=` XPath resolves to whichever innermost div
+  contains the phrase. They use `WORKING_TREE_CLEAN`
+  (`[data-testid="working-tree-clean"]`) now.
+- **`jsPickOption` retries both of its steps.** It waits for an option to
+  EXIST and then clicks it in a second round trip; a React commit in between
+  unmounts the listbox portal (`option "…" vanished before the click`, four
+  sightings) or replaces the trigger before the portal mounts (`… never
+  appeared`, two). The miss is side-effect-free — the script dispatches nothing
+  when the selector does not match — which is what makes the retry safe.
+- **`specFileRetries: 1` + `specFileRetriesDeferred: true`** is a floor, not a
+  fix. It covers what no wait can: a starved runner losing the app itself
+  (`app never rendered Welcome screen`, seen in workers that then passed) used
+  to fail the whole required check. Safe because every spec file builds its own
+  fixtures in `before*` and disposes them in `after*` — not the #35 hazard,
+  which was a *script* retry re-running effects inside one attempt. **Never
+  silent:** `onWorkerEnd` prints the requeue, emits a `::warning` annotation and
+  writes a line to the job summary, so a spec that needed a retry on your PR is
+  still a signal on a green gate. Read those lines.
+
+**Diagnosing the next one — two API calls, before anything else:**
+
+```bash
+gh run list --workflow e2e.yml --branch main --limit 12 \
+  --json databaseId,conclusion,createdAt
+gh run view <red-id> --log-failed | grep -E "✖|Error: "
+```
+
+A byte-identical failure sitting on a recent red `main` run is proof it is not
+your diff, with no scratch branch to push and nothing to clean up. `main` goes
+red intermittently, so one is often already there. Also speed-independent, and
+better than eyeballing wall clock on a noisy runner: the per-spec
+`[e2e] <spec>: N driver scripts, M stalled` line is a diff of app *behaviour*
+between two runs — identical counts on the specs you did not touch is strong
+evidence of no behavioural change. Audit your own diff regardless; the audit
+has found real (unrelated) problems every time it was run.
+
 ## Dependency advisories in the dev toolchain (#346)
 
 Every Dependabot alert this repo has open against the root `pnpm` project is

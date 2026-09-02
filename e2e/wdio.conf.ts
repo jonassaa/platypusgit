@@ -1,7 +1,12 @@
+import { appendFileSync } from "node:fs";
 import path from "node:path";
 import type { TauriCapabilities } from "@wdio/tauri-service";
 import { $, browser } from "@wdio/globals";
-import { armDriverBridge, ensureMacAppFocus } from "./support/app";
+import {
+  armDriverBridge,
+  ensureMacAppFocus,
+  installStaleProofWaits,
+} from "./support/app";
 import {
   formatScriptTiming,
   recordScriptDuration,
@@ -147,6 +152,17 @@ export const config: WebdriverIO.Config = {
     // disables it regardless), so force activation ourselves and assert the
     // page actually reports visible+focused before any spec runs.
     await ensureMacAppFocus();
+    // Guard 3 (issue #364): make every `waitForDisplayed` re-resolve its
+    // selector on each poll. `isDisplayed` caches `elementId` and never
+    // re-runs the selector, and a detached node answers "not displayed"
+    // without raising stale — so a re-render landing between the find and the
+    // visibility check leaves the wait polling a dead node for its whole
+    // budget while the element it wanted is on screen. That is the entire
+    // #364 flake class, and a bigger timeout cannot fix it. The full
+    // mechanism, and why this is an override rather than a helper, is in
+    // `installStaleProofWaits`. Must run before the first `$()` below:
+    // element overrides attach at element-creation time.
+    await installStaleProofWaits();
     // On a fresh session the webview may still be booting; openRepo() starts
     // with a browser.refresh(), which must not fire mid-boot. Wait for the
     // Welcome screen once here so every repo-opening spec is safe from the
@@ -206,6 +222,59 @@ export const config: WebdriverIO.Config = {
   afterCommand: (commandName) => {
     if (SCRIPT_COMMANDS.has(commandName)) {
       recordScriptDuration(Date.now() - scriptStartedAt);
+    }
+  },
+  // One retry per spec FILE — the floor under the required gate, not a fix
+  // (issue #364).
+  //
+  // The fixes are the guards in `before` and the waits themselves; this covers
+  // what no wait can. A starved runner also loses the app itself — the
+  // `app never rendered Welcome screen` companion line, seen in workers that
+  // then passed — and one such loss failed the whole required check, which
+  // taught everyone to read a red required check as noise. That is the more
+  // expensive failure mode of the two.
+  //
+  // Safe here because every spec file builds its own fixtures: temp repos are
+  // created in `beforeEach`/`before` and disposed in the matching `after*`, so
+  // a re-run starts from the same state the first attempt did. (Not the same
+  // hazard as #35's script retries, which re-ran a script whose side effects
+  // had already landed inside one attempt — `executeOnce` owns that.)
+  //
+  // `Deferred` puts the retry at the END of this shard's queue instead of
+  // immediately: a spec that lost a race to whatever else the runner was doing
+  // gets to re-run under different conditions, and a genuinely broken spec
+  // still fails, just later.
+  //
+  // A retry that hides a real regression is the risk, so a requeue is never
+  // silent — `onWorkerEnd` below prints it, annotates the run and writes it to
+  // the job summary. Read those lines: a spec that needed a retry on your PR
+  // is a signal even when the gate is green.
+  specFileRetries: 1,
+  specFileRetriesDeferred: true,
+  // Name every retried spec file, loudly, at the moment it is requeued.
+  //
+  // `retries` is the count REMAINING (the launcher's own `_endHandler` comment
+  // says so; the type's "number of retries used" is wrong), so a nonzero
+  // exit code with retries left is exactly "this failed and will be run
+  // again". Printing here rather than in `onComplete` means the line appears
+  // whether or not the retry then passes.
+  onWorkerEnd: (cid, exitCode, specFiles, retries) => {
+    if (exitCode === 0 || retries <= 0) return;
+    const names = specFiles.map((s) => path.basename(s)).join(", ");
+    const line = `[e2e] RETRY: ${names} failed on attempt 1 (worker ${cid}) — requeued, ${retries} retry left`;
+    console.log(line);
+    // GitHub annotation + job summary: the log of a green four-shard run is
+    // not somewhere anyone looks, and a masked flake has to be visible from
+    // the run page or it is not really reported. Both are no-ops locally.
+    console.log(`::warning title=e2e spec retried::${names} failed on its first attempt (worker ${cid})`);
+    const summary = process.env.GITHUB_STEP_SUMMARY;
+    if (summary) {
+      try {
+        appendFileSync(summary, `- :repeat: **e2e retry** — \`${names}\` failed on attempt 1 (worker ${cid})\n`);
+      } catch {
+        // Summary file unavailable (not on Actions, or read-only mount). The
+        // console lines above already carry the finding.
+      }
     }
   },
   framework: "mocha",

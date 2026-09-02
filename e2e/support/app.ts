@@ -60,6 +60,120 @@ export async function armDriverBridge(): Promise<void> {
   );
 }
 
+/** Options `waitForDisplayed` accepts. Not exported by webdriverio, and the
+ *  exported `WaitForOptions` is missing the three visibility flags, so the
+ *  override below would silently drop them. */
+type WaitForDisplayedParams = {
+  timeout?: number;
+  interval?: number;
+  timeoutMsg?: string;
+  reverse?: boolean;
+  withinViewport?: boolean;
+  contentVisibilityAuto?: boolean;
+  opacityProperty?: boolean;
+  visibilityProperty?: boolean;
+};
+
+/** Make every `waitForDisplayed` in the suite re-resolve its selector on each
+ *  poll, so a re-render that swaps the node cannot kill the wait (issue #364).
+ *
+ *  # The bug this removes
+ *
+ *  `waitForDisplayed` is `waitUntil(() => this.isDisplayed())` over an element
+ *  HANDLE, and `isDisplayed` resolves the selector exactly once
+ *  (`hasElementId`, webdriverio 9.31.5): the first poll caches `elementId` and
+ *  no later poll re-runs the selector. So if React detaches that node between
+ *  the find and the visibility check — two separate round trips — every
+ *  remaining poll interrogates a node that is no longer in the document:
+ *
+ *  - `checkVisibility()` on a detached node returns `false`, honestly;
+ *  - the `getComputedStyle` probe returns an empty declaration rather than
+ *    throwing, so the "stale element reference" branch is never taken;
+ *  - no stale error means `elementErrorHandler` has nothing to catch and never
+ *    refetches.
+ *
+ *  The wait then polls a dead node for its ENTIRE budget with the element it
+ *  wanted on screen the whole time, and fails with the caller's `timeoutMsg`.
+ *  Raising the timeout cannot help: once the handle is bound to a detached
+ *  node, no amount of waiting re-resolves it. `waitForExist` does not have the
+ *  bug — `isExisting` re-runs the selector on every poll (and revalidates
+ *  `elementId` afterwards), which is exactly the shape reproduced here.
+ *
+ *  # Why it is a CI-only failure
+ *
+ *  Losing the find-vs-swap race needs a re-render to land inside those two
+ *  round trips, so a starved runner loses it and a quiet laptop does not. It
+ *  produced the whole of #364: `commit.e2e.ts`'s four waits for the clean
+ *  state (whose `PGEmpty` is unmounted and remounted by every refresh, because
+ *  `CommitPanel` gates it on `!loading`), `remote.e2e.ts`'s renamed-remote row,
+ *  `settings.e2e.ts` after a reload. One mechanism, one fix — and the tell is
+ *  a wait that gives up while the screen is right, on a sub-test that wanders
+ *  between runs.
+ *
+ *  # Why an override rather than a helper
+ *
+ *  A helper only fixes the sites that adopt it, and there are 227 of them; the
+ *  228th would reintroduce the class. Overriding the command fixes every
+ *  existing site and every future one, and keeps specs reading as plain
+ *  WebdriverIO. `test/e2eWaitGate.test.ts` pins that the conf installs it.
+ *
+ *  Re-resolution is a WebDriver find (`this.parent.$(selector)`), NOT an
+ *  in-page `document.querySelector` poll — see `refreshAndSettle`: an
+ *  in-page poll right after a navigation is the #194 stall, and
+ *  `waitForDisplayed` is a legal settle gate precisely because it is a find.
+ *  Going through `this.parent` keeps a scoped `dialog.$("label*=…")` scoped.
+ *
+ *  Element overrides are attached when an element object is created, so this
+ *  must run in the conf's `before` hook, ahead of the first `$()`. */
+export async function installStaleProofWaits(): Promise<void> {
+  await browser.overwriteCommand(
+    "waitForDisplayed",
+    async function (
+      this: WebdriverIO.Element,
+      origFn: (opts?: WaitForDisplayedParams) => Promise<true>,
+      opts: WaitForDisplayedParams = {},
+    ): Promise<true> {
+      const selector = this.selector;
+      // Three shapes stay on the original implementation.
+      //
+      // `reverse` already tolerates a detached node — "gone" is the answer it
+      // is waiting for, and a dead handle reports exactly that, so
+      // re-resolving would change the meaning of a passing wait rather than
+      // rescue it. A non-string selector (a function, a custom strategy) has
+      // no selector to re-run. And an element taken out of a `$$` list is
+      // identified by its INDEX within that list: re-running the selector
+      // alone would silently wait on the FIRST match instead of the one the
+      // caller is holding.
+      if (opts.reverse || typeof selector !== "string" || this.index !== undefined) {
+        return origFn.call(this, opts);
+      }
+      const timeout = opts.timeout ?? browser.options.waitforTimeout ?? 15_000;
+      const interval = opts.interval ?? browser.options.waitforInterval ?? 500;
+      const timeoutMsg =
+        opts.timeoutMsg ??
+        `element ("${selector}") still not displayed after ${timeout}ms`;
+      // Forwarded explicitly rather than by spread: an `interval`/`timeout`
+      // reaching isDisplayed would be ignored, but a dropped visibility flag
+      // would quietly change what "displayed" means.
+      const params = {
+        withinViewport: opts.withinViewport ?? false,
+        contentVisibilityAuto: opts.contentVisibilityAuto ?? true,
+        opacityProperty: opts.opacityProperty ?? true,
+        visibilityProperty: opts.visibilityProperty ?? true,
+      };
+      await browser.waitUntil(
+        // A fresh handle per poll: `$()` leaves `elementId` unset, so
+        // `isDisplayed` resolves the selector again instead of reusing a node
+        // that may have been swapped out since the last poll.
+        () => this.parent.$(selector).isDisplayed(params),
+        { timeout, interval, timeoutMsg },
+      );
+      return true;
+    },
+    true,
+  );
+}
+
 /** macOS focus self-heal (issue #32).
  *
  * The e2e debug binary is unbundled and doesn't reliably win foreground
@@ -800,52 +914,88 @@ export async function jsPickOption(
   opts?: { within?: string; text?: string },
 ): Promise<void> {
   // executeOnce: a driver-retry re-run would toggle the list shut again, and
-  // the not-found throws all happen before any dispatch.
-  const opened = await executeOnce(
-    (sel: string, within: string | null, text: string | null) => {
-      let scope: ParentNode = document;
-      if (within) {
-        const hosts = Array.from(document.querySelectorAll(within));
-        const host = text
-          ? hosts.find((h) => h.textContent?.includes(text))
-          : hosts[0];
-        if (!host) return false;
-        scope = host;
-      }
-      const el = scope.querySelector(sel) as HTMLElement | null;
-      if (!el) return false;
-      if (el.getAttribute("aria-expanded") === "true") return true;
-      el.focus();
-      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      return true;
-    },
-    selector,
-    opts?.within ?? null,
-    opts?.text ?? null,
-  );
-  if (!opened) {
-    throw new Error(
-      `jsPickOption: trigger not found: ${selector}` +
-        (opts?.within ? ` (within ${opts.within}${opts.text ? `, text: ${opts.text}` : ""})` : ""),
+  // the not-found throws all happen before any dispatch. The `aria-expanded`
+  // check is what makes this safe to call more than once (see the loop below):
+  // an already-open trigger is left alone rather than toggled shut.
+  const open = () =>
+    executeOnce(
+      (sel: string, within: string | null, text: string | null) => {
+        let scope: ParentNode = document;
+        if (within) {
+          const hosts = Array.from(document.querySelectorAll(within));
+          const host = text
+            ? hosts.find((h) => h.textContent?.includes(text))
+            : hosts[0];
+          if (!host) return false;
+          scope = host;
+        }
+        const el = scope.querySelector(sel) as HTMLElement | null;
+        if (!el) return false;
+        if (el.getAttribute("aria-expanded") === "true") return true;
+        el.focus();
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        return true;
+      },
+      selector,
+      opts?.within ?? null,
+      opts?.text ?? null,
     );
-  }
+  const where =
+    selector +
+    (opts?.within ? ` (within ${opts.within}${opts.text ? `, text: ${opts.text}` : ""})` : "");
 
   // The listbox is a portal rendered one React commit after the mousedown, so
   // poll for the option rather than looking once (the `waitForMenuItem` rule).
   const option = `[data-pg-listbox] [data-pg-option][data-value="${value}"]`;
-  await $(option).waitForExist({
-    timeout: 10_000,
-    timeoutMsg: `option "${value}" never appeared for ${selector}`,
-  });
-  const clicked = await executeOnce((sel: string) => {
-    const el = document.querySelector(sel) as HTMLElement | null;
-    if (!el) return false;
-    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-    el.click();
-    return true;
-  }, option);
-  if (!clicked) throw new Error(`jsPickOption: option "${value}" vanished before the click`);
+  // Two open attempts, not one (issue #364). `option "feature" never appeared
+  // for [data-testid="history-ref-select"]` hit shard 3 twice, always on a
+  // starved runner: the mousedown lands on a trigger that a React commit
+  // replaces immediately after, so the toggle is applied to a node that is
+  // already on its way out and the portal never mounts. Re-opening once
+  // recovers that; a trigger that is genuinely absent, or a listbox that
+  // genuinely lacks the option, still fails — just after 2 × 6s instead of 10s.
+  let listed = false;
+  for (let attempt = 1; attempt <= 2 && !listed; attempt++) {
+    if (!(await open())) throw new Error(`jsPickOption: trigger not found: ${where}`);
+    listed = await $(option)
+      .waitForExist({ timeout: 6_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+  }
+  if (!listed) {
+    throw new Error(`option "${value}" never appeared for ${where}`);
+  }
+  // Poll the click instead of firing it once (issue #364). The wait above
+  // proves the option EXISTED; the click is a second round trip, and a React
+  // commit landing in between unmounts the listbox portal — which is exactly
+  // how `option "feature" vanished before the click` failed shard 3 on
+  // history-ops, four times, always on a starved runner and never locally.
+  //
+  // Retrying is safe *because* the miss is side-effect-free: the script
+  // dispatches nothing when the selector does not match, so a returned `false`
+  // means nothing happened and the next attempt is the first one. Each poll is
+  // a fresh `executeOnce` token, so each attempt really runs (the token only
+  // suppresses the DRIVER re-running one attempt, which is still what #35
+  // needs it for).
+  //
+  await browser.waitUntil(
+    () =>
+      executeOnce((sel: string) => {
+        const el = document.querySelector(sel) as HTMLElement | null;
+        if (!el) return false;
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        el.click();
+        return true;
+      }, option),
+    {
+      timeout: 10_000,
+      interval: 100,
+      timeoutMsg: `jsPickOption: option "${value}" kept vanishing before the click`,
+    },
+  );
   // The listbox closing is the only in-page signal that the commit landed.
   await $("[data-pg-listbox]").waitForExist({
     reverse: true,
@@ -1248,6 +1398,15 @@ export function waitForSelector(
     { timeout, timeoutMsg },
   );
 }
+
+/** `CommitPanel`'s clean-tree empty state (#364).
+ *
+ *  A testid, not the `div*=Working tree clean` text match six waits used to
+ *  use. Two reasons, and the second is the one that cost CI time: matching
+ *  rendered PROSE pins a required gate to copy this app is free to reword, and
+ *  a `div*=` XPath resolves to whichever innermost div happens to contain the
+ *  phrase — so the wait was never explicit about the element it bound to. */
+export const WORKING_TREE_CLEAN = '[data-testid="working-tree-clean"]';
 
 /** The docked terminal panel's host element (#243). */
 export const TERMINAL_VIEW = '[data-testid="terminal-view"]';

@@ -1257,7 +1257,15 @@ export function CommitPanelScreen() {
     !noSignature
   ) {
     return (
-      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+      // The testid is the e2e hook for "this panel is in its clean state"
+      // (#364). Six waits used to match the PGEmpty TITLE as rendered prose
+      // (`div*=Working tree clean`), which couples a required CI gate to a
+      // string this file is free to reword — and says nothing about which
+      // element the wait is bound to. Keep it if the copy changes.
+      <div
+        data-testid="working-tree-clean"
+        style={{ flex: 1, display: "flex", minHeight: 0 }}
+      >
         <PGEmpty
           icon="check"
           title="Working tree clean"

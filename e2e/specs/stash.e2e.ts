@@ -8,6 +8,7 @@ import {
   resetApp,
   stubNativeDialogs,
   switchScreen,
+  WORKING_TREE_CLEAN,
 } from "../support/app";
 
 describe("stash", () => {
@@ -34,7 +35,7 @@ describe("stash", () => {
     await stubNativeDialogs({ promptText: "e2e stash" });
     await $("button*=Stash").click();
 
-    await $("div*=Working tree clean").waitForDisplayed({
+    await $(WORKING_TREE_CLEAN).waitForDisplayed({
       timeout: 20_000,
       timeoutMsg: "commit panel did not return to clean state after stash",
     });
@@ -78,7 +79,7 @@ describe("stash", () => {
       promptQueue: ["before rename", "renamed by e2e"],
     });
     await $("button*=Stash").click();
-    await $("div*=Working tree clean").waitForDisplayed({
+    await $(WORKING_TREE_CLEAN).waitForDisplayed({
       timeout: 20_000,
       timeoutMsg: "commit panel did not return to clean state after stash",
     });

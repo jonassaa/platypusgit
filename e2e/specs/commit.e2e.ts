@@ -1,6 +1,12 @@
 import { browser, $, expect } from "@wdio/globals";
 import { dirtyRepo, TempRepo } from "../support/tempRepo";
-import { changeRow, openRepo, resetApp, switchScreen } from "../support/app";
+import {
+  changeRow,
+  openRepo,
+  resetApp,
+  switchScreen,
+  WORKING_TREE_CLEAN,
+} from "../support/app";
 
 describe("commit", () => {
   let repo: TempRepo;
@@ -44,9 +50,10 @@ describe("commit", () => {
     });
     await commitBtn.click();
 
-    // UI as wait condition: CommitPanel returns to its empty state once the
-    // commit lands (PGEmpty title "Working tree clean", rendered in a <div>).
-    await $("div*=Working tree clean").waitForDisplayed({
+    // UI as wait condition: CommitPanel returns to its clean-tree empty state
+    // once the commit lands. The wait is on that state's own testid, not on
+    // the PGEmpty title as rendered text (#364).
+    await $(WORKING_TREE_CLEAN).waitForDisplayed({
       timeout: 20_000,
       timeoutMsg: "commit panel did not return to clean state",
     });
@@ -66,7 +73,7 @@ describe("commit", () => {
     );
     await $('[data-testid="commit-message"]').setValue("feat: typo in mesage");
     await $('[data-testid="commit-button"]').click();
-    await $("div*=Working tree clean").waitForDisplayed({
+    await $(WORKING_TREE_CLEAN).waitForDisplayed({
       timeout: 20_000,
       timeoutMsg: "commit panel did not return to clean state",
     });
@@ -83,7 +90,7 @@ describe("commit", () => {
     await messageBox.setValue("feat: typo in message");
     await $('[data-testid="commit-button"]').click();
 
-    await $("div*=Working tree clean").waitForDisplayed({
+    await $(WORKING_TREE_CLEAN).waitForDisplayed({
       timeout: 20_000,
       timeoutMsg: "commit panel did not return to clean state after amending",
     });
@@ -131,7 +138,7 @@ describe("commit", () => {
 
     // The escape hatch on the refusal itself.
     await $('[data-testid="hook-skip"]').click();
-    await $("div*=Working tree clean").waitForDisplayed({
+    await $(WORKING_TREE_CLEAN).waitForDisplayed({
       timeout: 20_000,
       timeoutMsg: "committing without hooks did not return the panel to clean",
     });
