@@ -144,6 +144,50 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.0',
+    date: '2026-09-02',
+    status: 'feature',
+    summary:
+      'The Date column could tell you a commit was made "3w ago" and nothing more, which cannot answer the question you were usually asking it: did this land before or after that one? Every date surface can now show the real timestamp — `2026-08-14 13:42` — and hovering any date gives the full stamp with its zone offset, whichever format you picked. A default install reads exactly as it did before: this is a preference, and "Relative" is still what it starts as.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'A date format preference, in Settings → Appearance',
+            detail:
+              'Three choices: `Relative` (`3w ago`, the default), `Absolute` (`2026-08-14 13:42`) or `Both` (`2026-08-14 13:42 (3w ago)`). It applies everywhere a commit date is written — History, Reflog, Compare and the repository browser — so the log column and the panel beside it can no longer describe one instant in two different ways. The Settings row carries a live sample of the format it is offering rather than making you infer it from the word, and the Date column is sized per format, so picking a longer stamp widens the column instead of clipping it. The absolute form is ISO-shaped and zero-padded rather than locale-formatted on purpose: it sorts, every row occupies the same width, and a developer tool should not make you guess whether `08/14` means August or February.',
+          },
+          {
+            title: 'Hovering a date always gives the full timestamp, in every format',
+            detail:
+              'Zone offset included — `2026-08-14 13:42:07 +02:00 (3w ago)`. Choosing "Relative" therefore never puts the exact time out of reach, and reading one commit\'s timestamp never means a trip to Settings. The zone is in there because that is what makes a stamp decisive beyond this window: one copied out of a tooltip can be compared against one pasted from a terminal or read off a CI log. The tooltip sits on the date cell rather than the row, so it does not follow the pointer across the message and sha columns.',
+          },
+          {
+            title: 'Commit details shows the timestamp inline, whatever the column says',
+            detail:
+              '`2026-08-14 13:42:07 · 3w ago`, unconditionally. The detail panel has the room, and "show me the exact date of this commit" was the half of the request that a preference — any preference — would have answered only for the people who went looking for it. Seconds are there because two commits a few seconds apart otherwise read as the same instant. The Reflog detail joins the same formatter: it used to call `toLocaleString()`, which read differently from the row directly beside it, and differently again on someone else\'s machine.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Timestamps are shown in your timezone, not the author\'s',
+            detail:
+              'Where `git log` prints the offset a commit was authored under, PlatypusGit shows that same instant on your own clock. The author\'s offset is not carried across to the interface — a commit reaches it as unix seconds and nothing else — so matching git here is a change to what the backend sends rather than to how a date is written, and it is separate work. The reading you do get is the one the feature exists for: whether this landed before or after that, asked in the clock you are asking it in. The hover names the zone it used, so no stamp is ambiguous about which clock that was.',
+          },
+          {
+            title: 'The Microsoft Store listing is still not live',
+            detail:
+              'Unchanged from 0.4.1, which fixed the single certification finding the first submission came back with. Resubmitting is a separate manual step, so until the listing exists, install on Windows with the `.msi`, Scoop or winget. The packaged form has still not been run on a real Windows machine.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.4.1',
     date: '2026-09-02',
     status: 'store compliance fix',
