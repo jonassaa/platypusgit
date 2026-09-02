@@ -6,7 +6,7 @@ export const site = {
   repo: 'https://github.com/jonassaa/platypusgit',
   releases: 'https://github.com/jonassaa/platypusgit/releases',
   releasesLatest: 'https://github.com/jonassaa/platypusgit/releases/latest',
-  buyMeACoffee: 'https://buymeacoffee.com/REPLACE_ME', // TODO: user supplies real URL
+  buyMeACoffee: 'https://buymeacoffee.com/jonassaa', // kept in sync with ../.github/FUNDING.yml
   license: 'GPL-3.0-only',
   author: 'Jonas Aasberg',
 };

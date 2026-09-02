@@ -40,8 +40,10 @@ the copy actually happens in CI.
 
 ## Configuration
 
-All external links live in `src/data/site.ts`. Set the real **Buy Me a Coffee**
-URL there (`buyMeACoffee`) and in `../.github/FUNDING.yml` (`buy_me_a_coffee` handle).
+All external links live in `src/data/site.ts`. The **Buy Me a Coffee** link is
+written twice on purpose — `buyMeACoffee` here (the site's Support page) and
+`../.github/FUNDING.yml` (the repo's Sponsor button, which takes the bare
+handle, not a URL). Change one and change the other.
 
 Feature/changelog content lives in `src/data/features.ts`.
 
