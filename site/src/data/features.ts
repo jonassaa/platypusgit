@@ -144,6 +144,40 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.4.1',
+    date: '2026-09-02',
+    status: 'store compliance fix',
+    summary:
+      'The first Microsoft Store submission was rejected, and the reason is worth stating plainly: an app installed from the Store is not allowed to tell you about updates that come from anywhere else. PlatypusGit did — it checked GitHub a couple of seconds after launch and opened a panel offering the release page. On a Store install that whole surface is now gone: no check, no notification, no link. Every other way of installing is unchanged and still checks exactly as before.',
+    sections: [
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'A Microsoft Store install no longer checks for, or mentions, updates',
+            detail:
+              'Store policy requires that a product installed from the Store be updated only through the Store. PlatypusGit already knew not to install an update over a packaged copy of itself — an MSIX is read-only, and Windows refuses to launch a package whose files have been altered — but it still asked GitHub what the newest release was, and still opened the update panel with a "View release" button onto an installer download. Finding out about the update in the app is the part that breaks the rule; nothing has to be installed for it to count. A packaged install now makes no request at all, shows no version chip in the titlebar, opens no panel, and offers no release link. Settings shows the version you are running and one line saying the Store keeps it up to date, rather than controls that would be dead anyway.',
+          },
+          {
+            title: 'Every other install still checks for updates exactly as before',
+            detail:
+              'This is a rule about the Store, not a quiet retreat from update checking. Homebrew, apt, Scoop, the `.msi`, the AppImage and a hand-built binary all behave identically to 0.4.0 — they check, and then either update themselves or hand you the right command for your package manager. Your "Check for updates" preference and release channel are untouched and still travel in an exported settings file; a Store install simply does not consult them.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'The Microsoft Store listing is still not live',
+            detail:
+              'It has moved, though. The package was submitted for the first time and came back from certification with the single finding this release fixes; nothing about the package itself — its identity, manifest or capabilities — was questioned. Resubmitting is a separate manual step, so until the listing exists, install on Windows with the `.msi`, Scoop or winget. The packaged form has still not been run on a real Windows machine.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.4.0',
     date: '2026-09-02',
     status: 'feature',
