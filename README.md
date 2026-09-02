@@ -254,6 +254,14 @@ Contributions welcome — including documentation and triage. Start with
 [good first issue](https://github.com/jonassaa/platypusgit/labels/good%20first%20issue),
 and please read the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
+## Support
+
+platypusgit is free and open source and always will be — no paid tier, no
+license to buy, no account. If it saves you time, you can
+[buy me a coffee](https://buymeacoffee.com/jonassaa); starring the repo, filing
+good bug reports and telling another developer about it help just as much. The
+[support page](https://www.platypusgit.com/support/) lists the lot.
+
 ## License
 
 [GNU General Public License v3.0](./LICENSE).

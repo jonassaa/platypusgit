@@ -1,2 +1,4 @@
-# Buy Me a Coffee handle — replace REPLACE_ME with the real handle.
-buy_me_a_coffee: REPLACE_ME
+# GitHub renders these as the repo's "Sponsor" button. Buy Me a Coffee takes the
+# handle, not the full URL — the site's own link lives in site/src/data/site.ts
+# (`buyMeACoffee`) and the two must name the same page.
+buy_me_a_coffee: jonassaa
