@@ -568,6 +568,49 @@ A refusal had presented as data loss.
   Moving `set_head` up would just relocate the same class of bug to the conflict
   path.
 
+### Taking a held branch (#358)
+
+The refusal above tells the user where the branch is; `checkout_branch`'s `take`
+flag is how they get it *here*, which is what they actually wanted.
+
+- **A worktree can RELEASE a branch without being removed.** It is already
+  standing on the branch's tip, so releasing is `set_head_detached` to the oid it
+  is already at: a rewrite of that worktree's HEAD file and nothing else — no
+  checkout, no index write, its working tree never opened. That is the whole
+  reason this is safe to offer, and it is why uncommitted work over there
+  survives. `taking_a_held_branch_leaves_the_holders_uncommitted_work_alone`
+  pins it.
+- **One flag on the existing command, not a second command.** `take: false`
+  refuses and describes; `take: true` releases and proceeds. Same shape as
+  `delete_branch(.., force)` and `BranchExists`, and it keeps the resolve →
+  validate → release → checkout sequence inside ONE `with_repo` closure, so
+  nothing can move between the check and the write.
+- **The blockers are the two kinds of state a detached HEAD would abandon**, not
+  dirtiness: a **locked** worktree (an explicit "leave me alone" that operations
+  honour) and one **mid-operation** — rebase, merge, cherry-pick, revert, am or
+  bisect, read off `Repository::state()`. git tracks those against HEAD, so
+  moving HEAD out from under one leaves a half-finished operation nobody can
+  explain. Dirtiness is reported, never refused.
+- **`release_blocker` computes `dirty` BEFORE it returns any refusal.** Returning
+  early from the lock check reported every locked worktree as clean, and the
+  confirmation's wording depends on it — the bug the
+  `the_refusal_reports_a_blocked_holder…` test was written to catch.
+- **The refusal re-validates at take time** rather than trusting the `blocked` it
+  reported: the user saw that a dialog ago, and a lock or a rebase can have
+  started since.
+- **A checkout that fails after the release puts the holder back on its branch.**
+  Leaving it detached would have cost it its branch for a checkout that never
+  happened — the same half-applied state this whole guard exists to prevent, one
+  worktree over.
+
+The frontend half is one catch arm in `useRepoStore.checkoutBranch`: it turns
+`BranchHeldByWorktree` into a `pgChoose`, retries with `take: true` on "move it
+here", and **pops the auto-stash back on every path that does not complete the
+checkout** — decline, "open that one", and a take the backend refuses on
+re-validation. That action stashes BEFORE it calls the backend, so any of those
+returning early would leave the user's work in a stash they never made. Only the
+refused take also raises a banner; a decline is a choice, not a failure.
+
 ## Deleting an untracked file (#245)
 
 `GitBackend::delete_untracked` is on the trait despite being an unlink rather

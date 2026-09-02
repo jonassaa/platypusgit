@@ -12,7 +12,7 @@ fn cherry_pick_applies_commit_onto_head() {
 
     // Create branch `feature`, commit a change there, go back to main.
     backend.create_branch(&handle.id, "feature", None).unwrap();
-    backend.checkout_branch(&handle.id, "feature").unwrap();
+    backend.checkout_branch(&handle.id, "feature", false).unwrap();
     write_file(tr.path(), "NOTES.md", "hello notes\n");
     backend.stage(&handle.id, &[PathBuf::from("NOTES.md")]).unwrap();
     let feature_oid = backend
@@ -30,7 +30,7 @@ fn cherry_pick_applies_commit_onto_head() {
         .unwrap()
         .oid;
 
-    backend.checkout_branch(&handle.id, "main").unwrap();
+    backend.checkout_branch(&handle.id, "main", false).unwrap();
     assert!(!tr.path().join("NOTES.md").exists());
 
     backend.cherry_pick(&handle.id, &feature_oid).unwrap();

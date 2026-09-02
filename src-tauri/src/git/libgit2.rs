@@ -2700,19 +2700,97 @@ fn reject_checked_out(repo: &Repository, branch: &str) -> AppResult<()> {
 /// between the two branches showed up staged. So the check happens here, before
 /// anything is written.
 ///
-/// `checked_out_at`'s `head` argument is deliberately `None`, which skips its
-/// "this worktree" case: only LINKED worktrees block a checkout. The branch this
-/// repository is already on is a legal target — `git checkout <current>` is a
-/// no-op, not an error — so `reject_checked_out`, the obvious reuse, is the
-/// wrong helper here.
-fn reject_held_by_linked_worktree(repo: &Repository, branch: &str) -> AppResult<()> {
-    let linked = crate::git::worktree::linked_worktree_heads(repo);
-    match checked_out_at(branch, None, &linked) {
-        None => Ok(()),
-        Some(where_) => Err(AppError::InvalidArgument(format!(
-            "{branch} is checked out in {where_} — switch to it there, or remove that worktree first"
-        ))),
+/// Only LINKED worktrees are looked at: the branch this repository is already on
+/// is a legal target — `git checkout <current>` is a no-op, not an error — so
+/// `reject_checked_out`, the obvious reuse, is the wrong helper here.
+///
+/// Returns the holding worktree's name, or `None` when the branch is free.
+fn held_by_linked_worktree(repo: &Repository, branch: &str) -> Option<String> {
+    crate::git::worktree::linked_worktree_heads(repo)
+        .into_iter()
+        .find(|(_, on)| on == branch)
+        .map(|(wt, _)| wt)
+}
+
+/// Why `worktree` cannot release its branch right now, or `None` when it can.
+///
+/// Two refusals, both about state that a detached HEAD would abandon rather than
+/// preserve:
+///
+/// - **Locked** is an explicit "leave me alone" that a user or another tool set,
+///   and the whole point of the lock is that operations honour it.
+/// - **Mid-operation** — a rebase, merge, cherry-pick, revert or bisect in
+///   progress. git tracks those against HEAD, so moving HEAD out from under one
+///   leaves a half-finished operation that neither git nor the user can explain.
+///
+/// Dirtiness is deliberately NOT a blocker: releasing rewrites HEAD and never
+/// the working tree, so uncommitted work is untouched. It is reported separately
+/// so the confirmation can mention it.
+fn release_blocker(repo: &Repository, worktree: &str) -> (Option<String>, bool) {
+    let Ok(wt) = repo.find_worktree(worktree) else {
+        return (Some("its worktree cannot be read".to_string()), false);
+    };
+    let Ok(wrepo) = Repository::open_from_worktree(&wt) else {
+        return (Some("its worktree cannot be opened".to_string()), false);
+    };
+    // Computed BEFORE any refusal returns: `dirty` describes the holder for the
+    // confirmation's wording, and a blocked holder still has to be described —
+    // returning early from the lock check reported every locked worktree as
+    // clean.
+    let dirty = wrepo
+        .statuses(None)
+        .map(|s| s.iter().any(|e| e.status() != git2::Status::CURRENT))
+        .unwrap_or(false);
+    if let Ok(git2::WorktreeLockStatus::Locked(reason)) = wt.is_locked() {
+        let why = reason
+            .as_deref()
+            .map(|r| r.trim())
+            .filter(|r| !r.is_empty())
+            .map(|r| format!("it is locked: {r}"))
+            .unwrap_or_else(|| "it is locked".to_string());
+        return (Some(why), dirty);
     }
+    let busy = match wrepo.state() {
+        git2::RepositoryState::Clean => None,
+        git2::RepositoryState::Merge => Some("a merge"),
+        git2::RepositoryState::Revert | git2::RepositoryState::RevertSequence => Some("a revert"),
+        git2::RepositoryState::CherryPick | git2::RepositoryState::CherryPickSequence => {
+            Some("a cherry-pick")
+        }
+        git2::RepositoryState::Bisect => Some("a bisect"),
+        git2::RepositoryState::Rebase
+        | git2::RepositoryState::RebaseInteractive
+        | git2::RepositoryState::RebaseMerge => Some("a rebase"),
+        git2::RepositoryState::ApplyMailbox | git2::RepositoryState::ApplyMailboxOrRebase => {
+            Some("an am")
+        }
+    };
+    (busy.map(|op| format!("{op} is in progress there")), dirty)
+}
+
+/// The refusal a CHECKOUT gets when a linked worktree is standing on the target
+/// branch — git's own `'x' is already used by worktree at '…'`.
+///
+/// libgit2 refuses this too, but it refuses from `set_head`, which runs *after*
+/// `checkout_tree` has already rewritten the index and the working tree. That
+/// ordering is what turned this into a data bug rather than an error message:
+/// the tree became the target's, HEAD stayed put, and the entire difference
+/// between the two branches showed up staged. So the check happens before
+/// anything is written, and it describes the holder well enough for the UI to
+/// offer the take (#358).
+fn describe_holder(repo: &Repository, branch: &str, worktree: &str) -> AppError {
+    let (blocked, dirty) = release_blocker(repo, worktree);
+    let path = repo
+        .find_worktree(worktree)
+        .map(|wt| wt.path().to_string_lossy().to_string())
+        .unwrap_or_default();
+    AppError::BranchHeldByWorktree(crate::error::BranchHeld {
+        branch: branch.to_string(),
+        worktree: worktree.to_string(),
+        path,
+        blocked,
+        dirty,
+    })
 }
 
 /// Local branch names, in listing order.
@@ -4759,12 +4837,29 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()> {
+    fn checkout_branch(&self, repo_id: &RepoId, name: &str, take: bool) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
             // Before ANY of the checks that can write: a branch another worktree
             // is standing on cannot be checked out here, and finding that out
-            // from `set_head` would be too late (see the helper).
-            reject_held_by_linked_worktree(repo, name)?;
+            // from `set_head` would be too late (see `describe_holder`).
+            //
+            // The holder is resolved, validated and — if `take` — released inside
+            // this ONE `with_repo` closure, so nothing can move in between. Same
+            // rule as the stash ops: verify and mutate under one acquisition.
+            let holder = held_by_linked_worktree(repo, name);
+            if let Some(worktree) = holder.as_deref() {
+                if !take {
+                    return Err(describe_holder(repo, name, worktree));
+                }
+                // Re-checked here rather than trusting the `blocked` the refusal
+                // reported: the user saw that a dialog ago, and a lock or a
+                // rebase can have started since.
+                if let (Some(why), _) = release_blocker(repo, worktree) {
+                    return Err(AppError::InvalidArgument(format!(
+                        "{name} cannot be taken from worktree {worktree} — {why}"
+                    )));
+                }
+            }
             // Refuse only when tracked paths have pending modifications or staged
             // changes; untracked files are fine unless they would be overwritten by
             // the target tree (that's checked by checkout_tree's conflict detection).
@@ -4793,25 +4888,56 @@ impl GitBackend for Libgit2Backend {
             // Captured before the tree write, so a failed `set_head` can put the
             // checkout back where it started. Unborn HEAD has nothing to restore.
             let previous = repo.head().and_then(|h| h.peel(git2::ObjectType::Commit));
-            repo.checkout_tree(&obj, None).map_err(|e| match e.code() {
-                git2::ErrorCode::Conflict => AppError::DirtyWorktree(
-                    "untracked files would be overwritten by checkout".into(),
-                ),
-                _ => AppError::from(e),
-            })?;
-            // `checkout_tree` has now rewritten the index and the working tree,
-            // and only the ref move is left. A failure here used to be left
-            // exactly as it fell — the target's tree under an unmoved HEAD, which
-            // reads as "the whole branch diff is staged". The worktree was
+
+            // Release the branch from its holder — the FIRST mutation this op
+            // makes. `set_head_detached` to the commit that worktree is already
+            // standing on rewrites its HEAD file and NOTHING else: no checkout,
+            // no index write. That is the whole reason a take is safe to offer —
+            // uncommitted work over there is not even looked at.
+            let released = match holder.as_deref() {
+                None => None,
+                Some(worktree) => {
+                    let wt = repo.find_worktree(worktree)?;
+                    let wrepo = Repository::open_from_worktree(&wt)?;
+                    let at = wrepo.head()?.peel_to_commit()?.id();
+                    wrepo.set_head_detached(at)?;
+                    Some(wrepo)
+                }
+            };
+
+            // `checkout_tree` rewrites the index and the working tree, and only
+            // the ref move is left after it. A failure at either point used to be
+            // left exactly as it fell — the target's tree under an unmoved HEAD,
+            // which reads as "the whole branch diff is staged". This worktree was
             // verified clean above, so the reset restores where we started rather
             // than discarding anyone's work.
-            if let Err(e) = repo.set_head(&refname) {
-                if let Ok(previous) = previous {
-                    let _ = repo.reset(&previous, git2::ResetType::Hard, None);
+            let outcome = repo
+                .checkout_tree(&obj, None)
+                .map_err(|e| match e.code() {
+                    git2::ErrorCode::Conflict => AppError::DirtyWorktree(
+                        "untracked files would be overwritten by checkout".into(),
+                    ),
+                    _ => AppError::from(e),
+                })
+                .and_then(|()| {
+                    repo.set_head(&refname).map_err(|e| {
+                        if let Ok(previous) = &previous {
+                            let _ = repo.reset(previous, git2::ResetType::Hard, None);
+                        }
+                        AppError::from(e)
+                    })
+                });
+
+            if outcome.is_err() {
+                // Undo the release. Leaving that worktree detached would have
+                // cost it its branch for a checkout that never happened — the
+                // same class of half-applied state this whole guard exists to
+                // prevent, just one worktree over.
+                if let Some(wrepo) = &released {
+                    let _ = wrepo.set_head(&refname);
                 }
-                return Err(AppError::from(e));
             }
-            Ok(())
+            outcome
         })
     }
     fn create_branch(&self, repo_id: &RepoId, name: &str, from: Option<&str>) -> AppResult<()> {

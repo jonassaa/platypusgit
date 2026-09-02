@@ -151,8 +151,9 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   promises; do that deliberately, in the same commit. (`docs/dev/backend.md`)
 - **One signing chain** (`libgit2.rs::sign_payload`) for commits AND tags; a
   signing failure creates nothing. (`docs/dev/backend.md`)
-- **Never `window.confirm`/`window.prompt`** — `pgConfirm`/`pgPrompt` from
-  `@/design`. (`docs/dev/frontend.md`)
+- **Never `window.confirm`/`window.prompt`** — `pgConfirm`/`pgPrompt`/`pgChoose`
+  from `@/design`; every one of them reads a dismissal as "no answer", never as a
+  choice. (`docs/dev/frontend.md`)
 - **No native `<select>`/`<option>` in shipped `src/`** — `PGSelect`; a guard
   test enforces it. (`docs/dev/frontend.md`)
 - **Design system lives in `src/design/`**, imported from `@/design`. Do NOT

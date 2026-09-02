@@ -72,7 +72,7 @@ fn resolves_branch_revspec() {
     let tr = TempRepo::with_initial_commit("main content\n");
     let (backend, handle) = tr.open_with_backend();
     backend.create_branch(&handle.id, "feature", None).unwrap();
-    backend.checkout_branch(&handle.id, "feature").unwrap();
+    backend.checkout_branch(&handle.id, "feature", false).unwrap();
     write_file(tr.path(), "feature.txt", "on feature\n");
     tr.commit_all("feature commit");
 

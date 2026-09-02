@@ -95,7 +95,15 @@ export type AppError =
    * of eslint belong in the dedicated output block, which scrolls. See
    * `appErrorDetail`.
    */
-  | { kind: "HookRejected"; message: HookRejection };
+  | { kind: "HookRejected"; message: HookRejection }
+  /**
+   * A linked worktree is standing on the branch a checkout asked for (#358).
+   * The payload is a STRUCT because the remedy is a CHOICE the UI renders:
+   * `blocked` says whether the branch can be taken from that worktree at all,
+   * and `path` is what "open that one instead" opens. See
+   * `useRepoStore.checkoutBranch`.
+   */
+  | { kind: "BranchHeldByWorktree"; message: BranchHeld };
 
 /** Which credential the remote is asking for. */
 export type AuthKind = "Https" | "SshPassphrase" | "SshKey";
@@ -113,6 +121,25 @@ export interface AuthChallenge {
 export interface HookRejection {
   hook: string;
   output: string;
+}
+
+/**
+ * Which worktree holds a branch, and whether it can be made to let go (#358).
+ *
+ * `blocked` is the load-bearing field: `null` means taking the branch would
+ * succeed, so the UI may offer it; a string says why it would not, so the UI
+ * says that instead of offering a button destined to fail. `dirty` only changes
+ * the wording — a dirty holder is still releasable, because releasing rewrites
+ * its HEAD and never its working tree.
+ */
+export interface BranchHeld {
+  branch: string;
+  /** git's worktree name — the basename of its directory. */
+  worktree: string;
+  /** Absolute path: what tells two same-named checkouts apart, and what opens. */
+  path: string;
+  blocked: string | null;
+  dirty: boolean;
 }
 
 export function isAppError(e: unknown): e is AppError {
@@ -175,6 +202,21 @@ function appErrorDetail(e: AppError): string {
   }
   if (e.kind === "BranchExists" && typeof message === "string") {
     return `A local branch named ${message} already exists.`;
+  }
+  // BranchHeldByWorktree carries a struct. The banner is the fallback surface
+  // here — `checkoutBranch` normally intercepts this kind and asks the user what
+  // to do instead — so the sentence has to stand alone for the paths that do
+  // not, and it names the worktree because that is the only thing that makes the
+  // refusal actionable.
+  if (
+    e.kind === "BranchHeldByWorktree" &&
+    typeof message === "object" &&
+    message !== null &&
+    typeof (message as BranchHeld).branch === "string"
+  ) {
+    const held = message as BranchHeld;
+    const why = held.blocked ? `, and ${held.blocked}` : "";
+    return `${held.branch} is checked out in the worktree at ${held.path}${why}. git allows one worktree per branch.`;
   }
   // NoSignature carries NO payload — a unit variant in Rust. Without a case
   // here `appErrorMessage` fell through to its `|| e.kind` fallback and a

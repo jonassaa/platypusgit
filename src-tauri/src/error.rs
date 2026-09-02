@@ -192,6 +192,17 @@ pub enum AppError {
     /// from no error at all, which is what an absent hook produces.
     #[error("the {} hook rejected this commit", .0.hook)]
     HookRejected(HookRejection),
+
+    /// A linked worktree is standing on the branch a checkout asked for (#358).
+    ///
+    /// Its own variant, carrying a STRUCT, because the remedy is a choice and
+    /// the UI has to render it: the branch can be taken from that worktree
+    /// (`checkout_branch`'s `take`), or the user can go and work there instead —
+    /// and naming which worktree, at which path, is the whole difference between
+    /// an actionable refusal and libgit2's "current HEAD of a linked
+    /// repository". Prose in a `Git` string could not be offered as buttons.
+    #[error("{} is checked out in worktree {}", .0.branch, .0.worktree)]
+    BranchHeldByWorktree(BranchHeld),
 }
 
 /// A hook's refusal (#232). `output` is whatever the hook printed, verbatim —
@@ -201,6 +212,26 @@ pub enum AppError {
 pub struct HookRejection {
     pub hook: String,
     pub output: String,
+}
+
+/// Which worktree holds a branch, and whether it can be made to let go (#358).
+///
+/// `blocked` is the load-bearing field: `None` means a take would succeed, so
+/// the UI can offer it. `Some(reason)` means it would not, so the UI must say
+/// why instead of offering a button that is going to fail. `dirty` only changes
+/// the wording — a dirty holder is still releasable, because releasing rewrites
+/// its HEAD and never its working tree.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchHeld {
+    pub branch: String,
+    /// git's worktree name — the basename of its directory.
+    pub worktree: String,
+    /// Absolute path, which is what tells two same-named checkouts apart and
+    /// what "open that one instead" opens.
+    pub path: String,
+    pub blocked: Option<String>,
+    pub dirty: bool,
 }
 
 impl From<git2::Error> for AppError {

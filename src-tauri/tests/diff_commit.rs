@@ -51,7 +51,7 @@ fn diff_commit_merge_uses_first_parent() {
 
     // feature branch off the initial commit, adds feat.txt.
     backend.create_branch(&handle.id, "feature", None).unwrap();
-    backend.checkout_branch(&handle.id, "feature").unwrap();
+    backend.checkout_branch(&handle.id, "feature", false).unwrap();
     // The backend's checkout wrote a fresh index to disk; tr.repo caches its
     // own index in memory, so force it to re-read before committing through it
     // (else the previous branch's staged files leak into this commit's tree).
@@ -59,7 +59,7 @@ fn diff_commit_merge_uses_first_parent() {
     tr.add_commit("feat.txt", "feature\n", "feature work");
 
     // main diverges, adds main.txt.
-    backend.checkout_branch(&handle.id, "main").unwrap();
+    backend.checkout_branch(&handle.id, "main", false).unwrap();
     tr.repo.index().unwrap().read(true).unwrap();
     tr.add_commit("main.txt", "main\n", "main work");
 

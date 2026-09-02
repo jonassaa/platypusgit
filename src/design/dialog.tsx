@@ -66,9 +66,34 @@ export interface PGPromptOptions {
   multiline?: number;
 }
 
+/** One answer offered by `pgChoose`. */
+export interface PGChooseOption {
+  /** What `pgChoose` resolves to when this one is picked. */
+  id: string;
+  label: string;
+  /** Filled primary button — the recommended answer. At most one. */
+  primary?: boolean;
+  /** Red button — the destructive answer, if there is one. */
+  danger?: boolean;
+}
+
+export interface PGChooseOptions {
+  /** Headline. Keep it a question. */
+  title: string;
+  /** Optional detail under the title. */
+  body?: ReactNode;
+  /**
+   * The answers, left to right. Dismissal is never one of them — see
+   * `pgChoose`.
+   */
+  choices: PGChooseOption[];
+  cancelLabel?: string;
+}
+
 type Request =
   | { id: number; kind: "confirm"; opts: PGConfirmOptions; resolve: (v: boolean) => void }
-  | { id: number; kind: "prompt"; opts: PGPromptOptions; resolve: (v: string | null) => void };
+  | { id: number; kind: "prompt"; opts: PGPromptOptions; resolve: (v: string | null) => void }
+  | { id: number; kind: "choose"; opts: PGChooseOptions; resolve: (v: string | null) => void };
 
 let nextId = 1;
 let queue: Request[] = [];
@@ -138,6 +163,24 @@ export function pgPrompt(opts: PGPromptOptions | string): Promise<string | null>
   });
 }
 
+/**
+ * Ask the user to pick one of several named answers. Resolves the chosen
+ * option's `id`.
+ *
+ * **Dismissal is never a choice.** Escape, the backdrop, Cancel and a missing
+ * host all resolve `null`, so a call site can only act on an answer the user
+ * actually gave — the same reason `pgConfirm` resolves false rather than
+ * throwing. Reach for this instead of chaining two `pgConfirm`s when a refusal
+ * has two genuinely different remedies; a second modal over the first cannot be
+ * dismissed predictably (see the queue note at the top of this file).
+ */
+export function pgChoose(opts: PGChooseOptions): Promise<string | null> {
+  if (listeners.size === 0) return Promise.resolve(null);
+  return new Promise<string | null>((resolve) => {
+    push({ id: nextId++, kind: "choose", opts, resolve });
+  });
+}
+
 function useQueueHead(): Request | undefined {
   const [, force] = React.useReducer((n: number) => n + 1, 0);
   React.useEffect(() => {
@@ -161,6 +204,10 @@ export function PGDialogHost() {
 
 function DialogView({ req }: { req: Request }) {
   const isConfirm = req.kind === "confirm";
+  // A choice is neither a question nor a field: it renders no input, and it has
+  // no single "accept" for Enter to mean.
+  const isPrompt = req.kind === "prompt";
+  const isChoose = req.kind === "choose";
   const danger = isConfirm && !!(req.opts as PGConfirmOptions).danger;
   // An acknowledgement, not a question — see `pgAlert`.
   const hideCancel = isConfirm && !!(req.opts as PGConfirmOptions).hideCancel;
@@ -205,6 +252,10 @@ function DialogView({ req }: { req: Request }) {
       e.preventDefault();
       cancel();
     } else if (e.key === "Enter" && !e.shiftKey) {
+      // A choice dialog has no single answer to submit: Enter belongs to
+      // whichever choice button has focus, and calling preventDefault here
+      // would swallow the browser's own activation of it.
+      if (isChoose) return;
       // In a multi-line prompt Enter belongs to the text; submitting is a chord.
       if (!isConfirm && promptOpts.multiline && !(e.metaKey || e.ctrlKey)) return;
       e.stopPropagation();
@@ -295,7 +346,7 @@ function DialogView({ req }: { req: Request }) {
           </div>
         </div>
 
-        {!isConfirm &&
+        {isPrompt &&
           (promptOpts.multiline ? (
             <textarea
               ref={areaRef}
@@ -340,21 +391,46 @@ function DialogView({ req }: { req: Request }) {
           />
         )}
 
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          {!hideCancel && (
-            <PGButton size="sm" variant="ghost" onClick={cancel} data-testid="dialog-cancel">
-              {cancelLabel}
-            </PGButton>
-          )}
-          <PGButton
-            size="sm"
-            variant={danger ? "danger" : "primary"}
-            disabled={!canSubmit}
-            onClick={accept}
-            data-testid="dialog-confirm"
-          >
-            {confirmLabel}
-          </PGButton>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8,
+            // Three answers plus Cancel do not always fit 440px, and a choice
+            // the user cannot see is a choice they cannot make.
+            flexWrap: "wrap",
+          }}
+        >
+          <>
+            {!hideCancel && (
+              <PGButton size="sm" variant="ghost" onClick={cancel} data-testid="dialog-cancel">
+                {cancelLabel}
+              </PGButton>
+            )}
+            {isChoose ? (
+              (req.opts as PGChooseOptions).choices.map((c) => (
+                <PGButton
+                  key={c.id}
+                  size="sm"
+                  variant={c.danger ? "danger" : c.primary ? "primary" : "default"}
+                  onClick={() => settle(req.id, c.id)}
+                  data-testid={`dialog-choice-${c.id}`}
+                >
+                  {c.label}
+                </PGButton>
+              ))
+            ) : (
+              <PGButton
+                size="sm"
+                variant={danger ? "danger" : "primary"}
+                disabled={!canSubmit}
+                onClick={accept}
+                data-testid="dialog-confirm"
+              >
+                {confirmLabel}
+              </PGButton>
+            )}
+          </>
         </div>
       </div>
     </div>,
