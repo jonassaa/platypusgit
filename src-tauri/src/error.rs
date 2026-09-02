@@ -142,6 +142,24 @@ pub enum AppError {
     #[error("no bisect in progress")]
     NoBisect,
 
+    /// This install does not check for updates, because something else owns
+    /// them: a Microsoft Store (MSIX) package (#360).
+    ///
+    /// A **refusal**, not a failure. `check_for_update` returns it *before* it
+    /// would reach the network, so the request never leaves the machine — Store
+    /// policy 10.2.5 requires that a Store install neither updates nor
+    /// advertises updates outside the Store, and the v0.4.0 certification run
+    /// failed on the notification alone.
+    ///
+    /// A variant rather than a silent `available: false`, which is the tempting
+    /// one-liner and is a lie: "you are up to date" is a claim about the
+    /// release, and this install does not know. It exists as a BACKSTOP — every
+    /// shipped surface is gated ahead of it (`useUpdateStore.check`, and the
+    /// Settings section renders no button at all on such an install), so a user
+    /// reaching it means a new call site forgot the gate.
+    #[error("this install is updated by the Microsoft Store, not by the app")]
+    UpdatesManagedExternally,
+
     /// The user cancelled a running network op — clone, fetch, pull or push
     /// (#234). Not a failure: it is the outcome they asked for, so the UI
     /// clears the spinner and raises no banner.

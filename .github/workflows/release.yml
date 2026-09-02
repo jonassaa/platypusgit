@@ -333,8 +333,9 @@ jobs:
   # (x64 + arm64), it needs NO signing key at all — the Store re-signs, which is
   # the whole economics of this channel — and it must not be able to break the
   # .msi or the portable zip if makeappx or the manifest is wrong. Nothing here
-  # feeds latest.json either: a Store install never self-updates
-  # (update::capability returns NotifyStore), so there is no signature to read.
+  # feeds latest.json either: a Store install never self-updates, and since #360
+  # never even CHECKS (update::capability returns StoreManaged — policy 10.2.5),
+  # so there is no signature to read and no manifest to point at.
   #
   # Spec: docs/superpowers/specs/2026-08-27-msix-store-spec.md §B
   msix:

@@ -632,9 +632,9 @@ upgrade, which is exactly the axis `update::capability` expresses:
 | `.msi` direct download | per-machine installer | `SelfUpdate` |
 | Scoop bucket | portable zip in Scoop's tree | `NotifyScoop` |
 | winget | the same `.msi` | `SelfUpdate` |
-| **Store MSIX** | **read-only package** | **`NotifyStore`** |
+| **Store MSIX** | **read-only package** | **`StoreManaged`** |
 
-**`NotifyStore` is matched FIRST among the Windows arms, and that order is
+**`StoreManaged` is matched FIRST among the Windows arms, and that order is
 load-bearing.** Unlike every other notify variant it is not about giving better
 advice: an MSIX is read-only after deployment and Windows *refuses to launch a
 package whose files were tampered with*, so a self-update here does not fail —
@@ -648,6 +648,62 @@ twelve lines of `extern "system"`, no new crate. **Deliberately not** a
 packages install to other PackageVolumes and other paths. Same trap as
 `$env:SCOOP`, rejected for the same reason — the question is *"was this install
 packaged"*, and there is an API that answers exactly that.
+
+### A Store install has NO update surface — policy 10.2.5 (#360)
+
+**This is a certification gate, not a preference.** The v0.4.0 submission was
+rejected under policy **10.2.5 Security — Installing and Updating Store Apps**:
+
+> The product updates outside the Store. Please ensure that the product and
+> in-app products are updated only through the Store and resubmit.
+> **Location where update is found: In App, soon after launch**
+
+The app installed nothing. `StoreManaged` already kept it off the self-update
+path, so no "Install & restart" button was ever offered. What failed was the
+**notification**: the 2-second startup check in `AppShell` asked GitHub for the
+newest release, found one, and auto-opened `UpdatePanel` with a **"View
+release"** button onto the GitHub release page — where a user downloads the
+`.msi` and updates outside the Store. **Learning about the update inside the app
+is the violation**; you do not have to ship the bits.
+
+So `StoreManaged` (was `NotifyStore`, renamed because "notify" is now exactly
+what it must not do) means: *no request, no chip, no panel, no release link, no
+Settings control.*
+
+**Four gates, and each one is meant to be redundant:**
+
+| Where | What it does |
+| --- | --- |
+| `update::may_check_for_updates` | the rule, as one pure function |
+| `commands::update::check_for_update` | refuses with `AppError::UpdatesManagedExternally` **before** the fetch |
+| `useUpdateStore.check()` | returns early after the capability probe — this is what stops the request being made |
+| `UpdateChip` / `Settings → Updates` | render nothing to click |
+
+- **The frontend gate is the one that matters operationally** (nothing reaches
+  the network), the **backend one is the backstop** (a new call site that
+  forgets it fails closed instead of failing certification). `install()` refuses
+  too — unreachable through the UI, but it is the one action that would write to
+  the package.
+- **Settings shows the version and one sentence, not disabled controls.** A
+  greyed-out "Check for updates" beside "Automatically asks GitHub" is still
+  three statements about updating from outside the Store. Removing the section
+  entirely would leave someone looking for their version with nothing. The
+  sentence lives once, in `packageHint.ts::STORE_MANAGED_NOTE`, and names **who
+  updates this install and nothing else** — no command, no download, no release
+  page.
+- **`updateCheckMode` and `updateChannel` keep their persisted values.** They
+  are portable preferences (#254 exports them to a shareable file); this install
+  simply does not consult them. Same call the channel row already makes when
+  checks are off.
+- **The notify variants are untouched.** They still check and then defer the
+  *install* to a package manager — telling a `.deb` user that `apt upgrade` has
+  something for them is the whole point of #187. A gate that swept them up would
+  delete that feature while looking like a Store fix; `every_other_install_still_checks`
+  in `src-tauri/tests/update.rs` is what says so.
+- **`check_for_update_asks_the_gate_before_it_fetches`** pins the ORDER in the
+  source text, because `is_msix_packaged` is a compile-time `false` everywhere a
+  test can run: a gate moved below the fetch still compiles, still passes every
+  other test, and still fails certification.
 
 ### `makeappx` builds it; `winapp` is only for the local loop
 

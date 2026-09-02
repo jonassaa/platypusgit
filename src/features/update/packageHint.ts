@@ -13,12 +13,27 @@ import type { UpdateCapability } from "@/lib/types";
  * else, so a `.deb` user had no way to know *why* the in-app install was
  * unavailable or what to run instead — the panel was a silent dead end.
  */
+/**
+ * What a Microsoft Store install is told about updates, in the one place both
+ * readers take it from (#360).
+ *
+ * Deliberately says who does the updating and stops there. It names no command,
+ * no download and no release page: Store policy 10.2.5 is about the product not
+ * updating — or pointing at an update — outside the Store, and "here's where to
+ * get the new one" is the sentence that failed certification.
+ *
+ * No trailing colon, unlike the other hints' notes: those introduce a command
+ * box and this one introduces nothing.
+ */
+export const STORE_MANAGED_NOTE =
+  "This install came from the Microsoft Store, which keeps it up to date.";
+
 export interface PackageHint {
   /** One line on why in-app install is unavailable here. */
   note: string;
   /**
    * Copy-pasteable upgrade command, or `""` when there is genuinely nothing to
-   * run — `notify-store`, where the Store upgrades the package itself.
+   * run — `store-managed`, where the Store upgrades the package itself.
    * `UpdatePanel` renders the command box only when this is non-empty.
    */
   command: string;
@@ -64,17 +79,23 @@ export function packageHint(
       command: "scoop update platypusgit",
     };
   }
-  if (capability === "notify-store") {
+  if (capability === "store-managed") {
     return {
       // The one hint with an EMPTY command, and the reason is in the Rust enum:
       // the Store updates this install by itself. Naming `winget upgrade` here
       // would send a Store user to a channel they are not on; naming a download
-      // would send them to a file they cannot install over the package.
+      // would send them to a file they cannot install over the package — and
+      // after #360 that download is also what failed certification.
       //
       // UpdatePanel renders the command box only for a non-empty command, so
       // this arm shows its note alone. Returning `null` instead would be wrong:
       // that is "nothing useful to say", and there IS something to say.
-      note: "This install came from the Microsoft Store, which keeps it up to date:",
+      //
+      // Since #360 the PANEL can no longer reach this arm — a Store install
+      // never gets an `info` to open a panel with — so its live reader is
+      // Settings, via STORE_MANAGED_NOTE. It stays here so that the sentence
+      // has one home and so the panel degrades correctly if it ever does open.
+      note: STORE_MANAGED_NOTE,
       command: "",
     };
   }

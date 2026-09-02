@@ -63,9 +63,10 @@ pub struct UpdateInfo {
     pub prerelease: bool,
 }
 
-/// Whether this install can swap its own binary or should defer to a package
-/// manager. Serializes to `"self-update"` / `"notify"` / `"notify-apt"` /
-/// `"notify-scoop"`.
+/// Whether this install can swap its own binary, should defer to a package
+/// manager, or must not talk about updates at all. Serializes to
+/// `"self-update"` / `"notify"` / `"notify-apt"` / `"notify-scoop"` /
+/// `"store-managed"`.
 ///
 /// `NotifyApt` exists because after #187 there are TWO kinds of `.deb` install
 /// and they need different advice. On an apt-managed one, `apt upgrade` is the
@@ -80,12 +81,28 @@ pub struct UpdateInfo {
 /// the Start Menu shortcut, with `scoop list` reporting the old version forever.
 /// Silently two installs, from one click.
 ///
-/// `NotifyStore` is a Microsoft Store (MSIX) install, and it is the one variant
-/// whose reason is not "better advice". An MSIX is read-only after deployment and
-/// Windows refuses to launch a package whose files were tampered with, so a
-/// self-update here does not fail — it leaves an app that will not start. The
-/// Store owns the upgrade; the panel says so and offers nothing to click, which
-/// is why it is also the only variant with no command to copy.
+/// `StoreManaged` is a Microsoft Store (MSIX) install, and it is the one variant
+/// that is not about advice at all: it means this install has NO update surface.
+/// No check, no chip, no panel, no release link.
+///
+/// Two independent reasons, and either alone would be enough:
+///
+/// 1. **Store policy 10.2.5** — "the product and in-app products are updated
+///    only through the Store". The v0.4.0 submission failed certification on
+///    exactly this: the startup check found a newer GitHub release and the panel
+///    auto-opened with a "View release" button onto an `.msi` download. The
+///    report's own words were *"The product updates outside the Store … Location
+///    where update is found: In App, soon after launch"*. Notifying is enough to
+///    fail it — the app does not have to install anything.
+/// 2. **Technically it could not work anyway.** An MSIX is read-only after
+///    deployment and Windows refuses to launch a package whose files were
+///    tampered with, so a self-update here does not fail — it leaves an app that
+///    will not start.
+///
+/// So this variant is checked at the top of `check_for_update` (via
+/// `may_check_for_updates`) and again in the frontend store, and it is the only
+/// variant with no command to copy: there is nothing for the user to run,
+/// because the Store upgrades the package by itself.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateCapability {
@@ -93,7 +110,7 @@ pub enum UpdateCapability {
     Notify,
     NotifyApt,
     NotifyScoop,
-    NotifyStore,
+    StoreManaged,
 }
 
 /// The deb822 sources file `scripts/install-platypusgit.sh` writes.
@@ -332,13 +349,34 @@ pub fn is_msix_packaged() -> bool {
 /// toward `scoop update` on an install Scoop does not own.
 pub fn capability(env: InstallEnv<'_>) -> UpdateCapability {
     match env.os {
-        "windows" if env.msix_packaged => UpdateCapability::NotifyStore,
+        "windows" if env.msix_packaged => UpdateCapability::StoreManaged,
         "windows" if env.scoop_managed => UpdateCapability::NotifyScoop,
         "windows" => UpdateCapability::SelfUpdate,
         "linux" if env.is_appimage => UpdateCapability::SelfUpdate,
         "linux" if env.apt_managed => UpdateCapability::NotifyApt,
         _ => UpdateCapability::Notify,
     }
+}
+
+/// Is this install allowed to ask GitHub what the newest release is?
+///
+/// One pure function, so "may this install check" has a single answer that both
+/// `commands::update::check_for_update` and `src/features/update/useUpdateStore`
+/// are written against — and one that a test can exercise without a registered
+/// MSIX package (`is_msix_packaged` is a constant `false` everywhere a test can
+/// run).
+///
+/// A predicate rather than an inline `matches!` at the call site because the
+/// call site is a *refusal*, and Store policy 10.2.5 is the reason for it: the
+/// rule needs somewhere to be stated once and pinned by name. See
+/// `UpdateCapability::StoreManaged`.
+///
+/// Every other variant answers `true`. `Notify*` installs still check — they
+/// just hand the install off to a package manager afterwards, and telling a
+/// `.deb` user that `apt upgrade` has something for them is the whole point of
+/// #187.
+pub fn may_check_for_updates(capability: UpdateCapability) -> bool {
+    !matches!(capability, UpdateCapability::StoreManaged)
 }
 
 /// How many releases the prerelease channel considers.

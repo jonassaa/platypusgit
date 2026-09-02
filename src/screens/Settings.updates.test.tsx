@@ -21,6 +21,9 @@ function mockRestOfSettings() {
     source: "package",
     pathState: "onPath",
   }));
+  // The section probes this on mount now (#360) — it decides whether ANY update
+  // control is rendered. Ordinary install by default; the Store block overrides.
+  mockInvoke("get_update_capability", () => "self-update");
   mockInvoke("diagnostics_report", () => ({
     logPath: "/tmp/platypusgit.log",
     logExists: false,
@@ -119,6 +122,58 @@ describe("Settings → Updates: the check preference", () => {
     await pickMode("Only when I ask");
     expect(useSettingsStore.getState().updateCheckMode).toBe("manual");
     await waitFor(() => expect(checkButton()).not.toBeDisabled());
+  });
+});
+
+describe("Settings → Updates: a Microsoft Store install", () => {
+  // Store policy 10.2.5 and the v0.4.0 certification failure (#360). The report
+  // named "In App, soon after launch" — the startup panel — but this screen is
+  // the other half: three controls that are all statements about updating from
+  // outside the Store. Disabling them would not help; they would still say
+  // "Automatically asks GitHub" beside a "Check for updates" button.
+  beforeEach(() => {
+    mockInvoke("get_update_capability", () => "store-managed");
+  });
+
+  it("renders the version and the Store note, and no update controls", async () => {
+    render(<SettingsScreen />);
+    expect(
+      await screen.findByTestId("update-store-managed"),
+    ).toHaveTextContent(/microsoft store/i);
+    // The version is still here: this section is where someone comes to find
+    // it, and removing the whole thing would answer that question with silence.
+    expect(screen.getByTestId("settings-updates")).toHaveTextContent("0.1.0");
+    // Every control is GONE, not disabled.
+    expect(screen.queryByTestId("update-check-mode")).toBeNull();
+    expect(screen.queryByTestId("update-channel")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /check for updates/i }),
+    ).toBeNull();
+    expect(screen.queryByTestId("update-last-checked")).toBeNull();
+  });
+
+  it("names no command, download or release page", async () => {
+    render(<SettingsScreen />);
+    const section = await screen.findByTestId("settings-updates");
+    // The note says who updates this install and stops. "Where to get the new
+    // one" is the sentence that failed certification.
+    expect(section.textContent).not.toMatch(/github|download|release|winget/i);
+  });
+
+  it("makes no update check while rendering", async () => {
+    render(<SettingsScreen />);
+    await screen.findByTestId("update-store-managed");
+    expect(checked).toEqual([]);
+  });
+
+  it("leaves the persisted preferences untouched", async () => {
+    // They are portable preferences (#254 exports them). This install is simply
+    // not consulting them — the same call the channel row already makes when
+    // checks are off.
+    useSettingsStore.getState().set("updateCheckMode", "manual");
+    render(<SettingsScreen />);
+    await screen.findByTestId("update-store-managed");
+    expect(useSettingsStore.getState().updateCheckMode).toBe("manual");
   });
 });
 

@@ -73,6 +73,17 @@ describe("UpdateChip", () => {
     expect(screen.queryByTestId("pg-update-chip")).toBeNull();
   });
 
+  // A Store install should never HAVE an `info` to nag with — `check()` refuses
+  // before the request (#360) — but the chip is the most visible piece of the
+  // surface that failed certification: a version number in the titlebar, one
+  // click from a panel pointing at a download. It gates on the capability too,
+  // rather than trusting a promise made two files away.
+  it("is hidden on a Microsoft Store install", () => {
+    seed({ panelOpen: false, capability: "store-managed" });
+    render(<UpdateChip />);
+    expect(screen.queryByTestId("pg-update-chip")).toBeNull();
+  });
+
   it("still shows under 'only when I ask'", () => {
     // manual gates the REQUEST, not the result: a check the user asked for that
     // found something must still be visible outside Settings.
@@ -133,13 +144,13 @@ describe("UpdatePanel — capability + platform arms", () => {
     );
   });
 
-  it("notify-store on Windows shows the note and NO command box", () => {
+  it("store-managed on Windows shows the note and NO command box", () => {
     // The fifth capability, and the only one with nothing to copy: the Store
     // updates the package itself. An empty code box with a copy button that
     // copies "" is worse than no box, so the command half must not render —
     // while the note, which is the whole hint here, must.
     platformMock.value = "windows";
-    seed({ capability: "notify-store" });
+    seed({ capability: "store-managed" });
     render(<UpdatePanel />);
     expect(screen.getByTestId("pg-update-action")).toHaveTextContent(
       /view release/i,
