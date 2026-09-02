@@ -48,7 +48,11 @@ import {
 } from "@/lib/tauri";
 import { relativeTime } from "@/lib/derive";
 import { appErrorMessage } from "@/lib/errors";
-import { useUpdateStore } from "@/features/update/useUpdateStore";
+import { STORE_MANAGED_NOTE } from "@/features/update/packageHint";
+import {
+  updatesManagedExternally,
+  useUpdateStore,
+} from "@/features/update/useUpdateStore";
 import type {
   CliPathState,
   CliShimStatus,
@@ -763,11 +767,18 @@ function UpdatesSection() {
   const currentVersion = useUpdateStore((s) => s.currentVersion);
   const lastCheckedAt = useUpdateStore((s) => s.lastCheckedAt);
   const loadCurrentVersion = useUpdateStore((s) => s.loadCurrentVersion);
+  const loadCapability = useUpdateStore((s) => s.loadCapability);
+  const capability = useUpdateStore((s) => s.capability);
   const off = settings.updateCheckMode === "never";
+  const storeManaged = updatesManagedExternally(capability);
 
   React.useEffect(() => {
     void loadCurrentVersion();
-  }, [loadCurrentVersion]);
+    // Loaded HERE and not left to `check()` (#360): on a Microsoft Store install
+    // this section must render no update controls at all, and with
+    // `updateCheckMode: "never"` no check ever runs to discover that.
+    void loadCapability();
+  }, [loadCurrentVersion, loadCapability]);
 
   let statusNode: React.ReactNode = null;
   if (status === "up-to-date") {
@@ -794,6 +805,36 @@ function UpdatesSection() {
     );
   } else if (status === "error" && error) {
     statusNode = <span style={{ color: "var(--git-removed)" }}>{error}</span>;
+  }
+
+  // A Microsoft Store install gets the version and nothing else (#360).
+  //
+  // Not a disabled version of the normal section, and not a hidden one either.
+  // Disabled controls would still be three statements ABOUT updates from
+  // outside the Store — "Automatically asks GitHub", a release channel, a
+  // "Check for updates" button — which is what policy 10.2.5 is about; the
+  // v0.4.0 submission failed on a notification, having installed nothing.
+  // Removing the section entirely would leave the user who came here looking
+  // for their version with no answer and no explanation of why the setting
+  // other installs have is missing. So: the version, and one line naming who
+  // does the updating.
+  //
+  // `updateCheckMode` and `updateChannel` keep their persisted values
+  // untouched. They are portable preferences (#254 exports them) and this
+  // install is simply not consulting them — the same reasoning that leaves the
+  // channel control enabled when checks are off.
+  if (storeManaged) {
+    return (
+      <div data-testid="settings-updates">
+        <Section title="Updates">
+          <Row
+            label="Current version"
+            hint={<div data-testid="update-store-managed">{STORE_MANAGED_NOTE}</div>}
+            control={<Mono>{currentVersion || "…"}</Mono>}
+          />
+        </Section>
+      </div>
+    );
   }
 
   return (

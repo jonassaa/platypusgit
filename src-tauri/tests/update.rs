@@ -3,8 +3,8 @@ use std::cell::Cell;
 use platypusgit_lib::error::AppError;
 use platypusgit_lib::update::{
     capability, compute_available, discover, is_msix_packaged, is_newer, is_scoop_layout,
-    parse_release, parse_releases, pick_newest, InstallEnv, ReleaseMeta, UpdateCapability,
-    UpdateChannel,
+    may_check_for_updates, parse_release, parse_releases, pick_newest, InstallEnv, ReleaseMeta,
+    UpdateCapability, UpdateChannel,
 };
 
 #[test]
@@ -368,12 +368,69 @@ fn capability_takes_a_packaged_install_off_the_self_update_path() {
             msix_packaged: true,
             ..InstallEnv::new("windows")
         }),
-        UpdateCapability::NotifyStore
+        UpdateCapability::StoreManaged
     );
     // ...and the .msi install it is distinguished FROM keeps self-updating.
     assert_eq!(
         capability(InstallEnv::new("windows")),
         UpdateCapability::SelfUpdate
+    );
+}
+
+#[test]
+fn a_store_install_is_not_allowed_to_check_at_all() {
+    // Store policy 10.2.5, and the reason the v0.4.0 submission failed
+    // certification (#360): "The product updates outside the Store … Location
+    // where update is found: In App, soon after launch". The app installed
+    // nothing — the startup check found a newer GitHub release and the panel
+    // auto-opened offering the release page. NOTIFYING is the failing condition,
+    // so the request itself has to stop.
+    assert!(!may_check_for_updates(capability(InstallEnv {
+        msix_packaged: true,
+        ..InstallEnv::new("windows")
+    })));
+}
+
+#[test]
+fn every_other_install_still_checks() {
+    // The notify variants are NOT swept up by the Store rule: they check, and
+    // then hand the install off to a package manager. Telling a `.deb` user that
+    // `apt upgrade` has something for them is the entire point of #187, and a
+    // predicate that answered "no" to all of them would delete that feature
+    // while looking like a Store fix.
+    for cap in [
+        UpdateCapability::SelfUpdate,
+        UpdateCapability::Notify,
+        UpdateCapability::NotifyApt,
+        UpdateCapability::NotifyScoop,
+    ] {
+        assert!(may_check_for_updates(cap), "{cap:?} must still check");
+    }
+}
+
+#[test]
+fn check_for_update_asks_the_gate_before_it_fetches() {
+    // `may_check_for_updates` is only worth anything if the command consults it
+    // FIRST. The real call cannot be exercised from here — `is_msix_packaged` is
+    // a compile-time `false` on every platform a test runs on — so this pins the
+    // ORDER in the source, which is the part a refactor breaks silently: a gate
+    // moved below the fetch still compiles, still passes every other test, and
+    // still fails certification.
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/update.rs"),
+    )
+    .expect("read commands/update.rs");
+    // The trailing `(` matters: the doc comment above the command names the
+    // function in prose, and a comment is not a gate.
+    let gate = src
+        .find("may_check_for_updates(")
+        .expect("check_for_update must CALL update::may_check_for_updates");
+    let fetch = src
+        .find("fetch_for_channel")
+        .expect("check_for_update still fetches");
+    assert!(
+        gate < fetch,
+        "the Store gate must come before the fetch in commands/update.rs"
     );
 }
 
@@ -389,7 +446,7 @@ fn capability_prefers_the_store_over_scoop_when_both_look_true() {
             scoop_managed: true,
             ..InstallEnv::new("windows")
         }),
-        UpdateCapability::NotifyStore
+        UpdateCapability::StoreManaged
     );
 }
 

@@ -62,6 +62,17 @@ export type AppError =
   /** An op needed a bisect in progress and found none (#93). */
   | { kind: "NoBisect"; message?: string }
   /**
+   * The backend refused an update check because something else owns updates on
+   * this install — a Microsoft Store (MSIX) package (#360).
+   *
+   * A BACKSTOP, not a state the UI is expected to render: every shipped surface
+   * is gated ahead of it (`useUpdateStore.check` returns early, and Settings
+   * renders no check button on such an install), so reaching a banner means a
+   * new call site forgot the gate. It gets prose anyway — a banner reading
+   * "UpdatesManagedExternally" is exactly how #212 happened.
+   */
+  | { kind: "UpdatesManagedExternally"; message?: string }
+  /**
    * The user cancelled a running network op (#234). The outcome they asked for,
    * not a failure — every catch arm suppresses the banner for it and just clears
    * the spinner. Distinct from `Network` because a SIGKILLed git's last words
@@ -232,6 +243,12 @@ function appErrorDetail(e: AppError): string {
   // empty-repository box).
   if (e.kind === "Unborn") {
     return "This repository has no commits yet, so there is nothing to show here. Make the first commit and this fills in.";
+  }
+  // A unit variant too, and unreachable through any shipped surface — but a
+  // banner is the only thing that could ever show it, so it says what owns
+  // updates instead of naming the enum (#360).
+  if (e.kind === "UpdatesManagedExternally") {
+    return "This install is updated by the Microsoft Store, so PlatypusGit does not check for updates itself.";
   }
   // SshKeyExists carries a PATH. Rendered raw the banner would be a file name
   // with no hint that the app refused on purpose rather than failed.

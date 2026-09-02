@@ -149,6 +149,12 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   with a written reason — `test/privacy.test.ts` +
   `src-tauri/tests/no_telemetry.rs`. Tripping one means changing what the README
   promises; do that deliberately, in the same commit. (`docs/dev/backend.md`)
+- **A Microsoft Store install has NO update surface** — no check, no chip, no
+  panel, no release link, no Settings control. `StoreManaged` gates the CHECK,
+  not just the install: Store policy 10.2.5 makes *notifying* the violation, and
+  v0.4.0 failed certification on it. Anything new that reads `UpdateCapability`
+  gates on `may_check_for_updates` / `updatesManagedExternally`.
+  (`docs/dev/distribution.md`)
 - **One signing chain** (`libgit2.rs::sign_payload`) for commits AND tags; a
   signing failure creates nothing. (`docs/dev/backend.md`)
 - **Never `window.confirm`/`window.prompt`** — `pgConfirm`/`pgPrompt`/`pgChoose`

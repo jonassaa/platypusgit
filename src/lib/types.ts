@@ -741,16 +741,22 @@ export interface UpdateInfo {
  * self-updating a Scoop install would run the per-machine `.msi` and leave the
  * machine with two copies of the app — see the Rust enum for the full story.
  *
- * `notify-store` is a Microsoft Store (MSIX) install. It is the only variant
- * with no command to offer: the package is read-only, Windows refuses to launch
- * a tampered one, and the Store does the upgrade unprompted.
+ * `store-managed` is a Microsoft Store (MSIX) install, and it is the one value
+ * that is not advice about installing — it means this install has NO update
+ * surface at all: no check, no chip, no panel, no release link (#360). Store
+ * policy 10.2.5 requires that a Store product be updated only through the
+ * Store, and the v0.4.0 submission failed certification on the NOTIFICATION
+ * alone — the startup check found a newer GitHub release and the panel opened
+ * offering it. Every reader of this value has to gate on it, not just the one
+ * that installs; `updatesManagedExternally` in `features/update/useUpdateStore`
+ * is the predicate to use.
  */
 export type UpdateCapability =
   | "self-update"
   | "notify"
   | "notify-apt"
   | "notify-scoop"
-  | "notify-store";
+  | "store-managed";
 
 /**
  * "Commit as" identity. Mirrors Rust `AuthorOverride` (git/types.rs) — it sets

@@ -17,8 +17,20 @@ use crate::{
 /// also where the "should this check happen at all" gate lives
 /// (`useUpdateStore.check`). Keeping both on the same side of the IPC boundary
 /// means there is one place to read to know what any given check will do.
+///
+/// **The one thing this command decides for itself is the Store install** (#360).
+/// A packaged install refuses here, ahead of the channel and ahead of the fetch,
+/// because Store policy 10.2.5 makes "did we notify?" the failing condition —
+/// not "did we install?" — and a preference the user can flip is the wrong place
+/// to keep a rule certification enforces. The frontend gate stays (it is what
+/// keeps the UI from rendering a check button at all); this is the backstop that
+/// makes forgetting it harmless rather than a submission blocker. See
+/// `update::may_check_for_updates`.
 #[tauri::command]
 pub async fn check_for_update(channel: Option<UpdateChannel>) -> AppResult<UpdateInfo> {
+    if !update::may_check_for_updates(install_capability()) {
+        return Err(AppError::UpdatesManagedExternally);
+    }
     let current = env!("CARGO_PKG_VERSION").to_string();
     // Absent means stable. The frontend always sends one; the default is here so
     // that a caller which does not — an older webview against a newer binary, or
@@ -55,6 +67,21 @@ pub async fn check_for_update(channel: Option<UpdateChannel>) -> AppResult<Updat
 /// the answer is meaningless elsewhere.
 #[tauri::command]
 pub fn get_update_capability() -> AppResult<UpdateCapability> {
+    Ok(install_capability())
+}
+
+/// The probes behind `get_update_capability`, callable from Rust.
+///
+/// Extracted so `check_for_update` can ask the same question without going back
+/// out through IPC (#360). Two callers reading ONE function is the point: a
+/// second copy of the probe order is how a Store install ends up refusing in one
+/// command and checking in the other.
+///
+/// Not cached. Every probe is a `Path::exists` or one kernel32 call, and an
+/// install's identity cannot change under a running process — but a `OnceLock`
+/// here would buy nothing measurable and would have to be reasoned about in
+/// every test that touches it.
+fn install_capability() -> UpdateCapability {
     let os = std::env::consts::OS;
     let apt_managed = os == "linux" && std::path::Path::new(update::APT_SOURCES_PATH).exists();
     let scoop_managed = os == "windows"
@@ -65,14 +92,14 @@ pub fn get_update_capability() -> AppResult<UpdateCapability> {
                     .is_some_and(|dir| dir.join(update::SCOOP_MANIFEST_FILE).exists())
         });
     let msix_packaged = os == "windows" && update::is_msix_packaged();
-    Ok(update::capability(update::InstallEnv {
+    update::capability(update::InstallEnv {
         // `APPIMAGE=` (set but empty) is not an AppImage install.
         is_appimage: std::env::var("APPIMAGE").is_ok_and(|v| !v.is_empty()),
         apt_managed,
         scoop_managed,
         msix_packaged,
         ..update::InstallEnv::new(os)
-    }))
+    })
 }
 
 /// Open an https URL in the user's default browser (notify-path "View release").

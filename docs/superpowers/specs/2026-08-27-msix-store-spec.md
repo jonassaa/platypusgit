@@ -110,6 +110,13 @@ would write its own `Assets/`; do not let it.
 
 ### C. `update::capability` gains `NotifyStore`
 
+> **Superseded in part — read "Certification round 1" below before this
+> section.** The variant shipped as designed here and then *failed
+> certification*: it is now `StoreManaged` / `"store-managed"`, and it gates the
+> update **check**, not only the install. The design reasoning below is still
+> why the arm exists and why it wins over `SelfUpdate`; the names and the reach
+> are the amendment's.
+
 A fourth `UpdateCapability` variant, `notify-store` over IPC, plus
 `msix_packaged: bool` on `InstallEnv`, plus the mirrored member in the TS union
 (`src/lib/types.ts`). `capability` stays pure and stays fully testable on a Mac;
@@ -357,6 +364,49 @@ and launches the app *with* package identity, which is enough to answer 1–5
 without ever producing an `.msix`. `winapp unregister` afterwards, or the real
 package reports "already installed". Prerequisite: Windows 11 and
 `winget install microsoft.winappcli`.
+
+## Certification round 1 — what actually failed (2026-09-02, #360)
+
+The first submission (v0.4.0) was **rejected**, on one finding:
+
+> **10.2.5 Security - Installing and Updating Store Apps** — The product updates
+> outside the Store. Please ensure that the product and in-app products are
+> updated only through the Store and resubmit.
+> **Location where update is found: In App, soon after launch**
+
+**§C was necessary and not sufficient.** `NotifyStore` correctly kept a packaged
+install off the self-update path, so the app never *installed* anything outside
+the Store — and this spec treated that as the whole of the problem. It is not.
+10.2.5 is about the product being **updated only through the Store**, and the
+certification tester counted the *notification* as the update path: two seconds
+after launch, `AppShell`'s startup check asked GitHub for the newest release,
+`shouldNag` auto-opened `UpdatePanel`, and its primary button read **"View
+release"** — a link to the page where you download the `.msi`.
+
+The lesson worth carrying: **for a Store build, "we only notify" is not a
+mitigation, it is the finding.** Any surface that tells a Store user a newer
+version exists elsewhere is in scope, whoever installs it.
+
+The fix is described operationally in `docs/dev/distribution.md` ("A Store
+install has NO update surface"). In spec terms it amends §C:
+
+- `UpdateCapability::NotifyStore` → **`StoreManaged`** (`"store-managed"` over
+  IPC). The rename is the point: `notify` is precisely what this install must
+  not do, and a variant named for the behaviour it forbids is one refactor away
+  from being treated like its siblings.
+- The variant now gates the **check**, not just the install:
+  `update::may_check_for_updates` is the single pure statement of the rule, read
+  by `commands::update::check_for_update` (which refuses with
+  `AppError::UpdatesManagedExternally` before the fetch) and by
+  `useUpdateStore.check()` (which is what keeps the request from being made).
+- `UpdateChip` and `Settings → Updates` render nothing to click. Settings shows
+  the version and one sentence naming the Store — **not** disabled controls,
+  which would still be three statements about updating from outside it.
+
+**10.2.5 was the report's only finding** — the package itself, the manifest, the
+identity and the listing metadata drew no note, so §A, §B and §D stand as
+written and §E's open question is unchanged. Nothing about the *package* changes
+for the resubmission; the change is entirely in the app's behaviour.
 
 ## Follow-ups
 

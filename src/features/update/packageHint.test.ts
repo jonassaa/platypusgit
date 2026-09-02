@@ -83,7 +83,7 @@ describe("packageHint", () => {
   });
 
   it("names the Store for a packaged install", () => {
-    const hint = packageHint("notify-store", "windows");
+    const hint = packageHint("store-managed", "windows");
     expect(hint).not.toBeNull();
     expect(hint?.note).toContain("Microsoft Store");
   });
@@ -92,13 +92,13 @@ describe("packageHint", () => {
     // Every other notify variant hands over a command. This one must not: an
     // MSIX is read-only, there is nothing to type, and `winget upgrade` would be
     // advice for a channel this install did not come from.
-    expect(packageHint("notify-store", "windows")?.command).toBe("");
+    expect(packageHint("store-managed", "windows")?.command).toBe("");
   });
 
   it("trusts the backend's Store answer over the platform", () => {
     // Same rule the Scoop arm is pinned by: the capability is the more specific
     // answer and the platform switch must not get a chance to contradict it.
-    expect(packageHint("notify-store", undefined)?.note).toContain(
+    expect(packageHint("store-managed", undefined)?.note).toContain(
       "Microsoft Store",
     );
   });
