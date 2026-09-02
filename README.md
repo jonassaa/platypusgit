@@ -124,7 +124,7 @@ re-check any cell in a minute. A cell that has gone stale is a bug worth
 
 </details>
 
-**Where we are behind.** We are 0.1.x and the youngest tool on this list:
+**Where we are behind.** We are 0.5.x and the youngest tool on this list:
 installers that warn on first launch, no in-app update on macOS, and changed
 images shown as "binary" rather than a preview — the full list is under
 [Status](#status). Two of the gaps are deliberate rather than unfinished: no
@@ -209,7 +209,7 @@ copy of [`scripts/install-pgit.sh`](./scripts/install-pgit.sh) and
 
 ## Status
 
-**Active development, versioned 0.1.x** — expect frequent releases and rough
+**Active development, versioned 0.5.x** — expect frequent releases and rough
 edges. Most core git operations work end to end (the feature list above is what
 is implemented, not a roadmap). Known gaps, stated plainly:
 
