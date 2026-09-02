@@ -12,7 +12,7 @@ fn checkout_moves_head_to_existing_branch() {
     tr.repo.branch("feature", &head_commit, false).unwrap();
 
     backend
-        .checkout_branch(&handle.id, "feature")
+        .checkout_branch(&handle.id, "feature", false)
         .expect("checkout");
 
     let head = tr.repo.head().unwrap();
@@ -154,7 +154,7 @@ fn checkout_is_ok_with_untracked_files_that_dont_conflict() {
     support::fs::write_file(tr.path(), "scratch.txt", "junk\n");
 
     backend
-        .checkout_branch(&handle.id, "feature")
+        .checkout_branch(&handle.id, "feature", false)
         .expect("untracked file should not block checkout");
 }
 
@@ -168,7 +168,7 @@ fn checkout_refuses_with_modified_tracked_file() {
     support::fs::write_file(tr.path(), "README.md", "modified\n");
 
     let err = backend
-        .checkout_branch(&handle.id, "feature")
+        .checkout_branch(&handle.id, "feature", false)
         .unwrap_err();
     assert!(matches!(err, platypusgit_lib::error::AppError::DirtyWorktree(_)));
 }
@@ -179,7 +179,7 @@ fn delete_unmerged_branch_is_refused_without_force() {
     let (backend, handle) = tr.open_with_backend();
     // Create a branch, check it out, commit a change on it, go back to main.
     backend.create_branch(&handle.id, "feature", None).unwrap();
-    backend.checkout_branch(&handle.id, "feature").unwrap();
+    backend.checkout_branch(&handle.id, "feature", false).unwrap();
     support::fs::write_file(tr.path(), "NOTES.md", "notes\n");
     backend.stage(&handle.id, &[std::path::PathBuf::from("NOTES.md")]).unwrap();
     backend
@@ -195,7 +195,7 @@ fn delete_unmerged_branch_is_refused_without_force() {
             },
         )
         .unwrap();
-    backend.checkout_branch(&handle.id, "main").unwrap();
+    backend.checkout_branch(&handle.id, "main", false).unwrap();
 
     let err = backend.delete_branch(&handle.id, "feature", false).unwrap_err();
     assert!(matches!(err, platypusgit_lib::error::AppError::NotMerged(_)));
@@ -433,7 +433,7 @@ fn without_main(tr: &TempRepo, keep: &str) {
     let (backend, handle) = tr.open_with_backend();
     let tip = tr.repo.head().unwrap().peel_to_commit().unwrap();
     tr.repo.branch(keep, &tip, false).unwrap();
-    backend.checkout_branch(&handle.id, keep).unwrap();
+    backend.checkout_branch(&handle.id, keep, false).unwrap();
     backend.delete_branch(&handle.id, "main", false).unwrap();
 }
 

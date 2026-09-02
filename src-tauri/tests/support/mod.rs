@@ -114,7 +114,7 @@ pub fn with_conflicting_merge() -> TempRepo {
         let (backend, handle) = tr.open_with_backend();
         // feature branch: change README.
         backend.create_branch(&handle.id, "feature", None).unwrap();
-        backend.checkout_branch(&handle.id, "feature").unwrap();
+        backend.checkout_branch(&handle.id, "feature", false).unwrap();
         write_file(tr.path(), "README.md", "feature branch content\n");
         backend.stage(&handle.id, &[PathBuf::from("README.md")]).unwrap();
         backend
@@ -132,7 +132,7 @@ pub fn with_conflicting_merge() -> TempRepo {
             .unwrap();
 
         // main: change README differently.
-        backend.checkout_branch(&handle.id, "main").unwrap();
+        backend.checkout_branch(&handle.id, "main", false).unwrap();
         write_file(tr.path(), "README.md", "main branch content\n");
         backend.stage(&handle.id, &[PathBuf::from("README.md")]).unwrap();
         backend

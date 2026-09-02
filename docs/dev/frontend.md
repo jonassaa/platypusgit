@@ -1334,6 +1334,13 @@ not worked around: a second mechanism for the same job would also fire on `ls`.
 - **Never `window.confirm`/`window.prompt`** — `pgConfirm`/`pgPrompt` from
   `@/design`, promise-shaped, matching the native contract (dismissal →
   `false`/`null`; Escape + backdrop dismiss; empty prompt string ≠ `null`).
+- **`pgChoose` is the third one, for a refusal with two remedies** (#358).
+  Resolves the chosen option's `id`; Cancel, Escape, the backdrop and a missing
+  host ALL resolve `null`, so dismissal can never be read as an answer. Reach
+  for it instead of chaining two `pgConfirm`s — dialogs queue rather than stack,
+  so the second would appear after the first was answered rather than over it.
+  Mark at most one choice `primary`; Enter is left to the focused button, which
+  is why the Enter handler returns early for this kind.
 - `PGConfirmOptions` carries `body`, `danger`, `requireText` (type-the-name) —
   use them for destructive ops. `PGPromptOptions.multiline: <rows>` renders a
   textarea (Enter inserts a newline, ⌘/Ctrl+Enter submits; e2e's stub picks the

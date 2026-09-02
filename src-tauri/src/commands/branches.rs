@@ -55,15 +55,21 @@ pub async fn list_remotes(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Switch to a local branch.
+///
+/// `take` releases the branch from a linked worktree that holds it instead of
+/// refusing (#358). The frontend passes it only after the user has answered the
+/// choice `BranchHeldByWorktree` raised — never on a first attempt.
 #[tauri::command]
 pub async fn checkout_branch(
     state: State<'_, AppState>,
     repo_id: String,
     name: String,
+    take: bool,
 ) -> AppResult<()> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
-    tokio::task::spawn_blocking(move || backend.checkout_branch(&repo_id, &name))
+    tokio::task::spawn_blocking(move || backend.checkout_branch(&repo_id, &name, take))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
 }

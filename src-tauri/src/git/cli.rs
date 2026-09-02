@@ -292,7 +292,7 @@ impl GitBackend for CliBackend {
     fn remotes(&self, _repo_id: &RepoId) -> AppResult<Vec<RemoteInfo>> {
         Err(AppError::NotImplemented)
     }
-    fn checkout_branch(&self, _repo_id: &RepoId, _name: &str) -> AppResult<()> {
+    fn checkout_branch(&self, _repo_id: &RepoId, _name: &str, _take: bool) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
     fn create_branch(&self, _repo_id: &RepoId, _name: &str, _from: Option<&str>) -> AppResult<()> {

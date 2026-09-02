@@ -561,7 +561,22 @@ pub trait GitBackend: Send + Sync {
     ) -> AppResult<()>;
 
     // === refs ===
-    fn checkout_branch(&self, repo_id: &RepoId, name: &str) -> AppResult<()>;
+    /// Switch this worktree to a local branch.
+    ///
+    /// `take` decides what happens when a LINKED worktree is already standing on
+    /// `name`, which git forbids two worktrees from doing at once:
+    ///
+    /// - `false` — refuse with `BranchHeldByWorktree`, naming the holder so the
+    ///   caller can offer a choice. Nothing is written.
+    /// - `true` — release the branch from that worktree first, by detaching its
+    ///   HEAD to the commit it is already on. Its working tree is never written
+    ///   to, so uncommitted work there survives; a holder that is locked or
+    ///   mid-operation is refused instead.
+    ///
+    /// Validation and both ref moves happen under ONE lock acquisition, and a
+    /// checkout that fails after the release puts the holder back on its branch
+    /// — see the implementation.
+    fn checkout_branch(&self, repo_id: &RepoId, name: &str, take: bool) -> AppResult<()>;
     fn create_branch(&self, repo_id: &RepoId, name: &str, from: Option<&str>) -> AppResult<()>;
     fn delete_branch(&self, repo_id: &RepoId, name: &str, force: bool) -> AppResult<()>;
     fn rename_branch(&self, repo_id: &RepoId, from: &str, to: &str) -> AppResult<()>;

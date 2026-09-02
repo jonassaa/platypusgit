@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { pgFlash } from "@/design";
+import { pgChoose, pgFlash } from "@/design";
 import type {
   AuthorOverride,
   BisectMark,
@@ -16,7 +16,7 @@ import type {
   RebaseStep,
   RepoHandle,
 } from "@/lib/types";
-import type { AppError, HookRejection } from "@/lib/errors";
+import type { AppError, BranchHeld, HookRejection } from "@/lib/errors";
 import {
   dubiousOwnershipPath,
   isAppError,
@@ -145,6 +145,46 @@ import {
   type UndoDirection,
   type UndoKind,
 } from "./undoStack";
+
+/**
+ * The holder, when a checkout was refused because a linked worktree is standing
+ * on the branch (#358) — otherwise null, and the caller rethrows.
+ *
+ * Shape-checked rather than trusted: `message` is only a struct for the handful
+ * of variants that carry one, and a payload of the wrong type must fall through
+ * to the ordinary banner instead of rendering a dialog with `undefined` in it.
+ */
+function heldByWorktree(e: unknown): BranchHeld | null {
+  if (!isAppError(e) || e.kind !== "BranchHeldByWorktree") return null;
+  const held = e.message as BranchHeld;
+  return held && typeof held.branch === "string" && typeof held.path === "string"
+    ? held
+    : null;
+}
+
+/**
+ * Ask what to do about a branch another worktree holds.
+ *
+ * The take is offered ONLY when the backend said the holder can let go
+ * (`blocked === null`) — a button that is going to be refused is worse than no
+ * button. Cancel, Escape and the backdrop all come back as null, so declining
+ * can never be mistaken for a choice.
+ */
+async function askAboutHeldBranch(held: BranchHeld): Promise<string | null> {
+  const where = `worktree ${held.worktree} (${held.path})`;
+  const body = held.blocked
+    ? `It is checked out in ${where}, and ${held.blocked}. Finish or unlock that first, or go and work there instead.`
+    : `It is checked out in ${where}${held.dirty ? ", which has uncommitted changes" : ""}. ` +
+      `Moving it here leaves that worktree on a detached HEAD at the same commit — its files are not touched.`;
+  return pgChoose({
+    title: `Move ${held.branch} here?`,
+    body,
+    choices: [
+      { id: "open", label: "Open that one" },
+      ...(held.blocked ? [] : [{ id: "take", label: "Move it here", primary: true }]),
+    ],
+  });
+}
 
 /** Ids for undo entries. Module-level so they are unique across repositories. */
 let undoSeq = 0;
@@ -1433,7 +1473,47 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         keepIndex: false,
       });
       setActivity(repo.id, "branch", `Switching to ${name}…`);
-      await checkoutBranch(repo.id, name);
+      try {
+        await checkoutBranch(repo.id, name);
+      } catch (e) {
+        // A branch another worktree is standing on is not a failure to report —
+        // it is a question with two answers (#358). Anything else still is.
+        const held = heldByWorktree(e);
+        if (!held) throw e;
+        const answer = await askAboutHeldBranch(held);
+        if (answer !== "take") {
+          // Declined. Give the auto-stash back BEFORE going anywhere, or the
+          // user's uncommitted work is left in a stash they never made.
+          if (stashed) {
+            setActivity(repo.id, "branch", `Restoring stashed changes…`);
+            await stashPop(repo.id, 0);
+          }
+          if (answer === "open") {
+            // Imported here, not at the top: `useTabsStore` imports THIS module,
+            // and a static edge back would close the cycle at module-eval time.
+            const { useTabsStore } = await import("./useTabsStore");
+            await useTabsStore.getState().openRepo(held.path);
+          }
+          // No banner: the user chose this, and refreshAll puts the UI back in
+          // step with a repository nothing happened to.
+          await get().refreshAll();
+          return;
+        }
+        setActivity(repo.id, "branch", `Taking ${name} from ${held.worktree}…`);
+        try {
+          await checkoutBranch(repo.id, name, true);
+        } catch (takeError) {
+          // The backend re-validates, so the take can still be refused — a lock
+          // or a rebase may have started over there since the dialog opened.
+          // Hand the work back before reporting it, exactly as declining does;
+          // unlike a decline this one DOES deserve a banner, so it rethrows.
+          if (stashed) {
+            setActivity(repo.id, "branch", `Restoring stashed changes…`);
+            await stashPop(repo.id, 0);
+          }
+          throw takeError;
+        }
+      }
       if (stashed) {
         setActivity(repo.id, "branch", `Restoring stashed changes…`);
         await stashPop(repo.id, 0);

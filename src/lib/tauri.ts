@@ -715,8 +715,19 @@ export async function revert(repoId: string, oid: string): Promise<void> {
   return invoke<void>("revert", { repoId, oid });
 }
 
-export async function checkoutBranch(repoId: string, name: string): Promise<void> {
-  return invoke<void>("checkout_branch", { repoId, name });
+/**
+ * Switch to a local branch.
+ *
+ * `take` releases the branch from a linked worktree that holds it instead of
+ * rejecting with `BranchHeldByWorktree` (#358). Pass it only after the user has
+ * answered that refusal — `useRepoStore.checkoutBranch` owns that conversation.
+ */
+export async function checkoutBranch(
+  repoId: string,
+  name: string,
+  take = false,
+): Promise<void> {
+  return invoke<void>("checkout_branch", { repoId, name, take });
 }
 
 export async function createBranch(

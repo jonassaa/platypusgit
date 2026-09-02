@@ -30,12 +30,12 @@ fn diverged() -> TempRepo {
         }
 
         // 3 commits on feature.
-        backend.checkout_branch(&handle.id, "feature").unwrap();
+        backend.checkout_branch(&handle.id, "feature", false).unwrap();
         for i in 0..3 {
             write_file(tr.path(), "feature.txt", &format!("feature {i}\n"));
             tr.commit_all(&format!("feature {i}"));
         }
-        backend.checkout_branch(&handle.id, "main").unwrap();
+        backend.checkout_branch(&handle.id, "main", false).unwrap();
     }
     tr
 }
