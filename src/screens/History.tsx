@@ -42,7 +42,12 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { ShallowNotice } from "@/features/repo/ShallowNotice";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
+import {
+  useDateColumnWidth,
+  useDateFormat,
+  useDensityStep,
+  useSettingsStore,
+} from "@/features/settings/useSettingsStore";
 import { resolveHeadDecor } from "@/features/settings/headMarks";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
@@ -58,6 +63,11 @@ import {
 import { diffCommit } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/errors";
 import { currentBranch, mapCommitRefs, relativeTime, shortSha } from "@/lib/derive";
+import {
+  commitDateText,
+  commitDateTitle,
+  preciseTime,
+} from "@/lib/commitDate";
 import {
   clickSelection,
   emptySelection,
@@ -328,6 +338,11 @@ export function HistoryScreen() {
     loadMoreCommits,
   ]);
 
+  // The Date column's text and its width come from the same setting (#354).
+  // The header below reads the width from here so it cannot drift from the
+  // rows, which read it inside PGCommitRow.
+  const dateFormat = useDateFormat();
+  const dateW = useDateColumnWidth();
   const graphW = graphWidth(maxCol);
   const graphClamped = isGraphClamped(maxCol);
   const hiddenLanes = graphClamped ? maxCol - maxVisibleCol() : 0;
@@ -775,7 +790,7 @@ export function HistoryScreen() {
         data-testid="commit-header"
         style={{
           display: "grid",
-          gridTemplateColumns: commitRowGrid(graphW),
+          gridTemplateColumns: commitRowGrid(graphW, dateW),
           height: "calc(24px + var(--row-step))",
           background: "var(--bg-2)",
           borderBottom: "1px solid var(--border-0)",
@@ -841,7 +856,8 @@ export function HistoryScreen() {
               sha={c.shortOid}
               message={c.summary}
               author={c.author || "unknown"}
-              date={relativeTime(c.timestamp)}
+              date={commitDateText(c.timestamp, dateFormat)}
+              dateTitle={commitDateTitle(c.timestamp)}
               refs={refsByOid.get(c.oid)}
               selected={selectedSet.has(c.oid)}
               isHead={c.oid === headOid}
@@ -899,7 +915,12 @@ export function HistoryScreen() {
           }
           author={current.author || "unknown"}
           email={current.email}
-          date={relativeTime(current.timestamp)}
+          // Not the Date-column format: the detail panel has room, and "see the
+          // date on a commit" was half of #354's request — so the stamp is here
+          // unconditionally, with the relative form beside it for the reading
+          // the column normally gives. The zone stays in the hover text.
+          date={`${preciseTime(current.timestamp)} · ${relativeTime(current.timestamp)}`}
+          dateTitle={commitDateTitle(current.timestamp)}
           parents={current.parents.map(shortSha)}
         />
         {/* Notes hang off the commit, not off the log page: read lazily for

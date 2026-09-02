@@ -646,6 +646,46 @@ therefore belongs in `features/`, not `design/`.
   `MAX_BARREN_PAGES`, or it walks the whole repository. New client-side log
   filters inherit that trap.
 
+## How a commit date is written (#354)
+
+- **`lib/commitDate.ts` is the ONE place a timestamp becomes text.** History
+  rows and detail, Reflog, Compare and the repository browser all read from it,
+  so the same instant cannot be described three ways. `relativeTime` in
+  `lib/derive.ts` stays where it is — it is one of the forms composed here, not
+  a surface of its own. A new date surface calls `commitDateText` +
+  `commitDateTitle`; it does not grow its own template. The one deliberate
+  exception is History's "copy visible commits" export, which writes
+  `toISOString()` on purpose — that text is machine-readable output, not a
+  reading surface, and must not follow a UI preference.
+- **The `dateFormat` preference picks the text AND the column width.** The Date
+  column is fixed-width monospace, and `2026-08-14 13:42` does not fit the 90px
+  `3w ago` needs, so `DATE_COL_W` (in `design/graph-geometry.ts`) sizes the
+  column per format. `PGCommitRow` and History's column header both read it
+  through `useDateColumnWidth()` and hand the SAME number to `commitRowGrid` —
+  reading it in one and threading a prop through the other is what would let the
+  header drift off the rows under it. `relative` is 90px, the pre-#354 width, so
+  a default install is pixel-identical to what it was.
+- **The hover title is mode-independent, and it is on the CELL.** Every mode
+  hangs the full stamp (`fullTimestamp` — seconds and the zone offset) off the
+  date cell, so the exact time is always one hover away and picking "Relative"
+  never means the exact time is unreachable. A row-wide `title` would follow the
+  pointer across the message and sha columns and shadow the titles those use for
+  their own truncated text.
+- **Commit details shows a stamp unconditionally** — not the column format. It
+  has the room, and "see the date on a commit" was half of what #354 asked for;
+  gating it behind a non-default preference would answer only half. Inline it is
+  `preciseTime` (seconds, no zone) beside the relative form; the zone is what
+  the hover adds, so the title is never a copy of the line under it.
+- **Local time, and it says so.** `CommitInfo` carries unix seconds only — the
+  author's own UTC offset is not on the wire — so every stamp renders in the
+  reader's zone and `fullTimestamp` names that zone, which is what makes a
+  timestamp copied out of a tooltip comparable with one from a terminal.
+  Matching `git log`'s author-timezone display needs a backend change first
+  (`CommitInfo` in Rust and TS, plus `libgit2.rs`).
+- An unknown persisted format normalizes to `relative` in the store's `load()`,
+  for the density reason one column over: `undefined` reaching the grid resolves
+  every `Npx` template to `auto` and collapses the column on every row at once.
+
 ## `git notes` in the commit detail panel (#253)
 
 - **Notes hang off the SELECTED commit, never the log page.** `CommitNotes`

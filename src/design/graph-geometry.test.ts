@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { DATE_FORMATS } from "@/lib/commitDate";
 import {
+  DATE_COL_W,
   GRAPH_MAX_W,
   GRAPH_PAD,
   LANE_W,
@@ -59,5 +61,37 @@ describe("graph geometry", () => {
     // same as graphWidth(0)=24, a real one-lane log.
     expect(commitRowGrid(0)).toBe("70px 1fr 150px 90px");
     expect(commitRowGrid(0).split(" ")).toHaveLength(4);
+  });
+
+  // The Date column's width follows the user's date format (#354): a
+  // "2026-08-14 13:42" stamp is 16 monospace characters and does not fit the
+  // 90px a "3w ago" needs. The header and every row call THIS function with
+  // the same width, which is what keeps them from drifting apart.
+  it("defaults the date column to the relative width", () => {
+    expect(DATE_COL_W.relative).toBe(90);
+    expect(commitRowGrid(152)).toBe(commitRowGrid(152, DATE_COL_W.relative));
+  });
+
+  it("widens the date column for the stamp formats", () => {
+    expect(DATE_COL_W.absolute).toBeGreaterThan(DATE_COL_W.relative);
+    expect(DATE_COL_W.both).toBeGreaterThan(DATE_COL_W.absolute);
+    expect(commitRowGrid(152, DATE_COL_W.absolute)).toBe(
+      `152px 70px 1fr 150px ${DATE_COL_W.absolute}px`,
+    );
+    expect(commitRowGrid(0, DATE_COL_W.both)).toBe(`70px 1fr 150px ${DATE_COL_W.both}px`);
+  });
+
+  // Fixed-width monospace: the widest string the mode can produce has to fit,
+  // or the stamp is clipped mid-minute on every row at once.
+  it("gives every format room for the widest string it can render", () => {
+    const CH = 7.25; // --fs-12 monospace advance, measured
+    const widest = {
+      relative: "12mo ago".length,
+      absolute: "2026-08-14 13:42".length,
+      both: "2026-08-14 13:42 (12mo ago)".length,
+    };
+    for (const mode of DATE_FORMATS) {
+      expect(DATE_COL_W[mode]).toBeGreaterThanOrEqual(Math.ceil(widest[mode] * CH));
+    }
   });
 });

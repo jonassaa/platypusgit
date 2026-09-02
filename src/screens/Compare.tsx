@@ -41,7 +41,9 @@ import {
   sideKey,
   sideLabel,
 } from "@/features/compare/compareSides";
-import { relativeTime, shortSha } from "@/lib/derive";
+import { shortSha } from "@/lib/derive";
+import { commitDateText, commitDateTitle } from "@/lib/commitDate";
+import { useDateFormat } from "@/features/settings/useSettingsStore";
 import type { CommitInfo } from "@/lib/types";
 
 /**
@@ -49,6 +51,7 @@ import type { CommitInfo } from "@/lib/types";
  * draws a graph lane, and these lists carry no layout to draw one from.
  */
 function CompareCommitRow({ commit }: { commit: CommitInfo }) {
+  const dateFormat = useDateFormat();
   return (
     <div
       data-pg-row=""
@@ -88,7 +91,10 @@ function CompareCommitRow({ commit }: { commit: CommitInfo }) {
           fontSize: "var(--fs-10)",
         }}
       >
-        {commit.author} · {relativeTime(commit.timestamp)}
+        {commit.author} ·{" "}
+        <span title={commitDateTitle(commit.timestamp)}>
+          {commitDateText(commit.timestamp, dateFormat)}
+        </span>
       </span>
     </div>
   );

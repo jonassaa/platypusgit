@@ -329,6 +329,61 @@ describe("logo theme slots", () => {
 const rowStep = () =>
   document.documentElement.style.getPropertyValue("--row-step");
 
+// ═════════════════════════════════════════════════════════════════════════════
+// DATE FORMAT (#354)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("dateFormat", () => {
+  // Relative by default: the pre-#354 log, unchanged for anyone who never
+  // opens Settings. The hover tooltip is what gives them the exact time.
+  it("defaults to relative", async () => {
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().dateFormat).toBe("relative");
+  });
+
+  it("persists a chosen format", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().set("dateFormat", "both");
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as Record<string, unknown>;
+    expect(raw.dateFormat).toBe("both");
+    const again = await freshStore();
+    expect(again.useSettingsStore.getState().dateFormat).toBe("both");
+  });
+
+  // The format picks the Date column's WIDTH as well as its text, so an
+  // unknown value would size the column from `undefined` — every row's grid
+  // resolving to `auto` at once, which is the density trap one column over.
+  it("falls back to relative for an unknown or wrongly-typed persisted value", async () => {
+    for (const bad of ["iso", "Relative", "", true, 0, null] as unknown[]) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ dateFormat: bad }));
+      const { useSettingsStore } = await freshStore();
+      expect(useSettingsStore.getState().dateFormat, String(bad)).toBe("relative");
+    }
+  });
+
+  it("reset() returns to relative", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().set("dateFormat", "absolute");
+    useSettingsStore.getState().reset();
+    expect(useSettingsStore.getState().dateFormat).toBe("relative");
+  });
+
+  it("useDateColumnWidth reports the width the chosen format needs", async () => {
+    const { useSettingsStore, useDateColumnWidth } = await freshStore();
+    const { DATE_COL_W } = await import("@/design/graph-geometry");
+    const { renderHook } = await import("@testing-library/react");
+    const { act } = await import("react");
+
+    const { result } = renderHook(() => useDateColumnWidth());
+    expect(result.current).toBe(DATE_COL_W.relative);
+
+    await act(async () => {
+      useSettingsStore.getState().set("dateFormat", "both");
+    });
+    expect(result.current).toBe(DATE_COL_W.both);
+  });
+});
+
 describe("uiDensity CSS hook", () => {
   it("applies --row-step from the persisted density at load", async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "comfortable" }));
