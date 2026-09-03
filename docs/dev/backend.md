@@ -685,6 +685,48 @@ again. `commands/repo.rs::delete_untracked_files` is therefore thin.
   are unlinked as links (with a `remove_dir` fallback for the Windows
   directory-symlink case), never followed.
 
+## Partial staging synthesizes real patch text (#61 D7)
+
+`patch_text_for_lines` is the single synthesizer behind `stage_lines`,
+`unstage_lines`, `discard_lines`, `patch_text_for_hunk` (whole-hunk unstage and
+discard) and `stage_hunk`'s untracked-**creation** route — the one case
+`ApplyLocation::Index` cannot serve, because libgit2 needs an index entry that
+does not exist yet. What it produces is piped to a real `git apply`, so it is
+patch text in the format git parses, not a rendering.
+
+- **`\ No newline at end of file` is DATA, not decoration.** git2 hands the
+  marker back as a line of its own, whose `content` is the marker text, under
+  three origins: `=` (`CONTEXT_EOFNL`) after a context line, `>` (`ADD_EOFNL`)
+  after a `-` line, `<` (`DEL_EOFNL`) after a `+` line. The origin names describe
+  the *transition* (`ADD_EOFNL` = "old has no LF at end, new does"), so reading
+  them as "which side" is backwards; the position is what carries the meaning,
+  and it is always *the line whose own record lacks the `\n`*. So the synthesizer
+  drops all three and regenerates the marker from `content.ends_with('\n')`,
+  which is the same predicate xdiff itself used to emit it.
+- **Dropping the marker and fabricating the `\n` is not a cosmetic bug.** On the
+  creation route `git apply --cached` exits 0 and stages a blob one byte longer
+  than the file on disk — so the row the user just staged reappears as modified
+  immediately, with no error anywhere. On a tracked file the patch is simply
+  rejected: `git apply failed: error: patch failed: <file>:<line>`.
+- **The marker belongs to a SIDE, and the selection can move a line between
+  sides.** A record with no trailing newline ends its side of the *original*
+  diff, but the emitted patch is a subset: an unselected `-` becomes context
+  (`Apply`), an unselected `+` becomes context (`Reverse`), and either can end up
+  with the other side continuing past it. So the marker is decided against the
+  emitted body — `last_old` / `last_new`, the last line each side actually ends
+  on — and a line the side carries on past gets a genuine `\n` instead.
+- **A context line that ends only ONE side is emitted as a `-`/`+` pair.** No
+  context line can say "newline here but not there"; git spells that as a removal
+  without the newline followed by a re-addition with one. The pair costs the same
+  one old line and one new line the context line did, so the `@@` counts computed
+  while choosing markers stay correct.
+- CRLF needs nothing special and must keep needing nothing: a `\r\n` record
+  already ends in `\n`, so no marker is involved. That is why the predicate is
+  `ends_with('\n')` and never `trim_end()`, which would eat the `\r`.
+- `src-tauri/tests/no_trailing_newline.rs` pins all of it, and every assertion is
+  on real bytes — the index blob against the worktree file, or the worktree file
+  itself. "The command returned `Ok`" is exactly what the creation-route bug did.
+
 ## `blame.ignoreRevsFile` — where libgit2 cannot follow (#253)
 
 - **libgit2's blame has no ignore-revs support of any kind.**
