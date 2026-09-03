@@ -16,6 +16,7 @@ import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { activePins } from "@/features/branches/pins";
 import { summarizeFastForward } from "@/features/branches/fastForward";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
+import { actionsFor } from "@/features/actions/customActions";
 import { runAction } from "@/features/actions/runAction";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
@@ -292,8 +293,17 @@ export function buildCommands(): PaletteItem[] {
   // team runs fifty times a day should be reachable the same way `Fetch all
   // remotes` is, not buried in a menu. Only with a repository open — every
   // placeholder is about one.
+  //
+  // The palette IS the `repo` surface — the app's repo-level place, where every
+  // op that is not about one file or one commit already lives. So an action
+  // placed only on the file or commit menu is not listed here; one saved before
+  // surfaces existed has no `surfaces` key, reads as `repo`, and stays exactly
+  // where its owner has been running it from.
   if (repo.current) {
-    for (const action of useSettingsStore.getState().customActions) {
+    for (const action of actionsFor(
+      useSettingsStore.getState().customActions,
+      "repo",
+    )) {
       items.push({
         type: "command",
         id: `custom-action:${action.id}`,

@@ -3,7 +3,12 @@
 // Separate from the palette entry and from Settings so "what happens when an
 // action runs" is one place: spawn, report, refresh.
 
-import { pgAlert, pgFlash } from "@/design";
+// Reached by module, not through the `@/design` barrel. `design/index.ts`
+// re-exports `context-menu.tsx`, which now imports THIS file for the file and
+// commit menu entries — the barrel would close that into an import cycle. The
+// same reason `pgFlash` was moved out to `ui-helpers.tsx` for features/keymap.
+import { pgAlert } from "@/design/dialog";
+import { pgFlash } from "@/design/ui-helpers";
 import { setActivity, useRepoStore } from "@/features/repo/useRepoStore";
 import { appErrorMessage } from "@/lib/errors";
 import { runCustomAction } from "@/lib/tauri";

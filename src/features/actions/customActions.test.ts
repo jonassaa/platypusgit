@@ -8,14 +8,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  actionsFor,
   blankAction,
+  commitContext,
   describeResult,
+  fileContext,
   isSavableAction,
   newActionId,
   normalizeAction,
   removeAction,
   repoContext,
   shouldShowOutput,
+  showsOn,
   upsertAction,
   type CustomAction,
 } from "./customActions";
@@ -26,6 +30,7 @@ const action = (over: Partial<CustomAction> = {}): CustomAction => ({
   command: "code -g $FILE",
   showOutput: false,
   refreshAfter: true,
+  surfaces: ["repo"],
   ...over,
 });
 
@@ -116,5 +121,83 @@ describe("the context sent for a repo-level invocation", () => {
 
   it("tolerates a detached HEAD", () => {
     expect(repoContext(null).branch).toBeNull();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// WHERE AN ACTION SHOWS UP (#225, second half)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("surfaces", () => {
+  it("defaults a new action to the palette alone", () => {
+    expect(blankAction().surfaces).toEqual(["repo"]);
+  });
+
+  it("treats an action with no surfaces field as a palette action", () => {
+    // THE MIGRATION. Every action persisted before this feature existed has no
+    // `surfaces` key, and it was a palette action — so that is what it stays.
+    const legacy = { ...action(), surfaces: undefined } as unknown as CustomAction;
+    expect(normalizeAction(legacy).surfaces).toEqual(["repo"]);
+  });
+
+  it("drops unknown surfaces and duplicates, in a canonical order", () => {
+    const messy = {
+      ...action(),
+      surfaces: ["commit", "file", "commit", "branch"],
+    } as unknown as CustomAction;
+    expect(normalizeAction(messy).surfaces).toEqual(["file", "commit"]);
+  });
+
+  it("reads a surface off an action", () => {
+    const a = action({ surfaces: ["file", "commit"] });
+    expect(showsOn(a, "file")).toBe(true);
+    expect(showsOn(a, "commit")).toBe(true);
+    expect(showsOn(a, "repo")).toBe(false);
+  });
+
+  it("filters a list to one surface, in list order", () => {
+    const list = [
+      action({ id: "a", surfaces: ["repo"] }),
+      action({ id: "b", surfaces: ["file"] }),
+      action({ id: "c", surfaces: ["repo", "file"] }),
+    ];
+    expect(actionsFor(list, "file").map((a) => a.id)).toEqual(["b", "c"]);
+    expect(actionsFor(list, "commit")).toEqual([]);
+  });
+
+  it("refuses to save an action that would show up nowhere", () => {
+    // An action reachable from no surface is one that can never be run: it
+    // exists in Settings and does nothing. Disabling Save says so where the
+    // three empty toggles are, rather than silently putting one back.
+    expect(isSavableAction(action({ surfaces: [] }))).toBe(false);
+    expect(isSavableAction(action({ surfaces: ["commit"] }))).toBe(true);
+  });
+});
+
+describe("the context sent for a file selection", () => {
+  it("carries the selected paths and still leaves repo to the backend", () => {
+    const ctx = fileContext("main", ["src/a.ts", "src/b.ts"]);
+    expect(ctx.repo).toBe("");
+    expect(ctx.files).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(ctx.branch).toBe("main");
+    expect(ctx.sha).toBeNull();
+  });
+
+  it("drops blank paths rather than sending an empty $FILE", () => {
+    expect(fileContext(null, ["", "  ", "a.ts"]).files).toEqual(["a.ts"]);
+  });
+});
+
+describe("the context sent for a commit", () => {
+  it("carries the sha and no files", () => {
+    const ctx = commitContext("main", "abc1234");
+    expect(ctx.sha).toBe("abc1234");
+    expect(ctx.files).toEqual([]);
+    expect(ctx.repo).toBe("");
+    expect(ctx.branch).toBe("main");
+  });
+
+  it("sends null rather than an empty sha", () => {
+    expect(commitContext(null, "").sha).toBeNull();
   });
 });

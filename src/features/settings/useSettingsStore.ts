@@ -4,7 +4,10 @@ import { type DateFormat, isDateFormat } from "@/lib/commitDate";
 import { DATE_COL_W } from "@/design/graph-geometry";
 import type { UpdateChannel, UpdateRefsMode } from "@/lib/types";
 import type { SavedIdentity } from "@/features/commits/identity/identityList";
-import type { CustomAction } from "@/features/actions/customActions";
+import {
+  coerceCustomActions,
+  type CustomAction,
+} from "@/features/actions/customActions";
 import {
   DEFAULT_HEAD_WEIGHT,
   HEAD_WEIGHTS,
@@ -1462,6 +1465,13 @@ function coerceSettings(
   // Backfill logo colors for custom themes saved before the slots existed, drop
   // anything unusable, and keep the ids so `activeThemeId` still resolves.
   out.customThemes = normalizeCustomThemes(out.customThemes, base.customThemes);
+
+  // Custom actions (#225). Object-valued, so the scalar type-guard above
+  // never looked at them: the list arrives from localStorage — or from a
+  // shared settings file — exactly as it was written. This is where an
+  // action saved before `surfaces` existed is carried forward as a palette
+  // action, which is the only surface it ever had.
+  out.customActions = coerceCustomActions(out.customActions) ?? base.customActions;
 
   // THEME PREFERENCE (#236). Runs after `customThemes` so both the repair and
   // the seed can see the theme list this payload actually brings.

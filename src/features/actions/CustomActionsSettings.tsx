@@ -12,12 +12,17 @@ import { PGButton, PGInput, PGToggle } from "@/design";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 
 import {
+  ACTION_SURFACES,
   PLACEHOLDERS,
+  SURFACE_LABELS,
   blankAction,
   isSavableAction,
   normalizeAction,
+  normalizeSurfaces,
   removeAction,
+  showsOn,
   upsertAction,
+  type ActionSurface,
   type CustomAction,
 } from "./customActions";
 
@@ -44,7 +49,8 @@ export function CustomActionsSettings() {
           lineHeight: 1.5,
         }}
       >
-        Your own commands, in the command palette. The command is a program and
+        Your own commands, wherever you put them — the command palette, the file
+        context menu, the commit context menu. The command is a program and
         its arguments —{" "}
         <strong>not a shell line</strong>: quotes group arguments, and{" "}
         <code style={{ fontFamily: "var(--font-mono)" }}>| &gt; ; &amp;&amp;</code>{" "}
@@ -89,6 +95,12 @@ export function CustomActionsSettings() {
                 }}
               >
                 {a.command}
+              </div>
+              {/* Where it shows up, on the row rather than only inside the
+                  editor: "why is this not in my file menu" is the question a
+                  list that only shows names cannot answer. */}
+              <div style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
+                {surfaceSummary(a)}
               </div>
             </div>
             <PGButton
@@ -174,12 +186,33 @@ function ActionEditor({
           style={{ flex: "2 1 240px", minWidth: 0 }}
         />
       </div>
+      {/* Where it shows up (#225). Toggles rather than a PGSelect because the
+          answer is a SET, not a choice — an action can sensibly be on the file
+          menu and in the palette at once, and most useful ones are. */}
+      <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
+          Shows up in:
+        </span>
+        {ACTION_SURFACES.map((surface) => (
+          <PGToggle
+            key={surface}
+            checked={showsOn(draft, surface)}
+            onChange={() => onChange(toggleSurface(draft, surface))}
+            label={
+              <span style={{ fontSize: "var(--fs-11)" }}>
+                {SURFACE_LABELS[surface]}
+              </span>
+            }
+            testId={`custom-action-surface-${surface}`}
+          />
+        ))}
+      </div>
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <PGToggle
             checked={draft.showOutput}
             onChange={(v) => onChange({ ...draft, showOutput: v })}
-            data-testid="custom-action-show-output"
+            testId="custom-action-show-output"
           />
           <span style={{ fontSize: "var(--fs-11)" }}>
             Show output (a failure is always shown)
@@ -189,16 +222,18 @@ function ActionEditor({
           <PGToggle
             checked={draft.refreshAfter}
             onChange={(v) => onChange({ ...draft, refreshAfter: v })}
-            data-testid="custom-action-refresh-after"
+            testId="custom-action-refresh-after"
           />
           <span style={{ fontSize: "var(--fs-11)" }}>Refresh when it exits</span>
         </label>
         <PGButton
           size="xs"
           variant="primary"
-          // Name and command non-blank, and nothing more: whether the command
-          // PARSES is the backend's question, and its refusal names what is
-          // wrong. A second parser here would be a second place to drift.
+          // Name and command non-blank, and at least one surface. Whether the
+          // command PARSES is still the backend's question — its refusal names
+          // what is wrong, and a second parser here would be a second place to
+          // drift. The surface check is the opposite case: it CAN be answered
+          // here, and an action placed nowhere is one that can never be run.
           disabled={!isSavableAction(draft)}
           onClick={onSave}
           data-testid="custom-action-save"
@@ -211,4 +246,27 @@ function ActionEditor({
       </div>
     </div>
   );
+}
+
+/**
+ * Flip one surface on the draft.
+ *
+ * Rebuilt through `normalizeSurfaces` rather than pushed onto: the stored order
+ * is canonical, so two actions ticked the same way compare equal however their
+ * owners clicked — which is what lets a settings export diff cleanly.
+ */
+function toggleSurface(draft: CustomAction, surface: ActionSurface): CustomAction {
+  const on = showsOn(draft, surface);
+  const next = normalizeSurfaces(draft.surfaces).filter((s) => s !== surface);
+  return {
+    ...draft,
+    surfaces: normalizeSurfaces(on ? next : [...next, surface]),
+  };
+}
+
+/** Where a saved action shows up, for its row. */
+function surfaceSummary(a: CustomAction): string {
+  return normalizeSurfaces(a.surfaces)
+    .map((s) => SURFACE_LABELS[s])
+    .join(", ");
 }

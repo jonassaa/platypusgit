@@ -12,6 +12,7 @@ import { headAncestryOf } from "@/features/commits/headAncestry";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import type {
+  ActionContext,
   BranchInfo,
   CommitInfo,
   DiffToolTarget,
@@ -37,6 +38,14 @@ import { absoluteInWorkdir, relativeToWorkdir } from "@/lib/paths";
 // closing a cycle back through this file (which imports chordFor from there).
 import { pgFlash } from "./ui-helpers";
 import { describeFastForward } from "@/features/branches/fastForward";
+import {
+  actionsFor,
+  commitContext,
+  fileContext,
+  type ActionSurface,
+} from "@/features/actions/customActions";
+import { runAction } from "@/features/actions/runAction";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 
 export interface ContextMenuItem {
   label?: ReactNode;
@@ -658,6 +667,11 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
         pgFlash("copied subject");
       },
     },
+    // The user's own commands, last (#225). Deliberately not on
+    // `commitMultiMenuItems`: `$SHA` is singular and the substitution has no
+    // list form for it, so the honest answer for a selection of five is that
+    // this menu does not offer actions — not "the first one, silently".
+    ...customActionItems("commit", commitContext(headBranch(), commit?.sha ?? null)),
   ];
 }
 
@@ -978,6 +992,54 @@ export function externalDiffItem(
       void useRepoStore.getState().openInDifftool(target, usable);
     },
   };
+}
+
+/**
+ * The user's own commands, on one context menu (#225).
+ *
+ * The second half of custom actions: the first shipped the parser, the Settings
+ * list and the palette entry, which left `$FILE`, `$FILES` and `$SHA`
+ * advertised and unfillable — nothing populated an `ActionContext` past the
+ * repository and the branch. A menu is where a file or a commit is already
+ * named, so it is where those placeholders can finally mean something.
+ *
+ * Each action says which surfaces it wants (`surfaces`), so this is a filter,
+ * not a broadcast: an action nobody placed on the file menu never appears
+ * there. The leading divider is INSIDE the returned block, so a surface with no
+ * actions contributes nothing at all — an empty separated block reads as a menu
+ * that failed to render its own entries.
+ *
+ * `context` carries only what the SURFACE knows. `repo` stays empty on purpose:
+ * `run_custom_action` overwrites it with the repository it resolves, which is
+ * also the child process's cwd, so a second source of truth here could only
+ * ever disagree with the one that matters.
+ */
+export function customActionItems(
+  surface: ActionSurface,
+  context: ActionContext,
+): ContextMenuItem[] {
+  // Every placeholder is about an open repository, and `runAction` declines
+  // without one — so an entry offered here would be one that does nothing.
+  if (!useRepoStore.getState().current) return [];
+  const actions = actionsFor(useSettingsStore.getState().customActions, surface);
+  if (!actions.length) return [];
+  return [
+    { divider: true },
+    ...actions.map(
+      (a): ContextMenuItem => ({
+        // The palette's icon for the same action, so one command looks like one
+        // command wherever it is reached from.
+        icon: "terminal",
+        label: a.name,
+        onClick: () => void runAction(a, context),
+      }),
+    ),
+  ];
+}
+
+/** The branch a menu-built `ActionContext` reports as `$BRANCH`. */
+function headBranch(): string | null {
+  return useRepoStore.getState().headInfo?.branch ?? null;
 }
 
 export function worktreeMenuItems(
@@ -1833,6 +1895,15 @@ export function fileMenuItems(
         if (path) useRepoStore.getState().openInTerminal(path);
       },
     },
+    // The user's own commands (#225), directly under the other "run something
+    // outside the app on this file" entries — and ABOVE the danger block, which
+    // stays the last thing in this menu on every surface that has one.
+    //
+    // Only on the ordinary file menu. A conflicted, embedded or submodule row
+    // returned its own menu further up; those are not the file menu with extras
+    // removed, so they do not grow a file-surface action either — the same call
+    // `externalDiffItem` made.
+    ...customActionItems("file", fileContext(headBranch(), [path])),
     { divider: true },
     // An untracked file has no copy in the index or in history, so deleting it
     // is for good — say so, and never do it on a single click the way a
@@ -2080,6 +2151,11 @@ export function multiFileMenuItems(
       },
     );
   }
+
+  // Every selected path, which is what `$FILES` is for — the one placeholder
+  // that expands to several whole arguments. Sending only the first would run
+  // the program on the wrong thing without saying so.
+  items.push(...customActionItems("file", fileContext(headBranch(), all)));
 
   // The untracked half of the selection, which is what Delete acts on. Filtered
   // against the selection for the same reason `promptStashPaths` filters: the
