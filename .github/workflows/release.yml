@@ -406,22 +406,32 @@ jobs:
       # image bump does not silently break this; the name filter is required
       # because that `bin` directory also holds non-version `x64`/`x86`/`arm64`
       # directories, and `[version]` would throw on those.
-      - name: Put the Windows SDK's makeappx on PATH
+      # `makepri.exe` is required for the same reason and lives in the same
+      # directory: it builds the resources.pri without which the package's
+      # target-size app-list icons are invisible to Windows and the taskbar
+      # falls back to an accent-coloured plate behind the icon. Both tools are
+      # demanded HERE so a runner image that ships one and not the other fails
+      # on this step, naming the tool, rather than mid-pack.
+      - name: Put the Windows SDK's makeappx and makepri on PATH
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $root = 'C:\Program Files (x86)\Windows Kits\10\bin'
           if (-not (Test-Path $root)) { throw "no Windows 10 SDK at $root" }
           $sdk = Get-ChildItem $root -Directory |
+              Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
               Where-Object {
-                  $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and
-                  (Test-Path (Join-Path $_.FullName 'x64\makeappx.exe'))
+                  $x64 = Join-Path $_.FullName 'x64'
+                  (Test-Path (Join-Path $x64 'makeappx.exe')) -and
+                  (Test-Path (Join-Path $x64 'makepri.exe'))
               } |
               Sort-Object { [version]$_.Name } -Descending |
               Select-Object -First 1
-          if (-not $sdk) { throw "no x64\makeappx.exe under any SDK version in $root" }
+          if (-not $sdk) {
+              throw "no SDK version in $root has both x64\makeappx.exe and x64\makepri.exe"
+          }
           $bin = Join-Path $sdk.FullName 'x64'
-          Write-Host "makeappx found in: $bin"
+          Write-Host "makeappx + makepri found in: $bin"
           $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       # The Store identity comes from REPOSITORY VARIABLES, not from the script's
@@ -490,9 +500,27 @@ jobs:
               if (-not (Test-Path $pkg)) { throw "msixbundle is missing the $arch package" }
               $inner = "inner-$arch"
               Expand-Archive -Path $pkg -DestinationPath $inner -Force
-              foreach ($f in 'platypusgit.exe', 'pgit.cmd', 'AppxManifest.xml') {
+              # resources.pri joins the root-file list because the package is
+              # not merely worse without it — the target-size icons below become
+              # unreadable, since their qualifiers live in their FILENAMES and
+              # only the resource index turns a filename into a qualifier.
+              foreach ($f in 'platypusgit.exe', 'pgit.cmd', 'AppxManifest.xml', 'resources.pri') {
                   if (-not (Test-Path (Join-Path $inner $f))) {
                       throw "$arch package has no $f at its root"
+                  }
+              }
+              # The unplated app-list icons. Their absence is invisible in every
+              # other check here — the package installs, launches and passes
+              # certification — and shows up only as an accent-coloured plate
+              # behind the icon on the user's taskbar and Start, which is what
+              # shipped before #390. Both ends of the ladder are checked so a
+              # half-rendered set cannot pass either.
+              foreach ($n in 16, 256) {
+                  foreach ($form in '_altform-unplated', '_altform-lightunplated') {
+                      $asset = Join-Path $inner "Assets\Square44x44Logo.targetsize-$n$form.png"
+                      if (-not (Test-Path $asset)) {
+                          throw "$arch package is missing $asset — the taskbar icon would get a coloured plate"
+                      }
                   }
               }
               $manifest = Get-Content (Join-Path $inner 'AppxManifest.xml') -Raw

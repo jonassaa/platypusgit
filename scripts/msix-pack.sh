@@ -39,6 +39,31 @@ set -eu
 # ever added, it comes back here together with the wide asset.
 LOGOS="Square44x44Logo Square71x71Logo Square150x150Logo StoreLogo"
 
+# The target-size app-list ladder, rendered by scripts/gen-msix-appicons.sh into
+# src-tauri/icons/msix/. Keep in step with that script's SIZES —
+# src-tauri/tests/msix_identity.rs fails the build if the two lists disagree or
+# if a file named here is missing.
+#
+# THIS IS THE FIX FOR THE BLUE PLATE. Shipping only Square44x44Logo.png makes
+# Windows draw the icon on a system icon plate — a rounded square in the user's
+# accent colour, blue by default — on the taskbar, Start, the all-apps list,
+# task view, ALT+TAB and snap assist. The plate exists to guarantee contrast for
+# icons that assume one; ours is transparent and needs none.
+TARGETSIZES="16 20 24 30 32 36 40 48 60 64 72 80 96 256"
+
+# Each size is staged under all THREE candidate names below, byte-identical.
+# Microsoft: "Separate files for all three theme variations (default, light
+# theme, dark theme) are required, even if the icon is the same. If you do not
+# provide these files, your icon will appear on a system icon plate to ensure a
+# minimum contrast ratio." Identical is correct HERE specifically because the
+# mark is transparent and reads on light and dark alike — an icon with a plated
+# background of its own would need three genuinely different renders.
+#
+# Spelled out as three cp lines below rather than a nested loop over a suffix
+# list: one of the three suffixes is the EMPTY string, which POSIX word
+# splitting cannot carry in a list, and faking it with a sentinel costs more
+# than it saves.
+
 VERSION=
 ARCH=
 EXE=
@@ -129,6 +154,18 @@ for logo in $LOGOS; do
     cp "$src" "$OUT/Assets/$logo.png"
 done
 
+for n in $TARGETSIZES; do
+    src="$root/src-tauri/icons/msix/Square44x44Logo.targetsize-$n.png"
+    [ -f "$src" ] || {
+        echo "missing target-size icon: $src" >&2
+        echo "Re-render the ladder: sh scripts/gen-msix-appicons.sh" >&2
+        exit 1
+    }
+    cp "$src" "$OUT/Assets/Square44x44Logo.targetsize-$n.png"
+    cp "$src" "$OUT/Assets/Square44x44Logo.targetsize-${n}_altform-unplated.png"
+    cp "$src" "$OUT/Assets/Square44x44Logo.targetsize-${n}_altform-lightunplated.png"
+done
+
 # sed, not a template engine: four fixed tokens. The delimiter is | because a
 # publisher CN contains commas, spaces and dots but never a pipe.
 sed -e "s|__MSIX_IDENTITY_NAME__|$IDENTITY_NAME|g" \
@@ -149,12 +186,16 @@ fi
 echo "staged $ARCH payload in $OUT (version $MSIX_VERSION)"
 
 if [ "$STAGE_ONLY" -eq 1 ]; then
-    echo "--stage-only: not calling makeappx"
+    echo "--stage-only: not calling makepri or makeappx"
     exit 0
 fi
 
-if ! command -v makeappx.exe >/dev/null 2>&1; then
-    echo "makeappx.exe is not on PATH." >&2
+# Both tools, checked together: they live in the SAME Windows SDK bin directory,
+# so a missing one is always the same missing PATH entry. makepri is not
+# optional — see the resource-index step below.
+for tool in makepri.exe makeappx.exe; do
+    command -v "$tool" >/dev/null 2>&1 && continue
+    echo "$tool is not on PATH." >&2
     echo >&2
     echo "It ships with the Windows 10 SDK, but the SDK's bin directory is NOT" >&2
     echo "on PATH by default — including on GitHub's windows runners, which is" >&2
@@ -165,9 +206,10 @@ if ! command -v makeappx.exe >/dev/null 2>&1; then
     # the character 0x64. A Windows path is nothing but backslashes.
     printf '  "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\<version>\\x64"\n' >&2
     echo >&2
-    echo "On a non-Windows host, use --stage-only instead." >&2
+    echo "There is no ARM build of makepri; the x64 one runs fine under" >&2
+    echo "emulation. On a non-Windows host, use --stage-only instead." >&2
     exit 1
-fi
+done
 
 # No signing here, deliberately: the Microsoft Store re-signs the package, which
 # is the entire economics of this channel (spec §Problem). Signing locally is for
@@ -189,6 +231,49 @@ fi
 # environment leaves no doubt about which process reads it.
 export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
+
+# Build the resource index. WITHOUT THIS THE TARGET-SIZE LADDER IS DEAD WEIGHT:
+# the qualifiers that pick a candidate (`targetsize-48`, `_altform-unplated`)
+# live in the FILENAME, and nothing reads a filename as a qualifier except the
+# Modern Resource Manager reading resources.pri. `makeappx pack` does not build
+# one. A package without it resolves `Square44x44Logo` to the single literal
+# file the manifest names, every variant beside it is ignored, and Windows —
+# finding no unplated candidate — draws the accent-coloured plate. Microsoft:
+#
+#   "If you create target-based assets as described in the section above ...
+#    you'll have to generate a new PRI file."
+#   — learn.microsoft.com/windows/msix/desktop/desktop-to-uwp-manual-conversion
+#
+# The config file is written OUTSIDE the payload directory on purpose. The
+# documented flow puts priconfig.xml in the package root, where makeappx then
+# packages it — harmless but it ships a build artifact to every user, and it
+# makes the payload tree stop matching what the shape gate expects to find.
+priconfig="$OUT.priconfig.xml"
+rm -f "$priconfig"
+makepri.exe createconfig /cf "$priconfig" /dq en-US /o
+
+# Drop the <packaging> block. It declares autoResourcePackage qualifiers
+# (Language, Scale, DXFeatureLevel) that ask makepri to SPLIT its output into
+# per-qualifier resource packages — a shape that belongs to a bundle assembled
+# by makepri, not to the two single-arch packages this script produces and
+# release.yml bundles itself. One package, one resources.pri, nothing to lose
+# track of.
+sed -i.bak '/<packaging>/,/<\/packaging>/d' "$priconfig"
+rm -f "$priconfig.bak"
+
+# /pr is the project root makepri indexes; /of names the index it writes. It
+# lands INSIDE the payload because that is where Windows looks for it, and it is
+# written after the scan, so it never indexes itself.
+makepri.exe new /pr "$OUT" /cf "$priconfig" /of "$OUT/resources.pri" /o
+rm -f "$priconfig"
+
+# makepri exits 0 having written nothing in at least one failure mode (an
+# AppxManifest it could not read), and the package that follows would look
+# perfectly well-formed while being the exact bug this whole step exists to fix.
+[ -s "$OUT/resources.pri" ] || {
+    echo "makepri produced no resources.pri in $OUT" >&2
+    exit 1
+}
 
 makeappx.exe pack /d "$OUT" /p "$OUT.msix" /o
 echo "packed $OUT.msix"
