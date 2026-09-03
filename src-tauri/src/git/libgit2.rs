@@ -1520,6 +1520,27 @@ fn changed_line_count(
     Ok(n)
 }
 
+/// git's own spelling of "the last line of this side has no newline", including
+/// the `\n` that terminates the marker line itself. `git apply` reads it; a
+/// patch that omits it asserts a trailing newline the file does not have.
+const NO_NEWLINE_MARKER: &str = "\\ No newline at end of file\n";
+
+/// Emit one body line whose record does NOT end in `\n`, terminating it so the
+/// patch stays line-oriented.
+///
+/// `ends_file` says whether the missing newline is real for the side this marker
+/// puts the line on. When the side carries on past this line, the newline is not
+/// missing there at all — the line simply is not the last one — so the marker
+/// must be withheld and the `\n` is genuine.
+fn push_unterminated(body: &mut String, marker: char, content: &str, ends_file: bool) {
+    body.push(marker);
+    body.push_str(content);
+    body.push('\n');
+    if ends_file {
+        body.push_str(NO_NEWLINE_MARKER);
+    }
+}
+
 /// Build a unified-diff patch containing only the selected changed lines of one
 /// hunk (#61 D7).
 ///
@@ -1533,6 +1554,12 @@ fn changed_line_count(
 /// context** (we are not removing it, so it exists on both sides), and an
 /// **unselected `+` is dropped** (it exists on neither side of this partial
 /// patch). For `Reverse` those two rules swap.
+///
+/// A file whose last line has no trailing newline is the trap here: the result
+/// goes to a real `git apply`, so the `\ No newline at end of file` marker is
+/// part of the data, not decoration. Fabricating the newline instead stages a
+/// blob one byte longer than the file on disk (so the row the user just staged
+/// comes straight back as modified) or makes `git apply` reject the patch.
 fn patch_text_for_lines(
     diff: &git2::Diff,
     delta_index: usize,
@@ -1590,7 +1617,10 @@ fn patch_text_for_lines(
         PatchDirection::Reverse => '+',
     };
 
-    let mut body = String::new();
+    // Pass one: decide the marker every kept line ends up with. The bodies are
+    // NOT serialized yet, because whether a record's missing newline is real
+    // depends on where the line lands after the selection — see below.
+    let mut kept: Vec<(char, String)> = Vec::new();
     let mut old_count: u32 = 0;
     let mut new_count: u32 = 0;
     let mut changed_seen: usize = 0;
@@ -1599,6 +1629,12 @@ fn patch_text_for_lines(
     for line_i in 0..line_count {
         let line = patch.line_in_hunk(hunk_index, line_i).map_err(AppError::from)?;
         let origin = line.origin();
+        // `=`/`>`/`<` (CONTEXT_EOFNL / ADD_EOFNL / DEL_EOFNL) are git2's way of
+        // handing back the `\ No newline at end of file` marker as a line of its
+        // own, carrying the marker text as its content. They are dropped here and
+        // regenerated in pass two: which SIDE the missing newline belongs to is a
+        // property of the marker each line ends up with, and the selection can
+        // move a line from one side to the other.
         if !matches!(origin, '+' | '-' | ' ') {
             continue;
         }
@@ -1630,10 +1666,49 @@ fn patch_text_for_lines(
             '+' => new_count += 1,
             _ => {}
         }
-        body.push(marker);
-        body.push_str(content);
-        if !content.ends_with('\n') {
-            body.push('\n');
+        kept.push((marker, content.to_string()));
+    }
+
+    // Pass two. A record git2 hands back without a trailing `\n` is, by
+    // construction, the last line of whichever side(s) it belongs to in the
+    // ORIGINAL diff — but this patch is a subset, so the question to answer per
+    // line is "does the side I am on still end here?". These are the two ends of
+    // the patch we are actually emitting.
+    let last_old = kept.iter().rposition(|(m, _)| matches!(m, ' ' | '-'));
+    let last_new = kept.iter().rposition(|(m, _)| matches!(m, ' ' | '+'));
+
+    let mut body = String::new();
+    for (i, (marker, content)) in kept.iter().enumerate() {
+        if content.ends_with('\n') {
+            body.push(*marker);
+            body.push_str(content);
+            continue;
+        }
+        let ends_old = Some(i) == last_old;
+        let ends_new = Some(i) == last_new;
+        match marker {
+            '-' => push_unterminated(&mut body, '-', content, ends_old),
+            '+' => push_unterminated(&mut body, '+', content, ends_new),
+            // A context line is on BOTH sides, so it only gets the marker when
+            // both sides end on it — which is exactly what git's `=` means.
+            _ => match (ends_old, ends_new) {
+                (true, true) => push_unterminated(&mut body, ' ', content, true),
+                // One side ends here and the other carries on past it, so the
+                // line has a newline on one side and not the other. A context
+                // line cannot say that; git spells it as a removal followed by
+                // a re-addition, and the pair costs the same one old line and
+                // one new line the context line did — so the counts above stay
+                // right.
+                (true, false) => {
+                    push_unterminated(&mut body, '-', content, true);
+                    push_unterminated(&mut body, '+', content, false);
+                }
+                (false, true) => {
+                    push_unterminated(&mut body, '-', content, false);
+                    push_unterminated(&mut body, '+', content, true);
+                }
+                (false, false) => push_unterminated(&mut body, ' ', content, false),
+            },
         }
     }
 
