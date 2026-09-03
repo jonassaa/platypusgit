@@ -564,3 +564,26 @@ fn the_refusal_reports_a_blocked_holder_so_the_ui_can_hide_the_offer() {
         other => panic!("expected BranchHeldByWorktree, got {other:?}"),
     }
 }
+
+#[test]
+fn add_refuses_an_invalid_new_branch_name_and_creates_nothing() {
+    // The dialog's new-branch field is free text, so it gets the same refusal
+    // create_branch got in #214 rather than a stringified libgit2 message.
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+    let (_hold, path) = worktree_target("bad-branch");
+
+    let err = backend
+        .worktree_add(&handle.id, &path, WorktreeBranch::New("foo bar".to_string()))
+        .expect_err("an invalid branch name must be refused");
+    assert!(matches!(err, AppError::InvalidRef(_)), "got {err:?}");
+
+    // Refused before anything was written to disk or to the ref store.
+    assert!(!path.exists(), "{} should not have been created", path.display());
+    assert!(backend.worktrees(&handle.id).unwrap().is_empty());
+    assert!(!backend
+        .branches(&handle.id)
+        .unwrap()
+        .iter()
+        .any(|b| b.name.contains("foo")));
+}
