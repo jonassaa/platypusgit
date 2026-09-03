@@ -400,11 +400,18 @@ export function PGStatusItem({
   label,
   tone = "default",
   onClick,
+  testId,
 }: {
   icon?: IconName | string;
   label?: ReactNode;
   tone?: "default" | "accent" | "success" | "warn" | "danger";
   onClick?: () => void;
+  /**
+   * A stable hook for the e2e suite. Threaded explicitly rather than spread
+   * from `...rest`, like every other design-system row: a status item's own
+   * label is prose, and a spec that waits on prose dies to a copy edit.
+   */
+  testId?: string;
 }) {
   const tones = {
     default: "var(--fg-2)",
@@ -415,6 +422,7 @@ export function PGStatusItem({
   };
   return (
     <div
+      data-testid={testId}
       onClick={onClick}
       style={{
         display: "flex",

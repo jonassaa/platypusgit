@@ -38,6 +38,7 @@ import {
   useRepoStore,
 } from "@/features/repo/useRepoStore";
 import { useFsWatch } from "@/features/repo/useFsWatch";
+import { startAutoFetch } from "@/features/repo/autoFetch";
 import { ActivityStatus } from "@/features/repo/ActivityStatus";
 import { LoadingStatus } from "@/features/repo/LoadingStatus";
 import { primaryActivity } from "@/features/repo/repoActivity";
@@ -236,23 +237,15 @@ export function AppShell() {
   // App-global subscription inside; the watch itself follows this repository.
   useFsWatch(repo?.id ?? null);
 
+  // Auto-fetch on a timer, and the deadline that belongs to timer-started
+  // fetches alone (#234, #263). The policy — which fetches may be killed on a
+  // clock and which may never be — lives in `startAutoFetch` rather than in this
+  // effect body, so it can be tested without rendering the shell.
   const autoFetchEnabled = useSettingsStore((s) => s.autoFetchEnabled);
   const autoFetchMinutes = useSettingsStore((s) => s.autoFetchMinutes);
   React.useEffect(() => {
     if (!repo || !autoFetchEnabled) return;
-    const id = window.setInterval(
-      () => {
-        // Skip the tick while a fetch is still running (#234). A remote that
-        // stalls outlives the interval, and every tick used to start ANOTHER
-        // `git fetch` against it — a pile of stuck processes the user never
-        // asked for, growing until the app is quit. Nothing is lost by skipping:
-        // the next tick fetches, and a fetch is idempotent.
-        if (useRepoStore.getState().activity.fetch) return;
-        useRepoStore.getState().fetchAll();
-      },
-      Math.max(1, autoFetchMinutes) * 60_000,
-    );
-    return () => window.clearInterval(id);
+    return startAutoFetch(autoFetchMinutes);
   }, [repo, autoFetchEnabled, autoFetchMinutes]);
 
   // Single global keymap listener — resolves chord → action → handler or

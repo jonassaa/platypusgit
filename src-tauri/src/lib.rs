@@ -89,9 +89,9 @@ pub fn run() {
     // The notice is printed unconditionally for a debug launch, and names the
     // already-running case, because that case cannot be detected from here: the
     // single-instance plugin forwards this invocation's intent and exits inside
-    // `Builder::run()` below, so a `pgit --debug` against a running app would
-    // otherwise return an immediate, silent, log-free 0. stderr, not stdout —
-    // stdout is where the log itself is about to go.
+    // the builder below (`build()`, then `run()`), so a `pgit --debug` against a
+    // running app would otherwise return an immediate, silent, log-free 0.
+    // stderr, not stdout — stdout is where the log itself is about to go.
     let debug_launch = matches!(parsed, cli::Parsed::DebugLaunch(_));
     if debug_launch {
         eprintln!(
@@ -393,12 +393,19 @@ pub fn run() {
             commands::terminal::term_resize,
             commands::terminal::term_close,
         ])
-        // A shell must not outlive the window that hosts it (#243). Called
-        // explicitly rather than left to a `Drop`: the state is behind an `Arc`
-        // that every reader thread holds, so its drop runs at a time nobody
-        // controls — and an orphaned interactive shell is not a leak the user
-        // can see, only one their process list can.
+        // Nothing the user started may outlive the window they started it from.
+        //
+        // Both arms below are cleanups the app must perform ITSELF, because the
+        // way this process ends runs no destructors: `tao::EventLoop::run` is
+        // `-> !` and finishes with `std::process::exit`, on every platform. A
+        // `Drop` impl, a `kill_on_drop` child, an in-flight future — none of
+        // them unwind.
         .on_window_event(|window, event| {
+            // A shell must not outlive the window that hosts it (#243). Called
+            // explicitly rather than left to a `Drop`: the state is behind an
+            // `Arc` that every reader thread holds, so its drop runs at a time
+            // nobody controls — and an orphaned interactive shell is not a leak
+            // the user can see, only one their process list can.
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 use tauri::Manager as _;
                 if let Some(terminals) =
@@ -407,7 +414,54 @@ pub fn run() {
                     terminals.close_all();
                 }
             }
+            // Neither may a network op (#263). `kill_on_drop(true)` is the
+            // documented backstop for a DROPPED future, and quitting drops
+            // nothing: measured, a `kill_on_drop` child was still alive 500 ms
+            // after its parent's `process::exit(0)`. So a `git clone` escaped
+            // the app and carried on populating the destination the Clone
+            // dialog had already reported as never created.
+            //
+            // `CloseRequested`, not `Destroyed`: it fires while the process is
+            // still alive and there is still something that can signal git.
+            //
+            // Gated on the label because this handler is app-global — the merge
+            // resolver is a second window, and closing it must not stop a fetch
+            // running behind it. `cancel_all` sends SIGTERM only, so git gets to
+            // run its own lock-file and clone-junk cleanup on the way out; see
+            // `cancel.rs`.
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. })
+                && cancel::close_cancels_everything(window.label())
+            {
+                let signalled = cancel::cancel_all();
+                if signalled > 0 {
+                    log::info!("window closing — cancelled {signalled} network op(s) in flight");
+                }
+            }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // The OTHER ways out (#263). `CloseRequested` above is emitted from
+        // tao's `windowShouldClose:` and nowhere else, so it covers the window's
+        // own close button and NOT ⌘Q: on macOS `applicationWillTerminate` goes
+        // straight to `LoopDestroyed`, which arrives here as `RunEvent::Exit`.
+        // Without this, quitting with a keystroke still leaves a `git clone`
+        // running against a destination the app has already forgotten.
+        //
+        // Being reached twice on the ordinary close path costs nothing:
+        // `cancel_all` is always the polite SIGTERM, never the escalation, and a
+        // registration that has already unwound is no longer in the registry.
+        //
+        // `Builder::run(context)` is documented as `build(context)?` followed by
+        // `App::run(|_, _| {})`, so this is the same call with a callback.
+        .run(|_app, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+            ) {
+                let signalled = cancel::cancel_all();
+                if signalled > 0 {
+                    log::info!("app exiting — cancelled {signalled} network op(s) in flight");
+                }
+            }
+        });
 }

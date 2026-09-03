@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createServer, type Server, type Socket } from "node:net";
 import {
   chmodSync,
   mkdtempSync,
@@ -72,6 +73,58 @@ export class TempRepo {
       return false;
     }
   }
+}
+
+/**
+ * A git remote that connects and then says nothing, forever (#263 item 3).
+ *
+ * The deterministic stall, with no network involved: a loopback listener that
+ * ACCEPTS the connection and never answers is exactly the failure a cancel
+ * button exists for, and the one case a timeout-free `git` sits in until
+ * something kills it. The spec process and the app share a network namespace
+ * (one container, see `docker-compose.e2e.yml`), so `127.0.0.1` here is
+ * `127.0.0.1` there.
+ *
+ * `git://` on purpose: it is a built-in transport, so nothing depends on which
+ * remote helpers the image ships, and the URL needs no path that exists.
+ *
+ * Two details are load-bearing, both learned in `src-tauri/tests/net_cancel.rs`:
+ *
+ * - **The accepted sockets are held, not dropped.** Closing one makes git see
+ *   EOF and fail fast, and the test would then be about a broken connection
+ *   instead of a stalled one — a green test of the wrong thing.
+ * - **Every socket swallows its own errors.** Cancelling kills git mid-connection,
+ *   which arrives here as `ECONNRESET`; an unhandled `error` event on a socket
+ *   is a throw that takes the whole wdio worker down.
+ */
+export interface StalledRemote {
+  /** A git URL that connects and then hangs until something kills the client. */
+  readonly url: string;
+  dispose: () => void;
+}
+
+export async function stalledGitRemote(): Promise<StalledRemote> {
+  const held: Socket[] = [];
+  const server: Server = createServer((sock) => {
+    sock.on("error", () => {});
+    held.push(sock);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("stalledGitRemote: listener has no TCP port");
+  }
+  return {
+    url: `git://127.0.0.1:${address.port}/stalled.git`,
+    dispose: () => {
+      for (const sock of held) sock.destroy();
+      held.length = 0;
+      server.close();
+    },
+  };
 }
 
 export function makeTempRepo(): TempRepo {

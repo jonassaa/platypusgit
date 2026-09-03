@@ -143,6 +143,7 @@ export function ActivityStatus() {
           clicking again.
         */
         <PGStatusItem
+          testId="activity-cancel"
           icon="x"
           label={cancelRequested ? "Force stop" : "Cancel"}
           tone="danger"

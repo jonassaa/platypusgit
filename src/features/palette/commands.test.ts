@@ -158,6 +158,49 @@ describe("buildCommands", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  // Cancelling a stalled network op without a mouse (#263 item 4). The status
+  // bar's Cancel button was the only route to `cancelNetworkOps`, so a keyboard
+  // user watching a fetch hang had to reach for the pointer.
+  describe("cancel the running network op", () => {
+    const act = (label: string) => ({ label, startedAt: 1_000 });
+
+    it("is absent while nothing is running", () => {
+      expect(ids()).not.toContain("action:cancel-network");
+    });
+
+    it("appears while a fetch is running and cancels it", () => {
+      const cancelNetworkOps = vi.fn();
+      setRepo({ activity: { fetch: act("Fetching origin…") }, cancelNetworkOps });
+      const item = buildCommands().find((i) => i.id === "action:cancel-network");
+      expect(item).toBeTruthy();
+      // Names what it would stop — there can be several ops in flight, and a
+      // bare "Cancel" in a palette is a row nobody dares press.
+      expect(item!.detail).toBe("Fetching origin…");
+      item!.run();
+      expect(cancelNetworkOps).toHaveBeenCalled();
+    });
+
+    it("stays away from an op the backend cannot stop", () => {
+      // Same gate as the status bar's button (`isCancellable`): a rebase replay
+      // is libgit2 work inside one blocking call with nothing to signal, so a
+      // row offering to cancel it would be a row that does nothing.
+      setRepo({ activity: { rebase: act("Rebasing…") } });
+      expect(ids()).not.toContain("action:cancel-network");
+    });
+
+    it("relabels itself once a cancel has been asked for", () => {
+      // The second ask escalates SIGTERM → SIGKILL (#263), so the first one has
+      // to have visibly changed something — here as in the status bar.
+      setRepo({ activity: { fetch: act("Fetching origin…") } });
+      const before = buildCommands().find((i) => i.id === "action:cancel-network");
+      expect(before!.label).toBe("Cancel network operation");
+
+      setRepo({ activity: { fetch: act("Fetching origin…") }, cancelRequested: true });
+      const after = buildCommands().find((i) => i.id === "action:cancel-network");
+      expect(after!.label).toBe("Force stop network operation");
+    });
+  });
+
   it("omits stash-pop when there are no stashes", () => {
     expect(ids()).not.toContain("action:stash-pop-latest");
   });

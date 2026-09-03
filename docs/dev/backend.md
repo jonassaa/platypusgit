@@ -219,6 +219,29 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
 - **Check `is_cancelled()` after the child exits, always.** A cancel landing as
   git dies of its own accord must still win: the request is what decides the
   outcome, not who got there first.
+- **Closing the app's window cancels everything in flight** (`cancel_all`, wired
+  to `WindowEvent::CloseRequested` in `lib.rs`). `kill_on_drop(true)` is the
+  backstop for a DROPPED future, and quitting drops nothing: `tao::EventLoop::run`
+  is `-> !` and ends in `std::process::exit` on macOS, Linux and Windows alike,
+  which runs no destructor on any stack. Measured before the fix: a
+  `kill_on_drop` child was **still alive 500 ms after its parent's
+  `process::exit(0)`** — so a `git clone` outlived the app and carried on
+  populating the destination the Clone dialog had already reported as never
+  created. Two rules on the handler: it is **gated on `window.label() == "main"`**
+  (`cancel::close_cancels_everything`), because `on_window_event` is app-global
+  and closing the `merge` resolver must not stop a fetch; and it sends
+  **`SIGTERM` only, never the escalation**, because git's own
+  `remove_lock_file_on_signal` / `remove_junk_on_signal` is the only cleanup
+  still possible once our process is gone. `tests/cancel_on_close.rs` pins all
+  three, the last of them by greping `lib.rs` — the closure needs a Tauri runtime
+  no `cargo test` has. **`CloseRequested` is not every way out**: tao emits it
+  from `windowShouldClose:` only, so ⌘Q on macOS
+  (`applicationWillTerminate` → `LoopDestroyed`) never reaches it. So the app is
+  built with `build()` + `App::run(cb)` — the documented expansion of
+  `Builder::run(context)` — and `RunEvent::Exit`/`ExitRequested` calls
+  `cancel_all` too. Being reached twice on the ordinary close path is free:
+  `cancel_all` never escalates, and a finished op is already out of the
+  registry.
 - **A cancelled clone removes its partial destination**, and puts back an empty
   directory the user had picked. Even with `SIGTERM` giving git a chance to run
   its own cleanup, the leftovers (a `SIGKILL` escalation, or Windows) fail the
@@ -249,10 +272,13 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `/dev/null`.** It always discarded stdout; `wait_with_output` was there to
   drain both concurrently and avoid a deadlock. With one pipe to read, nulling
   the other removes the hazard rather than managing it.
-- **Cancellation still works because the `select!` is inside the read loop.**
-  The wait used to be one `wait_with_output`; it is now many reads, and each one
-  races the cancel token `biased`-first. A stalled fetch sits in exactly that
-  read.
+- **Cancellation still works because a stalled fetch sits in that read loop.**
+  The wait used to be one `wait_with_output`; it is now many reads, and a stalled
+  transfer sits in exactly one of them. #296 raced each read against a cancel
+  token with `select!`; #263 removed that, because returning early DROPS the
+  `Child` and `kill_on_drop` is a `SIGKILL`. The kill is out-of-band now (by
+  pid, from the cancelling task), and the read returns because the pipe closed
+  underneath it.
 - **Rebase reports through a sink on the trait, not an `AppHandle` on the
   backend.** `rebase_start_with_progress` / `rebase_continue_with_progress` take
   a `RebaseProgressSink`; the old names remain as default methods delegating

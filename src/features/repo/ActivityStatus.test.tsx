@@ -128,6 +128,14 @@ describe("Cancel", () => {
     expect(screen.queryByText("Cancel")).toBeNull();
   });
 
+  // The e2e suite drives this button against the real binary (#263 item 3), and
+  // "Cancel" is prose — a copy edit here would silently turn that spec's wait
+  // into one that never resolves. The hook is state, not words.
+  it("carries a stable hook for the e2e suite to find", () => {
+    show({ fetch: running("Fetching origin…") });
+    expect(screen.getByTestId("activity-cancel")).toHaveTextContent("Cancel");
+  });
+
   it("cancels the repository's network ops when clicked", async () => {
     mockInvoke("cancel_network_op", () => 1);
     show({ fetch: running("Fetching origin…") });

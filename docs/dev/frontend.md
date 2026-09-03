@@ -1006,6 +1006,27 @@ cancellable in the backend but unstoppable from the UI for two releases.
   escapable only by clicking again. `cancelRequested` clears when the last
   `activity` entry goes, so the next stalled op starts from the polite signal.
   See `docs/dev/backend.md` for the signal half.
+- **Cancel has a keyboard route too** (#263). The status bar's button was the
+  only one, which made the thing a user needs most when the app looks hung the
+  one thing they cannot reach without a pointer. `action:cancel-network` in the
+  palette is gated on the SAME `isCancellable(primaryActivity(...))` the button
+  is, carries the same two labels, and names the op it would stop in its
+  `detail` — a bare "Cancel" in a palette is a row nobody dares press. Two
+  surfaces, one gate: they cannot drift into offering different things.
+- **The auto-fetch timer is the ONE thing in the app with a deadline**
+  (`features/repo/autoFetch.ts`, #263). #260 rejected a global network timeout
+  and was right to: one short enough to rescue a stalled host is short enough to
+  kill a legitimately slow clone, and only the person watching can tell those
+  apart. That argument covers everything the USER started — and nothing the
+  timer did. Nobody is watching those, and the skip-while-running guard (which
+  exists so a stalled remote cannot grow a pile of stuck `git fetch` processes)
+  means one stalled auto-fetch turns auto-fetch off for the rest of the session.
+  So `startAutoFetch` arms a 2-minute deadline, and **only a tick that itself
+  started the fetch arms one**: a tick that finds `activity.fetch` already set —
+  which is exactly what somebody else's fetch looks like — returns without
+  arming anything, and the armed timer is cleared when its own op settles and
+  re-checks `startedAt` and the repository before firing. The cancel it fires is
+  `Scope::Repo`-wide like every other, so it clears the whole pile.
 - **`setActivity` is guarded on the repository, like `setFor`.** `activity` is a
   per-repo slice field and an op outlives a tab switch: a fetch on A finishing
   after the user moved to B used to clear B's entry, taking B's spinner and
