@@ -81,6 +81,50 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
     the webview already knows, and until it fires there simply are no
     dimensions (never `0 × 0`). The backdrop is a checkerboard built from
     `--bg-1`/`--bg-2` so transparency reads in both themes (#236).
+- **A textual diff with ZERO hunks is ordinary, and every surface says so.**
+  Two everyday changes produce a `FileDiff` whose `hunks` is empty: an EMPTY
+  ADDED file (a `.gitkeep` — git writes `new file mode` and no `@@` range), and
+  a MODE-ONLY change (`chmod +x` — `old mode`/`new mode`, no range either).
+  `diff_to_file_diffs` pushes one `FileDiff` per delta in the file callback, and
+  a hunk is only ever opened from the line callback, so the entry arrives with
+  `0 / 0` and nothing to lay out. Before this, `CommitDiffPanel` and the
+  DiffViewer had no branch for it and rendered a blank pane — and
+  `CommitDiffPanel` is what History, CommitDiff and Compare mount, i.e. the
+  screen the app launches on. All four surfaces now print
+  `PGEmpty icon="file" title="No diff"` / "File is tracked but no hunks were
+  produced." for exactly this condition (RepoBrowser keeps its own "No diff
+  available" — its gate is the wider "no diff AND no file content", not this
+  one). The wording is shared on purpose: `isTextualDiff`'s doc comment is the
+  rule, and a file that reads differently depending on which pane you opened it
+  in is the bug.
+  - **The same emptiness reaches the copy menu**, and `diffCopyMenuItems` gates
+    "Copy file diff as text" on `hasCopyableDiffText(diff)` — the rule its own
+    docstring already stated for the other two entries. Unguarded it put `""` on
+    the clipboard and flashed "copied diff", which reads as a working feature.
+    A binary diff has no file-content lines either, so one gate covers both.
+    * **The gate is cheap and the TEXT is lazy**, and that split is the point.
+      `fileDiffToText` walks every line of every hunk and allocates a string per
+      line; the commit-diff paths set no `max_size`, so a checked-in minified
+      blob arrives whole. Building the text to decide whether to SHOW an entry
+      would hitch every right-click on exactly the diffs that are already the
+      weak point — so `hasCopyableDiffText` (`lib/diffCopy.ts`, beside the
+      builder so the two cannot drift) short-circuits at the first content line,
+      and `fileDiffToText` runs in `onClick`.
+    * **Not `hunks.length > 0`.** A hunk is created by the line callback that
+      carries its `@@` header, and that header is itself a `HunkHeader` LINE
+      which `isFileContent` drops — so a hunk holding nothing but its own header
+      passes that test and would offer an entry copying a bare `@@` range with
+      no code. The row model already filters the same way
+      (`h.lines.filter(isFileContent)`), so a header-only hunk renders zero rows
+      too: "has file content" is the predicate both sides mean.
+  - **Follow-up: a mode-only change is legible as "no diff", not as what it is.**
+    Saying "mode changed 100644 → 100755" needs `old_mode`/`new_mode` on
+    `FileDiff` (`git/types.rs`), filled at BOTH construction sites
+    (`libgit2.rs::diff_to_file_diffs` and `diff()`) off
+    `delta.old_file().mode()`/`new_file().mode()`, then a TS field and a line in
+    the shared empty state. Deliberately out of scope of the empty-state fix: it
+    is a backend type change threaded through two diff builders, not a rendering
+    branch, and the blank pane was the user-visible half.
 - **Diff CODE is selectable; diff CHROME is not.** `body` is `user-select: none`
   (native desktop feel), so each row's code cell opts back in with
   `.pg-selectable` (`index.css`) while the line-number cells and the `+`/`−`

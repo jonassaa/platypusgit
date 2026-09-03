@@ -633,6 +633,18 @@ export function DiffViewerScreen() {
               />
             </>
           )}
+          {/* Textual, but the row model has nothing to lay out: an empty added
+              file, or a mode-only change (`chmod +x`), which git prints as
+              `old mode`/`new mode` with no `@@` range at all. The file row shows
+              `0 / 0` and this pane was blank white space. Not gated on `mode` —
+              neither renderer has anything to draw. Same sentence as
+              `CommitPanel`'s and `CommitDiffPanel`'s: `isTextualDiff`'s whole
+              point is that a file cannot read differently per pane. */}
+          {!diffLoading && isTextualDiff(diff) && diff && diff.hunks.length === 0 && (
+            <PGEmpty icon="file" title="No diff">
+              File is tracked but no hunks were produced.
+            </PGEmpty>
+          )}
           {!diffLoading && isTextualDiff(diff) && diff && mode === "unified" && (
             <>
             <DiffFindBar find={find} />
