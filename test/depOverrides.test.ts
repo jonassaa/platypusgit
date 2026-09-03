@@ -2,14 +2,14 @@
  * @vitest-environment node
  */
 // The standing half of issue 346: **the `pnpm.overrides` security block is the
-// only thing fixing 20 advisories, and the routine way it dies is a merge.**
+// only thing fixing 20+ advisories, and the routine way it dies is a merge.**
 //
 // Every npm Dependabot alert this repo gets against the root project is
 // `development` scope and transitive-only. Dependabot cannot fix any of them:
 // its security updater bumps manifest entries and never writes
 // `pnpm.overrides`. So the fix is hand-written in `package.json` — and a
 // Dependabot npm PR regenerates the lockfile and **drops the whole block**.
-// Merge one of those without restoring it and 20 advisories come back silently,
+// Merge one of those without restoring it and 20+ advisories come back silently,
 // with no test failing and nothing in the diff that looks like a security
 // change. That is the exact failure this file exists to make loud.
 //
@@ -23,10 +23,16 @@
 //
 // If this test fails, do NOT delete the entry to make it pass. Restore the
 // block (`git show origin/main:package.json`), re-run `pnpm install`, and check
-// the lockfile diff. The reasoning behind each entry, and the two advisories
-// deliberately left open (`esbuild`, `extract-zip`), are in
-// `docs/dev/testing.md`; the one shipped advisory we cannot fix (`glib`) is in
-// `docs/dev/distribution.md`.
+// the lockfile diff. The reasoning behind each entry, and the one advisory
+// deliberately left open (`extract-zip`, which has no patched version at all),
+// are in `docs/dev/testing.md`; the one shipped advisory we cannot fix
+// (`glib`) is in `docs/dev/distribution.md`.
+//
+// One entry in `FLOORS` has NO matching override key, on purpose: `esbuild`.
+// `vite` 7.3.6 widened its range to `^0.27.0 || ^0.28.0`, which deduped the
+// vulnerable 0.27.7 out of the tree without us overriding anything. That fix
+// lives in someone else's version range, so this floor is the only thing
+// holding it — a `vite` pin or downgrade would quietly bring 0.27.x back.
 //
 // **Deliberately NOT a version-drift test.** It asserts a floor, never a
 // ceiling, so an ordinary bump past the floor keeps it green. And an unguarded
@@ -59,6 +65,9 @@ const FLOORS: Array<{
   { name: "@babel/core", major: 7, min: "7.29.6", why: "GHSA-4x5r-pxfx-6jf8 — arbitrary file read via sourceMappingURL" },
   { name: "brace-expansion", major: 1, min: "1.1.16", why: "GHSA-3jxr-9vmj-r5cp — exponential-time expansion DoS" },
   { name: "brace-expansion", major: 2, min: "2.1.2", why: "GHSA-3jxr-9vmj-r5cp — exponential-time expansion DoS" },
+  { name: "browserslist", major: 4, min: "4.28.7", why: "GHSA-73wf-gq98-2v4g crash/prototype write in normalizeStats + GHSA-c83g-rgw3-j3cx unbounded cache growth" },
+  // The one entry with no override key — see the note at the top of the file.
+  { name: "esbuild", major: 0, min: "0.28.1", why: "GHSA-g7r4-m6w7-qqqr — dev-server arbitrary file read; deduped out by vite >= 7.3.6, not by an override" },
   { name: "fast-xml-parser", major: 5, min: "5.10.1", why: "GHSA-8r6m-32jq-jx6q — DOCTYPE resets entity expansion limits" },
   { name: "form-data", major: 4, min: "4.0.6", why: "GHSA-hmw2-7cc7-3qxx — CRLF injection in multipart field names" },
   { name: "ip-address", major: 10, min: "10.3.1", why: "GHSA-mwp4-54f8-5fhr — leading-zero octets decoded as decimal, SSRF bypass" },
@@ -79,6 +88,7 @@ const REQUIRED_KEYS = [
   "@babel/core",
   "brace-expansion@1",
   "brace-expansion@2",
+  "browserslist",
   "fast-xml-parser",
   "form-data",
   "ip-address",

@@ -272,12 +272,21 @@ Where two majors of one package coexist in the tree, the override MUST use the
 `brace-expansion@2`). A bare `"undici": "^7"` would drag `webdriver`, which
 wants 6.x, across a major and break the runner.
 
-Two standing decisions, recorded so they are not re-litigated:
+Two entries have a story worth recording so they are not re-litigated:
 
-- **`esbuild` is deliberately NOT overridden.** `vite` resolves it as a
-  tightly-coupled peer; forcing it across a minor is likelier to break the
-  bundle than to buy anything, since the advisory only affects `esbuild serve`
-  on Windows, which nothing here runs. The next `vite` bump carries it.
+- **`esbuild` was fixed by `vite`, not by an override.** `vite` resolves it as
+  a tightly-coupled peer, so forcing it across a minor was likelier to break
+  the bundle than to buy anything — the standing decision was to wait for the
+  next `vite` bump to carry it, and that is what happened. `vite` 7.3.6 widened
+  its range to `^0.27.0 || ^0.28.0`; the patch bump dedupes the tree onto the
+  `esbuild` 0.28.1 that `tsx` and `@wdio/native-utils` already pulled, and the
+  whole 0.27.7 subtree — plus its 26 `@esbuild/*` platform packages — drops
+  out of the lockfile. Because that fix is *incidental*, living in `vite`'s
+  version range rather than in our overrides block, `esbuild` carries a
+  **floor entry with no
+  matching override key** in `test/depOverrides.test.ts`, so a `vite` pin or
+  downgrade that re-introduces 0.27.x fails the build instead of silently
+  re-opening GHSA-g7r4-m6w7-qqqr.
 - **`extract-zip` has no patched version at all**, and is dismissed as
   tolerable risk. It arrives via `@puppeteer/browsers` ← `@wdio/utils` — a
   Chrome/Edge downloader this repo never invokes, because `e2e/wdio.conf.ts`

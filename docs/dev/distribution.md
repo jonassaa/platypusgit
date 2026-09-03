@@ -859,10 +859,46 @@ bundles (`.deb` / `.AppImage`):
 glib 0.18.5 ← atk 0.18.2 ← gtk 0.18.2 ← {muda, tao ← tauri-runtime-wry} ← tauri
 ```
 
-**No override on our side fixes it.** `gtk-rs` 0.18 pins `glib` 0.18, so glib
-moves to >= 0.20 only when `tauri`/`tao`/`muda` move to a newer gtk generation.
-Re-check when the grouped `tauri` Cargo PR lands; do not attempt a local patch
-or a `[patch.crates-io]` pin — the gtk generation is the thing that has to move.
+**No override on our side fixes it, and none ever will while Tauri is on
+gtk3.** `gtk-rs` 0.18 pins `glib` 0.18, so glib moves to >= 0.20 only when
+`tauri`/`tao`/`muda` move to a newer gtk generation. Do not attempt a local
+patch or a `[patch.crates-io]` pin — the gtk generation is the thing that has
+to move.
+
+Re-measured 2026-09-03, because "re-check when the grouped `tauri` Cargo PR
+lands" reads as a routine bump and it is not one. Three facts, each checked
+against the crates.io API rather than inferred:
+
+- **`gtk` 0.18.2 is the newest version of the gtk3 bindings ever published.**
+  gtk-rs froze the gtk3 crates in favour of the separate `gtk4` crate, so there
+  is no gtk 0.19+ generation to bump *to*.
+- **`gtk` 0.18.2 requires `glib ^0.18`**, a caret range that caps below 0.19,
+  and **glib 0.18.x tops out at 0.18.5** — the exact version we resolve. So
+  0.18.5 is already the maximum reachable version, and `cargo update` has
+  nothing to find.
+- **Even a gtk 0.19 generation would not have fixed it.** glib 0.19.x exists
+  (up to 0.19.9) but the advisory's first patched version is 0.20.0, so the
+  whole 0.19 line is vulnerable too. Only a gtk generation on glib >= 0.20
+  would do, and none exists for gtk3.
+
+On the latest published `tauri` (2.11.5) the chain is still `gtk` 0.18.2 via
+`tao` 0.35.3, `muda` 0.19.3 and `webkit2gtk` 2.0.2. So the trigger to watch for
+is Tauri moving off gtk3 entirely — a Linux-backend rewrite, not a version bump
+— and there is nothing to do here until it happens.
+
+Dependabot #60 is therefore the one alert that stays open **with no pending
+action**, which is easy to misread as untriaged. Dismissing it as
+`tolerable_risk` on the grounds below is the honest disposition, and it is a
+call for the repo owner rather than an assistant — a dismissal is a change to
+the repo's security state, not a code change:
+
+```bash
+gh api -X PATCH repos/jonassaa/platypusgit/dependabot/alerts/60 \
+  -f state=dismissed -f dismissed_reason=tolerable_risk \
+  -f dismissed_comment='Unfixable on gtk3; see docs/dev/distribution.md'
+```
+
+Reopen with `-f state=open` if the assessment ever changes.
 
 What keeps it tolerable meanwhile: it is an unsoundness rather than a directly
 exploitable bug, it needs `VariantStrIter` on the call path, and `src-tauri/`
