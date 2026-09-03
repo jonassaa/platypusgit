@@ -45,6 +45,11 @@ function setup(
     commits: [],
     logRef: null,
     loading: false,
+    // A repository whose status HAS been read (#368) — what the clean-tree
+    // empty state gates on now. `loading: false` used to stand in for it, and
+    // no longer does: it only says no refresh is running, which is also true of
+    // a repository nobody has read yet.
+    statusLoaded: true,
   } as never);
   mockInvoke("get_diff", () => ({
     path: "a.ts",
