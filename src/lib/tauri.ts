@@ -1570,6 +1570,11 @@ export async function cloneRepo(
 // `Credentials` above: it authenticates an HTTP header for a host's API, not
 // git's askpass prompt for one remote. The two share no type and no storage —
 // see `src-tauri/src/forge/token.rs`. Nothing here ever returns a token.
+//
+// Every token-using call takes an `account`: the credential SLOT on that host
+// (#233), because a host can hold several accounts. `null` is the pre-#233 slot,
+// which is where an already-signed-in user's token lives — see
+// `features/forge/forgeAccounts.ts`. It is a storage-slot name, never a secret.
 
 /**
  * What forge, if any, this repository's remotes point at.
@@ -1594,32 +1599,42 @@ export function forgeSignIn(
   host: string,
   kind: ForgeKind,
   token: string,
+  account: string | null,
 ): Promise<ForgeIdentity> {
-  return invoke<ForgeIdentity>("forge_sign_in", { host, kind, token });
+  return invoke<ForgeIdentity>("forge_sign_in", { host, kind, token, account });
 }
 
-/** Whether `host` has a stored token. Does NOT hit the network. */
-export function forgeTokenStatus(host: string): Promise<ForgeTokenStatus> {
-  return invoke<ForgeTokenStatus>("forge_token_status", { host });
+/** Whether one account slot on `host` has a stored token. Does NOT hit the network. */
+export function forgeTokenStatus(
+  host: string,
+  account: string | null,
+): Promise<ForgeTokenStatus> {
+  return invoke<ForgeTokenStatus>("forge_token_status", { host, account });
 }
 
-/** Re-probe the stored token and report who it belongs to. */
+/** Re-probe one slot's stored token and report who it belongs to. */
 export function forgeValidateToken(
   host: string,
   kind: ForgeKind,
+  account: string | null,
 ): Promise<ForgeIdentity> {
-  return invoke<ForgeIdentity>("forge_validate_token", { host, kind });
+  return invoke<ForgeIdentity>("forge_validate_token", { host, kind, account });
 }
 
-/** Forget the token for `host`. */
-export function forgeSignOut(host: string): Promise<void> {
-  return invoke<void>("forge_sign_out", { host });
+/**
+ * Forget the token in ONE of `host`'s account slots.
+ *
+ * Per-account: the other account on the same host keeps its token.
+ */
+export function forgeSignOut(host: string, account: string | null): Promise<void> {
+  return invoke<void>("forge_sign_out", { host, account });
 }
 
 export function forgeListPullRequests(
   forge: ForgeRepo,
+  account: string | null,
 ): Promise<PullRequest[]> {
-  return invoke<PullRequest[]>("forge_list_pull_requests", { forge });
+  return invoke<PullRequest[]>("forge_list_pull_requests", { forge, account });
 }
 
 /**
@@ -1630,15 +1645,17 @@ export function forgeListPullRequests(
 export function forgePullRequestChecks(
   forge: ForgeRepo,
   sha: string,
+  account: string | null,
 ): Promise<ChecksSummary> {
-  return invoke<ChecksSummary>("forge_pull_request_checks", { forge, sha });
+  return invoke<ChecksSummary>("forge_pull_request_checks", { forge, sha, account });
 }
 
 export function forgeCreatePullRequest(
   forge: ForgeRepo,
   request: NewPullRequest,
+  account: string | null,
 ): Promise<PullRequest> {
-  return invoke<PullRequest>("forge_create_pull_request", { forge, request });
+  return invoke<PullRequest>("forge_create_pull_request", { forge, request, account });
 }
 
 /**

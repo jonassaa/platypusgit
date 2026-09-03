@@ -150,7 +150,11 @@ forge/           GitHub/GitLab PR/MR integration (#92). Trait = URL builders +
 │                kept (self-hosted APIs); no parseable remote → None (a state)
 ├── token.rs     Secret (no Display/Serialize, Debug prints Secret(***)), redact;
 │                storage via the git credential helper under
-│                <host>.platypusgit-forge.invalid — see backend.md
+│                <host>.platypusgit-forge.invalid — see backend.md.
+│                credential_username(account) picks the SLOT within a host
+│                (#233): None is the pre-#233 bare `platypusgit-forge`
+│                username, Some(id) appends `:id`, so two accounts on one
+│                host hold two tokens
 ├── http.rs      The ONLY impure file: one ureq agent, https_only + timeout +
 │                4MB cap; 401/403 → ForgeAuth, everything scrub_credentials'd
 ├── github.rs    REST v3 (api.github.com; /api/v3 for Enterprise)
@@ -472,7 +476,10 @@ commands/        Thin Tauri handlers, one file per area:
 ├── forge.rs     forge_detect, forge_sign_in/sign_out/token_status/validate_token,
 │                forge_list_pull_requests, forge_pull_request_checks,
 │                forge_create_pull_request, forge_checkout_pull_request. Owns
-│                ForgeTokens + blocking_forge (redacts tokens from errors)
+│                ForgeTokens + blocking_forge (redacts tokens from errors).
+│                Every token-using command takes an `account` slot (#233),
+│                absent/null = the pre-#233 slot, and ForgeTokens is keyed
+│                (host, account) so signing out of one leaves the other
 ├── reflog.rs    get_reflog, checkout_detached
 ├── submodule.rs list_submodules, submodule_init/sync/update (update is
 │                credentialed via net::run_git_authenticated)
@@ -600,9 +607,14 @@ features/            Components + Zustand store colocated per feature:
 │                    half, open the host's add-key page, generate)
 ├── create/          Clone + Init dialogs (PGModal), useCreateStore,
 │                    deriveRepoName. Clone shells out with the prompt-less env
-├── forge/           useForgeStore (hostKinds+logins under pg-forge-hosts, NEVER
-│                    a token), forgeLabels (prNoun/prNumberLabel/localBranchFor),
-│                    PullRequestRow, CreatePullRequestDialog, ForgeSettings
+├── forge/           useForgeStore (hostKinds + accounts under pg-forge-hosts,
+│                    NEVER a token), forgeAccounts (PURE — host → MANY accounts
+│                    with one active, the credential-slot id, and parseHosts's
+│                    migration off the old singular host→login map: the
+│                    migrated account keeps id null, which IS the pre-#233
+│                    credential slot), forgeLabels (prNoun/prNumberLabel/
+│                    localBranchFor), PullRequestRow, CreatePullRequestDialog,
+│                    ForgeSettings (one row per account + an add row)
 ├── compare/         compareSides (PURE — nav imports the TYPE from here),
 │                    useCompareStore (own store; RepoSlice untouched),
 │                    CompareSidePicker

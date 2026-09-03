@@ -1,21 +1,46 @@
-// The forge-account control, rendered inside the Settings screen (#92).
+// The forge-account control, rendered inside the Settings screen (#92, #233).
 //
 // State lives in `useForgeStore`, NOT `useSettingsStore`: that store is the
 // preferences store (appearance, diff, pull mode), and a list of signed-in hosts
 // is not a preference. Per-feature Zustand is the stated convention.
 //
+// A host has MANY accounts (#233), so this renders one row per account plus one
+// row for adding another — and the active account is marked, because two logins
+// with no "which one am I?" is exactly the confusion the feature exists to
+// remove. Removing an account touches ONE credential slot: the other account on
+// the same host keeps its token.
+//
 // SECURITY: the token is component state and is handed straight to
 // `forge_sign_in`. It is never put in the store (a devtools snapshot or a future
 // persistence middleware would pick it up), never logged, and no command can
-// read one back out.
+// read one back out. An account id is a credential-slot name, never a secret.
 
 import React from "react";
 
-import { PGButton, PGIcon, PGInput, PGSelect, pgConfirm, pgFlash } from "@/design";
+import {
+  PGBadge,
+  PGButton,
+  PGIcon,
+  PGInput,
+  PGSelect,
+  pgConfirm,
+  pgFlash,
+} from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import type { ForgeKind } from "@/lib/types";
+import type { ForgeAccount } from "./forgeAccounts";
 import { forgeLabel } from "./forgeLabels";
 import { useForgeStore } from "./useForgeStore";
+
+/**
+ * A slot id as a testid / React key fragment.
+ *
+ * The pre-#233 slot's id is `null` — see `forgeAccounts.ts` — and `null` makes a
+ * useless key.
+ */
+function slotKey(id: string | null): string {
+  return id ?? "default";
+}
 
 /** Where a user goes to mint the token, per forge. */
 const TOKEN_DOC: Record<ForgeKind, string> = {
@@ -26,7 +51,7 @@ const TOKEN_DOC: Record<ForgeKind, string> = {
 export function ForgeSettings() {
   const repoId = useRepoStore((s) => s.current?.id ?? null);
   const detection = useForgeStore((s) => s.detection);
-  const logins = useForgeStore((s) => s.logins);
+  const accounts = useForgeStore((s) => s.accounts);
   const hostKinds = useForgeStore((s) => s.hostKinds);
   const authBusy = useForgeStore((s) => s.authBusy);
   const signedIn = useForgeStore((s) => s.signedIn);
@@ -47,15 +72,15 @@ export function ForgeSettings() {
     const set = new Set<string>();
     if (detection) set.add(detection.host);
     Object.keys(hostKinds).forEach((h) => set.add(h));
-    Object.keys(logins).forEach((h) => set.add(h));
+    Object.keys(accounts).forEach((h) => set.add(h));
     return [...set].sort();
-  }, [detection, hostKinds, logins]);
+  }, [detection, hostKinds, accounts]);
 
   return (
     <div data-testid="settings-forge">
       <Section
         title="Integrations"
-        subtitle="Pull and merge requests. A forge API token is a separate credential from the one git pushes with — it is stored under its own key and never replaces it."
+        subtitle="Pull and merge requests. A forge API token is a separate credential from the one git pushes with — it is stored under its own key and never replaces it. A host can hold several accounts; the active one is what pull requests are listed and opened as."
       >
         {hosts.length === 0 && (
           <Row
@@ -65,10 +90,10 @@ export function ForgeSettings() {
           />
         )}
         {hosts.map((host) => (
-          <HostRow
+          <HostSection
             key={host}
             host={host}
-            login={logins[host] ?? null}
+            accounts={accounts[host] ?? []}
             kind={hostKinds[host] ?? builtinKindFor(host)}
             busy={authBusy}
             isCurrent={detection?.host === host}
@@ -103,31 +128,181 @@ function builtinKindFor(host: string): ForgeKind | undefined {
   return undefined;
 }
 
-function HostRow({
+/** Every account on one host, then the row that adds another. */
+function HostSection({
   host,
-  login,
+  accounts,
   kind,
   busy,
   isCurrent,
   currentSignedIn,
 }: {
   host: string;
-  login: string | null;
+  accounts: ForgeAccount[];
   kind: ForgeKind | undefined;
   busy: boolean;
   isCurrent: boolean;
   currentSignedIn: boolean;
 }) {
-  const [token, setToken] = React.useState("");
   const [pickedKind, setPickedKind] = React.useState<ForgeKind>(kind ?? "GitHub");
-
-  // A self-hosted host has no login yet AND no known forge — asking which one it
-  // is has to come before asking for a token, or the token goes to the wrong API.
+  // A self-hosted host has no known forge — asking which one it is has to come
+  // before asking for a token, or the token goes to the wrong API.
   const needsKind = !kind;
   const effectiveKind = kind ?? pickedKind;
-  // A stored login is the strongest "signed in" signal we have without a network
-  // call; the current host also has a live presence check.
-  const isSignedIn = !!login || (isCurrent && currentSignedIn);
+
+  return (
+    <>
+      {accounts.map((account) => (
+        <AccountRow
+          key={slotKey(account.id)}
+          host={host}
+          account={account}
+          kind={effectiveKind}
+          busy={busy}
+          isCurrent={isCurrent}
+        />
+      ))}
+      <AddAccountRow
+        host={host}
+        hasAccounts={accounts.length > 0}
+        needsKind={needsKind}
+        effectiveKind={effectiveKind}
+        pickedKind={pickedKind}
+        setPickedKind={setPickedKind}
+        busy={busy}
+        // Only read when the host has no accounts: a live token with no account
+        // record (cleared localStorage, keychain intact) is worth saying out
+        // loud, because pull requests keep working while Settings shows nothing.
+        hasUnnamedToken={isCurrent && currentSignedIn}
+      />
+    </>
+  );
+}
+
+function AccountRow({
+  host,
+  account,
+  kind,
+  busy,
+  isCurrent,
+}: {
+  host: string;
+  account: ForgeAccount;
+  kind: ForgeKind;
+  busy: boolean;
+  isCurrent: boolean;
+}) {
+  const key = slotKey(account.id);
+
+  const remove = async () => {
+    if (
+      !(await pgConfirm({
+        title: `Remove the ${forgeLabel(kind)} token for ${account.login} on ${host}?`,
+        body: "Pull and merge requests open as this account stop loading until you add a token again. Any other account on this host, and your git push credential, are separate credentials and are not touched.",
+        danger: true,
+        confirmLabel: "Remove token",
+      }))
+    ) {
+      return;
+    }
+    await useForgeStore.getState().signOut(host, account.id);
+    pgFlash(`Removed the token for ${account.login} on ${host}`);
+  };
+
+  return (
+    <Row
+      label={account.login}
+      testId={`forge-account-${host}-${key}`}
+      hint={
+        <span
+          // The active account answers "is this host signed in", so it keeps the
+          // per-host testid the rest of the app and the e2e suite look for.
+          data-testid={account.active ? `forge-signed-in-${host}` : undefined}
+        >
+          <PGIcon
+            name="check"
+            size={11}
+            style={{ color: "var(--git-added)", marginRight: 4 }}
+          />
+          {forgeLabel(kind)} — signed in as{" "}
+          <code style={{ fontFamily: "var(--font-mono)" }}>{account.login}</code>
+          {" on "}
+          {host}
+        </span>
+      }
+      badge={
+        account.active ? (
+          <PGBadge tone="accent" style={{ marginLeft: 8 }}>
+            Active
+          </PGBadge>
+        ) : null
+      }
+      control={
+        <div style={{ display: "flex", gap: 6 }}>
+          {!account.active && (
+            <PGButton
+              size="sm"
+              variant="default"
+              onClick={() =>
+                void useForgeStore.getState().switchAccount(host, account.id)
+              }
+              disabled={busy}
+              data-testid={`forge-use-${host}-${key}`}
+            >
+              Use
+            </PGButton>
+          )}
+          <PGButton
+            size="sm"
+            variant={account.active && isCurrent ? "default" : "ghost"}
+            onClick={() =>
+              void useForgeStore.getState().validate(host, kind, account.id)
+            }
+            disabled={busy}
+            data-testid={`forge-recheck-${host}-${key}`}
+          >
+            Re-check
+          </PGButton>
+          <PGButton
+            size="sm"
+            variant="ghost"
+            onClick={() => void remove()}
+            disabled={busy}
+            data-testid={`forge-remove-${host}-${key}`}
+          >
+            Remove token
+          </PGButton>
+        </div>
+      }
+    />
+  );
+}
+
+function AddAccountRow({
+  host,
+  hasAccounts,
+  needsKind,
+  effectiveKind,
+  pickedKind,
+  setPickedKind,
+  busy,
+  hasUnnamedToken,
+}: {
+  host: string;
+  hasAccounts: boolean;
+  needsKind: boolean;
+  effectiveKind: ForgeKind;
+  pickedKind: ForgeKind;
+  setPickedKind: (k: ForgeKind) => void;
+  busy: boolean;
+  hasUnnamedToken: boolean;
+}) {
+  const [token, setToken] = React.useState("");
+  // A password box sitting permanently open under every signed-in host is
+  // noise; a host with nothing signed in still gets the field directly, because
+  // that IS the thing to do there.
+  const [open, setOpen] = React.useState(false);
+  const showField = !hasAccounts || open;
 
   const submit = async () => {
     const value = token.trim();
@@ -136,74 +311,31 @@ function HostRow({
     const ok = await useForgeStore.getState().signIn(host, effectiveKind, value);
     // Clear the field either way: a rejected token must not sit in the DOM.
     setToken("");
-    if (ok) pgFlash(`Signed in to ${host}`);
-  };
-
-  const remove = async () => {
-    if (
-      !(await pgConfirm({
-        title: `Remove the ${forgeLabel(effectiveKind)} token for ${host}?`,
-        body: "Pull and merge requests for this host stop loading until you add a token again. Your git push credential is a separate credential and is not touched.",
-        danger: true,
-        confirmLabel: "Remove token",
-      }))
-    ) {
-      return;
+    if (ok) {
+      setOpen(false);
+      pgFlash(`Signed in to ${host}`);
     }
-    await useForgeStore.getState().signOut(host);
-    pgFlash(`Removed the token for ${host}`);
   };
 
   return (
     <Row
       label={host}
       hint={
-        isSignedIn ? (
-          <span data-testid={`forge-signed-in-${host}`}>
-            <PGIcon
-              name="check"
-              size={11}
-              style={{ color: "var(--git-added)", marginRight: 4 }}
-            />
-            {forgeLabel(effectiveKind)} — signed in
-            {login ? (
-              <>
-                {" as "}
-                <code style={{ fontFamily: "var(--font-mono)" }}>{login}</code>
-              </>
-            ) : null}
-          </span>
+        hasAccounts ? (
+          "Add another account on this host — a work login and a personal one can both be signed in, and you pick which one is active."
         ) : (
           <span data-testid={`forge-signed-out-${host}`}>
             {needsKind
               ? "platypusgit cannot tell a self-hosted GitHub from a GitLab by its URL — pick the forge, then paste a token."
               : TOKEN_DOC[effectiveKind]}
+            {hasUnnamedToken
+              ? " A token is already stored for this host but not the account it belongs to — sign in again to name it."
+              : ""}
           </span>
         )
       }
       control={
-        isSignedIn ? (
-          <div style={{ display: "flex", gap: 6 }}>
-            <PGButton
-              size="sm"
-              variant="default"
-              onClick={() => void useForgeStore.getState().validate(host, effectiveKind)}
-              disabled={busy}
-              data-testid={`forge-recheck-${host}`}
-            >
-              Re-check
-            </PGButton>
-            <PGButton
-              size="sm"
-              variant="ghost"
-              onClick={() => void remove()}
-              disabled={busy}
-              data-testid={`forge-remove-${host}`}
-            >
-              Remove token
-            </PGButton>
-          </div>
-        ) : (
+        showField ? (
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             {needsKind && (
               <PGSelect
@@ -241,6 +373,16 @@ function HostRow({
               Sign in
             </PGButton>
           </div>
+        ) : (
+          <PGButton
+            size="sm"
+            variant="default"
+            onClick={() => setOpen(true)}
+            disabled={busy}
+            data-testid={`forge-add-${host}`}
+          >
+            Add account
+          </PGButton>
         )
       }
     />
@@ -311,13 +453,19 @@ function Row({
   label,
   hint,
   control,
+  badge,
+  testId,
 }: {
   label: string;
   hint?: React.ReactNode;
   control: React.ReactNode;
+  /** Sits beside the label — "Active", not a second line of prose. */
+  badge?: React.ReactNode;
+  testId?: string;
 }) {
   return (
     <div
+      data-testid={testId}
       style={{
         display: "flex",
         alignItems: "flex-start",
@@ -329,6 +477,8 @@ function Row({
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
+            display: "flex",
+            alignItems: "center",
             fontSize: "var(--fs-13)",
             color: "var(--fg-0)",
             fontWeight: 500,
@@ -336,6 +486,7 @@ function Row({
           }}
         >
           {label}
+          {badge}
         </div>
         {hint && (
           <div

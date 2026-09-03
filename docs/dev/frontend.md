@@ -426,6 +426,51 @@ right shape, but `signCommits` is a global tri-state (#61 D6) and the signing
 chain resolves its key from git config — a field nothing reads would be dead
 weight that later needs migrating.
 
+## Forge accounts are host → MANY (#233)
+
+The identity half above is about git's `user.name`/`user.email`. The forge side
+had its own one-account-per-host constraint: `pg-forge-hosts` persisted
+`logins: Record<string, string>`, host → login, **singular**, so two GitHub
+accounts were not expressible at all.
+
+`features/forge/forgeAccounts.ts` is the pure module that replaced it:
+`accounts: Record<string, ForgeAccount[]>` with `ForgeAccount = {id, login,
+active}`.
+
+- **`id` is a credential-SLOT name, not the login.** It is what the backend
+  appends to `username=` (`platypusgit-forge:<id>`), which is what lets one host
+  hold two tokens. A login is the wrong key: a forge login can be renamed while
+  the token stays valid, and the entry would then be orphaned.
+- **`id: null` is the pre-#233 slot**, the bare `platypusgit-forge` username a
+  released build already wrote real tokens under. `parseHosts` migrates the old
+  `logins` map onto `id: null` and nothing else — any other id points at a slot
+  that has never held anything, and a user who never signed out would come back
+  signed out. Nothing ever mints `null`; it only arrives from migration.
+  `activeAccountId` also answers `null` for a host with NO accounts, which is
+  the same slot: cleared localStorage with the keychain intact still finds its
+  token.
+- **The active account is a flag on the row, not a `host → id` pointer.** A
+  pointer can dangle (naming a removed account) and is ambiguous (`null` meaning
+  both "the legacy slot" and "nothing recorded"). `parseHosts` normalises "none
+  flagged" and "two flagged" to exactly one, so every host with accounts has an
+  active one by construction.
+- **Every token-using call names the slot** — `forgeTokenStatus`,
+  `forgeValidateToken`, `forgeListPullRequests`, `forgePullRequestChecks`,
+  `forgeCreatePullRequest`, `forgeSignIn`, `forgeSignOut`. Signing out, and an
+  empty-slot `refreshTokenStatus`, remove ONE account and promote a survivor;
+  they must never evict the other account on the same host.
+- `signIn` always mints a fresh slot, because the login is the forge's answer
+  and is not known before validating. If the login turns out to already have a
+  row (re-authenticating an expired token), `upsertAccount` collapses onto it
+  and the displaced slot's dead token is erased best-effort.
+
+`ForgeSettings` renders one row per account plus one add row — the token field
+hides behind an explicit "Add account" once a host has one, because a password
+box sitting permanently open under every signed-in host is noise.
+
+**A saved identity does not reference a forge account yet.** It is the natural
+follow-on the issue names, and the map had to become host → many first.
+
 ## The commit-message composer (#252)
 
 `src/features/commits/message/` is **THE** commit-message composition surface —
