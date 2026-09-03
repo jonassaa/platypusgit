@@ -522,7 +522,9 @@ screens/             One per activity-bar item + deep views: RepoBrowser,
 features/            Components + Zustand store colocated per feature:
 ├── repo/            useRepoStore (ONE repo's live state — the active tab's),
 │                    repoSlice (RepoSlice / REPO_SLICE_KEYS / emptySlice),
-│                    repoActivity, shallowNoticeText (PURE, per-surface
+│                    repoActivity, autoFetch (the timer AND the deadline that
+│                    belongs to timer-started fetches alone — #263),
+│                    shallowNoticeText (PURE, per-surface
 │                    sentences) + ShallowNotice (the strip; History, FileHistory,
 │                    Blame and Compare mount it — test/shallowSurfaces.test.ts
 │                    fails the build for a fifth that forgets),

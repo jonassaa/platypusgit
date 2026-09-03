@@ -223,6 +223,57 @@ pub fn cancel(scope: &Scope) -> usize {
     signalled
 }
 
+/// The label of the window whose close ends the app.
+///
+/// Set in `tauri.conf.json`; the merge resolver is a second window labelled
+/// `merge` (`src/features/merge/openMergeWindow.ts`).
+pub const MAIN_WINDOW_LABEL: &str = "main";
+
+/// Whether closing the window called `label` should cancel everything in flight.
+///
+/// `on_window_event` is app-global — it fires for the merge resolver too — so
+/// without this gate, finishing a conflict resolution would kill the fetch
+/// running behind it. A pure function so the rule is testable without a Tauri
+/// runtime; the wiring itself is greped by `tests/cancel_on_close.rs`.
+pub fn close_cancels_everything(label: &str) -> bool {
+    label == MAIN_WINDOW_LABEL
+}
+
+/// Cancel every op in flight, whatever its scope. Answers how many were
+/// signalled.
+///
+/// For exactly one caller: the app's own window closing (#263). Cancellation's
+/// backstop for a dropped future is `kill_on_drop(true)`, and quitting does not
+/// drop anything — `tao::EventLoop::run` ends in `std::process::exit`, which
+/// runs no destructors on any stack. Measured: a `kill_on_drop` child was still
+/// alive 500 ms after its parent's `process::exit(0)`. So without this, a
+/// `git clone` outlives the app and finishes populating the destination the
+/// Clone dialog was told never got created.
+///
+/// **Always the polite signal, even for an entry that was already cancelled
+/// once.** `cancel()` escalates on a second ask because the user clicking again
+/// says the first did not work; there is no second click on the way out, and
+/// nobody left to notice. What there IS is git's own `SIGTERM` handling
+/// (`remove_lock_file_on_signal`, and `remove_junk_on_signal` in `clone`) — the
+/// only cleanup still possible once our process is gone. A `SIGKILL` here would
+/// strand `.git/FETCH_HEAD.lock` and half a clone with nothing running that
+/// could remove either.
+///
+/// Fire-and-forget, like `cancel()`: it signals and returns. The app is about to
+/// exit and must not wait on a git that is slow to die.
+pub fn cancel_all() -> usize {
+    let mut live = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut signalled = 0;
+    for entry in live.iter_mut() {
+        entry.cancel_requested = true;
+        if let Some(pid) = entry.pid {
+            kill_tree(pid, false);
+        }
+        signalled += 1;
+    }
+    signalled
+}
+
 /// Kill `pid` and everything spawned into its process group.
 ///
 /// # Why the process group
