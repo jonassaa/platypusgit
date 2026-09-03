@@ -134,6 +134,40 @@ describe.each([
     expect(calls("remember_credential")).toHaveLength(0);
   });
 
+  // #212. Cancelling the prompt used to return the app to exactly its prior
+  // state: no banner, no spinner, no status line — nothing at all to
+  // distinguish "your push did not happen" from "your push worked".
+  it("reports the original failure when the prompt is dismissed", async () => {
+    mockInvoke(cmd, httpsChallenge);
+
+    await run();
+    // Raising the prompt is not yet a failure, so the banner is still clear.
+    expect(useRepoStore.getState().error).toBeNull();
+
+    await useAuthStore.getState().dismiss();
+
+    expect(useRepoStore.getState().error).toEqual({
+      kind: "Auth",
+      message: { host: "github.com", kind: "Https" },
+    });
+  });
+
+  it("reports nothing when the prompt is answered and the retry works", async () => {
+    let attempts = 0;
+    mockInvoke(cmd, () => {
+      attempts += 1;
+      if (attempts === 1) httpsChallenge();
+      return null;
+    });
+
+    await run();
+    await useAuthStore
+      .getState()
+      .challenge!.retry({ username: "ada", secret: "token" }, false);
+
+    expect(useRepoStore.getState().error).toBeNull();
+  });
+
   it("surfaces a non-auth failure without prompting", async () => {
     mockInvoke(cmd, () => {
       throw { kind: "Network", message: "Could not resolve host: github.com" };

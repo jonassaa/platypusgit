@@ -9,6 +9,7 @@
 // A runner returns `false` to decline (nothing to do), letting the key fall
 // through to the browser.
 
+import { useAuthStore } from "@/features/auth/useAuthStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useCreateTagStore } from "@/features/tags/useCreateTagStore";
 import { useForgeStore } from "@/features/forge/useForgeStore";
@@ -301,6 +302,19 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
     run: () => {
       if (useOverlayStore.getState().cheatSheetOpen) {
         useOverlayStore.getState().closeCheatSheet();
+        return true;
+      }
+      // The credential prompt sits on PGModal's `nested` layer (MODAL_Z in
+      // design/modal.tsx), above every other dialog: it is raised BY one of
+      // them — a clone, a push — and is answered before that dialog is usable
+      // again. So it takes Escape first, or the chord closes the Clone dialog
+      // out from under a prompt that dialog is still waiting on: the clone
+      // then runs with `open === "none"`, no progress bar and no Cancel
+      // button, and `openClone()` refuses to reopen it while busy (#212).
+      // Dismissing is an ANSWERLESS exit and reports the original failure —
+      // see `useAuthStore`.
+      if (useAuthStore.getState().challenge) {
+        void useAuthStore.getState().dismiss();
         return true;
       }
       // Between the cheat sheet (zIndex 1000, topmost) and the update panel

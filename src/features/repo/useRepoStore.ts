@@ -673,9 +673,17 @@ export function applyRebaseProgress(p: RebaseProgress) {
  * `CredentialDialog` does not answer.
  *
  * The first attempt is always prompt-less, so the common case (a credential
- * helper or ssh-agent already answers) behaves exactly as it did before. A
- * cancelled dialog never calls `onError`, leaving the original error already
- * reported by the caller's own catch.
+ * helper or ssh-agent already answers) behaves exactly as it did before.
+ *
+ * **A dismissed prompt reports the original failure** (#212). It used to return
+ * silently on the theory that "the caller's own catch already reported it" —
+ * but there is no such catch: this function swallowed the auth error to raise
+ * the challenge, and `attempt`'s `finally` had already taken the activity label
+ * down. Cancelling Sign in therefore left no banner, no spinner and no status
+ * line, so a push that did not happen looked exactly like one that did. The
+ * dismissal is routed to `onError` with the very error that raised the prompt,
+ * which is the same banner the user would have seen with no credential flow at
+ * all. Raising the prompt is still NOT a failure and still reports nothing.
  *
  * Exported so a network op owned by ANOTHER feature store can reuse it rather
  * than growing a second retry path — `useForgeStore.checkout` fetches a pull
@@ -719,6 +727,8 @@ export async function withAuthRetry(
     useAuthStore.getState().raise({
       host,
       kind,
+      // The op did not happen, and nothing else is left to say so.
+      onDismiss: () => onError(e),
       retry: async (creds, remember) => {
         try {
           await attempt(creds);

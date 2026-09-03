@@ -157,10 +157,19 @@ export const useCreateStore = create<CreateState>((set, get) => ({
       // Drop `busy` before prompting. `close()` refuses to close while busy, so
       // staying busy would leave the Clone dialog undismissable if the user
       // cancels the credential prompt.
+      //
+      // What it does NOT do any more is leave the dialog open to Escape: the
+      // credential prompt takes that chord first (`app.closeOverlay`), so
+      // dismissing the prompt no longer closes the dialog under it and orphans
+      // the clone with no progress bar and no Cancel button (#212).
       set({ busy: false, progress: null, error: null });
       useAuthStore.getState().raise({
         host,
         kind,
+        // Cancelled the prompt: nothing was cloned, and the dialog is still up
+        // with the form the user typed. Say why it stopped rather than leaving
+        // it looking like the clone simply never started.
+        onDismiss: () => set({ error: appErrorMessage(e) }),
         retry: async (creds, remember) => {
           set({ busy: true, cancelRequested: false, error: null, progress: null });
           try {

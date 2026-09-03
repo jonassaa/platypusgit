@@ -1467,6 +1467,36 @@ not worked around: a second mechanism for the same job would also fire on `ls`.
   token burns an authentication attempt on a credential we know is empty. Both
   `rememberCredential` call sites guard on `creds` for the same reason.
 
+### The credential prompt is a NESTED dialog (#212)
+
+It is raised BY another surface — the Clone dialog, a push, an auto-fetch — and
+is answered before that surface can go on. Two consequences, and they are the
+same rule stated twice:
+
+- **It paints above the other dialogs and it takes Escape first.**
+  `PGModal`'s `layer="nested"` (`MODAL_Z` in `design/modal.tsx`: base 100,
+  nested 150) and the matching first branch of `app.closeOverlay`. Same
+  z-index would have tie-broken on DOM order, and AppShell mounts
+  `<CredentialDialog />` BEFORE `<CloneDialog />` — so the prompt sat behind
+  the Clone dialog's own backdrop, and the Escape that seemed to dismiss the
+  prompt actually closed the Clone dialog under it. That orphaned the clone:
+  `runClone` drops `busy` before prompting (so the dialog stays dismissable),
+  the retry sets it back without reopening, and `openClone()` refuses to reopen
+  while busy — minutes of clone with no progress bar, no percentage and no
+  Cancel, and a failure that then reported nowhere at all. Keep the two orders
+  in step; a third modal layer belongs in `MODAL_Z`, not in a call site.
+- **Dismissal is "no answer", never an answer** — the rule
+  `pgConfirm`/`pgPrompt`/`pgChoose` already follow. `useAuthStore` splits the
+  two exits: `answer()` clears the prompt because the credential is on its way
+  to `retry`, `dismiss()` clears it and fires the challenge's `onDismiss`.
+  Without that split a cancelled Sign in was SILENT: `withAuthRetry` had
+  swallowed the auth error to raise the prompt and `attempt`'s `finally` had
+  already taken the activity label down, so a push that did not happen looked
+  exactly like one that did. `onDismiss` reports the failure that raised the
+  prompt — the banner via `onError` for `withAuthRetry`'s six call sites, the
+  dialog's own `error` for the clone. Raising a prompt is still not a failure
+  and still reports nothing; only dismissing one is.
+
 ## File lists
 
 - Row glyph + tint from `lib/fileIcon.ts` (`fileIconSpec(path)`); add a

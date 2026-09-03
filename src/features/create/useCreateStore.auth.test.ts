@@ -129,6 +129,26 @@ describe("clone credential retry", () => {
     expect(calls("remember_credential")[0].args.host).toBe("github.com");
   });
 
+  // #212. Dismissing the prompt leaves the Clone dialog open with its form
+  // intact — but silent, so nothing said the clone had not started. The
+  // failure that raised the prompt is the honest thing to show there.
+  it("reports the original failure in the dialog when the prompt is dismissed", async () => {
+    armClone();
+    await useCreateStore.getState().runClone({
+      url: "https://github.com/me/private.git",
+      parentDir: "/dev",
+      name: "private",
+      options: PLAIN,
+    });
+
+    await useAuthStore.getState().dismiss();
+
+    expect(useCreateStore.getState().error).toContain("Authentication required");
+    // Still the user's dialog, still theirs to retry: form populated, not busy.
+    expect(useCreateStore.getState().open).toBe("clone");
+    expect(useCreateStore.getState().busy).toBe(false);
+  });
+
   it("surfaces a non-auth failure in the dialog without prompting", async () => {
     mockInvoke("clone_repo", () => {
       throw { kind: "Network", message: "could not resolve host" };
