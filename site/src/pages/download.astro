@@ -252,30 +252,10 @@ const platforms = [
             <>
               <article class="card card-wide card-primary">
                 <span class="pill">Recommended</span>
-                <h3>Installer</h3>
-                <p class="card-lead">Download the 64-bit installer and run it.</p>
-                <CTAButton href={assets.windowsMsi} external>Download .msi</CTAButton>
-                <p class="filename mono">PlatypusGit_x64.msi</p>
-                <p class="card-note">
-                  Installs the app and the <a href="#cli"><code>pgit</code></a> command together, and puts
-                  <code>pgit</code> on your PATH. WebView2 is already present on Windows 11; on Windows 10
-                  the installer pulls it in if it is missing. This is the route that updates itself —
-                  platypusgit offers the new version in-app and installs it for you.
-                </p>
-                <details>
-                  <summary>First launch warning</summary>
-                  <p class="card-note">
-                    The installer isn’t code-signed yet, so Windows SmartScreen shows a warning. Click
-                    <strong>More info → Run anyway</strong> to proceed.
-                  </p>
-                </details>
-              </article>
-
-              <article class="card card-wide">
                 <h3>Microsoft Store</h3>
                 <p class="card-lead">
-                  The one Windows route with no SmartScreen warning — Microsoft signs the package
-                  itself — and the only one that runs natively on Arm.
+                  The signed build. No SmartScreen warning, Windows keeps it up to date, and it is
+                  the only package that runs natively on Arm.
                 </p>
                 {/* The badge is Microsoft's own web component, so the button looks like every
                     other Store button a Windows user has clicked. It renders an iframe from
@@ -298,7 +278,7 @@ const platforms = [
                 </div>
                 <p class="card-note">
                   One package for x64 <em>and</em> Arm64, so this is the route for a Copilot+ PC or any
-                  other Windows-on-Arm machine — the <code>.msi</code> above is x64 only. You get the
+                  other Windows-on-Arm machine — the <code>.msi</code> below is x64 only. You get the
                   app and the <a href="#cli"><code>pgit</code></a> command together, and because
                   Microsoft re-signs everything it distributes, nothing warns you on first launch.
                 </p>
@@ -313,7 +293,7 @@ const platforms = [
                   <p class="card-note">
                     Every release goes through Microsoft's certification before it appears here, so
                     this channel can trail a brand-new version by a little. If you want a release the
-                    day it ships, take the <code>.msi</code>.
+                    day it ships, take the <code>.msi</code> below instead.
                   </p>
                   <p class="card-note">
                     Removing it is <strong>Settings → Apps → platypusgit → Uninstall</strong>. An MSIX
@@ -328,6 +308,31 @@ const platforms = [
                     a Store app is not allowed to run one. Windows 11 ships WebView2 and Windows 10
                     gets it with Edge, so it is almost certainly already there; if no window appears,
                     install the Evergreen WebView2 Runtime from Microsoft.
+                  </p>
+                </details>
+              </article>
+
+              <article class="card card-wide">
+                <h3>Installer</h3>
+                <p class="card-lead">
+                  No Store, or you want each release the day it ships? Download the 64-bit installer
+                  and run it.
+                </p>
+                <CTAButton href={assets.windowsMsi} external>Download .msi</CTAButton>
+                <p class="filename mono">PlatypusGit_x64.msi</p>
+                <p class="card-note">
+                  Installs the app and the <a href="#cli"><code>pgit</code></a> command together, and puts
+                  <code>pgit</code> on your PATH. WebView2 is already present on Windows 11; on Windows 10
+                  the installer pulls it in if it is missing. This is the route that updates itself —
+                  platypusgit offers the new version in-app and installs it for you, with no wait for
+                  certification. x64 only.
+                </p>
+                <details>
+                  <summary>First launch warning</summary>
+                  <p class="card-note">
+                    The installer isn’t code-signed yet, so Windows SmartScreen shows a warning. Click
+                    <strong>More info → Run anyway</strong> to proceed. The Store build above is the
+                    one that avoids this entirely.
                   </p>
                 </details>
               </article>
