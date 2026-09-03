@@ -45,6 +45,15 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   key would overwrite the push credential; RFC 6761 means no remote can ever
   ask for it. (A custom `protocol=` was rejected — osxkeychain silently
   `exit(0)`s on unknown protocols.)
+- **A host holds MANY accounts (#233).** The host key stays shared (it is what
+  keeps the API token off the transport credential), so the ACCOUNT is carried
+  by `username=`: `credential_username(None)` is the bare `platypusgit-forge` a
+  pre-#233 build stored every token under and must stay byte-identical, and
+  `Some(id)` appends `:<id>`. The id is opaque, not the login — a forge login
+  can be renamed while the token stays valid, and a login-keyed entry would
+  orphan it. `ForgeTokens` is keyed `(host, account)` and `forge_sign_out`
+  erases ONE slot, so signing out of the work account leaves the personal one
+  signed in. Frontend side: `features/forge/forgeAccounts.ts`.
 - `git credential` runs with cwd = the OS temp dir, so a repo-local
   `credential.helper` cannot redirect token reads or writes.
 - `store_token` **round-trips** (approve → fill → compare) and raises

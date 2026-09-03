@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 import { ForgeSettings } from "./ForgeSettings";
 import { useForgeStore } from "./useForgeStore";
+import type { ForgeAccount } from "./forgeAccounts";
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
 import { WithDialogs, acceptDialog, dialogTitle, dismissDialog } from "@/test/dialog";
 import type { ForgeDetection } from "@/lib/types";
@@ -24,11 +25,15 @@ const SELF_HOSTED: ForgeDetection = {
   kind: null,
 };
 
+function acct(over: Partial<ForgeAccount> = {}): ForgeAccount {
+  return { id: "acc-1", login: "jonassaa", active: true, ...over };
+}
+
 beforeEach(() => {
   resetInvokeMock();
   localStorage.clear();
   useForgeStore.getState().reset();
-  useForgeStore.setState({ hostKinds: {}, logins: {} });
+  useForgeStore.setState({ hostKinds: {}, accounts: {} });
 });
 
 describe("ForgeSettings", () => {
@@ -127,10 +132,13 @@ describe("ForgeSettings", () => {
   });
 
   it("re-checks a stored token on demand", async () => {
-    useForgeStore.setState({ logins: { "github.com": "jonassaa" }, detection: GH });
+    useForgeStore.setState({
+      accounts: { "github.com": [acct()] },
+      detection: GH,
+    });
     mockInvoke("forge_validate_token", () => ({ login: "somebody-else", name: null }));
     render(<ForgeSettings />);
-    await userEvent.click(screen.getByTestId("forge-recheck-github.com"));
+    await userEvent.click(screen.getByTestId("forge-recheck-github.com-acc-1"));
     await waitFor(() =>
       expect(
         screen.getByTestId("forge-signed-in-github.com"),
@@ -139,36 +147,42 @@ describe("ForgeSettings", () => {
   });
 
   it("confirms before removing a token, and honours cancel", async () => {
-    useForgeStore.setState({ logins: { "github.com": "jonassaa" }, detection: GH });
+    useForgeStore.setState({
+      accounts: { "github.com": [acct()] },
+      detection: GH,
+    });
     mockInvoke("forge_sign_out", () => null);
     render(
       <WithDialogs>
         <ForgeSettings />
       </WithDialogs>,
     );
-    await userEvent.click(screen.getByTestId("forge-remove-github.com"));
+    await userEvent.click(screen.getByTestId("forge-remove-github.com-acc-1"));
     await waitFor(() =>
-      expect(dialogTitle()).toContain("Remove the GitHub token for github.com?"),
+      expect(dialogTitle()).toContain("Remove the GitHub token for jonassaa"),
     );
     await dismissDialog();
     expect(getInvokeCalls().map((c) => c.cmd)).not.toContain("forge_sign_out");
-    expect(useForgeStore.getState().logins["github.com"]).toBe("jonassaa");
+    expect(useForgeStore.getState().accounts["github.com"]).toHaveLength(1);
   });
 
   it("removes the token once confirmed", async () => {
-    useForgeStore.setState({ logins: { "github.com": "jonassaa" }, detection: GH });
+    useForgeStore.setState({
+      accounts: { "github.com": [acct()] },
+      detection: GH,
+    });
     mockInvoke("forge_sign_out", () => null);
     render(
       <WithDialogs>
         <ForgeSettings />
       </WithDialogs>,
     );
-    await userEvent.click(screen.getByTestId("forge-remove-github.com"));
+    await userEvent.click(screen.getByTestId("forge-remove-github.com-acc-1"));
     await waitFor(() => expect(dialogTitle()).toContain("Remove"));
     await acceptDialog();
     await waitFor(() => {
       expect(getInvokeCalls().map((c) => c.cmd)).toContain("forge_sign_out");
-      expect(useForgeStore.getState().logins["github.com"]).toBeUndefined();
+      expect(useForgeStore.getState().accounts["github.com"]).toBeUndefined();
     });
     // Back to offering a token, not stuck claiming to be signed in.
     expect(
@@ -179,11 +193,125 @@ describe("ForgeSettings", () => {
   it("lists a host the user configured even with no repository open", () => {
     useForgeStore.setState({
       hostKinds: { "git.example.com": "GitLab" },
-      logins: { "git.example.com": "aasberg" },
+      accounts: { "git.example.com": [acct({ login: "aasberg" })] },
     });
     render(<ForgeSettings />);
     expect(
       screen.getByTestId("forge-signed-in-git.example.com"),
     ).toHaveTextContent("GitLab — signed in as aasberg");
+  });
+});
+
+describe("ForgeSettings — several accounts on one host (#233)", () => {
+  const twoAccounts = {
+    "github.com": [
+      acct({ id: "acc-work", login: "work" }),
+      acct({ id: "acc-personal", login: "personal", active: false }),
+    ],
+  };
+
+  it("shows every account on the host, not just the active one", () => {
+    useForgeStore.setState({ accounts: twoAccounts, detection: GH });
+    render(<ForgeSettings />);
+    expect(screen.getByTestId("forge-account-github.com-acc-work")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("forge-account-github.com-acc-personal"),
+    ).toBeInTheDocument();
+  });
+
+  it("marks which account the host actually uses", () => {
+    useForgeStore.setState({ accounts: twoAccounts, detection: GH });
+    render(<ForgeSettings />);
+    // Two logins with no "which one am I?" is the confusion the whole feature
+    // exists to remove.
+    expect(screen.getByTestId("forge-account-github.com-acc-work")).toHaveTextContent(
+      "Active",
+    );
+    expect(
+      screen.getByTestId("forge-account-github.com-acc-personal"),
+    ).not.toHaveTextContent("Active");
+  });
+
+  it("switches the active account", async () => {
+    useForgeStore.setState({ accounts: twoAccounts, detection: GH, repoId: "r1" });
+    mockInvoke("forge_detect", () => GH);
+    mockInvoke("forge_token_status", () => ({
+      host: "github.com",
+      signedIn: true,
+      login: null,
+    }));
+    mockInvoke("forge_list_pull_requests", () => []);
+    render(<ForgeSettings />);
+    await userEvent.click(screen.getByTestId("forge-use-github.com-acc-personal"));
+    await waitFor(() =>
+      expect(
+        useForgeStore.getState().accounts["github.com"].find((a) => a.active)?.id,
+      ).toBe("acc-personal"),
+    );
+  });
+
+  it("offers no switch on the account already in use", () => {
+    useForgeStore.setState({ accounts: twoAccounts, detection: GH });
+    render(<ForgeSettings />);
+    expect(
+      screen.queryByTestId("forge-use-github.com-acc-work"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the token field behind an explicit Add account once signed in", async () => {
+    // A password box sitting open under every signed-in host is noise; a
+    // signed-OUT host still gets the field directly (the tests above).
+    useForgeStore.setState({ accounts: twoAccounts, detection: GH });
+    render(<ForgeSettings />);
+    expect(screen.queryByTestId("forge-token-github.com")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("forge-add-github.com"));
+    expect(screen.getByTestId("forge-token-github.com")).toBeInTheDocument();
+  });
+
+  it("signing out of one account leaves the other on screen", async () => {
+    useForgeStore.setState({ accounts: twoAccounts, detection: GH });
+    mockInvoke("forge_sign_out", () => null);
+    render(
+      <WithDialogs>
+        <ForgeSettings />
+      </WithDialogs>,
+    );
+    await userEvent.click(screen.getByTestId("forge-remove-github.com-acc-work"));
+    await waitFor(() => expect(dialogTitle()).toContain("Remove"));
+    await acceptDialog();
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("forge-account-github.com-acc-work"),
+      ).not.toBeInTheDocument(),
+    );
+    // The eviction the singular host → login map could not avoid.
+    expect(
+      screen.getByTestId("forge-account-github.com-acc-personal"),
+    ).toBeInTheDocument();
+  });
+
+  it("names the account in the removal confirmation", async () => {
+    useForgeStore.setState({ accounts: twoAccounts, detection: GH });
+    mockInvoke("forge_sign_out", () => null);
+    render(
+      <WithDialogs>
+        <ForgeSettings />
+      </WithDialogs>,
+    );
+    await userEvent.click(screen.getByTestId("forge-remove-github.com-acc-personal"));
+    // "Remove the token for github.com?" would be a lie with two accounts on it.
+    await waitFor(() => expect(dialogTitle()).toContain("personal"));
+    await dismissDialog();
+  });
+
+  it("renders the pre-#233 account, whose slot id is null", () => {
+    useForgeStore.setState({
+      accounts: { "github.com": [acct({ id: null, login: "migrated" })] },
+      detection: GH,
+    });
+    render(<ForgeSettings />);
+    expect(
+      screen.getByTestId("forge-account-github.com-default"),
+    ).toHaveTextContent("migrated");
   });
 });

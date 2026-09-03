@@ -81,7 +81,37 @@ pub fn redact(text: &str, secret: &Secret) -> String {
 }
 
 /// Username every forge-token credential entry is stored under.
+///
+/// For the pre-#233 slot this is the whole username. A named account appends
+/// its slot id — see [`credential_username`].
 pub const CREDENTIAL_USERNAME: &str = "platypusgit-forge";
+
+/// The `username=` one host's account is stored against.
+///
+/// # Why the username, and not the host, carries the account (#233)
+///
+/// git credential helpers key on `protocol` + `host` + `username`. The host key
+/// is already load-bearing (see the module docs: it is what keeps an API token
+/// off the git-transport credential for the same host), so a second account on
+/// the same forge has to differ somewhere else — and the username is the only
+/// remaining part of the key.
+///
+/// `None` is the slot a pre-#233 build wrote under: the bare
+/// `platypusgit-forge`. It MUST stay byte-identical, or every already-signed-in
+/// user comes back signed out of a host they never left. An empty id means the
+/// same thing — `undefined`, `null` and `""` all reach here as "unspecified"
+/// from the frontend, and letting `""` mint a third distinct slot would strand a
+/// token in it.
+///
+/// The id is deliberately opaque rather than the login: a forge login can be
+/// renamed while the token stays valid, and a login-keyed entry would orphan the
+/// token on a rename.
+pub fn credential_username(account: Option<&str>) -> String {
+    match account.filter(|a| !a.is_empty()) {
+        None => CREDENTIAL_USERNAME.to_string(),
+        Some(id) => format!("{CREDENTIAL_USERNAME}:{id}"),
+    }
+}
 
 /// The `host=` a forge token for `host` is stored against. See the module docs.
 pub fn credential_host(host: &str) -> String {
@@ -108,16 +138,21 @@ fn credential_cwd() -> PathBuf {
     std::env::temp_dir()
 }
 
-/// Build the credential-protocol payload for one host, with or without the
-/// password. `None` is a `fill`/`reject` query; `Some` is an `approve` write.
-fn credential_input(host: &str, token: Option<&Secret>) -> AppResult<String> {
+/// Build the credential-protocol payload for one host + account slot, with or
+/// without the password. `None` token is a `fill`/`reject` query; `Some` is an
+/// `approve` write.
+fn credential_input(host: &str, account: Option<&str>, token: Option<&Secret>) -> AppResult<String> {
     let key_host = credential_host(host);
-    if !credential_line_safe(&key_host) || !credential_line_safe(CREDENTIAL_USERNAME) {
+    // The username now carries the account slot, so it is user-influenced the
+    // same way the host is: check the value that actually goes on the wire.
+    let key_user = credential_username(account);
+    if !credential_line_safe(&key_host) || !credential_line_safe(&key_user) {
         return Err(AppError::InvalidArgument(
-            "host contains a newline, which git's credential protocol cannot carry".into(),
+            "the host or account contains a newline, which git's credential protocol cannot carry"
+                .into(),
         ));
     }
-    let mut input = format!("protocol=https\nhost={key_host}\nusername={CREDENTIAL_USERNAME}\n");
+    let mut input = format!("protocol=https\nhost={key_host}\nusername={key_user}\n");
     if let Some(t) = token {
         if !credential_line_safe(t.expose()) {
             return Err(AppError::InvalidArgument(
@@ -201,19 +236,19 @@ fn password_from_fill(stdout: &str) -> Option<Secret> {
     None
 }
 
-/// Read the stored token for `host`, or `None`.
+/// Read the stored token for `host`'s `account` slot, or `None`.
 ///
 /// An empty `password=` reads as absent: a helper (or a stray `GIT_ASKPASS`)
 /// answering with an empty string must not look like a stored empty token.
-pub async fn load_token(host: &str) -> AppResult<Option<Secret>> {
-    let input = credential_input(host, None)?;
+pub async fn load_token(host: &str, account: Option<&str>) -> AppResult<Option<Secret>> {
+    let input = credential_input(host, account, None)?;
     match run_credential("fill", &input, true).await? {
         Some(stdout) => Ok(password_from_fill(&stdout)),
         None => Ok(None),
     }
 }
 
-/// Store the token for `host`, then prove it stuck.
+/// Store the token for `host`'s `account` slot, then prove it stuck.
 ///
 /// D5 could treat storage as best-effort — the credential had already worked for
 /// the operation the user asked for. A forge token cannot: if it silently
@@ -221,11 +256,11 @@ pub async fn load_token(host: &str) -> AppResult<Option<Secret>> {
 /// through `fill` and reports `ForgeTokenStore` with the remedy when the token
 /// does not come back. The caller keeps it in memory regardless, so the feature
 /// still works for this session.
-pub async fn store_token(host: &str, token: &Secret) -> AppResult<()> {
-    let input = credential_input(host, Some(token))?;
+pub async fn store_token(host: &str, account: Option<&str>, token: &Secret) -> AppResult<()> {
+    let input = credential_input(host, account, Some(token))?;
     run_credential("approve", &input, false).await?;
 
-    match load_token(host).await? {
+    match load_token(host, account).await? {
         Some(stored) if stored == *token => Ok(()),
         _ => Err(AppError::ForgeTokenStore(format!(
             "git did not keep the token for {host}. Configure a credential helper \
@@ -236,9 +271,9 @@ pub async fn store_token(host: &str, token: &Secret) -> AppResult<()> {
     }
 }
 
-/// Forget the token for `host`.
-pub async fn erase_token(host: &str) -> AppResult<()> {
-    let input = credential_input(host, None)?;
+/// Forget the token in `host`'s `account` slot. Leaves every other slot alone.
+pub async fn erase_token(host: &str, account: Option<&str>) -> AppResult<()> {
+    let input = credential_input(host, account, None)?;
     run_credential("reject", &input, false).await?;
     Ok(())
 }

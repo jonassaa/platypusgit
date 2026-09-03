@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
 import type { ForgeDetection, PullRequest } from "@/lib/types";
 import { useAuthStore } from "@/features/auth/useAuthStore";
+import type { ForgeAccount } from "./forgeAccounts";
 import { useForgeStore } from "./useForgeStore";
+
+/** One signed-in account, active unless said otherwise. */
+function acct(over: Partial<ForgeAccount> = {}): ForgeAccount {
+  return { id: "acc-1", login: "jonassaa", active: true, ...over };
+}
 
 /** Answer everything `useRepoStore.refreshAll` fans out to. */
 function mockRefreshAll() {
@@ -71,7 +77,7 @@ function reset() {
     selected: null,
     checks: {},
     hostKinds: {},
-    logins: {},
+    accounts: {},
     loading: false,
     creating: false,
     checkingOut: false,
@@ -157,7 +163,7 @@ describe("detect + gate", () => {
   it("passes the persisted host-kind map to detection", async () => {
     localStorage.setItem(
       "pg-forge-hosts",
-      JSON.stringify({ hostKinds: { "git.example.com": "GitLab" }, logins: {} }),
+      JSON.stringify({ hostKinds: { "git.example.com": "GitLab" }, accounts: {} }),
     );
     useForgeStore.setState({ hostKinds: { "git.example.com": "GitLab" } });
     mockInvoke("forge_detect", () => ({ ...SELF_HOSTED, kind: "GitLab" }));
@@ -453,20 +459,64 @@ describe("create", () => {
 describe("accounts", () => {
   beforeEach(reset);
 
-  it("signIn stores the login and the host's kind, and never the token", async () => {
+  it("signIn stores the account and the host's kind, and never the token", async () => {
     mockInvoke("forge_sign_in", () => ({ login: "jonassaa", name: "Jonas" }));
     expect(
       await useForgeStore.getState().signIn("github.com", "GitHub", "ghp_secret"),
     ).toBe(true);
     const s = useForgeStore.getState();
-    expect(s.logins["github.com"]).toBe("jonassaa");
+    expect(s.accounts["github.com"]?.[0]).toMatchObject({
+      login: "jonassaa",
+      active: true,
+    });
     expect(s.hostKinds["github.com"]).toBe("GitHub");
     // Nothing in the store, and nothing in localStorage, may hold the token.
     expect(JSON.stringify(s)).not.toContain("ghp_secret");
     expect(localStorage.getItem("pg-forge-hosts")).not.toContain("ghp_secret");
   });
 
-  it("signIn reports a rejected token and stores no login", async () => {
+  it("signIn names the credential slot it wants the token stored in", async () => {
+    // The slot id is what lets a second account on the same host have its own
+    // token instead of overwriting the first one's.
+    mockInvoke("forge_sign_in", () => ({ login: "jonassaa", name: null }));
+    await useForgeStore.getState().signIn("github.com", "GitHub", "ghp_x");
+    const call = getInvokeCalls().find((c) => c.cmd === "forge_sign_in");
+    const id = useForgeStore.getState().accounts["github.com"][0].id;
+    expect(id).toBeTruthy();
+    expect(call?.args.account).toBe(id);
+  });
+
+  it("keeps BOTH accounts when a second login signs in to the same host", async () => {
+    // The whole point of #233's forge half: work and personal on github.com.
+    useForgeStore.setState({
+      accounts: { "github.com": [acct({ id: "acc-work", login: "work" })] },
+    });
+    mockInvoke("forge_sign_in", () => ({ login: "personal", name: null }));
+    await useForgeStore.getState().signIn("github.com", "GitHub", "ghp_2");
+    const list = useForgeStore.getState().accounts["github.com"];
+    expect(list.map((a) => a.login)).toEqual(["work", "personal"]);
+    // The one you just signed in to is the one you meant to use.
+    expect(list.find((a) => a.active)?.login).toBe("personal");
+  });
+
+  it("collapses a re-sign-in for a login that already has a slot, erasing the old one", async () => {
+    // Pasting a fresh token for an expired one must not leave two "work" rows —
+    // and the token in the slot it replaces must not linger in the keychain.
+    useForgeStore.setState({
+      accounts: { "github.com": [acct({ id: null, login: "work" })] },
+    });
+    mockInvoke("forge_sign_in", () => ({ login: "work", name: null }));
+    mockInvoke("forge_sign_out", () => null);
+    await useForgeStore.getState().signIn("github.com", "GitHub", "ghp_new");
+    const list = useForgeStore.getState().accounts["github.com"];
+    expect(list).toHaveLength(1);
+    expect(list[0].login).toBe("work");
+    expect(list[0].id).not.toBeNull();
+    const out = getInvokeCalls().find((c) => c.cmd === "forge_sign_out");
+    expect(out?.args).toEqual({ host: "github.com", account: null });
+  });
+
+  it("signIn reports a rejected token and stores no account", async () => {
     mockInvoke("forge_sign_in", () => {
       throw { kind: "ForgeAuth", message: "github.com" };
     });
@@ -474,9 +524,22 @@ describe("accounts", () => {
       await useForgeStore.getState().signIn("github.com", "GitHub", "bad"),
     ).toBe(false);
     const s = useForgeStore.getState();
-    expect(s.logins["github.com"]).toBeUndefined();
+    expect(s.accounts["github.com"]).toBeUndefined();
     expect(s.error).toContain("github.com");
     expect(s.authBusy).toBe(false);
+  });
+
+  it("a rejected second token leaves the first account untouched", async () => {
+    useForgeStore.setState({
+      accounts: { "github.com": [acct({ id: "acc-work", login: "work" })] },
+    });
+    mockInvoke("forge_sign_in", () => {
+      throw { kind: "ForgeAuth", message: "github.com" };
+    });
+    await useForgeStore.getState().signIn("github.com", "GitHub", "bad");
+    expect(useForgeStore.getState().accounts["github.com"]).toEqual([
+      { id: "acc-work", login: "work", active: true },
+    ]);
   });
 
   it("signIn surfaces a token-store failure so it is not silently lost", async () => {
@@ -494,41 +557,137 @@ describe("accounts", () => {
     expect(useForgeStore.getState().error).toContain("credential helper");
   });
 
-  it("validate drops a login the forge no longer accepts", async () => {
+  it("validate re-probes ONE slot and renames just that account", async () => {
     useForgeStore.setState({
-      logins: { "github.com": "jonassaa" },
-      forge: {
-        host: "github.com",
-        owner: "o",
-        name: "r",
-        kind: "GitHub",
+      accounts: {
+        "github.com": [
+          acct({ id: "acc-1", login: "work" }),
+          acct({ id: "acc-2", login: "personal", active: false }),
+        ],
       },
+    });
+    mockInvoke("forge_validate_token", () => ({ login: "renamed", name: null }));
+    await useForgeStore.getState().validate("github.com", "GitHub", "acc-2");
+    const call = getInvokeCalls().find((c) => c.cmd === "forge_validate_token");
+    expect(call?.args.account).toBe("acc-2");
+    expect(
+      useForgeStore.getState().accounts["github.com"].map((a) => a.login),
+    ).toEqual(["work", "renamed"]);
+  });
+
+  it("validate drops ONLY the account the forge no longer accepts", async () => {
+    useForgeStore.setState({
+      accounts: {
+        "github.com": [
+          acct({ id: "acc-1", login: "work" }),
+          acct({ id: "acc-2", login: "personal", active: false }),
+        ],
+      },
+      forge: { host: "github.com", owner: "o", name: "r", kind: "GitHub" },
       signedIn: true,
     });
     mockInvoke("forge_validate_token", () => {
       throw { kind: "ForgeAuth", message: "github.com" };
     });
-    await useForgeStore.getState().validate("github.com", "GitHub");
-    const s = useForgeStore.getState();
-    expect(s.logins["github.com"]).toBeUndefined();
-    expect(s.signedIn).toBe(false);
+    await useForgeStore.getState().validate("github.com", "GitHub", "acc-1");
+    const list = useForgeStore.getState().accounts["github.com"];
+    // The other account on the same host is still signed in — the eviction the
+    // singular `logins` map could not avoid.
+    expect(list).toEqual([{ id: "acc-2", login: "personal", active: true }]);
   });
 
-  it("signOut clears the login, the list and the checks cache", async () => {
+  it("signOut clears one account, the list and the checks cache", async () => {
     useForgeStore.setState({
-      logins: { "github.com": "jonassaa" },
+      accounts: { "github.com": [acct({ id: "acc-1" })] },
       forge: { host: "github.com", owner: "o", name: "r", kind: "GitHub" },
       signedIn: true,
       pulls: [pr()],
       checks: { 118: { state: "Success", total: 1, label: "success" } },
     });
     mockInvoke("forge_sign_out", () => null);
-    await useForgeStore.getState().signOut("github.com");
+    await useForgeStore.getState().signOut("github.com", "acc-1");
     const s = useForgeStore.getState();
-    expect(s.logins["github.com"]).toBeUndefined();
+    expect(s.accounts["github.com"]).toBeUndefined();
     expect(s.signedIn).toBe(false);
     expect(s.pulls).toEqual([]);
     expect(s.checks).toEqual({});
+    const call = getInvokeCalls().find((c) => c.cmd === "forge_sign_out");
+    expect(call?.args.account).toBe("acc-1");
+  });
+
+  it("signOut does NOT evict the other account on the same host", async () => {
+    useForgeStore.setState({
+      repoId: "r1",
+      accounts: {
+        "github.com": [
+          acct({ id: "acc-1", login: "work" }),
+          acct({ id: "acc-2", login: "personal", active: false }),
+        ],
+      },
+      detection: GH_DETECTION,
+      forge: { host: "github.com", owner: "o", name: "r", kind: "GitHub" },
+      signedIn: true,
+    });
+    mockInvoke("forge_sign_out", () => null);
+    mockInvoke("forge_detect", () => GH_DETECTION);
+    mockInvoke("forge_token_status", () => ({
+      host: "github.com",
+      signedIn: true,
+      login: null,
+    }));
+    mockInvoke("forge_list_pull_requests", () => []);
+    await useForgeStore.getState().signOut("github.com", "acc-1");
+    expect(useForgeStore.getState().accounts["github.com"]).toEqual([
+      { id: "acc-2", login: "personal", active: true },
+    ]);
+  });
+
+  it("switchAccount points the host at another account and re-detects", async () => {
+    useForgeStore.setState({
+      repoId: "r1",
+      detection: GH_DETECTION,
+      accounts: {
+        "github.com": [
+          acct({ id: "acc-1", login: "work" }),
+          acct({ id: "acc-2", login: "personal", active: false }),
+        ],
+      },
+    });
+    mockInvoke("forge_detect", () => GH_DETECTION);
+    mockInvoke("forge_token_status", () => ({
+      host: "github.com",
+      signedIn: true,
+      login: null,
+    }));
+    mockInvoke("forge_list_pull_requests", () => []);
+    await useForgeStore.getState().switchAccount("github.com", "acc-2");
+    const list = useForgeStore.getState().accounts["github.com"];
+    expect(list.find((a) => a.active)?.id).toBe("acc-2");
+    // Persisted immediately: which account a host uses must survive a restart.
+    expect(localStorage.getItem("pg-forge-hosts")).toContain("acc-2");
+    // The list on screen belongs to the account that just went inactive.
+    const status = getInvokeCalls().find((c) => c.cmd === "forge_token_status");
+    expect(status?.args.account).toBe("acc-2");
+  });
+
+  it("refreshTokenStatus drops only the active account when its slot is empty", async () => {
+    useForgeStore.setState({
+      accounts: {
+        "github.com": [
+          acct({ id: "acc-1", login: "work" }),
+          acct({ id: "acc-2", login: "personal", active: false }),
+        ],
+      },
+    });
+    mockInvoke("forge_token_status", () => ({
+      host: "github.com",
+      signedIn: false,
+      login: null,
+    }));
+    await useForgeStore.getState().refreshTokenStatus("github.com");
+    expect(useForgeStore.getState().accounts["github.com"]).toEqual([
+      { id: "acc-2", login: "personal", active: true },
+    ]);
   });
 
   it("setHostKind persists and re-runs detection", async () => {
@@ -546,6 +705,83 @@ describe("accounts", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(getInvokeCalls().map((c) => c.cmd)).toContain("forge_detect");
+  });
+});
+
+describe("every token-using call names the active account", () => {
+  beforeEach(() => {
+    reset();
+    useForgeStore.setState({
+      repoId: "r1",
+      detection: GH_DETECTION,
+      forge: {
+        host: "github.com",
+        owner: "jonassaa",
+        name: "platypusgit",
+        kind: "GitHub",
+      },
+      signedIn: true,
+      accounts: {
+        "github.com": [
+          acct({ id: "acc-1", login: "work", active: false }),
+          acct({ id: "acc-2", login: "personal" }),
+        ],
+      },
+    });
+  });
+
+  it("detect asks about the active slot, not the host as a whole", async () => {
+    mockInvoke("forge_detect", () => GH_DETECTION);
+    mockInvoke("forge_token_status", () => ({
+      host: "github.com",
+      signedIn: false,
+      login: null,
+    }));
+    await useForgeStore.getState().detect("r1");
+    const call = getInvokeCalls().find((c) => c.cmd === "forge_token_status");
+    expect(call?.args.account).toBe("acc-2");
+  });
+
+  it("refresh lists the active account's requests", async () => {
+    mockInvoke("forge_list_pull_requests", () => [pr()]);
+    await useForgeStore.getState().refresh();
+    const call = getInvokeCalls().find((c) => c.cmd === "forge_list_pull_requests");
+    expect(call?.args.account).toBe("acc-2");
+  });
+
+  it("loadChecks uses the active account", async () => {
+    useForgeStore.setState({ pulls: [pr()] });
+    mockInvoke("forge_pull_request_checks", () => ({
+      state: "Success",
+      total: 1,
+      label: "success",
+    }));
+    await useForgeStore.getState().loadChecks(118);
+    const call = getInvokeCalls().find((c) => c.cmd === "forge_pull_request_checks");
+    expect(call?.args.account).toBe("acc-2");
+  });
+
+  it("create opens the request as the active account", async () => {
+    mockInvoke("forge_create_pull_request", () => pr({ number: 121 }));
+    await useForgeStore.getState().create({
+      title: "t",
+      body: "",
+      sourceBranch: "feat/x",
+      targetBranch: "main",
+      draft: false,
+    });
+    const call = getInvokeCalls().find((c) => c.cmd === "forge_create_pull_request");
+    expect(call?.args.account).toBe("acc-2");
+  });
+
+  it("falls back to the pre-#233 slot when the host has no account list", async () => {
+    // Cleared localStorage with the keychain intact: null is the slot a released
+    // build actually stored the token in, so this still finds it.
+    useForgeStore.setState({ accounts: {} });
+    mockInvoke("forge_list_pull_requests", () => []);
+    await useForgeStore.getState().refresh();
+    const call = getInvokeCalls().find((c) => c.cmd === "forge_list_pull_requests");
+    expect(call?.args.account).toBeNull();
   });
 });
 

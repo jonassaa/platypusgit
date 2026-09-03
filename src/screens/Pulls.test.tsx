@@ -77,7 +77,7 @@ function seedForge(partial: Partial<ReturnType<typeof useForgeStore.getState>>) 
     selected: null as number | null,
     checks: {},
     hostKinds: {},
-    logins: {},
+    accounts: {},
     loading: false,
     creating: false,
     checkingOut: false,

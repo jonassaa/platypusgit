@@ -7,6 +7,11 @@
 //!    command that reads a token out.
 //! 2. **Every blocking `ureq` call is wrapped in `spawn_blocking`**, like every
 //!    libgit2 call, so an API round trip cannot block the async runtime.
+//!
+//! Every token-using command also takes an `account` slot (#233): a host can
+//! hold several accounts, and the caller says which one this call is for.
+//! Absent / `null` is the pre-#233 slot — the one an already-signed-in user's
+//! token is stored under — so an old caller keeps working unchanged.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -26,43 +31,59 @@ use crate::{
     state::AppState,
 };
 
-/// Per-host token cache, so a list refresh does not shell out to
-/// `git credential fill` on every call.
+/// Cache key: one forge host plus the account slot within it (#233).
 ///
 /// Keyed by the FORGE host as the user typed it (`github.com`), not by the
 /// namespaced credential host — the namespacing is `forge::token`'s business.
+/// `None` is the pre-#233 slot; two accounts on one host are two entries, so a
+/// refresh for the work account can never hand back the personal token.
+type TokenKey = (String, Option<String>);
+
+fn token_key(host: &str, account: Option<&str>) -> TokenKey {
+    (host.to_string(), account.map(str::to_string))
+}
+
+/// Per-account token cache, so a list refresh does not shell out to
+/// `git credential fill` on every call.
 #[derive(Default)]
-pub struct ForgeTokens(pub Mutex<HashMap<String, Secret>>);
+pub struct ForgeTokens(pub Mutex<HashMap<TokenKey, Secret>>);
 
 impl ForgeTokens {
-    fn get(&self, host: &str) -> Option<Secret> {
-        self.0.lock().ok()?.get(host).cloned()
+    fn get(&self, host: &str, account: Option<&str>) -> Option<Secret> {
+        self.0.lock().ok()?.get(&token_key(host, account)).cloned()
     }
 
-    fn put(&self, host: &str, token: Secret) {
+    fn put(&self, host: &str, account: Option<&str>, token: Secret) {
         if let Ok(mut map) = self.0.lock() {
-            map.insert(host.to_string(), token);
+            map.insert(token_key(host, account), token);
         }
     }
 
-    fn forget(&self, host: &str) {
+    /// Forget ONE slot. Signing out of the work account must leave the personal
+    /// account on the same host signed in.
+    fn forget(&self, host: &str, account: Option<&str>) {
         if let Ok(mut map) = self.0.lock() {
-            map.remove(host);
+            map.remove(&token_key(host, account));
         }
     }
 }
 
-/// The token for `host`, from memory or from the credential helper.
+/// The token for one account on `host`, from memory or from the credential
+/// helper.
 ///
 /// "Not signed in" is `ForgeAuth`, the same error a rejected token produces, so
 /// the frontend has exactly one shape to route to Settings.
-async fn token_for(tokens: &ForgeTokens, host: &str) -> AppResult<Secret> {
-    if let Some(t) = tokens.get(host) {
+async fn token_for(
+    tokens: &ForgeTokens,
+    host: &str,
+    account: Option<&str>,
+) -> AppResult<Secret> {
+    if let Some(t) = tokens.get(host, account) {
         return Ok(t);
     }
-    match token::load_token(host).await? {
+    match token::load_token(host, account).await? {
         Some(t) => {
-            tokens.put(host, t.clone());
+            tokens.put(host, account, t.clone());
             Ok(t)
         }
         None => Err(AppError::ForgeAuth(host.to_string())),
@@ -116,16 +137,22 @@ pub async fn forge_detect(
     Ok(remote::detect(&remotes, &host_kinds))
 }
 
-/// Validate a token against the forge, then store it.
+/// Validate a token against the forge, then store it in one account slot.
 ///
 /// Validation FIRST, deliberately: storing on submit would persist a typo into
 /// the user's keychain and then fail every later call with a stale secret.
+///
+/// `account` names the slot (#233). Absent / `null` is the pre-#233 slot, which
+/// is what an already-signed-in user's token is stored under; a second account
+/// on the same host arrives with an id the frontend minted, so neither token
+/// overwrites the other.
 #[tauri::command]
 pub async fn forge_sign_in(
     tokens: State<'_, ForgeTokens>,
     host: String,
     kind: ForgeKind,
     token: String,
+    account: Option<String>,
 ) -> AppResult<ForgeIdentity> {
     let secret = Secret::new(token);
     if secret.is_empty() {
@@ -144,23 +171,27 @@ pub async fn forge_sign_in(
 
     // Cache before storing: if the helper is missing, the session still works and
     // `store_token`'s error explains why it will not survive a restart.
-    tokens.put(&host, secret.clone());
-    token::store_token(&host, &secret).await?;
+    let slot = account.as_deref();
+    tokens.put(&host, slot, secret.clone());
+    token::store_token(&host, slot, &secret).await?;
     Ok(identity)
 }
 
-/// Whether `host` has a token. No network call — Settings renders often.
+/// Whether one account slot on `host` has a token. No network call — Settings
+/// renders often.
 #[tauri::command]
 pub async fn forge_token_status(
     tokens: State<'_, ForgeTokens>,
     host: String,
+    account: Option<String>,
 ) -> AppResult<ForgeTokenStatus> {
-    let signed_in = if tokens.get(&host).is_some() {
+    let slot = account.as_deref();
+    let signed_in = if tokens.get(&host, slot).is_some() {
         true
     } else {
-        match token::load_token(&host).await? {
+        match token::load_token(&host, slot).await? {
             Some(t) => {
-                tokens.put(&host, t);
+                tokens.put(&host, slot, t);
                 true
             }
             None => false,
@@ -179,8 +210,9 @@ pub async fn forge_validate_token(
     tokens: State<'_, ForgeTokens>,
     host: String,
     kind: ForgeKind,
+    account: Option<String>,
 ) -> AppResult<ForgeIdentity> {
-    let secret = token_for(&tokens, &host).await?;
+    let secret = token_for(&tokens, &host, account.as_deref()).await?;
     let url = forge_for(kind).identity_url(&host)?;
     blocking_forge(host.clone(), secret, move |t| {
         let forge = forge_for(kind);
@@ -191,14 +223,19 @@ pub async fn forge_validate_token(
     .await
 }
 
-/// Forget the token for `host`.
+/// Forget the token in ONE of `host`'s account slots (#233).
+///
+/// Per-account on purpose: the other account on the same host keeps its token,
+/// in the cache and in the credential helper.
 #[tauri::command]
 pub async fn forge_sign_out(
     tokens: State<'_, ForgeTokens>,
     host: String,
+    account: Option<String>,
 ) -> AppResult<()> {
-    tokens.forget(&host);
-    token::erase_token(&host).await
+    let slot = account.as_deref();
+    tokens.forget(&host, slot);
+    token::erase_token(&host, slot).await
 }
 
 /// Open pull requests / merge requests for `forge`.
@@ -206,8 +243,9 @@ pub async fn forge_sign_out(
 pub async fn forge_list_pull_requests(
     tokens: State<'_, ForgeTokens>,
     forge: ForgeRepo,
+    account: Option<String>,
 ) -> AppResult<Vec<PullRequest>> {
-    let secret = token_for(&tokens, &forge.host).await?;
+    let secret = token_for(&tokens, &forge.host, account.as_deref()).await?;
     let kind = forge.kind;
     let url = forge_for(kind).list_url(&forge)?;
     blocking_forge(forge.host.clone(), secret, move |t| {
@@ -226,8 +264,9 @@ pub async fn forge_pull_request_checks(
     tokens: State<'_, ForgeTokens>,
     forge: ForgeRepo,
     sha: String,
+    account: Option<String>,
 ) -> AppResult<ChecksSummary> {
-    let secret = token_for(&tokens, &forge.host).await?;
+    let secret = token_for(&tokens, &forge.host, account.as_deref()).await?;
     let kind = forge.kind;
     let url = forge_for(kind).checks_url(&forge, &sha)?;
     blocking_forge(forge.host.clone(), secret, move |t| {
@@ -245,6 +284,7 @@ pub async fn forge_create_pull_request(
     tokens: State<'_, ForgeTokens>,
     forge: ForgeRepo,
     request: NewPullRequest,
+    account: Option<String>,
 ) -> AppResult<PullRequest> {
     if request.title.trim().is_empty() {
         return Err(AppError::InvalidArgument("a title is required".into()));
@@ -254,7 +294,7 @@ pub async fn forge_create_pull_request(
             "the source and target branch are the same".into(),
         ));
     }
-    let secret = token_for(&tokens, &forge.host).await?;
+    let secret = token_for(&tokens, &forge.host, account.as_deref()).await?;
     let kind = forge.kind;
     let url = forge_for(kind).create_url(&forge)?;
     let body = forge_for(kind).create_body(&request);
