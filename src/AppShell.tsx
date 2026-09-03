@@ -5,6 +5,7 @@ import {
   PGActivityBar,
   PGButton,
   PGDialogHost,
+  PGErrorBanner,
   PGIconButton,
   PGStatusBar,
   PGStatusItem,
@@ -76,12 +77,6 @@ import { UpdatePanel } from "@/features/update/UpdatePanel";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { warmSyntax } from "@/lib/syntax";
 import { BranchPicker } from "@/features/branches/BranchPicker";
-import {
-  DUBIOUS_OWNERSHIP_HELP,
-  EMBEDDED_REPO_HELP,
-  appErrorMessage,
-  dubiousOwnershipPath,
-} from "@/lib/errors";
 import {
   currentBranch,
   isConflicted,
@@ -468,54 +463,11 @@ export function AppShell() {
           its three call sites — a context-menu item builder and a palette step —
           are not React components. Renders nothing until one opens it. */}
       <CreateTagDialog />
-      {error && (
-        <div
-          role="alert"
-          style={{
-            padding: "8px 14px",
-            fontSize: "var(--fs-12)",
-            fontFamily: "var(--font-mono)",
-            color: "var(--git-removed)",
-            background: "oklch(0.68 0.18 25 / 0.1)",
-            borderBottom: "1px solid oklch(0.68 0.18 25 / 0.35)",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          {/* The backend keeps EmbeddedRepo and DubiousOwnership terse like
-              the rest of the enum; the actionable half of the story lives in
-              the UI. A dismissed trust prompt must not leave the user staring
-              at libgit2's sentence with nothing to do about it. */}
-          <strong>
-            {error.kind === "EmbeddedRepo"
-              ? "Embedded repository"
-              : error.kind === "DubiousOwnership"
-                ? "Repository owned by another user"
-                : error.kind}
-            :
-          </strong>
-          <span style={{ flex: 1 }}>
-            {error.kind === "EmbeddedRepo"
-              ? `${appErrorMessage(error).replace(/^embedded repository: /, "")} — ${EMBEDDED_REPO_HELP}`
-              : error.kind === "DubiousOwnership"
-                ? `${dubiousOwnershipPath(error)} — ${DUBIOUS_OWNERSHIP_HELP}`
-                : appErrorMessage(error)}
-          </span>
-          <button
-            onClick={clearError}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "inherit",
-              cursor: "pointer",
-              fontSize: "var(--fs-11)",
-            }}
-          >
-            dismiss
-          </button>
-        </div>
-      )}
+      {/* One banner, shared with Reflog (#212). It leads with written prose or
+          with nothing — never with the enum's own spelling — and preserves the
+          newlines in git's multi-line advice. The remediation the two terse
+          variants need travels with the text, in `errorBannerText`. */}
+      {error && <PGErrorBanner error={error} onDismiss={clearError} />}
       {/* Below the banner (which is transient) and above the screens (which
           all need to know): the standing "a merge/rebase is open" signal, and
           the only route to the resolver now that the Conflicts tab is gone. */}

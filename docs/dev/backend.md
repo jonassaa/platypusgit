@@ -19,7 +19,11 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   (leads with the kind); `appErrorMessage` for a BANNER (never shows the enum
   spelling). `toAppError` (one definition) wraps for the five stores whose
   `error` field is an `AppError`; plain-string stores call `appErrorMessage`
-  directly.
+  directly. The banner half of that promise is enforced on the SURFACE too —
+  both banners used to bolt `{error.kind}` back on in front of
+  `appErrorMessage`, which is how "NoSignature:" reached a first-run user
+  anyway. One `PGErrorBanner` now, guarded from two directions; see
+  `docs/dev/frontend.md`.
 - **Neither formatter may throw or assume `message` is a string.** `invoke`
   logs a failure BEFORE rethrowing, so a logger exception replaces the original
   rejection — `isAuthError` fails to narrow and no credential prompt is raised.
@@ -152,6 +156,24 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   caller would stack a dialog on the prompt. `useForgeStore.checkout` returns a
   `CheckoutOutcome` (`ok`/`branch-exists`/`auth-pending`/`error`) for exactly
   this; `useCreateStore` hand-rolls the shape for clone.
+- **A pull's failure is not always a network failure (#212).**
+  `map_git_failure` has only two outcomes, because stderr is all it has — right
+  for fetch and push, wrong for the single most ordinary thing that happens to
+  a pull. `pull` therefore runs its result through
+  `net::map_conflicted_pull`, which reconsiders a `Network` verdict **by
+  reading the INDEX**, never the text: git writes `CONFLICT (content): …` to
+  STDOUT and the runner nulls stdout, so the banner used to show git's *fetch
+  summary* under the word "Network" — mislabelled AND undescribed. A conflicted
+  entry is what the resolver operates on and is the same answer for
+  `--no-rebase` and `--rebase`, whose stderr phrasings share nothing. It cannot
+  swallow a real network failure: `git pull` refuses before contacting the
+  remote when the index has unmerged entries, and only `Network` is
+  reconsidered — `Auth` keeps its identity or the credential prompt never
+  opens, `Cancelled` keeps its identity or a user who pressed Cancel is shown a
+  failure they did not have. The status read is best-effort; refining a failure
+  must never replace it. `tests/pull_conflicts.rs` carries the measured git
+  output. Still `Network`, and its own change: `--ff-only`'s "fatal: Not
+  possible to fast-forward, aborting." (a divergence refusal, not a conflict).
 - **Scrub before surfacing:** `map_git_failure` runs `scrub_credentials` first,
   on both branches — git echoes remote URLs, and userinfo ends at the LAST `@`
   (splitting on the first leaks a password containing `@`).

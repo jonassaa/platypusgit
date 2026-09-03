@@ -10,6 +10,7 @@ export * from "./ui-helpers";
 export * from "./empty-state";
 export * from "./hook-output";
 export * from "./error-boundary";
+export * from "./error-banner";
 export * from "./modal";
 export * from "./use-prevent-browser-context-menu";
 export * from "./resizable";

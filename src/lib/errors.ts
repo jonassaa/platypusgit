@@ -526,3 +526,70 @@ export function isSshKeygenUnavailableError(e: unknown): boolean {
 
 export const SSH_KEYGEN_UNAVAILABLE_HELP =
   "Generating a key needs ssh-keygen, which ships with OpenSSH (and with Git for Windows). Install it and reopen this dialog, or create the key from a terminal with `ssh-keygen -t ed25519`.";
+
+/**
+ * The short bold category a banner may lead with — WRITTEN PROSE or nothing.
+ *
+ * `Partial`, and that is the whole design (#212). The banner used to read
+ *
+ *     {kind === "EmbeddedRepo" ? "Embedded repository"
+ *       : kind === "DubiousOwnership" ? "Repository owned by another user"
+ *       : kind}
+ *
+ * so two variants got a label somebody wrote and the other thirty printed the
+ * Rust enum's own spelling: "NoSignature:", "Network:", "Git:", "Auth:". The
+ * fix is not a bigger map — a total `Record` would put the same obligation on
+ * every future variant and default to the same failure the day someone forgot.
+ * It is that a MISSING entry means NO LABEL: `appErrorMessage` already returns
+ * a whole sentence, so the default banner is that sentence and nothing else.
+ *
+ * An entry therefore has to earn itself. These two do, for one reason: the
+ * backend keeps them terse on purpose (`embedded repository: vendor/lib/`) and
+ * the prose that follows is remediation advice, so without the category the
+ * strip opens on a bare path. Everywhere else the label would only restate the
+ * sentence beside it.
+ *
+ * `Partial<Record<AppError["kind"], string>>` also makes a typo'd or removed
+ * variant a compile error, and `test/appErrors.test.ts` fails the build if any
+ * entry is ever set to the kind's own spelling.
+ */
+const ERROR_BANNER_LABELS: Partial<Record<AppError["kind"], string>> = {
+  EmbeddedRepo: "Embedded repository",
+  DubiousOwnership: "Repository owned by another user",
+};
+
+/** The banner's bold prefix, or `null` when the sentence stands on its own. */
+export function errorBannerLabel(e: AppError): string | null {
+  try {
+    return ERROR_BANNER_LABELS[e.kind] ?? null;
+  } catch {
+    // Same contract as `appErrorMessage`: this runs in render, so an exotic
+    // payload costs a label, never the screen.
+    return null;
+  }
+}
+
+/**
+ * The whole sentence a banner shows — `appErrorMessage` plus the remediation
+ * the two terse variants need.
+ *
+ * The split of duties is the one the rest of this file already makes: the Rust
+ * error carries the identifier (a path), the words live next to the UI that can
+ * act on them. It lives HERE rather than in the banner component so both are
+ * true at once — every surface that renders an `AppError` gets the advice, and
+ * the advice is testable without a DOM.
+ */
+export function errorBannerText(e: AppError): string {
+  try {
+    if (e.kind === "EmbeddedRepo") {
+      const path = appErrorMessage(e).replace(/^embedded repository: /, "");
+      return `${path} — ${EMBEDDED_REPO_HELP}`;
+    }
+    if (e.kind === "DubiousOwnership") {
+      return `${dubiousOwnershipPath(e)} — ${DUBIOUS_OWNERSHIP_HELP}`;
+    }
+    return appErrorMessage(e);
+  } catch {
+    return appErrorMessage(e);
+  }
+}

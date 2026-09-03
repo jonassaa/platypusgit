@@ -173,16 +173,50 @@ describe("remote operations", () => {
     );
   });
 
-  it("rejected non-fast-forward push surfaces the error banner", async () => {
+  // The banner is the ONLY thing a rejected push produces, so what it says is
+  // the whole feature. This used to assert `toContain("Network")` — pinning the
+  // enum's own spelling, which the banner led with, which is the defect #212 is
+  // about. The required gate was holding the bug in place. What is worth
+  // pinning instead is what a user can act on: git's reason, and the hint
+  // paragraph that names the fix, still shaped as lines.
+  it("rejected non-fast-forward push shows git's reason and its advice", async () => {
     pair = remoteRepo();
     makeDiverged(pair);
     await openRepo(pair.repo.path);
     const bareBefore = pair.bareGit("rev-parse", "main").trim();
     await $("button*=Push").click(); // titlebar, force=None
-    await $('[role="alert"]').waitForDisplayed({
+    await $('[data-testid="error-banner"]').waitForDisplayed({
       timeout: 20_000, timeoutMsg: "error banner never appeared for rejected push",
     });
-    expect(await $('[role="alert"]').getText()).toContain("Network");
+    // Scoped to the text, so the dismiss button's label is not in the string
+    // (`getText()` on the strip returns "…details.dismiss").
+    const banner = await $('[data-testid="banner-text"]').getText();
+
+    // 1. git's own reason survives the trip through `map_git_failure` and the
+    //    progress reader's tail.
+    expect(banner).toContain("non-fast-forward");
+
+    // 2. ...and so does the advice, AS SEPARATE LINES. This is the whole of the
+    //    `white-space: pre-wrap` fix (#212): without it git's hint paragraph
+    //    arrives as one run-on red line with "use 'git pull' before pushing
+    //    again" buried mid-sentence. Nothing else guards it end to end — a
+    //    component test can assert the style property, but only a real webview
+    //    lays the text out, and `progress::DEFAULT_TAIL_LINES` deciding to keep
+    //    fewer lines would break this and nothing else.
+    //    `>= 3` rather than the exact 4 this git prints: the wording of the
+    //    paragraph is git's, and it has gained and lost a line across releases.
+    const hints = banner.split("\n").filter((l) => l.startsWith("hint:"));
+    expect(hints.length).toBeGreaterThanOrEqual(3);
+    expect(hints.join(" ")).toContain("git pull");
+
+    // 3. and the strip leads with written prose or with nothing — never the
+    //    discriminant. `Network` has no entry in `ERROR_BANNER_LABELS`, so the
+    //    label element must not exist at all; the string check documents the
+    //    exact regression, and is safe here because this fixture's remote is a
+    //    local bare repo, so no git output can mention a network.
+    expect(await $('[data-testid="banner-label"]').isExisting()).toBe(false);
+    expect(banner).not.toContain("Network");
+
     expect(pair.bareGit("rev-parse", "main").trim()).toBe(bareBefore);
   });
 });

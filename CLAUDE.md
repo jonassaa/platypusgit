@@ -133,6 +133,11 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   updated in the same commit — and a UNIT variant needs prose in
   `appErrorDetail`, or a banner shows the enum's own spelling.
   `test/appErrors.test.ts` fails the build for both. (`docs/dev/backend.md`)
+- **One error banner — `PGErrorBanner`** from `@/design`. A user never reads a
+  `kind`: the bold prefix is written prose or nothing (`errorBannerLabel` is
+  `Partial` on purpose), and the text is `pre-wrap` so git's multi-line advice
+  survives. `test/appErrors.test.ts` + `error-banner.test.tsx` fail the build
+  for a new surface that spells the enum. (`docs/dev/frontend.md`)
 - **Never `Command::new` outside `src-tauri/src/proc.rs`** — a guard test
   fails the build. Use the `proc::git*`/`proc::program*` constructors.
   (`docs/dev/backend.md`)

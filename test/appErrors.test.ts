@@ -22,11 +22,15 @@
 // does NOT check is whether the prose is any good — only that somebody wrote
 // some.
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { appErrorMessage } from "../src/lib/errors";
+import {
+  appErrorMessage,
+  errorBannerLabel,
+  type AppError,
+} from "../src/lib/errors";
 
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
 
@@ -121,3 +125,120 @@ describe("AppError stays 1:1 with the frontend union", () => {
     }
   });
 });
+
+/**
+ * SHIPPED frontend source: every `.ts`/`.tsx` under `src/` that is not a test
+ * and not the jsdom harness. Same walk (and the same reason for it) as
+ * `test/nativeSelect.test.ts` — the property is about what the webview renders,
+ * and a test's own prose names the very thing it asserts the absence of.
+ */
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "test") continue;
+      out.push(...sourceFiles(p));
+    } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/** Comments stripped first, so prose explaining the rule cannot break it. */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
+// The banner half of the same promise, and the hole the tests above could not
+// see (#212 follow-up).
+//
+// `appErrorMessage` was written so a banner NEVER shows the enum's spelling —
+// `docs/dev/backend.md` says so in as many words. Both banners then bolted the
+// kind back on in front of it:
+//
+//     <strong>{error.kind}:</strong><span>{appErrorMessage(error)}</span>
+//
+// So a fresh machine's first commit read "NoSignature: git needs a name and an
+// email address…", a failed push read "Network: …", and a refused merge read
+// "Git: …" — the exact defect #212 names, reintroduced one line downstream of
+// the function that exists to prevent it. Everything above stayed green because
+// it only ever asked `appErrorMessage`, never the surface.
+//
+// Two assertions close it. The first is over the REAL enum, so a variant added
+// tomorrow is covered without anyone remembering this file exists; the second
+// forbids the markup that caused it, anywhere in shipped `src/`.
+describe("a banner never shows the enum's own spelling", () => {
+  const variants = rustVariants();
+
+  it("gives every variant either written prose or no label at all", () => {
+    const leaked = variants
+      .map((v) => ({
+        name: v.name,
+        // `as unknown as AppError`: the names come from the Rust file at run
+        // time, so they are plain strings as far as the type-checker knows.
+        label: errorBannerLabel({
+          kind: v.name,
+          message: "some prose",
+        } as unknown as AppError),
+      }))
+      // `null` is the deliberate default: the sentence stands on its own and
+      // there is nothing bold in front of it. A label is opt-in PROSE, so the
+      // one thing it may never be is the discriminant it was written to hide.
+      .filter(
+        ({ name, label }) =>
+          label !== null && (label === name || label.includes(name)),
+      );
+    expect(
+      leaked,
+      "AppError variants whose banner label is the enum's own spelling. " +
+        "`errorBannerLabel` returns a human category or null — never `e.kind`. " +
+        "Write a short label in ERROR_BANNER_LABELS, or leave the variant out " +
+        "and let the sentence carry the banner on its own.",
+    ).toEqual([]);
+  });
+
+  it("has no surface interpolating a kind into JSX text", () => {
+    const files = sourceFiles(resolve(process.cwd(), "src"));
+    // A broken walk would make the assertion below vacuous.
+    expect(files.length).toBeGreaterThan(100);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const code = stripComments(readFileSync(file, "utf8"));
+      if (RENDERS_A_KIND.some((re) => re.test(code))) {
+        offenders.push(relative(process.cwd(), file));
+      }
+    }
+    expect(
+      offenders,
+      "Files rendering a `.kind` discriminant as JSX text. Render an " +
+        "`AppError` with `PGErrorBanner` from `@/design` — the discriminant is " +
+        "for narrowing and for the log file, never for a user.",
+    ).toEqual([]);
+  });
+});
+
+/**
+ * The two spellings that actually shipped, as source patterns.
+ *
+ * Narrow on purpose. `kind` is an ordinary discriminant all over this tree
+ * (graph lanes, palette entries, dialog requests), and it is passed as a PROP
+ * (`kind={ln.kind}`) and built into keys (`` key={`${b.kind}:${b.name}`} ``)
+ * dozens of times — all legitimate, none of it text a user reads. So these
+ * match only a JSX *text child*:
+ *
+ *   `<strong>{error.kind}:</strong>`            — Reflog's banner
+ *   `{a ? "…" : b ? "…" : error.kind}`          — AppShell's banner
+ *
+ * Stated honestly, in the shape `spawn_no_window.rs` uses: this greps, and a
+ * determined third spelling (a `const label = error.kind` hoisted out of the
+ * JSX) would slip past it. `error-banner.test.tsx` is the assertion that
+ * cannot be dodged — it renders the real component for every variant in the
+ * real enum. This one exists to stop the CHEAP mistake, which is the one that
+ * happened twice.
+ */
+const RENDERS_A_KIND = [
+  />\s*\{\s*[A-Za-z_$][\w$.]*\.kind\s*\}/,
+  /\{[^{}]*\?[^{}]*:\s*[A-Za-z_$][\w$.]*\.kind\s*\}/,
+];
