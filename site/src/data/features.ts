@@ -144,6 +144,100 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.6.0',
+    date: '2026-09-03',
+    status: 'feature',
+    summary:
+      'PlatypusGit is on the Microsoft Store, which is now the recommended way to install it on Windows: Microsoft re-signs the package, so the SmartScreen warning that greets the `.msi` is simply not there. From this release the pipeline submits itself — cutting a release builds the bundle and hands it to Partner Center with no one uploading anything. Beside that, two features that were half-built land their other halves: a forge host can hold more than one account, and a custom action can appear in the menu you right-clicked rather than only in the palette.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'The Microsoft Store listing is live, and it is the recommended Windows channel',
+            detail:
+              'The reason to prefer it is narrow and real: Microsoft re-signs an MSIX submitted to the Store, for free, so a Store install is the only Windows channel with no SmartScreen warning — the one user-facing Windows problem the project could not solve on its own. Install it from the Store and updates arrive through the Store like any other app. A Store install deliberately has no update surface of its own: no check, no notification, no release link, because Store policy requires that a Store product be updated only through the Store. Every other channel — `.msi`, portable zip, Scoop, winget — is unchanged and still checks for updates exactly as before.',
+          },
+          {
+            title: 'Releases submit themselves to the Store',
+            detail:
+              'Previously the `.msixbundle` was built by CI and then uploaded to Partner Center by hand, which is the kind of step that quietly stops happening. A new `msstore-publish` job takes the bundle straight off the published release — the same file anyone can download, rather than an internal build artifact, so what Microsoft certifies is provably what users install — and submits it through the Store submission API. It is skipped for prereleases, and it skips a version the Store already holds, so re-running a release cannot resubmit and be rejected. Certification still runs on Microsoft\'s side and takes hours, so a Store user sees a new version some time after everyone else.',
+          },
+          {
+            title: 'More than one forge account per host',
+            detail:
+              'A GitHub or GitLab host used to hold exactly one login, so a work account and a personal account on the same host were not expressible — adding the second would have overwritten the first one\'s token, and switching between them would have been a lie. Settings now shows one row per account with an Active badge, a switch to change which one is used, and Re-check and Remove per account; the token field hides behind an explicit "Add account" once a host has one. Signing out of the work account leaves the personal one signed in. If you were already signed in, you stay signed in: the existing token keeps the exact storage slot it was written to, so nothing has to be re-entered.',
+          },
+          {
+            title: 'Custom actions can live in the file and commit menus',
+            detail:
+              'The first half of custom actions shipped a parser, a Settings list and a palette entry — and advertised `$FILE`, `$FILES` and `$SHA`, placeholders that nothing could actually fill, because the only context available was the repository. An action now declares which surfaces it appears on — repository, file, or commit — and the file, multi-file and commit context menus hand it the selection they were opened on, so `$FILE` gets the path you right-clicked and `$FILES` gets every path in a multi-select. Actions you already had keep appearing exactly where they did: no `surfaces` recorded means the palette, which is what they were.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Error banners no longer show an internal enum name',
+            detail:
+              'Every banner led with its error category as the code spells it, so a fresh machine\'s first commit read "NoSignature: …", a failed push "Network: …" and a refused merge "Git: …" — one line upstream of the readable sentence written precisely so that would never happen. Banners now lead with written prose or with nothing at all. Two related defects on the same path: a pull that hit conflicts was reported as a *network* error, because git writes "CONFLICT" to stdout while only stderr was being read — it is now identified by inspecting the index instead of any text, which gives the same answer whether you rebase or merge; and multi-line git output, like a rejected push with its four-line `hint:` paragraph, no longer collapses into one run-on red line.',
+          },
+          {
+            title: 'A file with no hunks says so instead of rendering a blank pane',
+            detail:
+              'Two everyday changes produce a diff with no hunks at all: an empty added file such as a `.gitkeep`, and a mode-only change such as `chmod +x`, which git reports without any line range. The row appeared reading `0 / 0` and the pane beside it was simply empty — on the screen the app launches on. The same emptiness reached the right-click menu, where "Copy file diff as text" would put an empty string on the clipboard and report that it had copied a diff. Both now behave.',
+          },
+          {
+            title: 'The credential prompt takes Escape, and a cancel is reported as a cancel',
+            detail:
+              'Dismissing the password dialog is now a real answer rather than a keypress the dialog ignored, and cancelling an authenticated operation says so instead of surfacing as a failure of the operation itself.',
+          },
+          {
+            title: 'Cancel closes the last gaps',
+            detail:
+              'A long-running operation could survive the ways you would actually try to stop it — closing the window, the keyboard route, and a timer that had already been scheduled. All three now cancel.',
+          },
+          {
+            title: 'Patches synthesized by PlatypusGit mark a missing final newline',
+            detail:
+              'A patch built in-app omitted git\'s `\\ No newline at end of file` marker, so applying it could silently add a trailing newline the original did not have.',
+          },
+          {
+            title: 'The commit panel stays put when a clean tree refreshes',
+            detail:
+              'The clean-tree panel was unmounted and remounted by a background refresh, which threw away anything typed in it.',
+          },
+          {
+            title: 'Branch names are validated on every path that creates one',
+            detail:
+              'Two remaining branch-creating paths accepted names git would then refuse, failing later and less clearly than they needed to.',
+          },
+          {
+            title: 'Two dependency advisories closed',
+            detail:
+              'Build-toolchain only — `browserslist` and `esbuild`, neither of which ships inside the app — with version floors pinned so they cannot regress.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'A Store update lands hours after the release, not with it',
+            detail:
+              'Submission is automatic now; certification is not instant. Microsoft reviews each update before it reaches the Store, so a Store install trails the `.msi`, Scoop and winget by however long that takes — usually hours. Nothing is wrong when the Store still offers the previous version shortly after a release.',
+          },
+          {
+            title: 'Timestamps are shown in your timezone, not the author\'s',
+            detail:
+              'Unchanged from 0.5.0. Where `git log` prints the offset a commit was authored under, PlatypusGit shows that same instant on your own clock — a commit reaches the interface as unix seconds and nothing else, so matching git here is a change to what the backend sends rather than to how a date is written. The hover names the zone it used, so no stamp is ambiguous about which clock that was.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.5.0',
     date: '2026-09-02',
     status: 'feature',
