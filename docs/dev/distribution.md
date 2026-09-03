@@ -866,7 +866,7 @@ gh secret set MSSTORE_TENANT_ID       # no --body: gh prompts, so the value
 gh secret set MSSTORE_SELLER_ID       # never reaches argv or shell history
 gh secret set MSSTORE_CLIENT_ID
 gh secret set MSSTORE_CLIENT_SECRET
-gh variable set MSSTORE_PRODUCT_ID --body '9N…'   # it is in the listing URL
+gh variable set MSSTORE_PRODUCT_ID --body '9PBXQNLRW5VZ'   # in the listing URL
 ```
 
 `scripts/msstore-wizard.sh` step 9 walks where each one comes from. **The Entra
@@ -874,6 +874,45 @@ ID app needs the `Manager` role** in Partner Center (Account settings > User
 management > Microsoft Entra applications); a lesser role authenticates fine and
 then fails the submission call, which reads as a broken pipeline rather than a
 permissions mistake made weeks earlier.
+
+**All five come out of Partner Center — the Entra portal is optional.** Measured
+walking this for real on 2026-09-03, and it is faster than the route the Learn
+docs describe: Account settings > **Tenants** > *Create Microsoft Entra ID*
+builds the directory, its global-admin user and the association in one step, for
+free; Account settings > **Users** then both creates the application and shows
+its Tenant ID and Client ID, with *Add new key* issuing the secret. Three of the
+four secrets never require leaving that page.
+
+Four things about the values themselves, each of which cost time:
+
+- **An Individual account can do this.** Partner Center's FAQ says "Individual
+  accounts do not support multiple users", which reads like a hard blocker and
+  is not one — it is about human co-developers. The submission API's own
+  prerequisites ask only that you *have* a directory and add that "you can
+  create a new Azure AD in Partner Center for no additional charge".
+- **The association sign-in refuses a personal Microsoft account**, even one
+  with the same email address, because an MSA and an Entra tenant are separate
+  identity systems. An Individual account signs into Partner Center *with* an
+  MSA, so there is nothing valid to type into that dialog until a directory with
+  a real member user exists. Let *Create Microsoft Entra ID* build one. Do it in
+  a private window, or the browser reuses the MSA session and the dialog just
+  appears broken.
+- **The Seller ID is a plain number** (`SellerId` is `int?` in the CLI, and
+  `StoreAPI.cs` throws `"SellerId is required"` when absent). It is NOT either
+  publisher ID on the Identifiers page — `CN=…` is the certificate subject and
+  the Windows-phone one is a legacy GUID. It lives on Account settings > Legal
+  info > Developer; easier still, `msstore reconfigure` retrieves it from the
+  enrollment-accounts API by itself.
+- **The product ID needs no credentials at all.** The public catalog answers,
+  which is the only source that works before the pipeline does:
+
+  ```bash
+  curl -s 'https://storeedgefd.dsx.mp.microsoft.com/v9.0/search?query=platypusgit&market=US&locale=en-US&deviceFamily=Windows.Desktop'
+  ```
+
+  Check `PackageFamilyNames` in the response against `MSIX_IDENTITY_NAME` before
+  trusting the `ProductId` — that is what distinguishes our listing from a
+  same-named app. It begins `9`, but not necessarily `9N`.
 
 **The job no-ops loudly until all five are set** — the same self-disabling shape
 as `winget-publish`, and for the same reason: the FIRST submission cannot be
@@ -883,7 +922,7 @@ emits a `::warning::` naming what is missing rather than passing in silence. The
 check is a step, not the job's `if:`, because the `secrets` context is not
 available in a job-level condition.
 
-Six things about this that are not guessable from the docs:
+Seven things about this that are not guessable from the docs:
 
 - **`.msixbundle` works, though the CLI's own documentation says it does not.**
   `--inputFile` is documented as taking `.msix` or `.msixupload`; the source
@@ -916,6 +955,21 @@ Six things about this that are not guessable from the docs:
   auth error. Record the expiry date here when you create it. The CLI also
   accepts a certificate (`--certificateThumbprint` / `--certificateFilePath`),
   which has the same problem in a different shape.
+- **Once CI has created a submission, do not hand-edit it in Partner Center.**
+  Microsoft's warning is blunt: change a submission in the dashboard that the
+  API created and "you will no longer be able to change or commit that
+  submission by using the API", sometimes leaving it in an error state that has
+  to be deleted and recreated. Listing edits belong in a window when no CI
+  submission is pending — which, since a release triggers one, means not during
+  a release.
+
+**Verify the credentials locally, never by dispatching a release.** `brew install
+microsoft/msstore-cli/msstore-cli`, then `msstore reconfigure` (it prompts, so no
+secret reaches argv) and `msstore apps list` — which fails immediately if the
+`Manager` role is wrong, and prints the product ID besides. A
+`workflow_dispatch` run against an existing tag rebuilds every bundle *and*
+rewrites `latest.json`'s notes as a bare link for everyone who already installed
+(`docs/dev/releasing.md`). That is far too expensive a way to test one API call.
 
 It runs on `windows-latest` because every Microsoft example does and the action's
 non-Windows support is undocumented — the job downloads one asset and makes one
