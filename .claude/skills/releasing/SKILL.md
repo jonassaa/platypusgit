@@ -114,9 +114,9 @@ bare link instead of your notes, and `pub_date` is stamped at run time. Only a
 direct publish gets the real body in. Two full builds, ~12 min each.
 
 **Prerelease identifiers do not build.** `scripts/msix-pack.sh` requires
-three-part `X.Y.Z` and exits 2 on anything else, and the `msix` job has no
-prerelease gate — so `v0.4.0-rc.1` fails that job and leaves a red release with
-three of four bundles. `update.rs` parses such a tag fine; the limit is
+three-part `X.Y.Z` and exits 2 on anything else, and neither `msix-build` (which
+runs it, once per arch) nor `msix` has a prerelease gate — so `v0.4.0-rc.1`
+fails both matrix legs and leaves a red release with three of four bundles. `update.rs` parses such a tag fine; the limit is
 packaging. **A prerelease here is a stable-shaped `X.Y.Z` flagged in the GitHub
 UI.**
 

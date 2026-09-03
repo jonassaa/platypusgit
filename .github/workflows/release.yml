@@ -330,9 +330,10 @@ jobs:
           fi
           echo "msi_sig=$sig" >> "$GITHUB_OUTPUT"
 
-  # The Microsoft Store package.
+  # The Microsoft Store package — TWO jobs: a per-architecture build matrix and
+  # the bundle step that joins them.
   #
-  # A SEPARATE job from `windows` on purpose, on three counts: it builds twice
+  # SEPARATE from `windows` on purpose, on three counts: it builds twice
   # (x64 + arm64), it needs NO signing key at all — the Store re-signs, which is
   # the whole economics of this channel — and it must not be able to break the
   # .msi or the portable zip if makeappx or the manifest is wrong. Nothing here
@@ -340,10 +341,31 @@ jobs:
   # never even CHECKS (update::capability returns StoreManaged — policy 10.2.5),
   # so there is no signature to read and no manifest to point at.
   #
+  # THE TWO BUILDS RUN IN PARALLEL, and that is the difference between this
+  # channel finishing with the others and holding the release open on its own.
+  # Back to back in one job they measured 493s (x64) + 410s (arm64) on v0.5.0,
+  # inside a 17m job — against 10m for `windows`, 12m for `macos-universal` and
+  # 9m for `linux`, i.e. msix alone was the release's long pole. Nothing is
+  # shared between them but the source tree: different `--target`, different
+  # target directory, no updater signature, no release asset. The `.msix`
+  # packages travel to `msix` as artifacts because `makeappx bundle` needs both
+  # of them on ONE machine, which is the only reason this is not a single job.
+  #
   # Spec: docs/superpowers/specs/2026-08-27-msix-store-spec.md §B
-  msix:
+  msix-build:
     needs: version
     runs-on: windows-latest
+    strategy:
+      # NOT fail-fast. When one architecture breaks, whether the other one broke
+      # too is the first thing you need to know — and a cancelled sibling turns
+      # that into a second eight-minute run to find out.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v7
         with:
@@ -363,12 +385,17 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+          targets: ${{ matrix.target }}
 
+      # `key` is what keeps the two legs in SEPARATE cache entries. Without it
+      # both compute the same key from the same job id and lockfile, race to save
+      # under it, and each leg then restores a cache carrying the other's target
+      # directory — larger every run and never a hit for the arch that needs one.
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.arch }}
 
       - name: Inject version ${{ needs.version.outputs.version }}
         shell: bash
@@ -388,11 +415,8 @@ jobs:
       # TAURI_SIGNING_PRIVATE_KEY nor an exception to the hard-error rule that
       # key exists for. The msstore config sets webviewInstallMode to `skip`,
       # because a package runs no bootstrapper.
-      - name: Build x64
-        run: pnpm tauri build --no-bundle --target x86_64-pc-windows-msvc --config src-tauri/tauri.msstore.conf.json
-
-      - name: Build arm64
-        run: pnpm tauri build --no-bundle --target aarch64-pc-windows-msvc --config src-tauri/tauri.msstore.conf.json
+      - name: Build ${{ matrix.arch }}
+        run: pnpm tauri build --no-bundle --target ${{ matrix.target }} --config src-tauri/tauri.msstore.conf.json
 
       # `makeappx.exe` ships with the Windows 10 SDK, and the SDK IS on the
       # runner — but its `bin\<version>\x64` directory is NOT on PATH, so the
@@ -443,7 +467,7 @@ jobs:
       # rather than `secrets`; set them from Partner Center > Product identity:
       #   gh variable set MSIX_IDENTITY_NAME --body '<Publisher>.<name>'
       #   gh variable set MSIX_PUBLISHER     --body 'CN=<guid>'
-      - name: Stage and pack both architectures
+      - name: Stage and pack ${{ matrix.arch }}
         shell: bash
         env:
           MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
@@ -455,12 +479,84 @@ jobs:
           : "${MSIX_IDENTITY_NAME:?repository variable is unset — copy it from Partner Center > Product identity}"
           : "${MSIX_PUBLISHER:?repository variable is unset — the whole CN=... string from Partner Center}"
           v="${{ needs.version.outputs.version }}"
-          sh scripts/msix-pack.sh --version "$v" --arch x64 \
-            --exe src-tauri/target/x86_64-pc-windows-msvc/release/platypusgit.exe \
-            --out msix-x64
-          sh scripts/msix-pack.sh --version "$v" --arch arm64 \
-            --exe src-tauri/target/aarch64-pc-windows-msvc/release/platypusgit.exe \
-            --out msix-arm64
+          sh scripts/msix-pack.sh --version "$v" --arch ${{ matrix.arch }} \
+            --exe src-tauri/target/${{ matrix.target }}/release/platypusgit.exe \
+            --out msix-${{ matrix.arch }}
+
+      # The ONLY thing that crosses to the `msix` job. Named `msix-<arch>` to
+      # match the file it carries: the bundle's inner package names are
+      # `msix-x64.msix` / `msix-arm64.msix`, and that is what the shape gate
+      # asserts on.
+      #
+      # `retention-days` well short of the 90-day default (these are throwaway
+      # intermediates) but not 1: re-running a failed `msix` job pulls artifacts
+      # from the ORIGINAL run, so a week is what buys you a re-run on Monday for
+      # a release cut on Friday without redoing both builds.
+      - name: Upload the ${{ matrix.arch }} package
+        uses: actions/upload-artifact@v7
+        with:
+          name: msix-${{ matrix.arch }}
+          path: msix-${{ matrix.arch }}.msix
+          if-no-files-found: error
+          retention-days: 7
+
+  # Joins the two architectures into the single .msixbundle the Store takes.
+  # Deliberately does NOT check out the repo, install Node or build anything —
+  # it downloads two packages and calls makeappx, which is why splitting the
+  # builds out costs about half a minute rather than a second full setup.
+  msix:
+    needs: [version, msix-build]
+    runs-on: windows-latest
+    steps:
+      # Two NAMED downloads into one directory, not a `msix-*` wildcard: with
+      # `name`, the artifact's contents land directly in `path`, so both packages
+      # end up flat in msix-bundle/ — exactly the layout `makeappx bundle /d`
+      # wants, with no staging copy. Everything in that directory goes INTO the
+      # bundle, so naming them is also what stops a future artifact in this
+      # workflow from silently shipping inside the .msixbundle.
+      - name: Collect the x64 package
+        uses: actions/download-artifact@v8
+        with:
+          name: msix-x64
+          path: msix-bundle
+
+      - name: Collect the arm64 package
+        uses: actions/download-artifact@v8
+        with:
+          name: msix-arm64
+          path: msix-bundle
+
+      # BYTE-IDENTICAL to `msix-build`'s copy above, deliberately — see that one
+      # for why the SDK's bin directory has to be found at all and why
+      # `$GITHUB_PATH` is the only thing that carries it to a later step. Both
+      # jobs need it because both call the SDK: that one packs, this one
+      # bundles. This job never invokes makepri, but demanding it here anyway is
+      # what keeps the copies from drifting — and they live in the same
+      # directory, so requiring both costs nothing. (Not a composite action:
+      # the runbook re-runs this workflow against OLD tags by
+      # workflow_dispatch, and a `uses: ./.github/actions/…` resolves against
+      # the checked-out tag, which would not have the file.)
+      - name: Put the Windows SDK's makeappx and makepri on PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\Program Files (x86)\Windows Kits\10\bin'
+          if (-not (Test-Path $root)) { throw "no Windows 10 SDK at $root" }
+          $sdk = Get-ChildItem $root -Directory |
+              Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+              Where-Object {
+                  $x64 = Join-Path $_.FullName 'x64'
+                  (Test-Path (Join-Path $x64 'makeappx.exe')) -and
+                  (Test-Path (Join-Path $x64 'makepri.exe'))
+              } |
+              Sort-Object { [version]$_.Name } -Descending |
+              Select-Object -First 1
+          if (-not $sdk) {
+              throw "no SDK version in $root has both x64\makeappx.exe and x64\makepri.exe"
+          }
+          $bin = Join-Path $sdk.FullName 'x64'
+          Write-Host "makeappx + makepri found in: $bin"
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       # `/bv` is NOT optional: without it makeappx stamps the bundle 0.0.0.0,
       # which is a lower version than anything already in the Store and is
@@ -479,8 +575,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $v = '${{ needs.version.outputs.version }}'
-          New-Item -ItemType Directory -Force -Path msix-bundle | Out-Null
-          Copy-Item msix-x64.msix, msix-arm64.msix msix-bundle/
+          # Everything in msix-bundle/ ends up IN the bundle, and the directory
+          # is filled by a job that ran elsewhere — so assert what landed there
+          # before makeappx ships it.
+          $pkgs = @(Get-ChildItem msix-bundle -File)
+          if ($pkgs.Count -ne 2) {
+              throw "msix-bundle must hold exactly the 2 arch packages, found $($pkgs.Count): $($pkgs.Name -join ', ')"
+          }
           & makeappx.exe bundle /d msix-bundle /bv "$v.0" /p PlatypusGit.msixbundle /o
           if ($LASTEXITCODE -ne 0) { throw "makeappx bundle failed ($LASTEXITCODE)" }
 
