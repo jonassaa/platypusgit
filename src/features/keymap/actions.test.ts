@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ACTIONS, ALL_ACTION_IDS } from "./actions";
+import { useAuthStore } from "@/features/auth/useAuthStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
@@ -59,6 +60,7 @@ describe("default runners", () => {
     useNavStore.setState({ intent: null });
     usePaletteStore.setState({ open: false });
     useOverlayStore.setState({ cheatSheetOpen: false });
+    useAuthStore.setState({ challenge: null });
   });
 
   it("nav.* runners fire a switch-screen intent", () => {
@@ -110,6 +112,31 @@ describe("default runners", () => {
     expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
     expect(useCreateStore.getState().open).toBe("clone");
     useCreateStore.setState({ open: "none", busy: false });
+  });
+
+  it("app.closeOverlay dismisses the credential prompt before the dialog under it (#212)", async () => {
+    useOverlayStore.setState({ cheatSheetOpen: false });
+    // What the clone-with-a-private-remote flow looks like mid-prompt: the
+    // Clone dialog is still open behind the credential dialog, and not busy —
+    // `runClone` drops `busy` before prompting so the dialog stays dismissable.
+    useCreateStore.setState({ open: "clone", busy: false });
+    useAuthStore.getState().raise({
+      host: "github.com",
+      kind: "Https",
+      retry: async () => {},
+    });
+
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+
+    // The topmost overlay is the one that closes.
+    expect(useAuthStore.getState().challenge).toBeNull();
+    // ...and the clone the prompt belongs to keeps its dialog, so answering
+    // it a second time still has a progress bar and a Cancel button to show.
+    expect(useCreateStore.getState().open).toBe("clone");
+
+    // A second Escape then closes the dialog itself.
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+    expect(useCreateStore.getState().open).toBe("none");
   });
 
   it("app.closeOverlay also closes the update panel", () => {

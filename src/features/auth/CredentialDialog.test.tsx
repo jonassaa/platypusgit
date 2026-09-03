@@ -2,6 +2,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { PGModal } from "@/design";
 import { CredentialDialog } from "./CredentialDialog";
 import { useAuthStore, type AuthChallengeRequest } from "./useAuthStore";
 import { useSshKeyStore } from "./useSshKeyStore";
@@ -193,6 +194,53 @@ describe("CredentialDialog", () => {
     fireEvent.click(screen.getByTestId("credential-cancel"));
     expect(retry).not.toHaveBeenCalled();
     expect(useAuthStore.getState().challenge).toBeNull();
+  });
+
+  // #212. Cancel is an ANSWERLESS exit, the way pgConfirm/pgPrompt read a
+  // dismissal — and the op that raised the prompt has to hear about it, or a
+  // cancelled Push is indistinguishable from a successful one.
+  it("dismissing tells the op that raised the prompt", () => {
+    const onDismiss = vi.fn();
+    raise({ onDismiss });
+    render(<CredentialDialog />);
+
+    fireEvent.click(screen.getByTestId("credential-cancel"));
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("answering the prompt is not a dismissal", async () => {
+    const onDismiss = vi.fn();
+    const retry = raise({ onDismiss });
+    render(<CredentialDialog />);
+    type("credential-secret", "ghp_token");
+
+    fireEvent.click(screen.getByTestId("credential-submit"));
+
+    await waitFor(() => expect(retry).toHaveBeenCalled());
+    // Submitting clears the dialog too — that must not be read as "cancelled"
+    // and report the very failure the retry is busy fixing.
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  // #212. It is raised BY another dialog (Clone) and answered before that
+  // dialog is usable again, so it has to paint over it. Same z-index would
+  // tie-break on DOM order, and AppShell mounts this one FIRST — which put the
+  // prompt behind the Clone dialog's own backdrop.
+  it("paints above the dialog that raised it", () => {
+    raise();
+    const base = render(<PGModal onCancel={() => {}}>base</PGModal>);
+    render(<CredentialDialog />);
+
+    const zOf = (el: Element | null | undefined) =>
+      Number(getComputedStyle(el as Element).zIndex);
+    const baseZ = zOf(base.container.querySelector('[role="dialog"]'));
+    const promptZ = zOf(
+      screen.getByTestId("credential-dialog").closest('[role="dialog"]'),
+    );
+
+    expect(baseZ).toBeGreaterThan(0);
+    expect(promptZ).toBeGreaterThan(baseZ);
   });
 
   it("cannot submit an empty secret", () => {

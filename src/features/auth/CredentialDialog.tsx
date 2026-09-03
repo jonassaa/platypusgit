@@ -11,10 +11,18 @@ import { useSshKeyStore } from "./useSshKeyStore";
  *
  * The secret is component state and is never written to the store, so nothing
  * sensitive outlives this component. Cancelling retries nothing — the original
- * error surfaces through the normal banner path.
+ * error surfaces through the normal banner path, via the challenge's
+ * `onDismiss` (#212). That is why answering goes through `answer()` and
+ * cancelling through `dismiss()`: both clear the prompt, and only one of them
+ * means "this op failed".
+ *
+ * Rendered on the `nested` modal layer: it is raised BY another dialog (Clone)
+ * and must paint over it. Escape reaches it through `app.closeOverlay`, which
+ * walks the same stacking order.
  */
 export function CredentialDialog() {
   const challenge = useAuthStore((s) => s.challenge);
+  const answer = useAuthStore((s) => s.answer);
   const dismiss = useAuthStore((s) => s.dismiss);
   const resetSshKeys = useSshKeyStore((s) => s.reset);
 
@@ -78,13 +86,19 @@ export function CredentialDialog() {
         : { secret };
     const doRetry = challenge.retry;
     // Clear before awaiting: the dialog's job is done, and leaving it mounted
-    // over a long fetch reads as if nothing happened.
-    dismiss();
+    // over a long fetch reads as if nothing happened. `answer`, not `dismiss` —
+    // the credential is on its way to the retry, so this is not a cancellation
+    // and must not report the failure the retry is about to fix.
+    answer();
     await doRetry(creds, remember);
   };
 
   return (
-    <PGModal onCancel={dismiss} width={isSsh ? 520 : 460}>
+    <PGModal
+      onCancel={() => void dismiss()}
+      width={isSsh ? 520 : 460}
+      layer="nested"
+    >
       <div
         data-testid="credential-dialog"
         style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -176,7 +190,7 @@ export function CredentialDialog() {
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <PGButton
             variant="ghost"
-            onClick={dismiss}
+            onClick={() => void dismiss()}
             data-testid="credential-cancel"
           >
             {challenge.kind === "SshKey" && !secretLeads ? "Close" : "Cancel"}
