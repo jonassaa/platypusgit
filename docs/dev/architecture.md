@@ -537,11 +537,17 @@ features/            Components + Zustand store colocated per feature:
 │                    validation, and how a result is reported — a FAILURE is
 │                    always shown whatever the setting says, because an action
 │                    that exits non-zero silently is indistinguishable from one
-│                    that never ran), runAction (spawn → report → refresh, with
-│                    a RepoActivity entry so a slow user program is visible),
-│                    CustomActionsSettings. Deliberately does NOT re-implement
-│                    the command parser — that lives beside the spawn in Rust,
-│                    and a second one would be a second place to drift
+│                    that never ran; plus the SURFACES model —
+│                    ACTION_SURFACES / showsOn / actionsFor / coerceCustomActions
+│                    — and the three ActionContext builders repoContext /
+│                    fileContext / commitContext, which are what finally fill
+│                    $FILE, $FILES and $SHA), runAction (spawn → report →
+│                    refresh, with a RepoActivity entry so a slow user program
+│                    is visible), CustomActionsSettings. Deliberately does NOT
+│                    re-implement the command parser — that lives beside the
+│                    spawn in Rust, and a second one would be a second place to
+│                    drift. The menu entries themselves are
+│                    design/context-menu.tsx::customActionItems(surface, ctx)
 ├── nav/             useNavStore — cross-screen intents + DeepViewHeader
 ├── branches/        BranchChip, BranchPicker, orderBranches (PURE, #135 — THE
 │                    one branch ordering; every branch list goes through it),

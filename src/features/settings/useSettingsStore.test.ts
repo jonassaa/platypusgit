@@ -430,3 +430,74 @@ describe("uiDensity CSS hook", () => {
     expect(document.documentElement.dataset.density).toBe("compact");
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CUSTOM ACTIONS — the surfaces migration (#225, second half)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// `customActions` is object-valued, so `coerceSettings`' scalar type-guard
+// (which compares against `typeof DEFAULTS[key]`) never looks at it — the whole
+// list arrives from localStorage exactly as it was written. That is precisely
+// where an action saved before `surfaces` existed lands, and getting this wrong
+// means someone's action silently disappears from the palette they have been
+// running it from.
+describe("useSettingsStore custom actions", () => {
+  const legacy = {
+    id: "act-1",
+    name: "Open in editor",
+    command: "code -g $FILE",
+    showOutput: false,
+    refreshAfter: true,
+  };
+
+  it("keeps an action saved before surfaces existed in the palette", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ customActions: [legacy] }));
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().customActions).toEqual([
+      { ...legacy, surfaces: ["repo"] },
+    ]);
+  });
+
+  it("repairs an action a hand-edited file ticked into no surface at all", async () => {
+    // The editor refuses to save one, so this can only come from a file — and
+    // an action reachable from nowhere is one that can never be run. The
+    // palette is where an action nobody placed has always lived.
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ customActions: [{ ...legacy, surfaces: [] }] }),
+    );
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().customActions[0].surfaces).toEqual(["repo"]);
+  });
+
+  it("keeps a stored surface list, canonically ordered and free of unknowns", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        customActions: [{ ...legacy, surfaces: ["commit", "branch", "file"] }],
+      }),
+    );
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().customActions[0].surfaces).toEqual([
+      "file",
+      "commit",
+    ]);
+  });
+
+  it("drops an unusable entry rather than the whole list", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ customActions: [legacy, null, { name: "no id" }, 7] }),
+    );
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().customActions.map((a) => a.id)).toEqual([
+      "act-1",
+    ]);
+  });
+
+  it("falls back to no actions when the stored value is not a list", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ customActions: "code" }));
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().customActions).toEqual([]);
+  });
+});

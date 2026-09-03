@@ -1542,6 +1542,56 @@ not worked around: a second mechanism for the same job would also fire on `ls`.
   `DeleteFailure[]`; the store refreshes the file list before it reports them,
   and `refreshAll()` first / error last in the catch arm.
 
+### Custom actions: where a user command shows up (#225)
+
+- **`surfaces` is the whole answer, and it is a SET** — `"repo" | "file" |
+  "commit"` (`features/actions/customActions.ts::ACTION_SURFACES`), in that
+  canonical order however the toggles were clicked, so two actions placed the
+  same way compare equal and a settings export diffs cleanly. `"repo"` IS the
+  command palette: the app's repo-level surface, where every op that is not
+  about one file or one commit already lives. Toggles, not a `PGSelect` — the
+  useful actions are on two surfaces at once.
+- **An absent `surfaces` means the palette, everywhere it is read.** Every
+  action persisted by the feature's first half has no such key and was a palette
+  action, so that is what it stays. The rule lives in `normalizeSurfaces` /
+  `DEFAULT_SURFACES` (so `showsOn`, `actionsFor` and the Settings row all agree
+  without asking) *and* in `coerceCustomActions`, which `coerceSettings` calls
+  to write the field in on load. Both halves are load-bearing: `customActions`
+  is object-valued, so the scalar type-guard in `coerceSettings` never looked at
+  the list — it arrives from localStorage exactly as it was written.
+- **An action ticked into no surface cannot be saved.** `isSavableAction`
+  refuses it, so the cause stays on screen (three empty toggles) rather than the
+  app silently putting a surface back. A list that reaches `coerceCustomActions`
+  with an empty one came from a hand-edited file, and *that* is repaired to the
+  palette — a persisted action nobody can reach is worse than one in the wrong
+  place.
+- **One menu builder, three call sites**:
+  `design/context-menu.tsx::customActionItems(surface, context)`, wired into
+  `fileMenuItems` (above the danger block, next to the other "run something
+  outside the app" entries), `multiFileMenuItems` (same place) and
+  `commitMenuItems` (last). The leading divider is INSIDE the returned block, so
+  a surface with no actions contributes nothing — an empty separated block reads
+  as a menu that failed to render.
+- **The context comes from the three builders, never assembled inline** —
+  `repoContext` / `fileContext` / `commitContext` in `customActions.ts`. They
+  are what finally fill `$FILE`, `$FILES` and `$SHA`; before them the advertised
+  placeholders could never resolve. A multi-select passes EVERY selected path,
+  because `$FILES` is the one placeholder that expands to several whole
+  arguments. `repo` stays `""` in all three: `run_custom_action` overwrites it
+  with the repository it resolves, which is also the child's cwd, so a value
+  here could only ever be a second source of truth that disagrees.
+- **Deliberately absent from three menus.** `commitMultiMenuItems` — `$SHA` is
+  singular and the substitution has no list form, so "the first of five,
+  silently" is not an answer. And the menus that REPLACE the file menu
+  (conflicted, embedded, submodule rows) get no file-surface action, the same
+  call `externalDiffItem` made: they are not the file menu with entries removed.
+- **`runAction` reaches `pgAlert` / `pgFlash` by module, not through
+  `@/design`.** The barrel re-exports `context-menu.tsx`, which now imports
+  `runAction` — the barrel would close that into a cycle. Same reason `pgFlash`
+  lives in `ui-helpers.tsx` for `features/keymap`.
+- The parser stays in Rust. `customActions.ts` fills a context and filters a
+  list; it never turns a command string into argv.
+
 ## Drag and drop
 
 - **Pointer events, never HTML5 drag-and-drop** — WebDriver can't synthesize an
