@@ -124,6 +124,23 @@ export interface RepoSlice {
   /** True while an additional page is being fetched. */
   loadingMore: boolean;
   loading: boolean;
+  /**
+   * Whether a status read for THIS repository has ever completed (#368).
+   *
+   * Not the same question as `loading`. `loading` answers "is a refresh in
+   * flight?", and flips true for the whole of every `refreshAll`; this latches
+   * once and stays latched, because a refresh has the PREVIOUS status in the
+   * store the entire time it runs. A surface that must not read empty lists as
+   * data ("Working tree clean") wants this one — gating on `!loading` made the
+   * commit panel swap to the empty three-pane layout and back on every refresh.
+   *
+   * Per-repo, and therefore here: repo A having been read says nothing about
+   * repo B, and a tab switch that inherited a `true` would let the incoming
+   * tab claim a clean tree off A's emptied lists. Kept by `frozenSlice` on
+   * purpose — the parked slice still holds the status that was read, so it is
+   * still read. Cleared only by `emptySlice()`, i.e. by opening a repository.
+   */
+  statusLoaded: boolean;
   error: AppError | null;
   repoState: GitRepoState;
   /**
@@ -238,6 +255,7 @@ export function emptySlice(): RepoSlice {
     searchCursor: null,
     loadingMore: false,
     loading: false,
+    statusLoaded: false,
     error: null,
     repoState: "Clean",
     rebaseStatus: DEFAULT_REBASE_STATUS,

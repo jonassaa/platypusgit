@@ -1094,6 +1094,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         headInfo,
         shallowInfo: shallow,
         loading: false,
+        // Only on the success path, and never reset (#368): a refresh that
+        // could not read status has not loaded one, and a LATER refresh must
+        // not un-answer "have we read this repository?" — that is what made
+        // the commit panel flicker when it asked `loading` instead.
+        statusLoaded: true,
       });
       // Keep an active search in sync with the refreshed history.
       const activeFilter = get().commitFilter;
@@ -1119,7 +1124,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         // Same degrade-don't-fail policy as `refreshAll`.
         bisectStatusFn(repo.id).catch(() => DEFAULT_BISECT_STATUS),
       ]);
-      setFor(repo.id, { status, repoState, bisectStatus });
+      // `statusLoaded` for the same reason `refreshAll` sets it (#368): this is
+      // the other path that lands a status, and a repository whose first read
+      // came from a stage/unstage is just as read as one that ran a full
+      // refresh.
+      setFor(repo.id, { status, repoState, bisectStatus, statusLoaded: true });
     } catch (e) {
       setErrorFor(repo.id, e);
     }

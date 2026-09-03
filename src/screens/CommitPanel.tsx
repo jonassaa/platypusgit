@@ -143,7 +143,8 @@ export function CommitPanelScreen() {
   const status = useRepoStore((s) => s.status);
   const branches = useRepoStore((s) => s.branches);
   const remotes = useRepoStore((s) => s.remotes);
-  const loading = useRepoStore((s) => s.loading);
+  // `statusLoaded`, not `loading` (#368) — see the clean-tree branch below.
+  const statusLoaded = useRepoStore((s) => s.statusLoaded);
   const stage = useRepoStore((s) => s.stage);
   const unstage = useRepoStore((s) => s.unstage);
   const commitAction = useRepoStore((s) => s.commit);
@@ -1248,8 +1249,19 @@ export function CommitPanelScreen() {
   // exactly as it was, so this cannot fire on the attempt itself — but an
   // external change that empties the tree while the identity form is open must
   // not swallow the form the user is typing into.
+  //
+  // `statusLoaded` is the guard against the OTHER lie: before the first status
+  // read, empty lists mean "we don't know yet", not "clean". It used to be
+  // `!loading`, which answers a different question — "is a refresh in flight?"
+  // — and `refreshAll` holds that true for ten backend reads, so a clean
+  // repository swapped to the three-pane layout with two empty file lists on
+  // every refresh and back again (#368). That reads as "your changes vanished",
+  // it lasts as long as the filesystem is slow, and it churns the DOM node the
+  // e2e waits bind to (#364). `statusLoaded` latches on the first completed
+  // read and never un-latches: a refresh always has the previous status in the
+  // store while it runs.
   if (
-    !loading &&
+    statusLoaded &&
     staged.length === 0 &&
     unstaged.length === 0 &&
     !amend &&

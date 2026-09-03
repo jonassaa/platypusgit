@@ -1062,6 +1062,32 @@ in one or two of the ten and nothing said which.
   which must cover it. The shell root's `overflow: hidden` does not clip it,
   because it grows into the content area rather than out of the window.
 
+#### `statusLoaded` — "have we ever read this repo?" (#368)
+
+A third question the same boolean was being asked. `loading` means "a refresh is
+in flight"; `statusLoaded` is a per-repo latch set by the first completed status
+read (`refreshAll` AND `refreshStatus` — both land a status) and never cleared
+except by `emptySlice()`, i.e. by opening a repository. `frozenSlice` keeps it,
+unlike the in-flight flags: a parked slice still holds the status that was read.
+
+- **An empty-state that would be a LIE before the first read gates on this, not
+  on `!loading`.** The commit panel's `PGEmpty` ("Working tree clean") used to
+  ask `!loading`, so a clean repository swapped to the three-pane STAGED/UNSTAGED
+  layout with two empty file lists for the whole of every `refreshAll` and
+  swapped back — "your changes vanished" for as long as the filesystem is slow,
+  twice over after a commit (the watcher's `"all"` plan fires a second refresh),
+  and a fresh DOM node each time, which is what turned a WebdriverIO
+  handle-caching quirk into a red required gate (#364). A refresh has the
+  PREVIOUS status in the store the entire time it runs; there is nothing to
+  hide.
+- **A spinner-in-place-of-empty is a different, legitimate use of `loading`** and
+  was left alone: History (`!commits.length && loading` → skeleton), RepoBrowser
+  (`tree.length === 0 && loading` → skeleton), Reflog/Submodules/Worktrees
+  (`items.length === 0 && !loading` → `PGEmpty`), Welcome (`disabled={loading}`).
+  None of them swap a populated layout for a different one mid-refresh — they
+  only choose between "loading" and "empty" when there is genuinely nothing on
+  screen.
+
 ### Settings: one validator, two untrusted sources (#254)
 
 `useSettingsStore` reads a payload it does not control from two places — the
