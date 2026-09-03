@@ -1295,6 +1295,54 @@ update checks back on for someone who turned them off.
   does NOT (forwards `title` only). Row components need explicit prop threading
   for new attributes.
 
+### One error banner, and it never spells the enum (#212)
+
+`PGErrorBanner` (`src/design/error-banner.tsx`) is the dismissible red strip an
+`AppError` is reported on. AppShell and Reflog render it; a panel that shows a
+failure inline (Submodules, Worktrees, LFS) keeps its own layout around
+`appErrorMessage` and is fine as it is.
+
+Three rules, each of which shipped broken in the two hand-rolled copies it
+replaced:
+
+- **The bold prefix is written prose or nothing** — never `error.kind`. Both
+  banners used to lead with the discriminant, so a fresh machine's first commit
+  read `NoSignature: git needs a name and an email address…` and a failed push
+  read `Network: …` — the exact defect #212 is about, one line downstream of
+  `appErrorMessage`, which exists to prevent it. `errorBannerLabel`
+  (`src/lib/errors.ts`) is a **`Partial`** map on purpose: a missing entry means
+  NO label, so a variant added tomorrow is safe by default. A total `Record`
+  would put the same obligation on every future variant and fail the same way
+  the day someone forgot. Two entries earn themselves today, both because the
+  backend keeps them terse and the sentence is remediation advice
+  (`EmbeddedRepo`, `DubiousOwnership`).
+- **`white-space: pre-wrap`.** A rejected non-fast-forward push is
+  `! [rejected] …` plus git's four-line `hint:` paragraph; `ProgressReader`
+  keeps all of it and a collapsed banner ran the fix into the line above it.
+  The `max-height: 30vh` + `overflow-y: auto` goes on the TEXT, not the strip —
+  a `remote:` banner is unbounded and must not grow until it owns the window,
+  but scrolling the strip would carry the dismiss button out of reach on
+  exactly the errors that most need dismissing. `align-items: flex-start`, or
+  the button floats into the middle of the paragraph.
+- **Remediation travels with the text**, in `errorBannerText`, not in the
+  component: every surface that renders an `AppError` gets the advice, and the
+  advice is testable without a DOM.
+
+Guarded by `src/design/error-banner.test.tsx` (renders the component for every
+variant in the real Rust enum) plus two assertions in `test/appErrors.test.ts`
+(no label may be a kind's own spelling; no shipped `src/` file may interpolate
+a `.kind` into JSX text). End to end, `remote.e2e.ts`'s rejected-push case
+pins that git's `hint:` paragraph still arrives as SEPARATE LINES — jsdom can
+only see the style property, and only a real webview lays the text out. That
+spec previously asserted `toContain("Network")`, so the required CI gate was
+holding the defect in place: an e2e assertion on an `AppError`'s kind is
+always a bug, and `grep`ping `e2e/` for the variant names in `error.rs` found
+exactly one.
+
+Still open, deliberately: the banner reports a rejected push but offers no
+"Pull first / Force-push with lease" button — that is a design change, not a
+legibility fix.
+
 ### A row's trailing action buttons get FIXED slots
 
 `PGWorktreeRow` is the worked example (`git-components.worktreeRow.test.tsx`

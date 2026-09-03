@@ -5,7 +5,7 @@ use crate::{
     error::{AppError, AppResult},
     git::types::{
         BranchInfo, BulkFastForward, FastForward, NetOp, NetProgress, PullMode, PushForce,
-        RemoteInfo, RepoId, StashInfo, TagInfo, TagTarget,
+        RemoteInfo, RepoId, StashInfo, StatusFlag, TagInfo, TagTarget,
     },
     state::AppState,
 };
@@ -344,7 +344,7 @@ pub async fn pull(
         PullMode::Merge => "--no-rebase",
         PullMode::Rebase => "--rebase",
     };
-    run_git_progress(
+    let outcome = run_git_progress(
         &app,
         &path,
         &repo_id,
@@ -354,7 +354,39 @@ pub async fn pull(
         &["pull", "--progress", mode_flag, remote.as_str(), branch.as_str()],
         credentials.as_ref(),
     )
-    .await
+    .await;
+    // A pull is the one network op that also MERGES, so it is the one whose
+    // failure may have nothing to do with the network (#212). The index says
+    // which it was — git's own conflict output goes to stdout, which the runner
+    // discards. See `net::map_conflicted_pull`.
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(e) => Err(crate::commands::net::map_conflicted_pull(
+            e,
+            &conflicted_paths(&state, &repo_id).await,
+        )),
+    }
+}
+
+/// Paths the index reports as conflicted — best effort, on a failure path.
+///
+/// Best effort on purpose: this runs only to REFINE a failure that already
+/// happened, so a status read that itself fails costs a better label, never the
+/// original error.
+async fn conflicted_paths(state: &State<'_, AppState>, repo_id: &RepoId) -> Vec<String> {
+    let backend = state.backend.clone();
+    let id = repo_id.clone();
+    match tokio::task::spawn_blocking(move || backend.status(&id)).await {
+        Ok(Ok(files)) => files
+            .into_iter()
+            .filter(|f| {
+                matches!(f.worktree, StatusFlag::Conflicted)
+                    || matches!(f.index, StatusFlag::Conflicted)
+            })
+            .map(|f| f.path)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Fetch a branch's remote, then advance the branch to its upstream (#246).

@@ -88,6 +88,51 @@ pub fn map_git_failure(stderr: &str) -> AppError {
     }
 }
 
+/// How many conflicted paths a message names before it starts counting.
+///
+/// Three fits a banner; forty is a wall, and the resolver lists them all anyway.
+const MAX_NAMED_CONFLICTS: usize = 3;
+
+/// Reconsider a failed pull that turns out to have left CONFLICTS (#212).
+///
+/// `map_git_failure` can only answer "auth" or "network", because stderr is all
+/// it has. That is the right answer for a fetch or a push — and the wrong one
+/// for the single most ordinary thing that happens to a pull, which is the
+/// remote and the local branch touching the same lines. The user was shown
+/// "Network:" over git's *fetch summary*, with the conflict itself nowhere on
+/// screen: git writes "CONFLICT (content): …" to STDOUT, and the runner sends
+/// stdout to `/dev/null` (see `run_git_authenticated_with_progress`, which
+/// keeps exactly one pipe to drain by hand on purpose).
+///
+/// So the verdict comes from the INDEX, not from text: a conflicted entry is
+/// what the resolver operates on, it is the same answer for `--no-rebase` and
+/// `--rebase` — whose stderr phrasings share nothing — and no wording a remote
+/// chooses can fake it.
+///
+/// **This cannot swallow a real network failure.** `git pull` refuses before it
+/// contacts the remote when the index has unmerged entries ("error: Pulling is
+/// not possible because you have unmerged files."), so "the pull failed AND the
+/// index has conflicts" cannot describe a fetch that never reached its remote.
+/// And only a `Network` verdict is reconsidered here: `Auth` keeps its identity
+/// or the credential prompt never opens, `Cancelled` keeps its identity or a
+/// user who pressed Cancel is shown a failure they did not have.
+///
+/// Pinned by `tests/pull_conflicts.rs`, which carries the measured git output.
+pub fn map_conflicted_pull(err: AppError, conflicted: &[String]) -> AppError {
+    if conflicted.is_empty() || !matches!(err, AppError::Network(_)) {
+        return err;
+    }
+    let which = if conflicted.len() <= MAX_NAMED_CONFLICTS {
+        conflicted.join(", ")
+    } else {
+        format!("{} files", conflicted.len())
+    };
+    AppError::ConflictsDetected(format!(
+        "The pull could not merge cleanly — conflicts in {which}. \
+         Resolve the conflicts, then finish the merge or rebase."
+    ))
+}
+
 /// Run `git -C cwd <args>`, mapping a non-zero exit through `map_git_failure`.
 ///
 /// Cancellable (#234, #263): the op registers under `cancel::Scope::Repo(cwd)`

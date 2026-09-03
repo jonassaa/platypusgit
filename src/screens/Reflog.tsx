@@ -3,6 +3,7 @@ import {
   PGButton,
   PGCommitRow,
   PGEmpty,
+  PGErrorBanner,
   PGIconButton,
   PGToolbar,
   PGSpinner,
@@ -19,7 +20,6 @@ import {
 } from "@/features/reflog/DirtyTreeDialog";
 import { commitDateText, commitDateTitle, preciseTime } from "@/lib/commitDate";
 import { useDateFormat } from "@/features/settings/useSettingsStore";
-import { appErrorMessage } from "@/lib/errors";
 import { PGPane, FocusableScroll, usePaneList } from "@/features/keymap";
 import type { FileDiff, ReflogOp } from "@/lib/types";
 
@@ -179,35 +179,7 @@ export function ReflogScreen() {
       }}
     >
       {error && (
-        <div
-          role="alert"
-          style={{
-            padding: "6px 12px",
-            fontSize: "var(--fs-12)",
-            fontFamily: "var(--font-mono)",
-            color: "var(--git-removed)",
-            background: "oklch(0.68 0.18 25 / 0.1)",
-            borderBottom: "1px solid oklch(0.68 0.18 25 / 0.35)",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <strong>{error.kind}:</strong>
-          <span style={{ flex: 1 }}>{appErrorMessage(error)}</span>
-          <button
-            onClick={clearError}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "inherit",
-              cursor: "pointer",
-              fontSize: "var(--fs-11)",
-            }}
-          >
-            dismiss
-          </button>
-        </div>
+        <PGErrorBanner error={error} onDismiss={clearError} compact />
       )}
       <PGToolbar
         right={
