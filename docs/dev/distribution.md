@@ -276,6 +276,14 @@ makes no request whatever the channel is set to.
 
   `tauri icon` also emits iOS/Android sets this project does not ship — drop
   them, they were never tracked.
+- **`src-tauri/icons/msix/` is a SECOND generated set, from a second
+  generator.** `tauri icon` renders square tiles and has no notion of MRM
+  qualifiers, so the Store package's target-size app-list ladder
+  (`Square44x44Logo.targetsize-<N>.png`) comes from
+  `scripts/gen-msix-appicons.sh` instead — hence its own subdirectory, out of
+  reach of a `tauri icon` re-run. **Re-render it whenever `app-icon.svg`
+  changes**, in the same commit: `sh scripts/gen-msix-appicons.sh`. What it is
+  for is the taskbar-plate story under the Microsoft Store section below.
 - **Verify transparency, don't eyeball it.** A PNG can carry an alpha channel
   and still be fully opaque (the old set did: `hasAlpha: yes`, every corner
   `α=255`). Check a corner pixel's alpha, and check `.icns`/`.ico` members too
@@ -708,7 +716,8 @@ Settings control.*
 ### `makeappx` builds it; `winapp` is only for the local loop
 
 `release.yml`'s **`msix`** job: two `--no-bundle` builds (x64 + arm64) →
-`scripts/msix-pack.sh` per arch → `makeappx bundle` → shape gate → attach.
+`scripts/msix-pack.sh` per arch (which stages the payload, then runs `makepri`
+and `makeappx pack`) → `makeappx bundle` → shape gate → attach.
 
 - **Not `winapp pack` in CI.** `winapp` documents Windows 11 as a prerequisite
   and `windows-latest` is Windows Server. `makeappx` ships with the Windows SDK
@@ -725,6 +734,71 @@ Settings control.*
   package runs no bootstrapper. Evergreen WebView2 is preinstalled on Windows 11
   and arrives via Edge on Windows 10; `fixedRuntime` (~180 MB inside the package)
   is the fallback if that proves wrong, and is a deliberate later decision.
+
+### The blue box behind the taskbar icon — unplated assets (#390)
+
+A Store install showed the app icon on a **blue rounded square** in the taskbar
+and Start while every other channel showed it transparent. Nothing was wrong
+with the icon: it is the Windows **system icon plate**, drawn in the user's
+accent colour — blue on a default install, so this reproduces differently for
+different users, and not at all for someone with a custom accent.
+
+**Windows draws that plate whenever the package offers no `_altform-unplated`
+candidate at the size it wants.** The plate is a contrast guarantee for icons
+that assume a background of their own; `app-icon.svg` is transparent by design
+(#206) and needs none, so here it is pure damage. Microsoft states it without
+qualification:
+
+> If you do not include the `targetsize-*-altform-unplated` assets above your
+> icon will scale to a smaller size and will get an undesirable backplate
+> behind the icon on Taskbar and Start.
+
+It affects every surface that shows the icon without tile padding: taskbar,
+Start, the all-apps list, task view, ALT+TAB, snap assist, search results.
+
+**The fix is two halves, and each is inert without the other:**
+
+1. **The assets.** `scripts/gen-msix-appicons.sh` renders the fourteen
+   documented target sizes (16…256) into `src-tauri/icons/msix/`, committed;
+   `msix-pack.sh` stages each one **three times** — as the default candidate,
+   `_altform-unplated` (dark) and `_altform-lightunplated` (light). All three
+   are byte-identical, which is correct *only because* this mark is transparent
+   and reads on both themes; a plated icon would need three real renders.
+   Microsoft requires all three files "even if the icon is the same".
+2. **`resources.pri`.** The qualifiers that select a candidate live in the
+   **filename**, and the only thing that reads a filename as a qualifier is the
+   Modern Resource Manager reading the package's resource index. `makeappx
+   pack` does not build one. **A package with all 42 assets and no
+   `resources.pri` behaves exactly like a package with none of them** — this is
+   the half that is easy to get wrong, because the payload looks complete.
+   `msix-pack.sh` now runs `makepri createconfig` + `makepri new` before
+   packing, and `release.yml` demands `makepri.exe` on PATH beside
+   `makeappx.exe` (same SDK directory, so a missing one is the same missing
+   PATH entry).
+
+Two smaller traps met on the way:
+
+- **The generated `priconfig.xml` is written outside the payload directory**,
+  not into the package root as Microsoft's walkthrough does — otherwise
+  `makeappx` packages a build artifact and the payload stops matching what the
+  shape gate expects.
+- **Its `<packaging>` block is stripped.** Those `autoResourcePackage`
+  qualifiers ask makepri to split its output into per-qualifier resource
+  packages, a shape that belongs to a bundle makepri assembles itself, not to
+  the two single-arch packages this script hands to `makeappx bundle`.
+
+**Why the guards are heavy for what looks like an icon change:** none of this
+is visible in a package that installs, launches and passes certification. The
+only symptom is a coloured box on a user's taskbar, which no CI job can see. So
+`msix_identity.rs` pins the ladder against the packer's size list, pins the two
+scripts' lists against each other, pins all three candidate names, pins that
+`makepri` runs *before* `makeappx`, and pins `BackgroundColor="transparent"`;
+the release shape gate additionally opens the built package and demands
+`resources.pri` plus both ends of the unplated ladder.
+
+`Square44x44Logo` and `Square150x150Logo` in the manifest are **base sizes, not
+the only sizes an app needs** — a sentence worth keeping in mind before adding
+any further visual asset here.
 
 ### `pgit` on a Store install — nothing in `cli.rs` changed
 
@@ -755,9 +829,10 @@ from one side, which is the shape of every packaging trap in this document.
 
 `src-tauri/tests/msix_identity.rs` pins it against the rest of the tree (exe
 name from Cargo, `DisplayName` from `productName`, `PublisherDisplayName` from
-`bundle.publisher`, the alias, `runFullTrust`, the `uap10` version floor, and
-that every `Assets\…` reference exists in `icons/`). Two of those guards exist
-because they caught real bugs while being written:
+`bundle.publisher`, the alias, `runFullTrust`, the `uap10` version floor, that
+every `Assets\…` reference exists in `icons/`, and the five unplated-icon
+guards from #390 above). Three of those guards exist because they caught real
+bugs while being written:
 
 - **XML comments cannot contain `--`.** Used as an em-dash it makes the manifest
   unparseable — which `makeappx` would have reported at release time, from a
@@ -765,6 +840,11 @@ because they caught real bugs while being written:
 - The asset check first swallowed half the manifest as a "filename", because
   `<Logo>Assets\…</Logo>` is element text while the tile logos are quoted
   attributes.
+- The `makepri`-runs-first guard passed against a script whose `makepri` call
+  had been **commented out** — it matched the bare string, and the paragraph of
+  comment above the call contains it. It now skips comment lines. A guard for a
+  defect nobody can see needs its own negative test; all five of #390's were
+  run against a deliberately broken script before being trusted.
 
 **Identity `Name` and `Publisher` stay `__MSIX_…__` tokens.** Partner Center
 assigns them; `msix-pack.sh` substitutes them and refuses to pack if any token
@@ -782,8 +862,8 @@ guards). `msix-pack.sh --stage-only` makes the token substitution testable on a
 Mac — the one step that must not be wrong is the one step needing no Windows.
 CI proves the bundle *builds* and has the right shape.
 
-**Six behaviours are NOT verified, and this channel should not be called done
-until they are.** The local loop for five of them is `winapp run .\dist`, which
+**Seven behaviours are NOT verified, and this channel should not be called done
+until they are.** The local loop for six of them is `winapp run .\dist`, which
 registers a loose-layout package and needs no certificate:
 
 1. **`GIT_ASKPASS`** — git execs this binary and reads a credential from its
@@ -799,6 +879,12 @@ registers a loose-layout package and needs no certificate:
 6. **Whether the Store accepts the manifest** — restricted-capability
    justification, version format and runtime behaviour all meet reality for the
    first time at upload.
+7. **That the taskbar icon actually comes out unplated (#390).** Everything
+   about that fix is verified *structurally* — the assets are staged, the index
+   is built, the guards fail when broken — and the one thing that matters is a
+   pixel on somebody's taskbar. Install the package and look, with a NON-default
+   accent colour set, so a plate cannot hide against the background. Check Start
+   and the all-apps list too: they resolve candidates independently.
 
 **One claim in the tree is unconfirmed:** that the MSIX version's fourth part
 must be `0`. `msix-pack.sh` appends `.0` and says so in its own comment. Settle

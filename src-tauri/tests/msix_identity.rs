@@ -24,6 +24,45 @@ fn manifest() -> String {
     std::fs::read_to_string(&path).expect("read windows/Package.appxmanifest")
 }
 
+fn repo(rel: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri has a parent")
+        .join(rel)
+}
+
+fn script(rel: &str) -> String {
+    std::fs::read_to_string(repo(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
+}
+
+/// The whitespace-separated list assigned to `name` at the start of a line, as
+/// in `SIZES="16 20 24"`. Deliberately dumb: these are two fixed lines in two
+/// shell scripts, and a shell parser to read them would be the larger risk.
+fn shell_list(source: &str, name: &str) -> Vec<String> {
+    let prefix = format!("{name}=\"");
+    let line = source
+        .lines()
+        .find(|l| l.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("no line starting `{prefix}`"));
+    line[prefix.len()..]
+        .split('"')
+        .next()
+        .expect("split always yields a first element")
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Line number of the line that RUNS `cmd`, skipping comments. Matching the
+/// bare string instead would happily find the command inside the paragraph of
+/// comment explaining it — which is how the first draft of this passed against a
+/// script whose `makepri` call had been commented out.
+fn command_line(source: &str, cmd: &str) -> Option<usize> {
+    source
+        .lines()
+        .position(|l| !l.trim_start().starts_with('#') && l.trim_start().starts_with(cmd))
+}
+
 fn conf() -> serde_json::Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
     let text = std::fs::read_to_string(&path).expect("read tauri.conf.json");
@@ -200,5 +239,111 @@ fn every_referenced_asset_exists_in_the_icons_directory() {
         checked >= 4,
         "expected at least the store logo and three tile sizes to be \
          referenced, found {checked}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The unplated app-list icons (#390)
+//
+// Windows draws an app's icon on a SYSTEM ICON PLATE — a rounded square in the
+// user's accent colour, blue on a default install — wherever it is shown
+// without tile padding (taskbar, Start, all-apps, task view, ALT+TAB, snap
+// assist) unless the package offers a `_altform-unplated` candidate at the
+// right target size. The plate is there to guarantee contrast for icons that
+// assume one; app-icon.svg is transparent and needs none, so the plate is pure
+// damage, and that is what a Store install shipped until this was fixed.
+//
+// Three separate things have to stay true for the fix to hold, and NONE of them
+// is visible in a package that installs, launches and passes certification —
+// the only symptom is a blue box on somebody's taskbar, which no CI job can
+// see. Hence guards.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_packer_stages_a_target_size_icon_for_every_rendered_size() {
+    let sizes = shell_list(&script("scripts/msix-pack.sh"), "TARGETSIZES");
+    assert!(
+        sizes.len() >= 10,
+        "scripts/msix-pack.sh's TARGETSIZES has shrunk to {} entries. Windows \
+         picks the EXACT pixel size for the user's DPI, so a dropped size is a \
+         rescale of a neighbour, not a missing file nobody notices.",
+        sizes.len()
+    );
+    for n in &sizes {
+        let icon = repo("src-tauri/icons/msix").join(format!("Square44x44Logo.targetsize-{n}.png"));
+        assert!(
+            icon.exists(),
+            "scripts/msix-pack.sh stages Square44x44Logo.targetsize-{n}.png but \
+             src-tauri/icons/msix/ has no such file, so the pack step would \
+             abort at release time. Re-render the ladder: \
+             `sh scripts/gen-msix-appicons.sh`."
+        );
+    }
+}
+
+#[test]
+fn the_generator_and_the_packer_agree_on_the_size_ladder() {
+    // Two lists in two scripts, one of which is run by hand on a developer
+    // machine months apart from the other. Adding a size to the generator and
+    // forgetting the packer renders a PNG that is never packaged; the reverse
+    // fails the release. Neither is discoverable by reading one file.
+    let rendered = shell_list(&script("scripts/gen-msix-appicons.sh"), "SIZES");
+    let staged = shell_list(&script("scripts/msix-pack.sh"), "TARGETSIZES");
+    assert_eq!(
+        rendered, staged,
+        "gen-msix-appicons.sh's SIZES and msix-pack.sh's TARGETSIZES have \
+         drifted apart. They describe one ladder from two ends."
+    );
+}
+
+#[test]
+fn the_packer_stages_all_three_theme_candidates() {
+    // The DEFAULT candidate alone does not suppress the plate — the suppression
+    // IS `_altform-unplated`, and Windows wants a light-theme sibling beside it.
+    // Losing one `cp` line leaves a package that looks complete in a file
+    // listing and still plates the icon.
+    let packer = script("scripts/msix-pack.sh");
+    for form in ["_altform-unplated", "_altform-lightunplated"] {
+        assert!(
+            packer.contains(&format!("Square44x44Logo.targetsize-${{n}}{form}.png")),
+            "scripts/msix-pack.sh no longer stages the `{form}` candidate. \
+             Without it Windows falls back to the plated default and the \
+             taskbar icon sits on an accent-coloured square."
+        );
+    }
+}
+
+#[test]
+fn the_packer_builds_a_resource_index_before_packing() {
+    // makeappx does not build one, and without it the qualifiers in those
+    // filenames are just characters: MRM is the only thing that reads
+    // `targetsize-48_altform-unplated` as a candidate selector. A package with
+    // all 42 assets and no resources.pri behaves exactly like a package with
+    // none of them.
+    let packer = script("scripts/msix-pack.sh");
+    let pri = command_line(&packer, "makepri.exe new")
+        .expect("scripts/msix-pack.sh no longer RUNS `makepri.exe new`, so the package would carry no resources.pri and every target-size icon in it would be ignored");
+    let pack = command_line(&packer, "makeappx.exe pack")
+        .expect("scripts/msix-pack.sh no longer RUNS `makeappx.exe pack`");
+    assert!(
+        pri < pack,
+        "`makepri.exe new` runs AFTER `makeappx.exe pack` in \
+         scripts/msix-pack.sh. The index has to exist before the payload is \
+         zipped, or it is simply not in the package."
+    );
+}
+
+#[test]
+fn the_tile_background_stays_transparent() {
+    // Step 3 of Microsoft's target-based-asset procedure: "In the manifest file,
+    // set the BackgroundColor for every icon you are making transparent." A
+    // solid colour here puts a coloured square back behind the Start tile — a
+    // different surface from the taskbar plate above, with the same look and the
+    // same cause, so it is pinned in the same place.
+    assert!(
+        manifest().contains("BackgroundColor=\"transparent\""),
+        "VisualElements/@BackgroundColor is no longer `transparent`. The mark \
+         is designed to sit on the system's own background; giving it a colour \
+         reintroduces the plate this ladder exists to remove."
     );
 }

@@ -71,7 +71,13 @@ jobs:
           # Without them here, editing only the docs, only the matrix, or only
           # the table skipped its own guard and reported green (issue 189, then
           # #210 — a README-only PR ran no suite at all).
-          if echo "$changed" | grep -qE '^(src/|e2e/|test/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$|CLAUDE\.md$|README\.md$|CONTRIBUTING\.md$|docs/dev/|site/src/data/comparison\.json$|\.github/workflows/(tests|e2e)\.yml$)'; then
+          #
+          # `src-tauri/icons/msix/` is the newest entry and the same story
+          # (#390): `msixIcons.test.ts` decodes those PNGs and fails if one has
+          # an opaque corner. Re-rendering the ladder is the ONLY change that
+          # can break it, and without this it is the one change that would not
+          # run it.
+          if echo "$changed" | grep -qE '^(src/|e2e/|test/|src-tauri/icons/msix/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$|CLAUDE\.md$|README\.md$|CONTRIBUTING\.md$|docs/dev/|site/src/data/comparison\.json$|\.github/workflows/(tests|e2e)\.yml$)'; then
             echo "js=true" >> "$GITHUB_OUTPUT"
             echo "-> frontend sources touched, running the unit suite"
           else
@@ -87,12 +93,22 @@ jobs:
             echo "-> no backend sources touched, skipping the Rust suite"
           fi
 
-          # The Store packaging inputs. This gate exists because TWO bugs in it
+          # The Store packaging inputs. This gate exists because THREE bugs in it
           # reached a published release and could only be found on a Windows
           # runner: makeappx not being on PATH, then Git Bash rewriting `/d`
-          # into `D:/`. Neither is reachable from a Mac or from the unit suites,
-          # so nothing before the release job could see them.
-          if echo "$changed" | grep -qE '^(src-tauri/windows/Package\.appxmanifest$|src-tauri/tauri\.msstore\.conf\.json$|scripts/msix-pack\.sh$|\.github/workflows/(release|tests)\.yml$)'; then
+          # into `D:/`, then the missing unplated icons and resource index that
+          # put a blue plate behind the taskbar icon (#390). None is reachable
+          # from a Mac or from the unit suites, so nothing before the release
+          # job could see them.
+          #
+          # `src-tauri/icons/` is in the list as a WHOLE directory, not just the
+          # `msix/` ladder, and that breadth is the point: the package ships the
+          # base tile logos from it too, and re-rendering the icon set is
+          # precisely the change that drops one. Listing only the files this
+          # gate happened to break would leave it skippable by the next
+          # `tauri icon` run — the failure mode the paragraph above the js
+          # filter describes, three times over.
+          if echo "$changed" | grep -qE '^(src-tauri/windows/Package\.appxmanifest$|src-tauri/tauri\.msstore\.conf\.json$|src-tauri/icons/|scripts/msix-pack\.sh$|scripts/gen-msix-appicons\.sh$|\.github/workflows/(release|tests)\.yml$)'; then
             echo "msix=true" >> "$GITHUB_OUTPUT"
             echo "-> Store packaging touched, running the msix pack gate"
           else
@@ -265,22 +281,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Put the Windows SDK's makeappx on PATH
+      # Kept byte-identical to release.yml's step of the same name, deliberately:
+      # this job exists to fail here instead of at release time, which it can
+      # only do while the two agree. `makepri.exe` is demanded alongside
+      # `makeappx.exe` because msix-pack.sh needs both — see the resource-index
+      # step in that script.
+      - name: Put the Windows SDK's makeappx and makepri on PATH
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $root = 'C:\Program Files (x86)\Windows Kits\10\bin'
           if (-not (Test-Path $root)) { throw "no Windows 10 SDK at $root" }
           $sdk = Get-ChildItem $root -Directory |
+              Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
               Where-Object {
-                  $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and
-                  (Test-Path (Join-Path $_.FullName 'x64\makeappx.exe'))
+                  $x64 = Join-Path $_.FullName 'x64'
+                  (Test-Path (Join-Path $x64 'makeappx.exe')) -and
+                  (Test-Path (Join-Path $x64 'makepri.exe'))
               } |
               Sort-Object { [version]$_.Name } -Descending |
               Select-Object -First 1
-          if (-not $sdk) { throw "no x64\makeappx.exe under any SDK version in $root" }
+          if (-not $sdk) {
+              throw "no SDK version in $root has both x64\makeappx.exe and x64\makepri.exe"
+          }
           $bin = Join-Path $sdk.FullName 'x64'
-          Write-Host "makeappx found in: $bin"
+          Write-Host "makeappx + makepri found in: $bin"
           $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       # A real PE, because makeappx validates the Executable it is pointed at.
@@ -311,9 +336,23 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if (-not (Test-Path 'msix-gate.msix')) { throw 'no .msix was produced' }
           Expand-Archive -Path 'msix-gate.msix' -DestinationPath 'msix-gate-check' -Force
-          foreach ($f in 'platypusgit.exe', 'pgit.cmd', 'AppxManifest.xml') {
+          foreach ($f in 'platypusgit.exe', 'pgit.cmd', 'AppxManifest.xml', 'resources.pri') {
               if (-not (Test-Path (Join-Path 'msix-gate-check' $f))) {
                   throw "packed .msix has no $f at its root"
+              }
+          }
+          # The unplated app-list icons and the index that makes them findable
+          # (#390). Checked HERE and not only in release.yml because this is the
+          # gate that runs on the PR that breaks them: the defect is invisible
+          # in a package that installs, launches and certifies, and shows up
+          # only as an accent-coloured plate behind the icon on a user's
+          # taskbar. Both ends of the ladder, so a half-rendered set cannot pass.
+          foreach ($n in 16, 256) {
+              foreach ($form in '', '_altform-unplated', '_altform-lightunplated') {
+                  $asset = "msix-gate-check\Assets\Square44x44Logo.targetsize-$n$form.png"
+                  if (-not (Test-Path $asset)) {
+                      throw "packed .msix is missing $asset — the taskbar icon would get a coloured plate"
+                  }
               }
           }
           $manifest = Get-Content 'msix-gate-check\AppxManifest.xml' -Raw
