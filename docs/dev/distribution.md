@@ -715,9 +715,10 @@ Settings control.*
 
 ### `makeappx` builds it; `winapp` is only for the local loop
 
-`release.yml`'s **`msix`** job: two `--no-bundle` builds (x64 + arm64) →
-`scripts/msix-pack.sh` per arch (which stages the payload, then runs `makepri`
-and `makeappx pack`) → `makeappx bundle` → shape gate → attach.
+`release.yml`'s **`msix-build`** matrix, one leg per arch: a `--no-bundle` build
+→ `scripts/msix-pack.sh` (which stages the payload, then runs `makepri` and
+`makeappx pack`) → upload `msix-<arch>.msix` as an artifact. Then the **`msix`**
+job: download both → `makeappx bundle` → shape gate → attach.
 
 - **Not `winapp pack` in CI.** `winapp` documents Windows 11 as a prerequisite
   and `windows-latest` is Windows Server. `makeappx` ships with the Windows SDK
@@ -726,6 +727,31 @@ and `makeappx pack`) → `makeappx bundle` → shape gate → attach.
   and the portable zip down with it. It references no `TAURI_SIGNING_*` secret:
   `--no-bundle` produces no updater artifact, and nothing here feeds
   `latest.json` because a Store install never self-updates.
+- **The two architectures build in PARALLEL, and that is why there are two
+  jobs.** Back to back in one job they measured 493s + 410s on v0.5.0, inside a
+  17m job — against 10m for `windows`, 12m for `macos-universal` and 9m for
+  `linux`. This channel alone held the release open. Split, both legs measured
+  ~575s and the bundle job 6s, so the wall clock is one build rather than two.
+  The legs share nothing but the source tree (different `--target`, different
+  target directory, no signing key, no release asset); the only reason `msix` is
+  not folded back in is that `makeappx bundle` needs both packages on ONE
+  machine, so they travel as artifacts. Three things worth knowing:
+  - **It costs runner-minutes to save wall clock.** Build scripts and
+    proc-macros compile for the HOST, so in one job the second build reused
+    them — which is why arm64 was the *faster* of the two at 410s and why each
+    leg now costs ~575s on its own.
+  - **`Swatinem/rust-cache` needs `key: ${{ matrix.arch }}`.** The entry is
+    named `v0-rust-<key>-<job>-<os>-…`, so without a `key` both legs of one
+    matrix job compute the *same* name, race to save under it, and each then
+    restores a cache carrying the other's target directory. Expect a miss on a
+    real release either way: the job name is in that key, so only `msix-build`
+    can write it, and release runs happen on a tag ref — which reads its own
+    scope and the default branch's, never another tag's. Budget the cold
+    number (~11.5m a leg, measured), not the warm one.
+  - **Everything in the download directory goes *into* the bundle** — hence the
+    count check before `makeappx bundle`, and named downloads rather than a
+    `msix-*` wildcard, so a future artifact in this workflow cannot end up
+    inside the `.msixbundle`.
 - **`makeappx bundle` needs `/bv`.** Without it the bundle is stamped `0.0.0.0`,
   which is lower than anything already in the Store and is rejected as a
   downgrade. The inner packages carry the real version; the bundle must be told

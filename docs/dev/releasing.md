@@ -10,7 +10,7 @@ this file is about the *number* and the *order of operations*.
 `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` all read
 `0.0.0` in the tree and **that is correct — do not "fix" it**. `release.yml`
 injects the tag-derived version into all three at build time (`v0.4.0` → `0.4.0`),
-in every one of the four build jobs. The tag is the single source of truth.
+in every one of the build jobs. The tag is the single source of truth.
 
 This is the one part of the versioning story that has never gone wrong, and it is
 worth naming why: there are no bump commits, no release-prep PR, and no way for
@@ -138,11 +138,21 @@ The body is not just release notes: `updater-manifest` embeds it verbatim into
 
 ### 4. What CI then does
 
-`version` (gate) → four build jobs (`macos-universal`, `windows`, `msix`,
-`linux`) → six channel publishes, each gated on `prerelease == false`
+`version` (gate) → the build jobs (`macos-universal`, `windows`, `linux`, and
+`msix-build` ×2 → `msix`) → six channel publishes, each gated on `prerelease == false`
 (`bump-cask`, `bump-scoop`, `updater-manifest`, `apt-publish`, `winget-publish`,
 `msstore-publish`) → two live installs that verify the channel really serves the
 new version (`scoop-verify-live`, `apt-verify-live`).
+
+**The Store package is two jobs, and only the second one attaches anything.**
+`msix-build` is a 2-arch matrix (x64, arm64) that builds and packs one `.msix`
+each and uploads it as an artifact; `msix` downloads both, runs `makeappx
+bundle`, gates the shape and attaches `PlatypusGit.msixbundle`. They were a
+single job until the two back-to-back builds made msix the release's long pole —
+17m against 9–12m for every other build job on v0.5.0. Read a red `msix-build`
+as "one architecture failed" (it is not fail-fast, so the other leg still tells
+you whether the break is arch-specific) and a red `msix` as "both built, the
+bundle did not".
 
 **Two of the six self-disable, and a green job there means "submitted
 nothing".** `winget-publish` when `WINGET_TOKEN` is unset — expected today, do
@@ -216,9 +226,9 @@ your notes. Only a direct full-release publish gets the real body into
 chase — and it is the strongest argument for publishing direct.
 
 **Prerelease identifiers do not build.** `scripts/msix-pack.sh` requires a
-three-part `X.Y.Z` and exits 2 on anything else, and the `msix` job has no
-prerelease gate — so a `v0.4.0-rc.1` tag fails that job and produces a red
-release with three of the four bundles. `update.rs` parses such a tag fine (it
+three-part `X.Y.Z` and exits 2 on anything else, and neither `msix-build` (which
+runs it) nor `msix` has a prerelease gate — so a `v0.4.0-rc.1` tag fails both
+legs of the matrix and produces a red release with three of the four bundles. `update.rs` parses such a tag fine (it
 uses the `semver` crate's `cmp_precedence`), so the limitation is packaging, not
 the app. **The de facto rule, and the one to keep until someone needs otherwise:
 a prerelease is a stable-shaped `X.Y.Z` number flagged in the GitHub UI.** If
