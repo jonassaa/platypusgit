@@ -134,4 +134,82 @@ describe("diffCopyMenuItems", () => {
       "Copy file diff as text",
     ]);
   });
+
+  // A textual diff with no hunks is an everyday thing — an empty added file, a
+  // mode-only `chmod +x` — and `fileDiffToText` has nothing to build from. The
+  // entry used to be pushed unconditionally, so it copied "" and flashed
+  // "copied diff": the same rule the two entries above already follow.
+  const empty: FileDiff = { ...diff, additions: 0, deletions: 0, hunks: [] };
+
+  it("offers no whole-file entry when the file has no hunks", () => {
+    expect(labels(diffCopyMenuItems({ diff: empty }))).toEqual([]);
+  });
+
+  it("still offers the dragged text on a file with no hunks", () => {
+    selectText("some code");
+    expect(labels(diffCopyMenuItems({ diff: empty }))).toEqual(["Copy"]);
+  });
+
+  // The case that separates "has hunks" from "has something to copy". A hunk is
+  // only ever created by the line callback that carries its `@@` header, and
+  // that header arrives as a `HunkHeader` LINE — which `isFileContent` drops. So
+  // a hunk holding nothing but its own header is the shape the builder has to
+  // survive, and `hunks.length > 0` would offer an entry that copies a bare
+  // `@@` range and no code.
+  const headerOnly: FileDiff = {
+    ...diff,
+    additions: 0,
+    deletions: 0,
+    hunks: [
+      {
+        header: "@@ -1,1 +1,1 @@",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 1,
+        lines: [
+          {
+            kind: { kind: "HunkHeader" },
+            oldLineno: null,
+            newLineno: null,
+            content: "@@ -1,1 +1,1 @@\n",
+          },
+        ],
+      },
+    ],
+  };
+
+  it("offers no whole-file entry when the hunks hold no file content", () => {
+    expect(labels(diffCopyMenuItems({ diff: headerOnly }))).toEqual([]);
+  });
+
+  // The regression guard. `fileDiffToText` walks every line of every hunk and
+  // allocates a string per line; a checked-in minified blob is a real audited
+  // case here, and the commit-diff paths set no `max_size`. Deciding whether to
+  // SHOW the entry must not pay that cost on every right-click — the text is
+  // built when the reader actually clicks Copy.
+  it("does not walk the whole diff just to decide whether to offer the entry", () => {
+    let reads = 0;
+    const lines = diff.hunks[0].lines;
+    const counted = new Proxy(lines, {
+      get(t, k, r) {
+        if (typeof k === "string" && /^\d+$/.test(k)) reads++;
+        return Reflect.get(t, k, r);
+      },
+    });
+    const big: FileDiff = {
+      ...diff,
+      hunks: [{ ...diff.hunks[0], lines: counted }],
+    };
+
+    const items = diffCopyMenuItems({ diff: big });
+    expect(labels(items)).toEqual(["Copy file diff as text"]);
+    // Stops at the first line that is file content, rather than reading all four.
+    expect(reads).toBeLessThan(lines.length);
+
+    // ...and clicking still copies the whole thing.
+    const before = reads;
+    void click(items, "Copy file diff as text");
+    expect(reads).toBeGreaterThan(before);
+  });
 });

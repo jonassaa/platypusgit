@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  PGEmpty,
   PGFoldSeparator,
   PGIcon,
   PGResizeHandle,
@@ -636,6 +637,16 @@ export function CommitDiffPanel({
                 }
               />
             </>
+          )}
+          {/* Textual, but the row model has nothing to lay out: an empty added
+              file, or a mode-only change (`chmod +x`), which git prints as
+              `old mode`/`new mode` with no `@@` range at all. The file row shows
+              `0 / 0` and this pane was blank white space. Same sentence as
+              `CommitPanel`'s — the surfaces have to agree about a file. */}
+          {current && isTextualDiff(current) && current.hunks.length === 0 && (
+            <PGEmpty icon="file" title="No diff">
+              File is tracked but no hunks were produced.
+            </PGEmpty>
           )}
           {win.topPad > 0 && (
             <div data-pg-spacer="top" style={{ height: `${win.topPad}px` }} />

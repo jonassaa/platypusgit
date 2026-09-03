@@ -46,6 +46,31 @@ export function fileDiffToText(diff: FileDiff): string {
 }
 
 /**
+ * Is there anything for {@link fileDiffToText} to put on the clipboard?
+ *
+ * The cheap half of that question, and it lives HERE so the two cannot drift:
+ * a caller that offers "copy the file" has to ask the same module that would
+ * build the text, exactly as `selectedLinesToText` shares `isFileContent` with
+ * the row model rather than re-deriving the numbering.
+ *
+ * Short-circuits at the first file-content line. That matters: `fileDiffToText`
+ * walks every line of every hunk and allocates a string per line, and the
+ * commit-diff paths set no `max_size`, so a checked-in minified blob arrives
+ * whole. Building the text merely to decide whether to SHOW a menu entry would
+ * pay that cost on every right-click; this reads one line.
+ *
+ * Deliberately not `hunks.length > 0`: a hunk is created by the line callback
+ * carrying its `@@` header, and that header is itself a `HunkHeader` LINE which
+ * `isFileContent` drops — so a hunk holding nothing but its own header would
+ * pass that test and yield a bare `@@` range with no code. Nor is this exactly
+ * `fileDiffToText(diff) !== ""`, which is true for a multi-hunk headers-only
+ * patch (the joined newlines); there is nothing worth copying there either.
+ */
+export function hasCopyableDiffText(diff: FileDiff): boolean {
+  return diff.hunks.some((h) => h.lines.some(isFileContent));
+}
+
+/**
  * Just the selected changed lines, as bare code — no `+`/`-` prefix and no line
  * numbers, so the result pastes into a source file as-is. That is the same
  * promise the on-screen selection makes, where the gutters are `user-select:

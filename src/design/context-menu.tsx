@@ -18,7 +18,11 @@ import type {
   DiffToolTarget,
   FileDiff,
 } from "@/lib/types";
-import { fileDiffToText, selectedLinesToText } from "@/lib/diffCopy";
+import {
+  fileDiffToText,
+  hasCopyableDiffText,
+  selectedLinesToText,
+} from "@/lib/diffCopy";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { activePins, pinItem } from "@/features/branches/pins";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
@@ -418,14 +422,25 @@ export function diffCopyMenuItems(
     });
   }
 
-  items.push({
-    icon: "copy",
-    label: "Copy file diff as text",
-    onClick: () => {
-      navigator.clipboard?.writeText(fileDiffToText(diff));
-      pgFlash("copied diff");
-    },
-  });
+  // GATED, exactly as `dragged` and `lineCount` above are. A textual diff with
+  // no hunks is ordinary — an empty added file, a mode-only `chmod +x` — and so
+  // is a binary one; there is nothing to build from in either case, and the
+  // entry used to copy "" and flash "copied diff".
+  //
+  // The predicate is the cheap one and the TEXT stays lazy: `fileDiffToText`
+  // walks every line and allocates a string per line, so building it here would
+  // hitch every right-click on precisely the huge diffs that are already the
+  // weak point. It runs when the reader actually clicks Copy.
+  if (hasCopyableDiffText(diff)) {
+    items.push({
+      icon: "copy",
+      label: "Copy file diff as text",
+      onClick: () => {
+        navigator.clipboard?.writeText(fileDiffToText(diff));
+        pgFlash("copied diff");
+      },
+    });
+  }
 
   return items;
 }
