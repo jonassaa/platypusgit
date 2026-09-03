@@ -1,10 +1,14 @@
 #!/bin/sh
 # One-time setup for the platypusgit Microsoft Store listing.
 #
-# Walks the eight steps that live OUTSIDE this git repository — in Partner Center
-# and behind a government ID check — and that therefore no code review can see.
-# Those are exactly the steps that get half-done and then debugged months later
-# as a mystery submission rejection.
+# Walks the nine steps that live OUTSIDE this git repository — in Partner Center,
+# in Microsoft Entra ID, and behind a government ID check — and that therefore no
+# code review can see. Those are exactly the steps that get half-done and then
+# debugged months later as a mystery submission rejection.
+#
+# Step 9 is the one that outlives the others: it turns release.yml's
+# `msstore-publish` job on, so EVERY LATER RELEASE submits itself. Steps 1-8 are
+# done once and then never again.
 #
 #   sh scripts/msstore-wizard.sh            # walk the steps
 #   sh scripts/msstore-wizard.sh --dry-run  # print them, change nothing
@@ -101,7 +105,7 @@ done
 
 [ -f "$MANIFEST" ] || die "manifest not found: $MANIFEST"
 
-# `gh` is OPTIONAL here, unlike the other two wizards: seven of the eight steps
+# `gh` is OPTIONAL here, unlike the other two wizards: seven of the nine steps
 # are a browser and a phone camera, and requiring an authenticated CLI to read a
 # checklist would be a bad trade. It is used only to look up the release asset.
 HAVE_GH=no
@@ -123,7 +127,7 @@ fi
 
 # ─── 1. the account ──────────────────────────────────────────────────────────
 
-step "1/8  The developer account"
+step "1/9  The developer account"
 
 say "ALREADY HAVE A MICROSOFT DEVELOPER ACCOUNT? Skip this step entirely."
 say "Microsoft's own FAQ: 'this flow is only for new individual developers"
@@ -152,7 +156,7 @@ confirm "Account ready (existing or newly verified)?" || say "Skipped."
 
 # ─── 2. the name ─────────────────────────────────────────────────────────────
 
-step "2/8  Reserve the product name '$PRODUCT'"
+step "2/9  Reserve the product name '$PRODUCT'"
 
 say "In Partner Center: Apps and games > New product > MSIX or PWA app."
 say ""
@@ -163,7 +167,7 @@ confirm "Name reserved?" || say "Skipped."
 
 # ─── 3. the identity ─────────────────────────────────────────────────────────
 
-step "3/8  Copy the assigned package identity"
+step "3/9  Copy the assigned package identity"
 
 say "In the product: Product management > Product identity."
 say ""
@@ -215,7 +219,7 @@ fi
 
 # ─── 4. age ratings ──────────────────────────────────────────────────────────
 
-step "4/8  Age ratings (IARC questionnaire)"
+step "4/9  Age ratings (IARC questionnaire)"
 
 say "Policy 11.11: every question must be answered, and you are responsible for"
 say "the answers being accurate. A developer tool answers 'no' to essentially"
@@ -225,7 +229,7 @@ confirm "Questionnaire completed?" || say "Skipped."
 
 # ─── 5. restricted capabilities ──────────────────────────────────────────────
 
-step "5/8  Justify the restricted capability"
+step "5/9  Justify the restricted capability"
 
 say "The manifest declares:  <rescap:Capability Name=\"runFullTrust\" />"
 say ""
@@ -243,7 +247,7 @@ confirm "Justification entered?" || say "Skipped."
 
 # ─── 6. the description ──────────────────────────────────────────────────────
 
-step "6/8  Write the description — git goes in the FIRST line"
+step "6/9  Write the description — git goes in the FIRST line"
 
 say "Policy 10.2.4 permits depending on non-integrated software to deliver"
 say "primary functionality ONLY IF the dependency is disclosed AT THE BEGINNING"
@@ -260,7 +264,7 @@ confirm "Description written with the dependency first?" || say "Skipped."
 
 # ─── 7. the privacy policy ───────────────────────────────────────────────────
 
-step "7/8  Privacy policy URL"
+step "7/9  Privacy policy URL"
 
 say "Properties > Privacy policy URL:"
 say ""
@@ -273,7 +277,7 @@ confirm "URL entered?" || say "Skipped."
 
 # ─── 8. the upload ───────────────────────────────────────────────────────────
 
-step "8/8  Upload the msixbundle"
+step "8/9  Upload the msixbundle"
 
 say "Packages > upload PlatypusGit.msixbundle from the GitHub release."
 say "release.yml's 'msix' job builds and attaches it; you do not build it by hand."
@@ -297,6 +301,73 @@ say "Do NOT sign the bundle first. The Store re-signs it, which is the whole"
 say "reason this channel costs nothing."
 confirm "Uploaded?" || say "Skipped."
 
+# ─── 9. automate every later submission ──────────────────────────────────────
+
+step "9/9  Turn on automatic submissions for every later release"
+
+say "This is the step that outlives the wizard. Once these five values exist,"
+say "release.yml's 'msstore-publish' job submits the msixbundle by itself and"
+say "step 8 never has to be done by hand again."
+say ""
+say "FIRST, in Microsoft Entra ID (https://entra.microsoft.com):"
+say "  Identity > Applications > App registrations > New registration."
+say "  Any name; no redirect URI is needed. This app IS the release pipeline's"
+say "  identity — it is not a user and it does not sign in anywhere."
+say ""
+say "THEN, back in Partner Center:"
+say "  Account settings > User management > Microsoft Entra applications >"
+say "  add that app, and give it the MANAGER role."
+say ""
+say "The role is the trap. A lesser role authenticates fine and then fails the"
+say "submission call, so the failure reads as a broken pipeline rather than a"
+say "permissions mistake made weeks earlier."
+say ""
+say "FOUR values to collect:"
+say "  Tenant ID       Entra > Identity > Overview"
+say "  Client ID       the app registration's 'Application (client) ID'"
+say "  Client secret   the app registration > Certificates & secrets."
+say "                  SHOWN ONCE — copy it before leaving the page."
+say "  Seller ID       Partner Center > Account settings > Identifiers"
+say "                  (also labelled 'Publisher ID')"
+say ""
+say "Store them as repository secrets. Note there is NO --body: gh reads each"
+say "value from a hidden prompt, so it never reaches argv, the screen, or shell"
+say "history."
+say ""
+say "  gh secret set MSSTORE_TENANT_ID"
+say "  gh secret set MSSTORE_SELLER_ID"
+say "  gh secret set MSSTORE_CLIENT_ID"
+say "  gh secret set MSSTORE_CLIENT_SECRET"
+say ""
+
+if confirm "Enter the Store product ID now, and I will print its command?"; then
+    product_id="$(ask 'Store product ID (the 9N... from the listing URL):' PRODUCT_ID)"
+
+    case "$product_id" in
+        9*) ;;
+        *) warn "" ; warn "WARNING: a Store product ID normally begins '9'. Got: $product_id" ;;
+    esac
+
+    say ""
+    say "  gh variable set MSSTORE_PRODUCT_ID --body '$product_id'"
+    say ""
+    say "A VARIABLE, not a secret — it is in the listing's public URL, and the"
+    say "same reasoning as MSIX_IDENTITY_NAME applies."
+else
+    say "  gh variable set MSSTORE_PRODUCT_ID --body '<the 9N... id>'"
+fi
+
+say ""
+say "THE CLIENT SECRET EXPIRES. Entra caps the lifetime at 24 months and"
+say "defaults to less. When it lapses, msstore-publish fails on its first API"
+say "call — write the expiry date into docs/dev/distribution.md next to the"
+say "identity variables so the failure is recognisable rather than mysterious."
+say ""
+say "Nothing was written by this wizard. Until all five values are set the job"
+say "no-ops loudly instead of failing, so a release cut before you finish this"
+say "step still succeeds — it just does not reach the Store."
+confirm "Credentials stored?" || say "Skipped — msstore-publish stays off until they are."
+
 # ─── what you should have now ────────────────────────────────────────────────
 
 step "Done — what you should have now"
@@ -311,6 +382,9 @@ say "  5. runFullTrust justified."
 say "  6. A description whose FIRST line names the git dependency."
 say "  7. $PRIVACY_URL set as the privacy policy URL."
 say "  8. PlatypusGit.msixbundle uploaded, unsigned."
+say "  9. MSSTORE_TENANT_ID / _SELLER_ID / _CLIENT_ID / _CLIENT_SECRET stored as"
+say "     repository secrets and MSSTORE_PRODUCT_ID as a variable, so that no"
+say "     later release needs step 8 at all."
 say ""
 say "Then: Submit for certification, and record what the first submission"
 say "teaches. One claim in particular is UNVERIFIED and this is where it gets"

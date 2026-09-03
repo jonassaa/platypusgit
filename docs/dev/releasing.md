@@ -139,15 +139,20 @@ The body is not just release notes: `updater-manifest` embeds it verbatim into
 ### 4. What CI then does
 
 `version` (gate) → four build jobs (`macos-universal`, `windows`, `msix`,
-`linux`) → five channel publishes, each gated on `prerelease == false`
-(`bump-cask`, `bump-scoop`, `updater-manifest`, `apt-publish`, `winget-publish`)
-→ two live installs that verify the channel really serves the new version
-(`scoop-verify-live`, `apt-verify-live`).
+`linux`) → six channel publishes, each gated on `prerelease == false`
+(`bump-cask`, `bump-scoop`, `updater-manifest`, `apt-publish`, `winget-publish`,
+`msstore-publish`) → two live installs that verify the channel really serves the
+new version (`scoop-verify-live`, `apt-verify-live`).
 
-`winget-publish` self-disables when `WINGET_TOKEN` is unset: the job goes green
-having submitted nothing. That is expected today — do not read it as "winget
-shipped". `scripts/winget-wizard.sh` makes the first submission by hand and its
-last step stores the secret.
+**Two of the six self-disable, and a green job there means "submitted
+nothing".** `winget-publish` when `WINGET_TOKEN` is unset — expected today, do
+not read it as "winget shipped"; `scripts/winget-wizard.sh` makes the first
+submission by hand and its last step stores the secret. `msstore-publish` when
+any of `MSSTORE_TENANT_ID` / `_SELLER_ID` / `_CLIENT_ID` / `_CLIENT_SECRET` or
+the `MSSTORE_PRODUCT_ID` variable is unset; `scripts/msstore-wizard.sh` step 9
+sets those up. `msstore-publish` also skips — green, having done nothing —
+when the Store already holds this version, which is what makes a
+`workflow_dispatch` re-cut safe. Read its log, not its colour.
 
 The live verifications mean most post-publish checking is automated. Three things
 are not:

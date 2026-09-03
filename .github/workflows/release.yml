@@ -25,7 +25,10 @@ name: release
 #
 # `bump-cask` and `updater-manifest` are gated on prerelease == false (see their
 # `if:`), so a prerelease attaches the four bundles but touches NEITHER the
-# Homebrew cask NOR latest.json. Verifying the cask BEFORE promoting therefore
+# Homebrew cask NOR latest.json. `msstore-publish` sits on that same gate, so a
+# prerelease is never submitted to the Microsoft Store either — which matters
+# more there than anywhere else, because a submitted version cannot be
+# resubmitted. Verifying the cask BEFORE promoting therefore
 # means running this workflow by workflow_dispatch against the tag while it is
 # still a prerelease — accepting that the cask then points at the new version
 # for as long as you wait before flipping the flag.
@@ -1166,6 +1169,170 @@ jobs:
           release-tag: ${{ needs.version.outputs.tag }}
           installers-regex: 'PlatypusGit_x64\.msi$'
           token: ${{ secrets.WINGET_TOKEN }}
+
+  # The Microsoft Store submission. The `msix` job above already built and
+  # attached the bundle; this job hands that same asset to Partner Center
+  # through the Store submission API, driven by the Microsoft Store Developer
+  # CLI (`msstore`).
+  #
+  # SELF-DISABLING UNTIL THE ENTRA APP EXISTS, the same shape as
+  # winget-publish. The FIRST submission cannot be automated at all — it needs
+  # an ID-verified human, a reserved Store name and a written justification for
+  # the `runFullTrust` restricted capability (spec §G) — and the credentials
+  # this job needs can only be created after an account exists. So the presence
+  # of the credentials IS the signal "the manual submission happened", and
+  # without them the job no-ops loudly instead of failing. The check is a STEP,
+  # not the job's `if:`, because the `secrets` context is not available in a
+  # job-level condition — gating there would evaluate to false forever.
+  #
+  # WINDOWS on purpose. Every Microsoft example runs this on windows-latest and
+  # the action's non-Windows support is undocumented; the job downloads one
+  # asset and makes one API call, so the runner-minute multiplier is noise
+  # against the risk of finding out the hard way during a release.
+  #
+  # IDEMPOTENT on purpose. A workflow_dispatch re-cut against an existing tag
+  # would otherwise resubmit a version the Store already holds, which it
+  # rejects — and dispatch is the ONLY path that reaches here for a PROMOTED
+  # prerelease, because the `published` event was a prerelease and the gate
+  # below skipped it. Narrowing the gate to `release` would mean a promoted
+  # prerelease never reaches the Store at all, so the job stays dispatchable
+  # and checks for itself whether there is anything to do.
+  #
+  # It deliberately does NOT run `msstore submission poll`. That blocks until
+  # PUBLISHED or FAILED, and Store certification for an update runs for hours:
+  # a job parked on a Windows runner waiting for a human process is a 6-hour
+  # timeout, not a gate. Partner Center emails the outcome.
+  #
+  # Spec: docs/superpowers/specs/2026-08-27-msix-store-spec.md (Follow-ups).
+  # Setup: docs/dev/distribution.md > "Submitting to the Store from CI".
+  msstore-publish:
+    needs: [version, msix]
+    runs-on: windows-latest
+    if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+    steps:
+      # A PARTIAL setup warns rather than passing silently: four secrets and one
+      # variable have to agree, and "I set three of them" is the likely mistake.
+      - name: Is the Store submission set up yet?
+        id: gate
+        shell: pwsh
+        env:
+          MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          MSSTORE_SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+          MSSTORE_PRODUCT_ID: ${{ vars.MSSTORE_PRODUCT_ID }}
+        run: |
+          $names = 'MSSTORE_TENANT_ID', 'MSSTORE_SELLER_ID', 'MSSTORE_CLIENT_ID',
+                   'MSSTORE_CLIENT_SECRET', 'MSSTORE_PRODUCT_ID'
+          $missing = $names | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+          if (-not $missing) {
+              'have_creds=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              return
+          }
+          'have_creds=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if ($missing.Count -lt $names.Count) {
+              Write-Host "::warning::Store submission is half-configured — unset: $($missing -join ', ')"
+          } else {
+              Write-Host 'Store submission credentials are not set — skipping the Store submission.'
+          }
+          Write-Host 'Run scripts/msstore-wizard.sh — its step 9 walks the Entra ID'
+          Write-Host 'app setup and prints the exact commands that turn this job on.'
+
+      # The same asset users install, rather than a job artifact — so what the
+      # Store certifies is provably the published bundle, and a
+      # workflow_dispatch against an existing tag works identically.
+      - name: Download the release .msixbundle
+        if: steps.gate.outputs.have_creds == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" \
+            --repo jonassaa/platypusgit \
+            --pattern PlatypusGit.msixbundle \
+            --clobber
+          ls -la PlatypusGit.msixbundle
+
+      - name: Setup the Microsoft Store Developer CLI
+        if: steps.gate.outputs.have_creds == 'true'
+        uses: microsoft/microsoft-store-apppublisher@v1.1
+
+      # `msstore reconfigure` takes credentials ONLY as flags — there is no env
+      # form — so this is the one place in the repo where a secret rides on
+      # argv. Actions masks them in the log and the runner is ephemeral. Never
+      # add `--verbose` to a step that carries them.
+      - name: Configure Partner Center credentials
+        if: steps.gate.outputs.have_creds == 'true'
+        shell: pwsh
+        env:
+          MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          MSSTORE_SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+        run: |
+          msstore reconfigure `
+            --tenantId $env:MSSTORE_TENANT_ID `
+            --sellerId $env:MSSTORE_SELLER_ID `
+            --clientId $env:MSSTORE_CLIENT_ID `
+            --clientSecret $env:MSSTORE_CLIENT_SECRET
+          if ($LASTEXITCODE -ne 0) { throw "msstore reconfigure failed ($LASTEXITCODE)" }
+
+      # Substring, not a JSON path: the shape of this payload is Partner
+      # Center's, and a four-part version string is specific enough that a match
+      # anywhere in it means "already submitted". `submission get` returns the
+      # pending draft when there is one and the last published submission
+      # otherwise, so a version still in certification also counts as done.
+      - name: Does the Store already have this version?
+        id: submitted
+        if: steps.gate.outputs.have_creds == 'true'
+        shell: pwsh
+        env:
+          MSSTORE_PRODUCT_ID: ${{ vars.MSSTORE_PRODUCT_ID }}
+          MSIX_VERSION: ${{ needs.version.outputs.version }}.0
+        run: |
+          # Keep control of a non-zero exit so the hint below actually prints:
+          # under the default 'Stop', pwsh throws on the native call first.
+          $ErrorActionPreference = 'Continue'
+          $submission = msstore submission get $env:MSSTORE_PRODUCT_ID | Out-String
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host $submission
+              throw "msstore submission get failed ($LASTEXITCODE) — if this is an auth error, the MSSTORE_CLIENT_SECRET has probably expired (see docs/dev/distribution.md)"
+          }
+          if ($submission -match [regex]::Escape($env:MSIX_VERSION)) {
+              'already=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              Write-Host "The Store already carries $env:MSIX_VERSION — nothing to submit."
+          } else {
+              'already=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      # `msstore publish` DELETES any pending draft and recreates it from the
+      # last published submission. Nothing here edits submission metadata, so
+      # that is harmless — but anything added later that patches the listing
+      # (release notes, say) must run AFTER this step, via
+      # `publish --noCommit` + `submission update` + `submission publish`, or
+      # its edits are silently discarded.
+      - name: Submit the bundle to the Store
+        if: steps.gate.outputs.have_creds == 'true' && steps.submitted.outputs.already == 'false'
+        shell: pwsh
+        env:
+          MSSTORE_PRODUCT_ID: ${{ vars.MSSTORE_PRODUCT_ID }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          msstore publish PlatypusGit.msixbundle -id $env:MSSTORE_PRODUCT_ID
+          if ($LASTEXITCODE -ne 0) { throw "msstore publish failed ($LASTEXITCODE)" }
+
+      - name: Report the submission status
+        if: steps.gate.outputs.have_creds == 'true' && steps.submitted.outputs.already == 'false'
+        shell: pwsh
+        env:
+          MSSTORE_PRODUCT_ID: ${{ vars.MSSTORE_PRODUCT_ID }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          msstore submission status $env:MSSTORE_PRODUCT_ID
+          Write-Host 'Submitted. Certification runs in Partner Center and emails the outcome;'
+          Write-Host 'this job does not wait for it.'
 
   # Confirm the LIVE host actually serves what we just pushed. The gate above
   # cannot see any of this: DNS, the Pages build, HTTPS, propagation.

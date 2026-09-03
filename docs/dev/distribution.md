@@ -848,6 +848,82 @@ rejects a bundle carrying the development identity. Both guards exist because
 that fallback is exactly what would otherwise be attached to a public release,
 install fine everywhere, and be rejected only at upload.
 
+### Submitting to the Store from CI
+
+`release.yml`'s **`msstore-publish`** job downloads the release's
+`PlatypusGit.msixbundle` and hands it to Partner Center through the Store
+submission API, driven by the [Microsoft Store Developer
+CLI](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/commands)
+(`msstore`). It is gated on `prerelease == false` like every other channel
+publish, so a prerelease builds the bundle and submits nothing.
+
+Five values turn it on — four secrets and one variable, the same split as
+everywhere else in this doc (a secret is a credential; a public identifier is a
+variable):
+
+```bash
+gh secret set MSSTORE_TENANT_ID       # no --body: gh prompts, so the value
+gh secret set MSSTORE_SELLER_ID       # never reaches argv or shell history
+gh secret set MSSTORE_CLIENT_ID
+gh secret set MSSTORE_CLIENT_SECRET
+gh variable set MSSTORE_PRODUCT_ID --body '9N…'   # it is in the listing URL
+```
+
+`scripts/msstore-wizard.sh` step 9 walks where each one comes from. **The Entra
+ID app needs the `Manager` role** in Partner Center (Account settings > User
+management > Microsoft Entra applications); a lesser role authenticates fine and
+then fails the submission call, which reads as a broken pipeline rather than a
+permissions mistake made weeks earlier.
+
+**The job no-ops loudly until all five are set** — the same self-disabling shape
+as `winget-publish`, and for the same reason: the FIRST submission cannot be
+automated (ID-verified human, reserved name, `runFullTrust` justification — §G),
+so credentials existing *is* the signal that it happened. A half-configured set
+emits a `::warning::` naming what is missing rather than passing in silence. The
+check is a step, not the job's `if:`, because the `secrets` context is not
+available in a job-level condition.
+
+Six things about this that are not guessable from the docs:
+
+- **`.msixbundle` works, though the CLI's own documentation says it does not.**
+  `--inputFile` is documented as taking `.msix` or `.msixupload`; the source
+  (`MSIXProjectPublisher.cs`) declares `[".msix", ".msixbundle", ".msixupload"]`
+  and validates by extension, so the bundle is passed as the positional
+  argument. Verify against the source, not the flag reference, before concluding
+  the bundle needs repacking.
+- **The action was renamed.** It is `microsoft/microsoft-store-apppublisher@v1.1`.
+  `microsoft/setup-msstore-cli` is the same repository under its old name and
+  `microsoft/store-submission` is a different, deprecated action.
+- **`msstore publish` destroys any pending draft** and recreates it from the last
+  published submission. Nothing here edits listing metadata, so that is
+  harmless — but anything added later that patches the listing (Store release
+  notes, say) has to run `publish --noCommit` → `submission update` →
+  `submission publish`, in that order, or its edits are discarded silently.
+- **The job does not poll.** `msstore submission poll` blocks until PUBLISHED or
+  FAILED and Store certification for an update runs for hours; a job parked on a
+  Windows runner waiting for a human process is a six-hour timeout, not a gate.
+  Partner Center emails the outcome.
+- **It is idempotent on purpose**, because `workflow_dispatch` is the only path
+  that reaches the Store for a *promoted* prerelease (the `published` event was a
+  prerelease and the gate skipped it), and a dispatch re-cut against an existing
+  tag would otherwise resubmit a version the Store already holds and be rejected.
+  The pre-check greps the current submission for the four-part version and skips
+  when it is already there — a version still in certification counts as done.
+  Narrowing the gate to `release` instead would mean a promoted prerelease never
+  reaches the Store at all.
+- **The client secret expires.** Entra caps the lifetime at 24 months and
+  defaults to less; when it lapses the job fails on its first API call with an
+  auth error. Record the expiry date here when you create it. The CLI also
+  accepts a certificate (`--certificateThumbprint` / `--certificateFilePath`),
+  which has the same problem in a different shape.
+
+It runs on `windows-latest` because every Microsoft example does and the action's
+non-Windows support is undocumented — the job downloads one asset and makes one
+API call, so the runner-minute multiplier is not worth finding that out during a
+release. Two things it deliberately leaves alone: the listing metadata (the
+description, screenshots and release notes stay whatever the previous submission
+set) and the `msix` job's own prerelease behaviour.
+
 ## One shipped advisory we cannot fix: `glib` 0.18.5 (#346)
 
 `glib` 0.18.5 carries GHSA-wrw7-89jp-8q8g — unsoundness in the `Iterator` and

@@ -78,6 +78,11 @@ gh api repos/jonassaa/platypusgit/releases/latest --jq .tag_name   # must be the
   `workflow_dispatch` run wrote it**, and that is what users will see.
 - `winget-publish` green means nothing was submitted when `WINGET_TOKEN` is
   unset (it is). Expected — not "winget shipped".
+- `msstore-publish` green means the same when any `MSSTORE_*` credential is
+  unset, and *also* means "skipped" once they are set but the Store already
+  holds this version (which is what makes a dispatch re-cut safe). Read the log.
+  Certification then runs for hours in Partner Center — the job never waits for
+  it, so green is "submitted", never "live".
 
 ## Traps
 
