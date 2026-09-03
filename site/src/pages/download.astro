@@ -3,7 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 import OsIcon from '../components/OsIcon.astro';
-import { site, assets, apt, scoop } from '../data/site.ts';
+import { site, assets, apt, scoop, msStore } from '../data/site.ts';
 import { descriptions, softwareApplicationSchema, ORIGIN } from '../data/seo.ts';
 
 // The two installer URLs. Built from `site` in astro.config.mjs rather than
@@ -71,6 +71,7 @@ pnpm tauri build   # produces .dmg / .msi / .deb / .AppImage`;
 const pgitMatrix = [
   { os: 'macos', channel: 'Homebrew cask', ships: true, note: 'Removed again on uninstall' },
   { os: 'macos', channel: 'Disk image (.dmg)', ships: false, note: 'A drag-install runs no code' },
+  { os: 'windows', channel: 'Microsoft Store', ships: true, note: 'Registered as an app alias' },
   { os: 'windows', channel: 'Installer (.msi)', ships: true, note: 'Added to your PATH' },
   { os: 'windows', channel: 'Scoop', ships: true, note: 'Scoop shims it for you' },
   { os: 'linux', channel: 'APT repository', ships: true, note: 'Ships /usr/bin/pgit' },
@@ -91,8 +92,10 @@ const platforms = [
     key: 'windows',
     label: 'Windows',
     iconSize: 18,
-    blurb: 'An installer, or one line with Scoop.',
-    specs: ['Windows 10 or 11, x64', 'WebView2 — preinstalled on 11', 'Ships the pgit command'],
+    blurb: 'The Store, an installer, or one line with Scoop.',
+    // x64 everywhere; Arm64 only through the Store, which is the one channel
+    // that ships an arm64 build (release.yml's `msix` job bundles both).
+    specs: ['Windows 10 or 11 · x64, Arm64 via the Store', 'WebView2 — preinstalled on 11', 'Ships the pgit command'],
   },
   {
     key: 'linux',
@@ -148,9 +151,10 @@ const platforms = [
       <CTAButton href={site.releases} variant="secondary" external>All releases ↗</CTAButton>
     </div>
     <p class="head-note">
-      Builds are early but usable — expect frequent releases and rough edges. Nothing here is
-      notarized or code-signed yet, so first launch needs one extra step on macOS and Windows;
-      each panel says which.
+      Builds are early but usable — expect frequent releases and rough edges. We have not bought a
+      signing certificate, so most of these need one extra step on first launch on macOS and
+      Windows; each panel says which. The one exception is the Microsoft Store build, which
+      Microsoft signs on our behalf.
     </p>
   </section>
 
@@ -263,6 +267,67 @@ const platforms = [
                   <p class="card-note">
                     The installer isn’t code-signed yet, so Windows SmartScreen shows a warning. Click
                     <strong>More info → Run anyway</strong> to proceed.
+                  </p>
+                </details>
+              </article>
+
+              <article class="card card-wide">
+                <h3>Microsoft Store</h3>
+                <p class="card-lead">
+                  The one Windows route with no SmartScreen warning — Microsoft signs the package
+                  itself — and the only one that runs natively on Arm.
+                </p>
+                {/* The badge is Microsoft's own web component, so the button looks like every
+                    other Store button a Windows user has clicked. It renders an iframe from
+                    get.microsoft.com, which means it needs the network and a script to appear at
+                    all; the plain link below it is not decoration, it is what a reader with the
+                    script blocked actually uses. */}
+                <div class="store-badge">
+                  <ms-store-badge
+                    productid={msStore.productId}
+                    productname={site.name}
+                    window-mode="direct"
+                    theme="auto"
+                    size="large"
+                    language="en-us"
+                    animation="on"
+                  ></ms-store-badge>
+                  <a class="store-link" href={msStore.listing} target="_blank" rel="noopener">
+                    Open the Store listing ↗
+                  </a>
+                </div>
+                <p class="card-note">
+                  One package for x64 <em>and</em> Arm64, so this is the route for a Copilot+ PC or any
+                  other Windows-on-Arm machine — the <code>.msi</code> above is x64 only. You get the
+                  app and the <a href="#cli"><code>pgit</code></a> command together, and because
+                  Microsoft re-signs everything it distributes, nothing warns you on first launch.
+                </p>
+                <details>
+                  <summary>Updating and removing</summary>
+                  <p class="card-note">
+                    The Store owns updates on this install, and the app knows it — the in-app updater
+                    is switched off here, the same way it is under Scoop, so the two can never
+                    disagree about which copy you are running. Windows updates Store apps on its own;
+                    to do it now, open the Store and choose <strong>Library → Get updates</strong>.
+                  </p>
+                  <p class="card-note">
+                    Every release goes through Microsoft's certification before it appears here, so
+                    this channel can trail a brand-new version by a little. If you want a release the
+                    day it ships, take the <code>.msi</code>.
+                  </p>
+                  <p class="card-note">
+                    Removing it is <strong>Settings → Apps → platypusgit → Uninstall</strong>. An MSIX
+                    is a sealed package Windows manages rather than an installer that scatters files,
+                    so nothing is left behind.
+                  </p>
+                </details>
+                <details>
+                  <summary>WebView2, and what this package cannot do for you</summary>
+                  <p class="card-note">
+                    Like the Scoop build, the Store package does not carry the WebView2 bootstrapper —
+                    a Store app is not allowed to run one. Windows 11 ships WebView2 and Windows 10
+                    gets it with Edge, so it is almost certainly already there; if no window appears,
+                    install the Evergreen WebView2 Runtime from Microsoft.
                   </p>
                 </details>
               </article>
@@ -508,6 +573,42 @@ const platforms = [
   </section>
 </Layout>
 
+{/* Microsoft's Store badge component, loaded from their CDN because that is the
+    only place it is published. `is:inline` keeps Astro's bundler out of it: the
+    file is a remote third-party module, not something we can usefully process,
+    and it is the one asset on this page that is not served from our own origin.
+    `type="module"` already defers it, so nothing here blocks first paint — and
+    if it never arrives, the plain link inside the card is still there. */}
+<script is:inline type="module" src="https://get.microsoft.com/badge/ms-store-badge.bundled.js"></script>
+
+<script is:inline>
+  // The badge ships a `theme="auto"`, but "auto" means the OS preference —
+  // which is NOT what this site shows. The site defaults to dark and remembers
+  // an explicit choice in `pg-site-theme`, so a visitor whose OS is light but
+  // whose site is dark would get a light badge in a dark card. Mirror the theme
+  // the page is actually rendering instead. `theme` is one of the component's
+  // observed attributes, so re-setting it re-renders the badge.
+  (function () {
+    var root = document.documentElement;
+    var badge = document.querySelector('ms-store-badge');
+    if (!badge) return;
+
+    function apply() {
+      var mode = root.getAttribute('data-theme-mode');
+      badge.setAttribute('theme', mode === 'light' ? 'light' : 'dark');
+    }
+
+    apply();
+    // The toggle sets the attribute directly and fires no event of its own,
+    // so observing the attribute is what keeps this in step without reaching
+    // into ThemeToggle to add one.
+    new MutationObserver(apply).observe(root, {
+      attributes: true,
+      attributeFilter: ['data-theme-mode'],
+    });
+  })();
+</script>
+
 <script>
   // Tab behaviour only. Which panel is OPEN is decided by the inline script in
   // <head> position above and applied in CSS off html[data-os], so nothing here
@@ -670,6 +771,20 @@ const platforms = [
      thing that consumes it — so they need air between them in either order. */
   .card :global(.codeblock) + :global(.cta) { margin-top: var(--s-5); }
   .card .filename + :global(.codeblock) { margin-top: var(--s-6); }
+
+  /* ── the Store badge ───────────────────────────────────────── */
+  /* The badge arrives over the network, and an undefined custom element is an
+     inline box of zero height — so without a reservation the card grows by the
+     badge's height whenever the CDN answers, shoving everything below it down.
+     104px is the large badge's own height, taken from the component's `:host`
+     rule, so the space is exactly filled rather than approximately. */
+  .store-badge { display: flex; align-items: center; gap: var(--s-6); flex-wrap: wrap;
+    min-height: 104px; margin-top: var(--s-2); }
+  .store-badge ms-store-badge { display: inline-block; }
+  /* Visible on its own terms, not only as a fallback: some readers would rather
+     see where a button goes before they press it, and this is the one control
+     on the page whose destination is off-site. */
+  .store-link { color: var(--accent); font-size: 13.5px; }
 
   .card-specs { background: transparent; border-style: dashed; }
   .card-specs h3 { font-size: 13px; font-family: var(--font-mono); font-weight: 600;

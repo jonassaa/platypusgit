@@ -16,7 +16,7 @@ export const site = {
 // builds via the release workflow.
 export const downloads = [
   { key: 'macos', label: 'macOS', anchor: '/download/#macos', note: 'Apple Silicon & Intel · .dmg', available: true },
-  { key: 'windows', label: 'Windows', anchor: '/download/#windows', note: 'Windows 10 & 11 · .msi or Scoop', available: true },
+  { key: 'windows', label: 'Windows', anchor: '/download/#windows', note: 'Windows 10 & 11 · Store, .msi or Scoop', available: true },
   { key: 'linux', label: 'Linux', anchor: '/download/#linux', note: '.deb & AppImage', available: true },
 ] as const;
 
@@ -46,6 +46,25 @@ export const scoop = {
   // what `update::is_scoop_layout` matches on. Three things, one string.
   bucketName: 'platypusgit',
   pkg: 'platypusgit',
+};
+
+// The Microsoft Store listing. This channel exists for one reason: Microsoft
+// re-signs a submitted MSIX for free, which is the only way a Windows build
+// gets past SmartScreen without buying a $150–300/year certificate — see
+// `docs/dev/distribution.md`, "The Microsoft Store — MSIX".
+//
+// The product ID is the Store's identifier for the listing, and it is spelled
+// once here because two surfaces need it: the `<ms-store-badge>` element on the
+// download page takes it as an attribute, and the plain link beside the badge
+// needs it as a URL. Two copies of an opaque twelve-character string is two
+// chances to typo one of them into a listing that does not exist.
+const msStoreProductId = '9pbxqnlrw5vz';
+export const msStore = {
+  productId: msStoreProductId,
+  // `apps.microsoft.com/detail/<id>` is the form the Store's own share button
+  // produces: it opens the Store app on Windows and renders a web listing
+  // everywhere else, so it is safe to hand to a reader on any platform.
+  listing: `https://apps.microsoft.com/detail/${msStoreProductId}`,
 };
 
 // The APT repository (#187). Its own repo + GitHub Pages host, NOT this site:
