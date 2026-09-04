@@ -68,14 +68,20 @@ describe("settings side menu", () => {
     expect(useSettingsStore.getState().settingsPage).toBe("git.commit");
   });
 
-  it("collapses the enclosing group with the left arrow", () => {
+  it("collapses the enclosing group with the left arrow, and a header click reopens it", () => {
     render(<WithDialogs><SettingsScreen /></WithDialogs>);
     const appearanceRow = screen.getByRole("treeitem", { name: /Appearance/ });
     // Sibling in the same ("General") group, present while it's expanded.
     expect(screen.getByRole("treeitem", { name: /Keyboard/ })).toBeTruthy();
     fireEvent.keyDown(appearanceRow, { key: "ArrowLeft" });
+    // Collapse actually hides the group's rows — not just "a handler fired".
     expect(screen.queryByRole("treeitem", { name: /Keyboard/ })).toBeNull();
     // A page in an unrelated ("Git") group is unaffected.
     expect(screen.getByRole("treeitem", { name: /Diff/ })).toBeTruthy();
+    // Reopening goes through the same controlled `open` state Left/Right
+    // set: SettingsNav, not PGSidebarGroup, now owns it, so a plain header
+    // click (PGSidebarGroup's `onOpenChange`) must still flip it back.
+    fireEvent.click(screen.getByText("General"));
+    expect(screen.getByRole("treeitem", { name: /Keyboard/ })).toBeTruthy();
   });
 });

@@ -2,7 +2,8 @@ import React from "react";
 import { PGButton, PGPrimarySidebar, PGSearchInput, PGSidebarGroup, PGSidebarRow } from "@/design";
 
 import { GROUPS, PAGES } from "./pages";
-import type { SettingsPageId } from "./types";
+import type { SettingsGroup } from "./pages";
+import type { SettingsGroupId, SettingsPageId } from "./types";
 
 /**
  * The settings side menu: search box, the three grouped page trees, and a
@@ -31,14 +32,29 @@ export function SettingsNav({
 }) {
   const treeRef = React.useRef<HTMLDivElement>(null);
 
-  // Groups with no hits collapse while a search is active, and spring back to
-  // the user's own open/closed state when the query clears — `undefined`
-  // hands control back to `PGSidebarGroup`'s own uncontrolled state, which is
-  // deliberately NOT "fixed" to remember the forced-open state.
-  const groupOpen = (groupPages: readonly SettingsPageId[]): boolean | undefined => {
-    if (!matchCounts) return undefined;
-    return groupPages.some((p) => (matchCounts.get(p) ?? 0) > 0);
+  // SettingsNav owns every group's open/closed state and always passes a
+  // real boolean `open` to `PGSidebarGroup` — never `undefined` — so a
+  // keyboard collapse/expand has something to command without reaching into
+  // that component's internals. All three start open, matching its
+  // `defaultOpen` behaviour. `PGSidebarGroup`'s own uncontrolled path stays
+  // in place for other future callers; nothing here uses it any more.
+  const [localOpen, setLocalOpen] = React.useState<Record<SettingsGroupId, boolean>>(
+    () => Object.fromEntries(GROUPS.map((g) => [g.id, true])) as Record<SettingsGroupId, boolean>,
+  );
+
+  const setGroupOpen = (groupId: SettingsGroupId, open: boolean) => {
+    setLocalOpen((m) => ({ ...m, [groupId]: open }));
   };
+
+  // Dormant until Task 12 wires a real `matchCounts`: while a search is
+  // active, a group with any hits forces open regardless of `localOpen`,
+  // which a search never touches — so clearing the query reveals exactly
+  // whatever the user last set by hand, rather than whatever search forced.
+  const groupOpen = (group: SettingsGroup): boolean =>
+    matchCounts ? group.pages.some((p) => (matchCounts.get(p) ?? 0) > 0) : localOpen[group.id];
+
+  const groupOf = (id: SettingsPageId): SettingsGroup =>
+    GROUPS.find((g) => g.pages.includes(id))!;
 
   const visible = GROUPS.flatMap((g) =>
     g.pages.filter((p) => !matchCounts || (matchCounts.get(p) ?? 0) > 0),
@@ -48,22 +64,6 @@ export function SettingsNav({
     treeRef.current
       ?.querySelector<HTMLElement>(`[data-testid="settings-nav-${id}"]`)
       ?.focus();
-  };
-
-  /**
-   * A row only renders while its enclosing group is open, so a keydown
-   * reaching here always means "collapse". `PGSidebarGroup` is uncontrolled
-   * here (see `groupOpen` above) and exposes no imperative API to close it
-   * from outside — a synthetic click on its own header flips the same
-   * internal state a mouse click would, without making the group controlled
-   * (which would break the search spring-back behaviour). Focus moves to the
-   * tree root afterwards so it is not left on a node that just unmounted.
-   */
-  const collapseEnclosingGroup = (rowEl: HTMLElement) => {
-    const header = rowEl.closest('[role="group"]')?.parentElement?.parentElement
-      ?.firstElementChild as HTMLElement | null;
-    header?.click();
-    treeRef.current?.focus();
   };
 
   const onKeyDown = (e: React.KeyboardEvent, id: SettingsPageId) => {
@@ -84,11 +84,18 @@ export function SettingsNav({
       e.preventDefault();
       onSelect(id);
     } else if (e.key === "ArrowLeft") {
-      // A leaf treeitem has nothing to expand into, so ArrowRight is a
-      // no-op here (matching the ARIA tree pattern for end nodes); ArrowLeft
-      // can still collapse the group it sits in.
+      // A row only renders while its group is open, so reaching this from a
+      // treeitem always means "collapse". Focus moves to the tree root
+      // afterwards so it is not left on a node that just unmounted.
       e.preventDefault();
-      collapseEnclosingGroup(e.currentTarget as HTMLElement);
+      setGroupOpen(groupOf(id).id, false);
+      treeRef.current?.focus();
+    } else if (e.key === "ArrowRight") {
+      // A leaf treeitem's group is definitionally already open (a closed
+      // group renders no rows to focus), so this is a no-op in practice —
+      // kept for symmetry with Left and for a future parent-node treeitem.
+      e.preventDefault();
+      setGroupOpen(groupOf(id).id, true);
     }
   };
 
@@ -113,7 +120,8 @@ export function SettingsNav({
           <PGSidebarGroup
             key={group.id}
             title={group.title}
-            open={groupOpen(group.pages)}
+            open={groupOpen(group)}
+            onOpenChange={(open) => setGroupOpen(group.id, open)}
           >
             <div role="group" aria-label={group.title}>
               {group.pages.map((id) => {
