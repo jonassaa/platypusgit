@@ -1,7 +1,10 @@
 import { registerCardRows } from "@/features/settings/layout/SettingsCard";
 import * as appearance from "@/features/settings/pages/appearance";
+import * as commit from "@/features/settings/pages/commit";
 import * as diff from "@/features/settings/pages/diff";
+import * as integrations from "@/features/settings/pages/integrations";
 import * as keyboard from "@/features/settings/pages/keyboard";
+import * as remote from "@/features/settings/pages/remote";
 import * as updates from "@/features/settings/pages/updates";
 import type {
   SettingsGroupId,
@@ -32,12 +35,16 @@ export const PAGES: Record<SettingsPageId, SettingsPageModule> = {
   "general.appearance": { meta: appearance.meta, Page: appearance.AppearancePage },
   "general.keyboard": { meta: keyboard.meta, Page: keyboard.KeyboardPage },
   "general.updates": { meta: updates.meta, Page: updates.UpdatesPage },
+  "git.commit": { meta: commit.meta, Page: commit.CommitPage },
   "git.diff": { meta: diff.meta, Page: diff.DiffPage },
-  // Task 6 adds the other six. Until then the mapped type below fails to
-  // compile, which is the point: a missing page cannot be forgotten.
+  "git.remote": { meta: remote.meta, Page: remote.RemotePage },
+  "git.integrations": { meta: integrations.meta, Page: integrations.IntegrationsPage },
+  // Task 6 adds the other three (advanced.cli, advanced.workspace,
+  // advanced.backup). Until then the mapped type below fails to compile,
+  // which is the point: a missing page cannot be forgotten.
   //
   // The double cast (via `unknown`) is needed because TS's excess-property
-  // check refuses a direct cast from an object with 4 of 10 keys straight to
+  // check refuses a direct cast from an object with 7 of 10 keys straight to
   // `Record<SettingsPageId, …>` — "insufficient overlap". Scaffolding only:
   // Task 6 replaces this whole expression with a plain typed literal once all
   // ten keys are present, at which point the cast is not just unneeded but
