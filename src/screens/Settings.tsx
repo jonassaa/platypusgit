@@ -3,7 +3,6 @@ import {
   PGButton,
   PGButtonGroup,
   PGIcon,
-  PGIconButton,
   PGInput,
   PGSelect,
   PGToggle,
@@ -11,34 +10,25 @@ import {
   pgFlash,
 } from "@/design";
 import {
-  BUILTIN_THEMES,
-  DENSITY_STEP_PX,
-  ZOOM_MAX,
-  ZOOM_MIN,
   useSettingsStore,
   type SettingsImportReport,
-  type ThemeDef,
-  type ThemeFollowMode,
-  type UpdateChannel,
-
-  type UpdateCheckMode,
 } from "@/features/settings/useSettingsStore";
 import {
   DEFAULT_TICKET_PATTERN,
   isValidTicketPattern,
 } from "@/features/commits/message";
 import type { UpdateRefsMode } from "@/lib/types";
-import { CustomActionsSettings } from "@/features/actions/CustomActionsSettings";
 import { IdentityForm } from "@/features/commits/identity/IdentityForm";
 import { SavedIdentities } from "@/features/commits/identity/SavedIdentities";
 import { useRepoStore } from "@/features/repo/useRepoStore";
-import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import {
   SettingsCard,
   SettingsRow,
 } from "@/features/settings/layout/SettingsCard";
+import { AppearancePage } from "@/features/settings/pages/appearance";
 import { DiffPage } from "@/features/settings/pages/diff";
-import { ThemeEditorDialog } from "@/features/settings/theme/ThemeEditorDialog";
+import { KeyboardPage } from "@/features/settings/pages/keyboard";
+import { UpdatesPage } from "@/features/settings/pages/updates";
 import { ForgeSettings } from "@/features/forge/ForgeSettings";
 import {
   cliShimStatus,
@@ -48,14 +38,7 @@ import {
   revealLogFile,
   type PullMode,
 } from "@/lib/tauri";
-import { relativeTime } from "@/lib/derive";
-import { commitDateText, type DateFormat } from "@/lib/commitDate";
 import { appErrorMessage } from "@/lib/errors";
-import { STORE_MANAGED_NOTE } from "@/features/update/packageHint";
-import {
-  updatesManagedExternally,
-  useUpdateStore,
-} from "@/features/update/useUpdateStore";
 import type {
   CliPathState,
   CliShimStatus,
@@ -65,7 +48,6 @@ import { BUILTIN_PRESETS, useKeymapStore } from "@/features/keymap";
 
 export function SettingsScreen() {
   const s = useSettingsStore();
-  const active = s.getActiveTheme();
 
   return (
     <div
@@ -119,9 +101,8 @@ export function SettingsScreen() {
         </p>
 
         <IdentitySection />
-        <CustomActionsSection />
 
-        <AppearanceSection active={active} />
+        <AppearancePage />
 
         <SettingsCard
           id="pull"
@@ -336,19 +317,15 @@ export function SettingsScreen() {
         <DiffPage />
 
         <ForgeSettings />
-        <KeyboardSection />
+        <KeyboardPage />
         <CliSection />
-        <UpdatesSection />
+        <UpdatesPage />
         <BackupSection />
         <DiagnosticsSection />
       </div>
     </div>
   );
 }
-
-// ═════════════════════════════════════════════════════════════════════════════
-// KEYBOARD SECTION — keymap preset picker
-// ═════════════════════════════════════════════════════════════════════════════
 
 /**
  * `user.name` / `user.email` (#212) — the one thing on this screen that is NOT
@@ -364,25 +341,6 @@ export function SettingsScreen() {
  * way down: a user who lands in Settings before opening anything still gets a
  * true answer, from the global + system chain.
  */
-/**
- * User-defined commands (#225).
- *
- * Its own section rather than a row under something else: it is the one
- * Settings surface that spawns a process, and burying it would make the
- * "not a shell line" explanation easy to miss.
- */
-function CustomActionsSection() {
-  return (
-    <SettingsCard
-      id="actions"
-      title="Custom actions"
-      subtitle="Your own commands, available from the command palette."
-    >
-      <SettingsRow id="actions.list" label="Actions" stacked control={<CustomActionsSettings />} />
-    </SettingsCard>
-  );
-}
-
 function IdentitySection() {
   const repo = useRepoStore((s) => s.current);
   return (
@@ -404,34 +362,6 @@ function IdentitySection() {
         hint="Keep the identities you switch between — a work address and a personal one. Applying one writes it to the OPEN repository's config, so git and every hook agree with what you see here. Editing or removing an entry does not change repositories that already use it."
         stacked
         control={<SavedIdentities repoId={repo?.id ?? null} />}
-      />
-    </SettingsCard>
-  );
-}
-
-function KeyboardSection() {
-  const activePresetId = useKeymapStore((k) => k.activePresetId);
-  return (
-    <SettingsCard
-      id="keyboard"
-      title="Keyboard"
-      subtitle="Choose a keymap preset. Press ? anywhere to see the active bindings."
-    >
-      <SettingsRow
-        id="keyboard.keymap"
-        label="Keymap"
-        hint="Bindings apply across every screen. More presets coming."
-        control={
-          <PGSelect
-            value={activePresetId}
-            onChange={(v) => useKeymapStore.getState().setPreset(v)}
-            options={BUILTIN_PRESETS.map((p) => ({
-              value: p.id,
-              label: p.name,
-            }))}
-            data-testid="keymap-preset-select"
-          />
-        }
       />
     </SettingsCard>
   );
@@ -698,199 +628,6 @@ function PathNote({
   );
 }
 
-function UpdatesSection() {
-  const settings = useSettingsStore();
-  const status = useUpdateStore((s) => s.status);
-  const info = useUpdateStore((s) => s.info);
-  const error = useUpdateStore((s) => s.error);
-  const openPanel = useUpdateStore((s) => s.openPanel);
-  const check = useUpdateStore((s) => s.check);
-  // Single source: the store owns the running version (seeded from getVersion,
-  // and confirmed by check() from the backend's env!("CARGO_PKG_VERSION")).
-  const currentVersion = useUpdateStore((s) => s.currentVersion);
-  const lastCheckedAt = useUpdateStore((s) => s.lastCheckedAt);
-  const loadCurrentVersion = useUpdateStore((s) => s.loadCurrentVersion);
-  const loadCapability = useUpdateStore((s) => s.loadCapability);
-  const capability = useUpdateStore((s) => s.capability);
-  const off = settings.updateCheckMode === "never";
-  const storeManaged = updatesManagedExternally(capability);
-
-  React.useEffect(() => {
-    void loadCurrentVersion();
-    // Loaded HERE and not left to `check()` (#360): on a Microsoft Store install
-    // this section must render no update controls at all, and with
-    // `updateCheckMode: "never"` no check ever runs to discover that.
-    void loadCapability();
-  }, [loadCurrentVersion, loadCapability]);
-
-  let statusNode: React.ReactNode = null;
-  if (status === "up-to-date") {
-    statusNode = <>You're on the latest version.</>;
-  } else if (status === "available" && info) {
-    statusNode = (
-      <>
-        Update available:{" "}
-        <button
-          type="button"
-          onClick={openPanel}
-          style={{
-            background: "transparent",
-            border: "none",
-            padding: 0,
-            color: "var(--accent)",
-            cursor: "pointer",
-            font: "inherit",
-          }}
-        >
-          {info.latestVersion}
-        </button>
-      </>
-    );
-  } else if (status === "error" && error) {
-    statusNode = <span style={{ color: "var(--git-removed)" }}>{error}</span>;
-  }
-
-  // A Microsoft Store install gets the version and nothing else (#360).
-  //
-  // Not a disabled version of the normal section, and not a hidden one either.
-  // Disabled controls would still be three statements ABOUT updates from
-  // outside the Store — "Automatically asks GitHub", a release channel, a
-  // "Check for updates" button — which is what policy 10.2.5 is about; the
-  // v0.4.0 submission failed on a notification, having installed nothing.
-  // Removing the section entirely would leave the user who came here looking
-  // for their version with no answer and no explanation of why the setting
-  // other installs have is missing. So: the version, and one line naming who
-  // does the updating.
-  //
-  // `updateCheckMode` and `updateChannel` keep their persisted values
-  // untouched. They are portable preferences (#254 exports them) and this
-  // install is simply not consulting them — the same reasoning that leaves the
-  // channel control enabled when checks are off.
-  if (storeManaged) {
-    return (
-      <div data-testid="settings-updates">
-        <SettingsCard id="updates" title="Updates">
-          <SettingsRow
-            id="updates.version"
-            label="Current version"
-            hint={<div data-testid="update-store-managed">{STORE_MANAGED_NOTE}</div>}
-            control={<Mono>{currentVersion || "…"}</Mono>}
-          />
-        </SettingsCard>
-      </div>
-    );
-  }
-
-  return (
-    <div data-testid="settings-updates">
-      <SettingsCard
-        id="updates"
-        title="Updates"
-        subtitle="Check whether a newer PlatypusGit release is available."
-      >
-        <SettingsRow
-          id="updates.check"
-          label="Check for updates"
-          hint={
-            <>
-              <strong>Automatically</strong> asks GitHub shortly after launch.{" "}
-              <strong>Only when I ask</strong> never checks on its own — the
-              button below still works. <strong>Never</strong> makes no request
-              at all, from any part of the app.
-            </>
-          }
-          control={
-            <PGSelect
-              data-testid="update-check-mode"
-              value={settings.updateCheckMode}
-              onChange={(v) =>
-                settings.set("updateCheckMode", v as UpdateCheckMode)
-              }
-              options={[
-                { value: "auto", label: "Automatically" },
-                { value: "manual", label: "Only when I ask" },
-                { value: "never", label: "Never" },
-              ]}
-            />
-          }
-        />
-        <SettingsRow
-          id="updates.channel"
-          label="Release channel"
-          hint={
-            <>
-              <strong>Stable</strong> offers published releases only.{" "}
-              <strong>Include prereleases</strong> also offers release
-              candidates — newer, and not yet shipped to everyone. It adds
-              prereleases to what you are offered rather than restricting you to
-              them, so a stable release still wins whenever it is the newest
-              thing published. Switching back to Stable does not downgrade an
-              install; it just stops offering the next candidate.
-              {/*
-                Left enabled when checks are off. The preference is still real —
-                it persists and travels in a settings export — and a control
-                that appeared and disappeared as the row above changed would be
-                worse than one that is simply not consulted right now.
-              */}
-            </>
-          }
-          control={
-            <PGSelect
-              data-testid="update-channel"
-              value={settings.updateChannel}
-              onChange={(v) => settings.set("updateChannel", v as UpdateChannel)}
-              options={[
-                { value: "stable", label: "Stable" },
-                { value: "prerelease", label: "Include prereleases" },
-              ]}
-            />
-          }
-        />
-        <SettingsRow
-          id="updates.version"
-          label="Current version"
-          hint={
-            <>
-              <code style={{ fontFamily: "var(--font-mono)" }}>
-                {currentVersion || "…"}
-              </code>
-              {statusNode && <> — {statusNode}</>}
-              <div data-testid="update-last-checked" style={{ marginTop: 3 }}>
-                {off ? (
-                  // Not a dead end: the reason the button is disabled names the
-                  // setting one row up, which is one click from "Only when I
-                  // ask".
-                  <>Update checks are turned off.</>
-                ) : (
-                  <>
-                    Last checked:{" "}
-                    {lastCheckedAt
-                      ? relativeTime(Math.floor(lastCheckedAt / 1000))
-                      : "never"}
-                  </>
-                )}
-              </div>
-            </>
-          }
-          control={
-            <PGButton
-              size="sm"
-              onClick={() => check(true)}
-              loading={status === "checking"}
-              disabled={off}
-              title={
-                off ? "Update checks are turned off in Settings" : undefined
-              }
-            >
-              Check for updates
-            </PGButton>
-          }
-        />
-      </SettingsCard>
-    </div>
-  );
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
 // BACKUP SECTION — export / import every setting as one file (#254)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1089,345 +826,5 @@ function ImportReport({
         <> The file was written by a newer version of platypusgit.</>
       )}
     </span>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// APPEARANCE SECTION — theme picker + color editor + import/export
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Three weeks ago, so the sample says something in every format: "now" would
-// preview the relative form as "0s ago" and teach nothing about the choice.
-const DATE_SAMPLE_NOW = Date.now();
-const DATE_SAMPLE_TS = Math.floor(DATE_SAMPLE_NOW / 1000) - 60 * 60 * 24 * 21;
-
-function AppearanceSection({ active }: { active: ThemeDef }) {
-  const s = useSettingsStore();
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const isBuiltin = !!active.builtin;
-
-  const [editor, setEditor] = React.useState<
-    { kind: "new"; source: ThemeDef } | { kind: "edit"; id: string } | null
-  >(null);
-
-  const themeOptions = React.useMemo(() => {
-    const builtins = BUILTIN_THEMES.map((t) => ({
-      value: t.id,
-      label: t.name,
-    }));
-    const customs = s.customThemes.map((t) => ({
-      value: t.id,
-      label: `★ ${t.name}`,
-    }));
-    return [...builtins, ...customs];
-  }, [s.customThemes]);
-
-  // Each half of the pairing may only name a theme of its own mode — offering
-  // a dark theme as "the light one" would let the user build a pairing that
-  // never switches.
-  const pairOptions = React.useMemo(() => {
-    const of = (mode: "dark" | "light") => [
-      ...BUILTIN_THEMES.filter((t) => t.mode === mode).map((t) => ({
-        value: t.id,
-        label: t.name,
-      })),
-      ...s.customThemes
-        .filter((t) => t.mode === mode)
-        .map((t) => ({ value: t.id, label: `★ ${t.name}` })),
-    ];
-    return { light: of("light"), dark: of("dark") };
-  }, [s.customThemes]);
-
-  const following = s.themePreference.mode === "system";
-
-  const onImportClick = () => fileInputRef.current?.click();
-
-  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const theme = s.importThemeJson(text);
-      pgFlash(`Imported "${theme.name}"`);
-    } catch (err) {
-      pgFlash(`Import failed: ${appErrorMessage(err)}`);
-    }
-  };
-
-  const onDelete = async () => {
-    if (
-      !(await pgConfirm({
-        title: `Delete theme "${active.name}"?`,
-        body: "Custom themes aren't recoverable unless you exported the file.",
-        danger: true,
-        confirmLabel: "Delete theme",
-      }))
-    )
-      return;
-    s.deleteTheme(active.id);
-  };
-
-  return (
-    <SettingsCard
-      id="appearance"
-      title="Appearance"
-      subtitle="Pick a theme, or customize every color and export it as a sharable file."
-    >
-      <SettingsRow
-        id="appearance.follow"
-        label="Appearance"
-        hint={
-          following
-            ? `Follows the OS — currently ${
-                s.systemAppearance === "light" ? "light" : "dark"
-              }. Pick the theme each half uses below.`
-            : "One theme, always. Switch to “Follow system” to pair a light theme with a dark one."
-        }
-        control={
-          <PGButtonGroup
-            size="sm"
-            value={s.themePreference.mode}
-            onChange={(v) => s.setThemeFollowMode(v as ThemeFollowMode)}
-            options={[
-              { value: "fixed", label: "Fixed" },
-              { value: "system", label: "Follow system" },
-            ]}
-          />
-        }
-      />
-
-      {following ? (
-        <>
-          <SettingsRow
-            id="appearance.light"
-            label="Light theme"
-            hint="Applied while the OS is in light appearance."
-            control={
-              <PGSelect
-                value={s.themePreference.lightId}
-                onChange={(v) => s.setPairedThemeId("light", v)}
-                options={pairOptions.light}
-                size="sm"
-                style={{ minWidth: 200 }}
-              />
-            }
-          />
-          <SettingsRow
-            id="appearance.dark"
-            label="Dark theme"
-            hint="Applied while the OS is in dark appearance."
-            control={
-              <PGSelect
-                value={s.themePreference.darkId}
-                onChange={(v) => s.setPairedThemeId("dark", v)}
-                options={pairOptions.dark}
-                size="sm"
-                style={{ minWidth: 200 }}
-              />
-            }
-          />
-        </>
-      ) : (
-        <SettingsRow
-          id="appearance.theme"
-          label="Theme"
-          hint={
-            isBuiltin
-              ? "Built-in themes are read-only. Click “New custom theme” to fork and edit."
-              : "Custom theme. Click “Edit custom theme” to change its colors."
-          }
-          control={
-            <PGSelect
-              value={active.id}
-              onChange={(v) => s.setActiveThemeId(v)}
-              options={themeOptions}
-              size="sm"
-              style={{ minWidth: 200 }}
-            />
-          }
-        />
-      )}
-
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--border-0)",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 6,
-          alignItems: "center",
-          background: "var(--bg-0)",
-        }}
-      >
-        {!isBuiltin && (
-          <PGButton
-            size="sm"
-            variant="primary"
-            icon="edit"
-            onClick={() => setEditor({ kind: "edit", id: active.id })}
-          >
-            Edit custom theme…
-          </PGButton>
-        )}
-        <PGButton
-          size="sm"
-          variant={isBuiltin ? "primary" : "default"}
-          icon="plus"
-          onClick={() => setEditor({ kind: "new", source: active })}
-          title="Create a new custom theme starting from the active one"
-        >
-          New custom theme…
-        </PGButton>
-        {!isBuiltin && (
-          <PGButton
-            size="sm"
-            variant="default"
-            icon="trash"
-            onClick={() => void onDelete()}
-          >
-            Delete
-          </PGButton>
-        )}
-        <div style={{ flex: 1 }} />
-        <PGButton
-          size="sm"
-          variant="default"
-          icon="download"
-          onClick={() => s.downloadTheme(active.id)}
-          title="Download as .pgtheme.json"
-        >
-          Export
-        </PGButton>
-        <PGButton
-          size="sm"
-          variant="default"
-          icon="upload"
-          onClick={onImportClick}
-          title="Import a .pgtheme.json file"
-        >
-          Import…
-        </PGButton>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/json,.json,.pgtheme.json"
-          onChange={onImportFile}
-          style={{ display: "none" }}
-        />
-      </div>
-
-      <SettingsRow
-        id="appearance.density"
-        label="UI density"
-        hint={`Compact matches the dense IDE feel; comfortable gives every list row ${DENSITY_STEP_PX.comfortable}px more breathing room.`}
-        control={
-          <PGButtonGroup
-            size="sm"
-            value={s.uiDensity}
-            onChange={(v) => s.set("uiDensity", v as "compact" | "comfortable")}
-            options={[
-              { value: "compact", label: "Compact" },
-              { value: "comfortable", label: "Comfortable" },
-            ]}
-          />
-        }
-      />
-
-      <SettingsRow
-        id="appearance.dateFormat"
-        label="Date format"
-        hint={
-          <span data-testid="settings-date-format-hint">
-            How a commit date is written in History, Reflog, Compare and the
-            repository browser — right now:{" "}
-            <span
-              data-testid="settings-date-format-sample"
-              style={{ fontFamily: "var(--font-mono)", color: "var(--fg-1)" }}
-            >
-              {commitDateText(DATE_SAMPLE_TS, s.dateFormat, DATE_SAMPLE_NOW)}
-            </span>
-            . Hovering a date always shows the full timestamp, whichever format
-            you pick, and commit details always shows it in full.
-          </span>
-        }
-        control={
-          <PGButtonGroup
-            size="sm"
-            value={s.dateFormat}
-            onChange={(v) => s.set("dateFormat", v as DateFormat)}
-            options={[
-              { value: "relative", label: "Relative" },
-              { value: "absolute", label: "Absolute" },
-              { value: "both", label: "Both" },
-            ]}
-          />
-        }
-      />
-
-      <SettingsRow
-        id="appearance.headMarks"
-        stacked
-        label="Current position (HEAD)"
-        hint="How History marks the commit you are on. Pick any combination of marks, then set how hard they hit — the preview is the real History row."
-        control={<HeadMarksControl />}
-      />
-
-      <SettingsRow
-        id="appearance.zoom"
-        label="Zoom"
-        hint={`Scales the whole window — ${Math.round(ZOOM_MIN * 100)}% to ${Math.round(
-          ZOOM_MAX * 100,
-        )}%. Also on ⌘/Ctrl with + and −, reset with ⌘/Ctrl 0.`}
-        control={
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <PGIconButton
-              icon="minus"
-              size="md"
-              title="Zoom out"
-              onClick={() => s.stepZoom(-1)}
-            />
-            <span
-              data-testid="settings-zoom-value"
-              style={{
-                minWidth: 48,
-                textAlign: "center",
-                fontFamily: "var(--font-mono)",
-                fontSize: "var(--fs-12)",
-                color: "var(--fg-1)",
-              }}
-            >
-              {Math.round(s.uiZoom * 100)}%
-            </span>
-            <PGIconButton
-              icon="plus"
-              size="md"
-              title="Zoom in"
-              onClick={() => s.stepZoom(1)}
-            />
-            <PGButton
-              size="sm"
-              variant="ghost"
-              disabled={s.uiZoom === 1}
-              onClick={() => s.set("uiZoom", 1)}
-            >
-              Reset
-            </PGButton>
-          </div>
-        }
-      />
-
-      {editor && (
-        <ThemeEditorDialog
-          mode={editor.kind}
-          sourceTheme={
-            editor.kind === "new"
-              ? editor.source
-              : (s.customThemes.find((t) => t.id === editor.id) ?? active)
-          }
-          onClose={() => setEditor(null)}
-        />
-      )}
-    </SettingsCard>
   );
 }

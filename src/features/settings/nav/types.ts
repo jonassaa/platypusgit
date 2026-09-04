@@ -19,7 +19,7 @@ export type SettingsPageId =
  * A condition under which a row exists at all.
  *
  * `"updatable"` is the only one, and it is not cosmetic: on a Microsoft Store
- * install `UpdatesSection` renders no check and no channel, because
+ * install `UpdatesPage` renders no check and no channel, because
  * `StoreManaged` gates the CHECK and not just the install — Store policy 10.2.5
  * makes *notifying* the violation, and v0.4.0 failed certification on it. The
  * search index is a new surface that reads `UpdateCapability`, so it gates on
