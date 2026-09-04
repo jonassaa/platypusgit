@@ -125,16 +125,20 @@ pub async fn stash_diff(
     context_lines: u32,
     ignore_whitespace: bool,
     include_untracked: bool,
+    // The user's explicit "show it anyway" (#396) — see `raised_paths`.
+    raise_for: Option<Vec<String>>,
 ) -> AppResult<Vec<FileDiff>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
+    let raise = crate::commands::diff::raised_paths(raise_for);
     tokio::task::spawn_blocking(move || {
-        backend.stash_diff(
+        backend.stash_diff_over_ceiling(
             &repo_id,
             &oid,
             context_lines,
             ignore_whitespace,
             include_untracked,
+            &raise,
         )
     })
     .await

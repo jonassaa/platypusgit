@@ -379,6 +379,34 @@ pub struct FileDiff {
     /// off it); this says WHY, so the surfaces can name the real reason and the
     /// size instead of saying "binary file".
     pub oversized: Option<OversizedBlob>,
+    /// Set when this diff has MORE lines than were serialised (#396).
+    ///
+    /// Only the "show it anyway" path can produce it: an ordinary diff is under
+    /// `MAX_WORKDIR_BLOB` and comes back whole, so this stays `None` for every
+    /// file the app diffs on its own initiative. Once the user has waived the
+    /// ceiling the LINE count is the next wall — a 40 MB CSV is about a million
+    /// `DiffLine`s, i.e. a nine-figure JSON payload to parse and a million row
+    /// objects to lay out — so the lines stop at `MAX_DIFF_LINES` and the cap
+    /// reports itself rather than silently losing the rest.
+    ///
+    /// `additions`/`deletions` still count the WHOLE diff; only `hunks` stops
+    /// early. The file row must keep telling the truth about the change even
+    /// when the pane cannot show all of it.
+    pub truncated: Option<TruncatedDiff>,
+}
+
+/// How much of an over-ceiling diff was actually serialised (#396).
+///
+/// Same shape, and the same reasoning, as `OversizedBlob` below: the numbers the
+/// user reads are the ones that were applied, so no surface needs its own copy
+/// of the cap to build the sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TruncatedDiff {
+    /// Diff lines actually returned, across every hunk.
+    pub shown: usize,
+    /// Diff lines the file really has.
+    pub total: usize,
 }
 
 /// Why a diff has no text: the blob was bigger than the ceiling (#385).
@@ -394,6 +422,16 @@ pub struct OversizedBlob {
     pub size: u64,
     /// The ceiling that was applied, in bytes.
     pub limit: u64,
+    /// Was that ceiling the RAISED one — i.e. did the user already ask for this
+    /// blob anyway, and it was still too big? (#396)
+    ///
+    /// The UI cannot work this out for itself, and it needs to: offering "Diff
+    /// it anyway" a second time promises an answer that cannot change. It also
+    /// must not read a waived-path LIST as the answer — after a fresh fetch the
+    /// waiver is still in that list while the refusal is the DEFAULT ceiling's,
+    /// so the button belongs back on screen. Only the delta knows which ceiling
+    /// it actually lost to.
+    pub raised: bool,
 }
 
 /// The two sides of an LFS pointer change. Either side is `None` for an added or

@@ -233,6 +233,8 @@ pub trait GitBackend: Send + Sync {
     /// the blob is never read and `FileDiff.oversized` carries the size and the
     /// limit, so the UI can say "too large to diff" rather than the "binary"
     /// that libgit2's own answer to `max_size` would otherwise imply.
+    /// `raise_for` is the user's explicit "show it anyway" (#396) — see
+    /// `diff_over_ceiling`, which this forwards to with an empty list.
     fn diff(
         &self,
         repo_id: &RepoId,
@@ -240,6 +242,33 @@ pub trait GitBackend: Send + Sync {
         kind: DiffKind,
         context_lines: u32,
         ignore_whitespace: bool,
+    ) -> AppResult<FileDiff> {
+        self.diff_over_ceiling(repo_id, path, kind, context_lines, ignore_whitespace, &[])
+    }
+    /// `diff`, with the per-blob ceiling RAISED for the listed paths (#396).
+    ///
+    /// The ceiling is a guess about intent and it is usually right, but when it
+    /// is wrong it is completely wrong — a generated `schema.sql`, a `.csv`
+    /// fixture, a vendored lockfile, a minified bundle whose one changed line is
+    /// the thing being reviewed. This is the way past it: per file, per view,
+    /// never a setting, because a remembered "always diff huge files" is a
+    /// refusal turned into a footgun the user forgot they armed.
+    ///
+    /// **A raised ceiling is a DIFFERENT ceiling, not the absence of one.** The
+    /// listed paths are diffed at `MAX_BLOB_OVERRIDE` and their lines capped at
+    /// `MAX_DIFF_LINES` (reported as `FileDiff::truncated`); a path still over
+    /// that comes back `oversized` again, naming the raised limit. Everything
+    /// not listed keeps `MAX_WORKDIR_BLOB`. Implementations must not grow a
+    /// second, uncapped diff builder for this — one builder, one collector, one
+    /// policy function (`blob_ceiling`).
+    fn diff_over_ceiling(
+        &self,
+        repo_id: &RepoId,
+        path: &Path,
+        kind: DiffKind,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<FileDiff>;
     /// Read the full content of a file from the worktree. Falls back to the
     /// HEAD blob when the worktree copy is missing (e.g. a deleted file).
@@ -340,6 +369,29 @@ pub trait GitBackend: Send + Sync {
         to_oid: &str,
         context_lines: u32,
         ignore_whitespace: bool,
+    ) -> AppResult<Vec<FileDiff>> {
+        self.diff_commits_over_ceiling(
+            repo_id,
+            from_oid,
+            to_oid,
+            context_lines,
+            ignore_whitespace,
+            &[],
+        )
+    }
+    /// `raise_for` is the user's explicit "show it anyway" (#396). It is a
+    /// PATHSPEC as well as a raised ceiling: the answer covers only those paths,
+    /// so waiving the ceiling for one huge blob never reads the other huge blob
+    /// beside it. See `diff_over_ceiling` for the whole contract; the
+    /// un-suffixed method is this one with an empty list.
+    fn diff_commits_over_ceiling(
+        &self,
+        repo_id: &RepoId,
+        from_oid: &str,
+        to_oid: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>>;
     /// Diff a single commit against its first parent — i.e. "what this commit
     /// changed." A root commit (no parent) diffs against the empty tree
@@ -352,6 +404,21 @@ pub trait GitBackend: Send + Sync {
         oid: &str,
         context_lines: u32,
         ignore_whitespace: bool,
+    ) -> AppResult<Vec<FileDiff>> {
+        self.diff_commit_over_ceiling(repo_id, oid, context_lines, ignore_whitespace, &[])
+    }
+    /// `raise_for` is the user's explicit "show it anyway" (#396). It is a
+    /// PATHSPEC as well as a raised ceiling: the answer covers only those paths,
+    /// so waiving the ceiling for one huge blob never reads the other huge blob
+    /// beside it. See `diff_over_ceiling` for the whole contract; the
+    /// un-suffixed method is this one with an empty list.
+    fn diff_commit_over_ceiling(
+        &self,
+        repo_id: &RepoId,
+        oid: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>>;
     /// Diff the tree at `revspec` against the WORKING TREE — the whole tree, not
     /// one path. A general primitive: arbitrary revspec (branch, remote branch,
@@ -385,6 +452,29 @@ pub trait GitBackend: Send + Sync {
         context_lines: u32,
         ignore_whitespace: bool,
         include_untracked: bool,
+    ) -> AppResult<WorkdirDiff> {
+        self.diff_ref_to_workdir_over_ceiling(
+            repo_id,
+            revspec,
+            context_lines,
+            ignore_whitespace,
+            include_untracked,
+            &[],
+        )
+    }
+    /// `raise_for` is the user's explicit "show it anyway" (#396). It is a
+    /// PATHSPEC as well as a raised ceiling: the answer covers only those paths,
+    /// so waiving the ceiling for one huge blob never reads the other huge blob
+    /// beside it. See `diff_over_ceiling` for the whole contract; the
+    /// un-suffixed method is this one with an empty list.
+    fn diff_ref_to_workdir_over_ceiling(
+        &self,
+        repo_id: &RepoId,
+        revspec: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        include_untracked: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<WorkdirDiff>;
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>>;
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>>;
@@ -723,6 +813,29 @@ pub trait GitBackend: Send + Sync {
         context_lines: u32,
         ignore_whitespace: bool,
         include_untracked: bool,
+    ) -> AppResult<Vec<FileDiff>> {
+        self.stash_diff_over_ceiling(
+            repo_id,
+            oid,
+            context_lines,
+            ignore_whitespace,
+            include_untracked,
+            &[],
+        )
+    }
+    /// `raise_for` is the user's explicit "show it anyway" (#396). It is a
+    /// PATHSPEC as well as a raised ceiling: the answer covers only those paths,
+    /// so waiving the ceiling for one huge blob never reads the other huge blob
+    /// beside it. See `diff_over_ceiling` for the whole contract; the
+    /// un-suffixed method is this one with an empty list.
+    fn stash_diff_over_ceiling(
+        &self,
+        repo_id: &RepoId,
+        oid: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+        include_untracked: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>>;
 
     // === remote management ===

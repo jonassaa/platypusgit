@@ -8,6 +8,19 @@ use crate::{
     state::AppState,
 };
 
+/// The wire's `raiseFor` as paths (#396).
+///
+/// One converter for all four diff commands so they cannot disagree about what
+/// an absent or empty list means: nothing was waived, and the default ceiling
+/// applies. The stash's own diff command uses it too.
+pub(crate) fn raised_paths(raise_for: Option<Vec<String>>) -> Vec<PathBuf> {
+    raise_for
+        .unwrap_or_default()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+}
+
 #[tauri::command]
 pub async fn stage_hunk(
     state: State<'_, AppState>,
@@ -132,14 +145,23 @@ pub async fn get_diff(
     // Viewing option only — see the `diff` doc on GitBackend. Optional so an
     // older caller (or a test) that omits it keeps the exact git default.
     ignore_whitespace: Option<bool>,
+    // The user's explicit "show it anyway" (#396): paths whose blob ceiling was
+    // waived by a click on the notice. Optional so every ordinary caller is
+    // unchanged, and a LIST of paths rather than a size, because the ceiling is
+    // backend policy — a frontend copy of it would be free to drift from the one
+    // that was applied.
+    raise_for: Option<Vec<String>>,
 ) -> AppResult<FileDiff> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let path = PathBuf::from(path);
     let iw = ignore_whitespace.unwrap_or(false);
-    tokio::task::spawn_blocking(move || backend.diff(&repo_id, &path, kind, context_lines, iw))
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
+    let raise = raised_paths(raise_for);
+    tokio::task::spawn_blocking(move || {
+        backend.diff_over_ceiling(&repo_id, &path, kind, context_lines, iw, &raise)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 #[tauri::command]
@@ -192,12 +214,19 @@ pub async fn diff_commits(
     to_oid: String,
     context_lines: u32,
     ignore_whitespace: Option<bool>,
+    // The user's explicit "show it anyway" (#396): paths whose blob ceiling was
+    // waived by a click on the notice. Optional so every ordinary caller is
+    // unchanged, and a LIST of paths rather than a size, because the ceiling is
+    // backend policy — a frontend copy of it would be free to drift from the one
+    // that was applied.
+    raise_for: Option<Vec<String>>,
 ) -> AppResult<Vec<FileDiff>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let iw = ignore_whitespace.unwrap_or(false);
+    let raise = raised_paths(raise_for);
     tokio::task::spawn_blocking(move || {
-        backend.diff_commits(&repo_id, &from_oid, &to_oid, context_lines, iw)
+        backend.diff_commits_over_ceiling(&repo_id, &from_oid, &to_oid, context_lines, iw, &raise)
     })
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?
@@ -210,13 +239,22 @@ pub async fn diff_commit(
     oid: String,
     context_lines: u32,
     ignore_whitespace: Option<bool>,
+    // The user's explicit "show it anyway" (#396): paths whose blob ceiling was
+    // waived by a click on the notice. Optional so every ordinary caller is
+    // unchanged, and a LIST of paths rather than a size, because the ceiling is
+    // backend policy — a frontend copy of it would be free to drift from the one
+    // that was applied.
+    raise_for: Option<Vec<String>>,
 ) -> AppResult<Vec<FileDiff>> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let iw = ignore_whitespace.unwrap_or(false);
-    tokio::task::spawn_blocking(move || backend.diff_commit(&repo_id, &oid, context_lines, iw))
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
+    let raise = raised_paths(raise_for);
+    tokio::task::spawn_blocking(move || {
+        backend.diff_commit_over_ceiling(&repo_id, &oid, context_lines, iw, &raise)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
 /// Diff the tree at `revspec` against the working tree (#131).
@@ -231,13 +269,27 @@ pub async fn diff_ref_to_workdir(
     context_lines: u32,
     ignore_whitespace: Option<bool>,
     include_untracked: Option<bool>,
+    // The user's explicit "show it anyway" (#396): paths whose blob ceiling was
+    // waived by a click on the notice. Optional so every ordinary caller is
+    // unchanged, and a LIST of paths rather than a size, because the ceiling is
+    // backend policy — a frontend copy of it would be free to drift from the one
+    // that was applied.
+    raise_for: Option<Vec<String>>,
 ) -> AppResult<WorkdirDiff> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let iw = ignore_whitespace.unwrap_or(false);
     let untracked = include_untracked.unwrap_or(false);
+    let raise = raised_paths(raise_for);
     tokio::task::spawn_blocking(move || {
-        backend.diff_ref_to_workdir(&repo_id, &revspec, context_lines, iw, untracked)
+        backend.diff_ref_to_workdir_over_ceiling(
+            &repo_id,
+            &revspec,
+            context_lines,
+            iw,
+            untracked,
+            &raise,
+        )
     })
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?

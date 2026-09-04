@@ -61,6 +61,18 @@ interface CompareState {
   untrackedOmitted: number;
   loading: boolean;
   /**
+   * Paths whose blob ceiling the user waived with "Diff it anyway" (#396).
+   *
+   * Store state rather than screen state because `refresh` is: the waivers ride
+   * along on every fetch it makes, and a refresh that dropped them would replace
+   * the blob the user waited for with the refusal again, on its own. Cleared by
+   * `EMPTY_RESULTS`, so any change of sides — the "per view, never a setting"
+   * half of the promise — drops them with the results they belonged to.
+   */
+  raiseFor: string[];
+  /** A waived re-read is in flight — `refresh` is doing it. */
+  diffAnywayPending: boolean;
+  /**
    * Rendered in the screen, never pushed into `useRepoStore.error`: a revspec
    * typed into a picker that does not resolve is a bad input to this view, not
    * a repository-level failure worth the app banner.
@@ -82,6 +94,21 @@ interface CompareState {
   mark: (ref: string) => void;
   clearMark: () => void;
   refresh: (contextLines: number, ignoreWhitespace: boolean) => Promise<void>;
+  /**
+   * Waive the blob ceiling for one over-ceiling file, and re-read (#396).
+   *
+   * Records the paths and re-runs `refresh`, rather than fetching on its own:
+   * the backend answers with the WHOLE diff and the waived paths read at the
+   * raised ceiling, so `refresh` is already the right call and there is no
+   * second fetch shape to keep in step with the two it dispatches between.
+   * Every later `refresh` carries the waivers too — without that, a refresh
+   * would silently replace the blob the user waited for with the refusal again.
+   */
+  diffAnyway: (
+    paths: string[],
+    contextLines: number,
+    ignoreWhitespace: boolean,
+  ) => Promise<void>;
 }
 
 const EMPTY_RESULTS = {
@@ -91,6 +118,9 @@ const EMPTY_RESULTS = {
   behindCommits: [] as CommitInfo[],
   untrackedOmitted: 0,
   error: null,
+  // The waivers belong to the results they were granted for (#396).
+  raiseFor: [] as string[],
+  diffAnywayPending: false,
 };
 
 export const useCompareStore = create<CompareState>((set, get) => ({
@@ -163,7 +193,17 @@ export const useCompareStore = create<CompareState>((set, get) => ({
           ipcAheadBehind(repo.id, left.rev, right.rev),
           commitsBetween(repo.id, left.rev, right.rev, COMPARE_COMMIT_LIMIT),
           commitsBetween(repo.id, right.rev, left.rev, COMPARE_COMMIT_LIMIT),
-          diffCommits(repo.id, left.rev, right.rev, contextLines, ignoreWhitespace),
+          diffCommits(
+            repo.id,
+            left.rev,
+            right.rev,
+            contextLines,
+            ignoreWhitespace,
+            // Every refresh, not just the click that granted them (#396): a
+            // refresh that dropped them would replace the blob the user waited
+            // for with the refusal, on its own.
+            get().raiseFor,
+          ),
         ]);
         if (!fresh()) return;
         set({
@@ -185,6 +225,7 @@ export const useCompareStore = create<CompareState>((set, get) => ({
         contextLines,
         ignoreWhitespace,
         true,
+        get().raiseFor,
       );
       if (!fresh()) return;
       set({
@@ -198,6 +239,22 @@ export const useCompareStore = create<CompareState>((set, get) => ({
     } catch (e) {
       if (!fresh()) return;
       set({ ...EMPTY_RESULTS, loading: false, error: appErrorMessage(e) });
+    }
+  },
+
+  async diffAnyway(paths, contextLines, ignoreWhitespace) {
+    if (paths.length === 0) return;
+    set((s) => ({
+      raiseFor: [...new Set([...s.raiseFor, ...paths])],
+      diffAnywayPending: true,
+    }));
+    try {
+      await get().refresh(contextLines, ignoreWhitespace);
+    } finally {
+      // Cleared unconditionally: the read is over either way, and this flag
+      // only drives the action's label. `refresh`'s own token discipline
+      // decides whether its RESULTS get written.
+      set({ diffAnywayPending: false });
     }
   },
 }));

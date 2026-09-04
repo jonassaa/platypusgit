@@ -375,6 +375,71 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `src-tauri/tests/diff_blob_ceiling.rs` covers the four diff entry points and
   the control case: an ordinary text file must still diff exactly as before.
 
+### ...and the user's way past it (#396)
+
+The ceiling is a guess about intent — "a 5 MB text file is a generated
+artifact, not something anyone diffs in a GUI" — and it is usually right. When
+it is wrong it is completely wrong: a generated `schema.sql`, a `.csv` fixture,
+a vendored lockfile, a minified bundle whose one changed line is the thing being
+reviewed. So it is overridable, and these are the four properties that keep the
+escape hatch from becoming the uncapped path #385 removed.
+
+- **The ceiling is a FUNCTION, not a constant, at all six `max_size` sites.**
+  `blob_ceiling(raise: bool)` returns `MAX_WORKDIR_BLOB` or `MAX_BLOB_OVERRIDE`
+  (64 MB) and nothing else, so there is no spelling of "no limit" to reach for.
+  Each of the five diff ops has a `*_over_ceiling` sibling taking
+  `raise_for: &[PathBuf]`; the plain name is a one-line trait default that
+  forwards with `&[]`, which is what keeps the ~57 existing call sites (and
+  every test) unchanged. Over the raised ceiling the delta comes back
+  `oversized` again, with the RAISED limit in it — `oversized_delta` takes the
+  ceiling that was applied for exactly that reason.
+- **The wire carries PATHS, never a size.** `raiseFor: Option<Vec<String>>` on
+  the five diff commands, through the one `raised_paths` converter. The
+  alternative — an `Option<u64>` ceiling from the frontend — would put a copy of
+  the policy in the UI, free to drift from the one applied, which is the same
+  mistake the `oversized { size, limit }` shape exists to avoid.
+- **A raise is a PATHSPEC as well as a limit, so the multi-file ops run TWO
+  builds** (`with_raised`, `scope_to_raised`). libgit2's `max_size` is
+  diff-WIDE, so "raise it for this one path" cannot be said in one build: either
+  the whole diff gets the raised ceiling — and reads every huge blob in the
+  commit, the footgun a per-file hatch exists to avoid — or the raise is scoped
+  by a pathspec, which narrows the ANSWER. So the base build answers for every
+  file at the default ceiling and a second, pathspec'd build re-reads only the
+  waived paths, merged in by path. The extra pass costs one tree walk, not one
+  blob read: the base build never reads a blob over the ceiling, which is what
+  being over it means. Both sides of a rename go in the list, or `find_similar`
+  gets half a pair.
+- **The answer is the WHOLE diff, and that is load-bearing.** Returning just the
+  waived subset — the first shape this had — meant a caller could only pass its
+  waivers on the click that granted them. Every surface's diff fetch re-runs on a
+  status refresh (`CommitPanel`'s dependency list says so in as many words), so
+  the refusal came back on its own, seconds after the user's 6.7 MB read landed.
+  Measured in `e2e/specs/diff-oversized.e2e.ts`, which is why that spec waits on
+  the refusal STAYING gone rather than merely being gone.
+- **`OversizedBlob.raised` says which ceiling a delta lost to**, derived from
+  the applied limit rather than passed alongside it. The UI needs it and cannot
+  work it out: it holds no copy of either ceiling, and a list of waived paths is
+  not the answer — after a fresh fetch the path is still in that list while the
+  refusal is the DEFAULT ceiling's, so the action belongs back on screen.
+- **Blob size is the first wall; LINE COUNT is the second.** A 40 MB CSV
+  rewritten wholesale is about a million `DiffLine`s: a nine-figure JSON payload
+  for the webview to parse, a million row objects for `flattenDiffRows`, and a
+  `heights` array `windowVariable` reduces over on every scroll event. An
+  override that hands the user a frozen window is worse than the refusal it
+  replaced, so a raised diff caps its lines at `MAX_DIFF_LINES` (100k) and
+  reports `FileDiff::truncated { shown, total }`. The cap is reached ONLY
+  through `diff_lines_cap`, i.e. only under a raise: nothing the app opens on
+  its own initiative starts truncating. `additions`/`deletions` keep counting
+  past the cap — the file row must stay true even when the pane cannot show all
+  of it — and the cap is checked before the `String` allocation, which is what
+  it actually saves. It is keyed on the CEILING (`diff_lines_cap(ceiling)`), so
+  the two builds above cannot disagree about which of them may truncate.
+- `src-tauri/tests/diff_blob_override.rs` pins all of it, including the three
+  negatives that matter: an empty `raise_for` is byte-for-byte the default, a
+  raise naming a DIFFERENT path leaves this one refused, and an un-waived
+  artifact in the same commit keeps the default ceiling — which is what says its
+  blob was never loaded.
+
 ## Image previews: the only reader that returns BYTES (#224)
 
 - **`read_image_preview` is the fourth file reader**, and the only one that can

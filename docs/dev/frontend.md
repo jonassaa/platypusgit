@@ -74,10 +74,57 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
     sets `oversized` on a delta libgit2 already called binary, so that arm
     cannot fire alone today. It is there so "we did not read this blob" can
     never come to mean "render its hunks".
-  * **No "show it anyway" override yet** — deliberately out of scope of the fix,
-    and tracked as #396: the ceiling had to become one policy before an escape
-    hatch from it could mean anything, and the row model has to survive the
-    result first (`windowVariable` reduces over every height on every scroll).
+- **The notice grows an ACTION, and no surface owns it (#396).** #385 left the
+  sentence naming a limit with nothing to do about it, which is the shape that
+  invites the question. `OversizedDiffAction`
+  (`features/diff/OversizedDiffNotice.tsx`) is the one button, rendered by all
+  four surfaces — through `PGEmpty`'s `action` slot for the three that use
+  `ImageDiffOrEmpty`, and inside `CommitDiffPanel`'s `fallback` for the fourth.
+  A pane that grew its own is how a file comes to behave differently depending
+  on where you opened it, which is the rule `isTextualDiff`'s doc comment
+  already states.
+  * **The click records a WAIVER; the surface's ordinary fetch carries it.**
+    `useDiffAnyway(resetKey)` (`features/diff/`) is just that state, and every
+    diff fetch passes `raiseFor` — the backend answers with the whole diff and
+    those paths read at the raised ceiling, so there is no second fetch shape
+    and nothing to splice.
+  * **A hook that fetched the waived path ITSELF does not work**, and this is
+    the trap worth remembering. Every one of these surfaces re-runs its diff
+    fetch on a status refresh — `CommitPanel`'s dependency list says so on
+    purpose, `status` identity included — so a waived read that lived outside
+    that fetch was replaced by the refusal seconds after it landed, with the
+    user watching. `raiseFor` therefore belongs in the fetch effect's deps, and
+    `e2e/specs/diff-oversized.e2e.ts` waits on the refusal STAYING gone.
+  * **Per file, per view, never a setting.** The waivers are component state
+    (store state for Compare, because the store owns `diffs`), dropped whenever
+    `resetKey` changes — the selected path (plus side, in the commit panel: two
+    sides of one file are two diffs), or the commit/target being shown. A
+    remembered "always diff huge files" is a considered refusal turned into a
+    footgun the user forgot they armed, and here it costs megabytes.
+  * **A blob over even the RAISED ceiling stops offering the button** —
+    `diffAnywayExhausted`, off the delta's own `oversized.raised`. Not off the
+    waived-path list: a fresh fetch's refusal is the DEFAULT ceiling's while the
+    path is still in that list, and keying on the list hid the button for the
+    rest of the session.
+  * **`CommitDiffPanel` is presentational, so its CALLER answers the click.**
+    `onDiffAnyway` omitted means the notice renders with nothing under it, which
+    is the right thing for a surface with nowhere to send the re-read — and
+    `test/diffOversized.test.ts` checks that all three owners (CommitDiff,
+    History, Compare) wire it, because a panel silently offering no button is
+    the pre-#396 dead end again.
+  * **A waived read can come back SHORTENED**, and `TruncatedDiffNotice` says
+    so above the rows. Raising the ceiling gets the blob read; it does not make
+    a million rows something a diff pane can lay out, so the backend caps the
+    lines (`FileDiff.truncated { shown, total }`, counts off the wire like the
+    limit). An unmentioned cap reads as a diff that simply ends — the silent
+    wrong answer this whole area exists to avoid.
+  * **Still worth doing when the cap starts to bite:** `windowVariable` walks
+    `heights` from index 0 and reduces over it twice on every scroll event, so a
+    capped 100k-row diff costs ~O(n) per event. A prefix sum over `heights`
+    would make it O(log n) and would help every large diff, not just a waived
+    one. Not done here: the cap already bounds a waived diff to what the app
+    renders happily today, so this is a scroll-smoothness improvement rather
+    than a precondition.
 - **The complement of `isTextualDiff` is not automatically a dead end** (#224).
   When the binary is an IMAGE, all five diff surfaces render the shared
   `ImageDiffView` (`features/diff/`) — old beside new, each with pixel

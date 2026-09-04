@@ -94,6 +94,51 @@ export function oversizedDiffNotice(
 }
 
 /**
+ * Was this blob refused even though the user already asked for it anyway? (#396)
+ *
+ * The escape hatch raises the ceiling; it does not remove it. A blob over even
+ * the raised one comes back `oversized` a second time — with the raised limit in
+ * the sentence, which `oversizedDiffNotice` already reports correctly. What must
+ * not happen is offering the same button again: the answer cannot change, and a
+ * button that visibly does nothing is worse than no button.
+ *
+ * Reads the DELTA, deliberately not the surface's list of waived paths. The list
+ * says what the user asked for, not what the backend answered — after a fresh
+ * fetch (which never passes the waiver, so returning to a file costs a click
+ * rather than megabytes) the path is still in the list while the refusal is the
+ * DEFAULT ceiling's, and the action belongs back on screen. Keying off the list
+ * hid the button for the rest of the session instead.
+ */
+export function diffAnywayExhausted(diff: FileDiff | null | undefined): boolean {
+  return !!diff?.oversized?.raised;
+}
+
+/**
+ * The lines that did not fit, once the user asked for a diff anyway (#396).
+ *
+ * Blob size is the first wall and the line count is the second: a 40 MB CSV is
+ * about a million rows, which is a nine-figure JSON payload to parse and a
+ * million row objects to lay out. The backend caps the lines and reports the
+ * real length, and this is the one sentence that says so — a truncation nobody
+ * mentions is indistinguishable from a diff that ends early, which is the
+ * silent-wrong-answer this whole area exists to avoid.
+ *
+ * Counts come off the wire for the same reason the ceiling does: the cap is
+ * backend policy, and a copy of it here would be free to drift.
+ */
+export function truncatedDiffNotice(
+  diff: FileDiff | null | undefined,
+): { title: string; detail: string } | null {
+  const cut = diff?.truncated;
+  if (!cut) return null;
+  const fmt = (n: number) => n.toLocaleString();
+  return {
+    title: "Diff shortened",
+    detail: `Showing the first ${fmt(cut.shown)} of ${fmt(cut.total)} lines — the rest was not sent.`,
+  };
+}
+
+/**
  * Never committed and never staged — git holds no copy of it.
  *
  * Discarding one deletes it outright rather than restoring it, so the UI has to

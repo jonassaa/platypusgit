@@ -397,6 +397,11 @@ export async function listRemotes(repoId: string): Promise<RemoteInfo[]> {
  * context. Hunk indices from such a diff do NOT line up with the ones
  * stageHunk/discardHunk expect, so callers must disable hunk-level actions
  * while it is on (#61 D2).
+ *
+ * `raiseFor` is the user's explicit "Diff it anyway" (#396): the paths whose
+ * blob ceiling was waived by a click on the notice. Both sides of a rename
+ * belong in it. The wire carries PATHS, never a size — the ceiling is backend
+ * policy, and a copy of it here would be free to drift from the one applied.
  */
 export async function getDiff(
   repoId: string,
@@ -404,6 +409,7 @@ export async function getDiff(
   kind: DiffKind = "WorktreeToIndex",
   contextLines = 3,
   ignoreWhitespace = false,
+  raiseFor: string[] = [],
 ): Promise<FileDiff> {
   return invoke<FileDiff>("get_diff", {
     repoId,
@@ -411,6 +417,7 @@ export async function getDiff(
     kind,
     contextLines,
     ignoreWhitespace,
+    raiseFor,
   });
 }
 
@@ -431,6 +438,7 @@ export async function diffCommits(
   toOid: string,
   contextLines = 3,
   ignoreWhitespace = false,
+  raiseFor: string[] = [],
 ): Promise<FileDiff[]> {
   return invoke<FileDiff[]>("diff_commits", {
     repoId,
@@ -438,6 +446,7 @@ export async function diffCommits(
     toOid,
     contextLines,
     ignoreWhitespace,
+    raiseFor,
   });
 }
 
@@ -445,18 +454,25 @@ export async function diffCommits(
  * A single commit's own diff — against its first parent. Root commit (no
  * parent) diffs against the empty tree (all-added); a merge commit diffs
  * against its first parent. This is "what this commit changed."
+ *
+ * `raiseFor` is the user's explicit "Diff it anyway" (#396): the paths whose
+ * blob ceiling was waived by a click on the notice. Both sides of a rename
+ * belong in it. The wire carries PATHS, never a size — the ceiling is backend
+ * policy, and a copy of it here would be free to drift from the one applied.
  */
 export async function diffCommit(
   repoId: string,
   oid: string,
   contextLines = 3,
   ignoreWhitespace = false,
+  raiseFor: string[] = [],
 ): Promise<FileDiff[]> {
   return invoke<FileDiff[]>("diff_commit", {
     repoId,
     oid,
     contextLines,
     ignoreWhitespace,
+    raiseFor,
   });
 }
 
@@ -471,6 +487,11 @@ export async function diffCommit(
  * The untracked side is BOUNDED — over the backend's ceiling it is dropped
  * whole and the count comes back as `untrackedOmitted`. Render that; a short
  * file list with no explanation is the failure the cap exists to prevent.
+ *
+ * `raiseFor` is the user's explicit "Diff it anyway" (#396): the paths whose
+ * blob ceiling was waived by a click on the notice. Both sides of a rename
+ * belong in it. The wire carries PATHS, never a size — the ceiling is backend
+ * policy, and a copy of it here would be free to drift from the one applied.
  */
 export async function diffRefToWorkdir(
   repoId: string,
@@ -478,6 +499,7 @@ export async function diffRefToWorkdir(
   contextLines = 3,
   ignoreWhitespace = false,
   includeUntracked = false,
+  raiseFor: string[] = [],
 ): Promise<WorkdirDiff> {
   return invoke<WorkdirDiff>("diff_ref_to_workdir", {
     repoId,
@@ -485,6 +507,7 @@ export async function diffRefToWorkdir(
     contextLines,
     ignoreWhitespace,
     includeUntracked,
+    raiseFor,
   });
 }
 
@@ -941,6 +964,8 @@ export async function stashRename(
  * `includeUntracked` folds in the `git stash -u` payload, which lives in a
  * THIRD parent that no tree-level diff of the stash commit can reach. Inert on
  * an entry that has none — see `StashInfo.untracked`.
+ *
+ * `raiseFor` is the user's explicit "Diff it anyway" (#396) — see `getDiff`.
  */
 export async function stashDiff(
   repoId: string,
@@ -948,6 +973,7 @@ export async function stashDiff(
   contextLines = 3,
   ignoreWhitespace = false,
   includeUntracked = true,
+  raiseFor: string[] = [],
 ): Promise<FileDiff[]> {
   return invoke<FileDiff[]>("stash_diff", {
     repoId,
@@ -955,6 +981,7 @@ export async function stashDiff(
     contextLines,
     ignoreWhitespace,
     includeUntracked,
+    raiseFor,
   });
 }
 

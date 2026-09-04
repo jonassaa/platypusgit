@@ -21,6 +21,7 @@ import {
 import { useElementSize } from "@/lib/useElementSize";
 import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
+import { raisedPathsFor } from "@/features/diff/useDiffAnyway";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { FocusableScroll, PGPane } from "@/features/keymap";
 import { useRepoStore } from "@/features/repo/useRepoStore";
@@ -187,6 +188,11 @@ export function CompareScreen() {
   const setRight = useCompareStore((s) => s.setRight);
   const swap = useCompareStore((s) => s.swap);
   const refresh = useCompareStore((s) => s.refresh);
+  // The user's own way past the blob ceiling (#396). The store owns it because
+  // the store owns `diffs` — the waived read answers with a pathspec'd subset
+  // that has to be spliced into the list, not replace it.
+  const diffAnywayPending = useCompareStore((s) => s.diffAnywayPending);
+  const diffAnywayAction = useCompareStore((s) => s.diffAnyway);
 
   // First visit for this repository — or a tab switch since the last one — gets
   // the app's own `git diff`: the current branch against what is on disk. An
@@ -420,6 +426,14 @@ export function CompareScreen() {
           header={header}
           paneIdPrefix="compare"
           emptyLabel="No differences."
+          onDiffAnyway={(d) =>
+            void diffAnywayAction(
+              raisedPathsFor(d),
+              diffContextLines,
+              ignoreWhitespace,
+            )
+          }
+          diffAnywayPending={diffAnywayPending}
           // `SideSource` already has a `worktree` kind, so whole-file mode works
           // on both shapes with no new plumbing.
           syntaxSides={{

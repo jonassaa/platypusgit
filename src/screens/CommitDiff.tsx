@@ -4,6 +4,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
+import { useDiffAnyway } from "@/features/diff/useDiffAnyway";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { DeepViewHeader } from "@/features/nav/DeepViewHeader";
 import { diffCommit, diffCommits, diffRefToWorkdir, stashDiff } from "@/lib/tauri";
@@ -171,41 +172,81 @@ export function CommitDiffScreen() {
     }
   }, [intent, clearIntent]);
 
+  // The user's own way past the blob ceiling (#396), keyed on the target: the
+  // waivers ride along on EVERY fetch below, so a refetch of the same target
+  // (a context-width change, a refresh) keeps the blob the user asked for, and
+  // moving to another target drops them.
+  const anyway = useDiffAnyway(target);
+
+  // ONE dispatch for the four target kinds, so a waived read cannot drift from
+  // the fetch that produced the diff it is re-reading (#396) — a stash whose
+  // waiver quietly went through `diffCommits` would diff the wrong trees.
+  // Keyed on the repo ID, not the repo object: `useRepoStore.current` is
+  // replaced by a refresh, and an object dep here would re-fetch the whole
+  // commit diff — loading flash and all — every time anything refreshed.
+  const repoId = repo?.id ?? null;
+  const fetchDiffs = React.useCallback(
+    (): Promise<FileDiff[]> => {
+      if (!repoId || !target) return Promise.resolve([]);
+      const raiseFor = anyway.raiseFor;
+      switch (target.kind) {
+        case "commit-self":
+          return diffCommit(
+            repoId,
+            target.oid,
+            diffContextLines,
+            ignoreWhitespace,
+            raiseFor,
+          );
+        case "stash-diff":
+          // Its own first parent, resolved in the backend — NOT `diffCommits`
+          // against HEAD, which mixed the stash with everything landed since.
+          return stashDiff(
+            repoId,
+            target.oid,
+            diffContextLines,
+            ignoreWhitespace,
+            true,
+            raiseFor,
+          );
+        case "stash-vs-wt":
+          // The shared #131 primitive, reused rather than duplicated. The
+          // untracked flag is off — see `untrackedNote`.
+          return diffRefToWorkdir(
+            repoId,
+            target.oid,
+            diffContextLines,
+            ignoreWhitespace,
+            false,
+            raiseFor,
+          ).then((d) => d.files);
+        default:
+          return diffCommits(
+            repoId,
+            target.kind === "commit-vs-commit" ? target.from : target.oid,
+            target.kind === "commit-vs-commit" ? target.to : "HEAD",
+            diffContextLines,
+            ignoreWhitespace,
+            raiseFor,
+          );
+      }
+    },
+    [repoId, target, diffContextLines, ignoreWhitespace, anyway.raiseFor],
+  );
+
   React.useEffect(() => {
-    if (!repo || !target) return;
+    if (!repoId || !target) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    const fetch: Promise<FileDiff[]> =
-      target.kind === "commit-self"
-        ? diffCommit(repo.id, target.oid, diffContextLines, ignoreWhitespace)
-        : target.kind === "stash-diff"
-          ? // Its own first parent, resolved in the backend — NOT `diffCommits`
-            // against HEAD, which mixed the stash with everything landed since.
-            stashDiff(repo.id, target.oid, diffContextLines, ignoreWhitespace, true)
-          : target.kind === "stash-vs-wt"
-            ? // The shared #131 primitive, reused rather than duplicated. The
-              // untracked flag is off — see `untrackedNote`.
-              diffRefToWorkdir(
-                repo.id,
-                target.oid,
-                diffContextLines,
-                ignoreWhitespace,
-                false,
-              ).then((d) => d.files)
-            : diffCommits(
-                repo.id,
-                target.kind === "commit-vs-commit" ? target.from : target.oid,
-                target.kind === "commit-vs-commit" ? target.to : "HEAD",
-                diffContextLines,
-                ignoreWhitespace,
-              );
-    fetch
+    fetchDiffs()
       .then((d) => { if (!cancelled) setDiffs(d); })
       .catch((e) => { if (!cancelled) { setDiffs([]); setError(appErrorMessage(e)); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [repo?.id, target, diffContextLines, ignoreWhitespace]);
+  }, [repoId, target, fetchDiffs]);
+
+
 
   if (!target) {
     return (
@@ -243,6 +284,8 @@ export function CommitDiffScreen() {
         error={error}
         header={targetHeader(target)}
         paneIdPrefix="commitDiff"
+        onDiffAnyway={anyway.diffAnyway}
+        diffAnywayPending={loading}
         emptyLabel={
           target.kind === "commit-self" ? "No changes in this commit." : "No changes."
         }

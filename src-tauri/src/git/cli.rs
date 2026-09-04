@@ -111,13 +111,14 @@ impl GitBackend for CliBackend {
     ) -> AppResult<Vec<CommitInfo>> {
         Err(AppError::NotImplemented)
     }
-    fn diff(
+    fn diff_over_ceiling(
         &self,
         _repo_id: &RepoId,
         _path: &Path,
         _kind: DiffKind,
         _context_lines: u32,
         _ignore_whitespace: bool,
+        _raise_for: &[PathBuf],
     ) -> AppResult<FileDiff> {
         Err(AppError::NotImplemented)
     }
@@ -154,32 +155,35 @@ impl GitBackend for CliBackend {
     ) -> AppResult<Option<ImagePreview>> {
         Err(AppError::NotImplemented)
     }
-    fn diff_commits(
+    fn diff_commits_over_ceiling(
         &self,
         _repo_id: &RepoId,
         _from_oid: &str,
         _to_oid: &str,
         _context_lines: u32,
         _ignore_whitespace: bool,
+        _raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>> {
         Err(AppError::NotImplemented)
     }
-    fn diff_commit(
+    fn diff_commit_over_ceiling(
         &self,
         _repo_id: &RepoId,
         _oid: &str,
         _context_lines: u32,
         _ignore_whitespace: bool,
+        _raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>> {
         Err(AppError::NotImplemented)
     }
-    fn diff_ref_to_workdir(
+    fn diff_ref_to_workdir_over_ceiling(
         &self,
         _repo_id: &RepoId,
         _revspec: &str,
         _context_lines: u32,
         _ignore_whitespace: bool,
         _include_untracked: bool,
+        _raise_for: &[PathBuf],
     ) -> AppResult<WorkdirDiff> {
         Err(AppError::NotImplemented)
     }
@@ -378,13 +382,14 @@ impl GitBackend for CliBackend {
     ) -> AppResult<()> {
         Err(AppError::NotImplemented)
     }
-    fn stash_diff(
+    fn stash_diff_over_ceiling(
         &self,
         _repo_id: &RepoId,
         _oid: &str,
         _context_lines: u32,
         _ignore_whitespace: bool,
         _include_untracked: bool,
+        _raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>> {
         Err(AppError::NotImplemented)
     }

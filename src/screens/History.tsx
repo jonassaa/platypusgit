@@ -50,6 +50,7 @@ import {
 } from "@/features/settings/useSettingsStore";
 import { resolveHeadDecor } from "@/features/settings/headMarks";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
+import { useDiffAnyway } from "@/features/diff/useDiffAnyway";
 import { useIgnoreWhitespace } from "@/features/diff/WhitespaceToggle";
 import { PGPane, FocusableScroll, useAction, usePaneList } from "@/features/keymap";
 import {
@@ -445,6 +446,12 @@ export function HistoryScreen() {
   const inlineOid =
     sel.keys.length > 1 ? null : (primarySelectedKey(sel) ?? order[cursorIdx] ?? null);
   // Cancellable + debounced so rapid ↑/↓ through the log doesn't flood libgit2.
+  // The user's own way past the blob ceiling (#396), keyed on the commit whose
+  // diff is on screen: the waivers ride along on the fetch below, so a refetch
+  // of the SAME commit keeps the blob the user asked for, and walking the log
+  // drops them.
+  const anyway = useDiffAnyway(inlineOid);
+
   React.useEffect(() => {
     if (!repo || !inlineOid) {
       setInlineDiffs([]);
@@ -456,7 +463,13 @@ export function HistoryScreen() {
     setInlineLoading(true);
     setInlineError(null);
     const handle = window.setTimeout(() => {
-      diffCommit(repo.id, inlineOid, diffContextLines, ignoreWhitespace)
+      diffCommit(
+        repo.id,
+        inlineOid,
+        diffContextLines,
+        ignoreWhitespace,
+        anyway.raiseFor,
+      )
         .then((d) => { if (!cancelled) setInlineDiffs(d); })
         .catch((e) => {
           if (!cancelled) { setInlineDiffs([]); setInlineError(appErrorMessage(e)); }
@@ -464,7 +477,8 @@ export function HistoryScreen() {
         .finally(() => { if (!cancelled) setInlineLoading(false); });
     }, INLINE_DIFF_DEBOUNCE_MS);
     return () => { cancelled = true; window.clearTimeout(handle); };
-  }, [repo?.id, inlineOid, diffContextLines, ignoreWhitespace]);
+  }, [repo?.id, inlineOid, diffContextLines, ignoreWhitespace, anyway.raiseFor]);
+
 
   const exportVisible = React.useCallback(() => {
     const lines = visible.map(
@@ -942,6 +956,8 @@ export function HistoryScreen() {
       error={inlineError}
       header={diffHeader}
       paneIdPrefix="history.diff"
+      onDiffAnyway={anyway.diffAnyway}
+      diffAnywayPending={inlineLoading}
       // The inline panel shows the selected commit's own diff; a multi-selection
       // renders MultiCommitDetail instead, so this is always one commit (#61 D6).
       verifyOid={current?.oid}

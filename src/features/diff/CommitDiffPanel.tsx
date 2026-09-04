@@ -40,7 +40,12 @@ import type { FindMark } from "@/lib/diffFind";
 import { DiffFindBar } from "./DiffFindBar";
 import { useDiffFind } from "./useDiffFind";
 import type { DiffToolTarget, FileDiff } from "@/lib/types";
-import { isTextualDiff, oversizedDiffNotice } from "@/lib/derive";
+import {
+  diffAnywayExhausted,
+  isTextualDiff,
+  oversizedDiffNotice,
+} from "@/lib/derive";
+import { OversizedDiffEmpty, TruncatedDiffNotice } from "./OversizedDiffNotice";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { ImageDiffView } from "./ImageDiffView";
 import { diffImageSides } from "./useImagePreviews";
@@ -167,6 +172,18 @@ export interface CommitDiffPanelProps {
    * multi-commit diff), and the menu entry is then absent rather than broken.
    */
   difftoolTarget?: DiffToolTarget;
+  /**
+   * The user's "Diff it anyway" for one over-ceiling file (#396).
+   *
+   * The panel is presentational — the caller fetches the diffs, so the caller
+   * is the one that records the waiver and passes it on its next fetch (see
+   * `useDiffAnyway`). Omitted, and the notice keeps the plain "too large"
+   * wording with nothing to click; that is what a surface with nowhere to put
+   * the re-read should show, rather than a button that cannot work.
+   */
+  onDiffAnyway?: (diff: FileDiff) => void;
+  /** A waived re-read is in flight — the action says so and disables. */
+  diffAnywayPending?: boolean;
 }
 
 /**
@@ -185,6 +202,8 @@ export function CommitDiffPanel({
   verifyOid,
   syntaxSides,
   difftoolTarget,
+  onDiffAnyway,
+  diffAnywayPending = false,
 }: CommitDiffPanelProps) {
   const filesPaneId = `${paneIdPrefix}.files`;
   const viewPaneId = `${paneIdPrefix}.view`;
@@ -614,7 +633,22 @@ export function CommitDiffPanel({
           {/* The complement of `isTextualDiff`: everything the row model cannot
               render. An IMAGE gets previewed here rather than dead-ending
               (#224); the sentence stays as the fallback for everything else. */}
-          {current && !isTextualDiff(current) && (
+          {/* We declined to READ this blob, so there is nothing to preview and
+              exactly one thing to do about it (#396). BEFORE the image branch
+              on purpose: `MAX_PREVIEW_BYTES` (4 MiB) is below the diff ceiling
+              (5 MB), so an over-ceiling blob is also over the preview one and
+              comes back `tooLarge` — which counts as "notable" and suppresses
+              the `fallback` the #385 sentence lives in. It was unreachable here
+              for every file it was written for. */}
+          {current && oversized && (
+            <OversizedDiffEmpty
+              diff={current}
+              pending={diffAnywayPending}
+              alreadyTried={diffAnywayExhausted(current)}
+              onDiffAnyway={onDiffAnyway ? () => onDiffAnyway(current) : undefined}
+            />
+          )}
+          {current && !isTextualDiff(current) && !oversized && (
             <>
               {current.lfs && <LfsDiffNotice diff={current} />}
               <ImageDiffView
@@ -631,15 +665,11 @@ export function CommitDiffPanel({
                 }
                 fallback={
                   // The LFS notice above already said why there is no text, so
-                  // adding "Binary file" under it would say it twice.
+                  // adding "Binary file" under it would say it twice. An
+                  // over-ceiling blob never reaches here — see the branch above.
                   current.lfs ? null : (
                     <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-12)" }}>
-                      {/* An over-ceiling blob is flagged binary by libgit2, and
-                          calling a 40 MB `bundle.min.js` "binary" is a lie the
-                          user cannot act on — name the real reason (#385). */}
-                      {oversized
-                        ? `${oversized.title}: ${oversized.detail}`
-                        : "Binary file — no textual diff."}
+                      Binary file — no textual diff.
                     </div>
                   )
                 }
@@ -656,6 +686,10 @@ export function CommitDiffPanel({
               File is tracked but no hunks were produced.
             </PGEmpty>
           )}
+          {/* A waived ceiling gets the blob read; it does not make a million
+              rows layoutable, so the backend caps the lines. Say so above them
+              — an unmentioned cap reads as a diff that just ends (#396). */}
+          <TruncatedDiffNotice diff={current} />
           {win.topPad > 0 && (
             <div data-pg-spacer="top" style={{ height: `${win.topPad}px` }} />
           )}

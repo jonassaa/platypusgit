@@ -29,7 +29,17 @@ import {
   useDiffGaps,
   useExpandedGaps,
 } from "@/features/diff/useDiffGaps";
-import { isTextualDiff, oversizedDiffNotice, statusMark } from "@/lib/derive";
+import {
+  diffAnywayExhausted,
+  isTextualDiff,
+  oversizedDiffNotice,
+  statusMark,
+} from "@/lib/derive";
+import {
+  OversizedDiffEmpty,
+  TruncatedDiffNotice,
+} from "@/features/diff/OversizedDiffNotice";
+import { useDiffAnyway } from "@/features/diff/useDiffAnyway";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { ImageDiffOrEmpty, ImageDiffView } from "@/features/diff/ImageDiffView";
 import { diffImageSides } from "@/features/diff/useImagePreviews";
@@ -86,6 +96,11 @@ export function DiffViewerScreen() {
   // Non-null only when the backend declined to read the blob because of its
   // size (#385) — the surfaces must not call a 40 MB text file "binary".
   const oversized = oversizedDiffNotice(diff);
+  // ...and the user's own way past that refusal (#396). Keyed on the selected
+  // path: the waiver survives a refresh of the SAME file (or the diff the user
+  // waited for would vanish on its own) and is dropped the moment the selection
+  // moves, so coming back costs a click rather than another silent read.
+  const anyway = useDiffAnyway(selectedPath);
   // The file list may take everything the split allows, as long as the diff it
   // is a list OF keeps enough width to read a line of code (#162).
   const layout = useElementSize();
@@ -137,7 +152,14 @@ export function DiffViewerScreen() {
     }
     let cancelled = false;
     setDiffLoading(true);
-    getDiff(repo.id, current.path, "WorktreeToHead", diffContextLines, ignoreWhitespace)
+    getDiff(
+      repo.id,
+      current.path,
+      "WorktreeToHead",
+      diffContextLines,
+      ignoreWhitespace,
+      anyway.raiseFor,
+    )
       .then((d) => {
         if (!cancelled) setDiff(d);
       })
@@ -154,7 +176,14 @@ export function DiffViewerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [current?.path, current?.embedded, repo, diffContextLines, ignoreWhitespace]);
+  }, [
+    current?.path,
+    current?.embedded,
+    repo,
+    diffContextLines,
+    ignoreWhitespace,
+    anyway.raiseFor,
+  ]);
 
   // This screen compares the worktree against HEAD; an embedded repo has no
   // text to read on either side.
@@ -604,7 +633,20 @@ export function DiffViewerScreen() {
           )}
           {/* An image previews here instead of dead-ending (#224); everything
               else keeps the empty state. Same sides the syntax hook reads. */}
-          {!diffLoading && diff?.binary && (
+          {/* We declined to READ this blob, so there is nothing to preview and
+              exactly one thing to do about it — and this must come BEFORE the
+              image branch, because the preview ceiling (4 MiB) is below the
+              diff one and reports `tooLarge`, which suppresses the fallback the
+              sentence used to live in (#385/#396). */}
+          {!diffLoading && oversized && (
+            <OversizedDiffEmpty
+              diff={diff}
+              pending={diffLoading}
+              alreadyTried={diffAnywayExhausted(diff)}
+              onDiffAnyway={() => diff && anyway.diffAnyway(diff)}
+            />
+          )}
+          {!diffLoading && diff?.binary && !oversized && (
             <ImageDiffOrEmpty
               repoId={repo?.id ?? null}
               path={diff.path}
@@ -613,12 +655,8 @@ export function DiffViewerScreen() {
                 new: { kind: "worktree" },
                 oldPath: diff.oldPath,
               })}
-              title={oversized?.title ?? "Binary file"}
-            >
-              {/* Only the size can say WHY libgit2 called it binary; over the
-                  ceiling it is usually a text file we declined to read (#385). */}
-              {oversized?.detail}
-            </ImageDiffOrEmpty>
+              title="Binary file"
+            />
           )}
           {/* An LFS pointer is TEXT, so `binary` is honestly false — without this
               the pane would render "2 lines changed" for a multi-megabyte asset
@@ -652,6 +690,11 @@ export function DiffViewerScreen() {
               File is tracked but no hunks were produced.
             </PGEmpty>
           )}
+          {/* A waived ceiling gets the blob read; it does not make a million
+              rows something this pane can lay out, so the backend caps the
+              lines. Say so above them — a cap nobody mentions is
+              indistinguishable from a diff that just ends (#396). */}
+          {!diffLoading && <TruncatedDiffNotice diff={diff} />}
           {!diffLoading && isTextualDiff(diff) && diff && mode === "unified" && (
             <>
             <DiffFindBar find={find} />
