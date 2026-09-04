@@ -51,9 +51,18 @@ export function buildIndex(gates: { updatable: boolean }): IndexedRow[] {
   return out;
 }
 
+/**
+ * Lowercased, whitespace-split search terms. Empty (never `[""]`) for an
+ * empty or all-whitespace query — `"".split(/\s+/)` would otherwise produce
+ * `[""]`, and `.filter(Boolean)` is what turns that into `[]`.
+ */
+export function queryTerms(query: string): string[] {
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
 /** Every whitespace-separated term must appear. Substring, not fuzzy. */
 export function matchRows(query: string, index: IndexedRow[]): IndexedRow[] {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = queryTerms(query);
   if (terms.length === 0) return [];
   return index.filter((e) => terms.every((t) => e.haystack.includes(t)));
 }

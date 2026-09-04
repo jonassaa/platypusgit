@@ -46,6 +46,11 @@ describe("matchRows", () => {
     expect(matchRows("zzzznope", FULL)).toHaveLength(0);
   });
 
+  it("returns nothing for an empty or whitespace-only query", () => {
+    expect(matchRows("", FULL)).toHaveLength(0);
+    expect(matchRows("   ", FULL)).toHaveLength(0);
+  });
+
   it("counts hits per page", () => {
     const counts = matchCountsByPage(matchRows("diff", FULL));
     expect(counts.get("git.diff")).toBe(5);

@@ -12,7 +12,7 @@ import type { SettingsGroupId, SettingsPageId } from "./types";
  *
  * One clear responsibility: render the tree and report a page selection
  * upward. It does not decide which page renders — that stays in
- * `SettingsScreen` — and `matchCounts` stays `null` until search lands.
+ * `SettingsScreen`, which passes `null` for `matchCounts` outside a search.
  */
 export function SettingsNav({
   pageId,
@@ -42,27 +42,39 @@ export function SettingsNav({
     () => Object.fromEntries(GROUPS.map((g) => [g.id, true])) as Record<SettingsGroupId, boolean>,
   );
 
+  // Guarded so a header click during an active search never writes
+  // `localOpen`: while searching, `groupOpen` below ignores `localOpen`
+  // entirely (the displayed state is derived from `matchCounts`), so letting
+  // a click write it anyway would silently corrupt the state the user gets
+  // back once the query clears — the whole point of `localOpen` being
+  // untouched by search is that groups "spring back" to what the user set.
   const setGroupOpen = (groupId: SettingsGroupId, open: boolean) => {
+    if (matchCounts) return;
     setLocalOpen((m) => ({ ...m, [groupId]: open }));
   };
 
-  // Dormant until Task 12 wires a real `matchCounts`: while a search is
-  // active, a group with any hits forces open regardless of `localOpen`,
-  // which a search never touches — so clearing the query reveals exactly
-  // whatever the user last set by hand, rather than whatever search forced.
+  // While a search is active, EVERY group forces open, regardless of
+  // `localOpen` (which a search never touches — clearing the query reveals
+  // exactly whatever the user last set by hand). Not just groups with hits:
+  // the whole point of a zero-hit PAGE staying listed-but-dimmed rather than
+  // hidden (see `visible` below) falls apart one level up if its whole GROUP
+  // collapses instead — a group with no hits anywhere in it would take every
+  // one of its pages down with it, hidden rather than dimmed.
   const groupOpen = (group: SettingsGroup): boolean =>
-    matchCounts ? group.pages.some((p) => (matchCounts.get(p) ?? 0) > 0) : localOpen[group.id];
+    matchCounts ? true : localOpen[group.id];
 
   const groupOf = (id: SettingsPageId): SettingsGroup =>
     GROUPS.find((g) => g.pages.includes(id))!;
 
   // A collapsed group's pages are not in the DOM at all, so both the arrow-
   // key traversal below and the roving-tabindex fallback further down must
-  // agree with `groupOpen` on what is actually rendered — not just with
-  // `matchCounts` — or Up/Down can select a page with no row to land on.
-  const visible = GROUPS.filter((g) => groupOpen(g)).flatMap((g) =>
-    g.pages.filter((p) => !matchCounts || (matchCounts.get(p) ?? 0) > 0),
-  );
+  // agree with `groupOpen` on what is actually rendered. `matchCounts` does
+  // NOT filter this further: a zero-hit page stays listed (dimmed, not
+  // hidden) so mouse and keyboard agree on what is clickable/focusable —
+  // excluding it here would let arrow keys skip a row the user can still
+  // click, and would leave `visible.indexOf(id)` at -1 for a page the
+  // keyboard handler below is not written to survive.
+  const visible = GROUPS.filter((g) => groupOpen(g)).flatMap((g) => g.pages);
 
   // The roving tabindex normally follows the selected page, but that page's
   // row may not be rendered (its group collapsed after selection, e.g. via a
@@ -131,9 +143,9 @@ export function SettingsNav({
             key={group.id}
             title={group.title}
             open={groupOpen(group)}
-            // Deferred: while a search forces this open, a header click still
-            // writes `localOpen` — unreachable today (matchCounts is null),
-            // left for the search task to decide.
+            // `setGroupOpen` itself no-ops while `matchCounts` is set, so a
+            // header click on a group a search forced open does not write
+            // `localOpen` — see the comment on `setGroupOpen` above.
             onOpenChange={(open) => setGroupOpen(group.id, open)}
           >
             <div role="group" aria-label={group.title}>

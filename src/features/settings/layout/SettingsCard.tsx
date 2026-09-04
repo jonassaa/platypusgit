@@ -1,6 +1,7 @@
 import React from "react";
 
 import { useSettingsFilter } from "./filterContext";
+import { useSettingsHighlight } from "./highlightContext";
 
 /**
  * The one card/row layout pair for the Settings screen.
@@ -95,6 +96,7 @@ export function SettingsRow({
   stacked?: boolean;
 }) {
   const visible = useSettingsFilter();
+  const highlightTerms = useSettingsHighlight();
   if (visible && !visible.has(id)) return null;
   return (
     <div
@@ -116,7 +118,7 @@ export function SettingsRow({
             fontWeight: 500,
           }}
         >
-          {label}
+          {highlightLabel(label, highlightTerms)}
         </div>
         {hint && (
           <div
@@ -156,4 +158,35 @@ function cardHasVisibleRow(cardId: string, visible: ReadonlySet<string>): boolea
   // registry no search exists, and `visible` is always null.
   if (!declared) return false;
   return declared.some((id) => visible.has(id));
+}
+
+/**
+ * Wrap every occurrence of a search term in `label`.
+ *
+ * Splits on a capturing regex — `String.prototype.split` manages its own
+ * iteration over the pattern and does not touch `lastIndex`, unlike
+ * `RegExp.prototype.test`/`exec` on a `/g` regex, which advance it on every
+ * call. Deciding each part by membership in a lowercased `Set` (rather than
+ * re-testing the stateful regex against it) is what keeps a label containing
+ * a term more than once highlighting EVERY occurrence, not alternating ones.
+ */
+function highlightLabel(label: string, terms: string[]): React.ReactNode {
+  if (terms.length === 0) return label;
+  const lowerTerms = new Set(terms.map((t) => t.toLowerCase()));
+  const re = new RegExp(`(${terms.map(escapeRe).join("|")})`, "gi");
+  return label
+    .split(re)
+    .map((part, i) =>
+      lowerTerms.has(part.toLowerCase()) ? (
+        <span key={i} style={{ background: "var(--bg-selection)", color: "var(--fg-0)" }}>
+          {part}
+        </span>
+      ) : (
+        <React.Fragment key={i}>{part}</React.Fragment>
+      ),
+    );
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
