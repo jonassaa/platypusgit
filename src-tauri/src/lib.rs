@@ -21,6 +21,13 @@ use std::sync::{Arc, Mutex};
 
 use crate::{git::libgit2::Libgit2Backend, state::AppState};
 
+/// How long to wait for the frontend to show the main window before doing it
+/// here instead. See the backstop in `setup` for what this is defending
+/// against; `src/lib/revealWindow.tsx` is the code expected to win the race.
+///
+/// Unrelated to `reveal.rs`, which reveals FILES in the OS file manager.
+const SHOW_WINDOW_FALLBACK_MS: u64 = 4000;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -141,6 +148,14 @@ pub fn run() {
                 }
             }
             if let Some(win) = app.get_webview_window("main") {
+                // `show()` first: the window is created hidden (see the setup
+                // hook) and neither unminimize nor set_focus reveals a hidden
+                // window. Without this, a `pgit …` landing in the sub-second gap
+                // before the frontend's own reveal would focus a window that is
+                // not on screen — the user's second launch would look like it
+                // did nothing. A no-op once the window is up, which is the
+                // normal case.
+                let _ = win.show();
                 let _ = win.unminimize();
                 let _ = win.set_focus();
             }
@@ -175,7 +190,7 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
-        .setup(|_app| {
+        .setup(|app| {
             log::info!(
                 "platypusgit starting v{}",
                 env!("CARGO_PKG_VERSION")
@@ -215,13 +230,61 @@ pub fn run() {
             // macOS uses titleBarStyle: Overlay (set in tauri.conf.json) to keep native
             // traffic lights while letting our content extend under them. On Windows /
             // Linux we hide the OS frame entirely and render PGWindowControls ourselves.
+            //
+            // Stripping the frame HERE, at runtime, rather than declaring
+            // `"decorations": false` in the config, used to be visible: the window
+            // was created decorated and shown immediately, so Windows users saw a
+            // native title bar appear and then vanish. It is invisible now only
+            // because the window is created hidden (`"visible": false`) and nothing
+            // reveals it until the frontend says so — this runs long before that.
+            // Do not make the window visible at creation again without moving this
+            // into the config first; per-platform config files cannot do it cleanly,
+            // because Tauri merges them with RFC 7396 semantics, which REPLACE the
+            // `windows` array rather than merging into it.
             #[cfg(not(target_os = "macos"))]
             {
                 use tauri::Manager;
-                if let Some(win) = _app.get_webview_window("main") {
+                if let Some(win) = app.get_webview_window("main") {
                     if let Err(e) = win.set_decorations(false) {
                         log::error!("failed to disable window decorations: {e}");
                     }
+                }
+            }
+
+            // Show-the-window backstop for the hidden window
+            // (see src/lib/revealWindow.tsx).
+            //
+            // The frontend reveals the window on React's first commit, which is what
+            // makes the app open already-drawn instead of flashing white. The failure
+            // mode of that trade is severe and silent: if the bundle throws at module
+            // scope, or fails to load at all, nothing ever calls `show()` and
+            // platypusgit becomes a process with no window — no UI, no error, just a
+            // dock icon. Showing it anyway after a timeout turns that into the far
+            // better bug: a visible window that is empty or carries the error
+            // boundary's screen.
+            //
+            // Firing this on a healthy-but-slow start is harmless — `show()` on an
+            // already-visible window is a no-op, and the frontend's own reveal is
+            // whichever comes first.
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            SHOW_WINDOW_FALLBACK_MS,
+                        ));
+                        // Err (rather than Ok(true)) counts as "not known to be
+                        // visible" on purpose: the whole point is to err towards a
+                        // window the user can see.
+                        if !matches!(win.is_visible(), Ok(true)) {
+                            log::warn!(
+                                "frontend did not reveal the window within {SHOW_WINDOW_FALLBACK_MS}ms; showing it anyway"
+                            );
+                            if let Err(e) = win.show() {
+                                log::error!("failed to reveal the window: {e}");
+                            }
+                        }
+                    });
                 }
             }
             Ok(())

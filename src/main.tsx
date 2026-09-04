@@ -4,6 +4,7 @@ import { attachConsole } from "@tauri-apps/plugin-log";
 import App from "./App";
 import { PGErrorBoundary } from "./design/error-boundary";
 import { MergeWindow } from "./features/merge/MergeWindow";
+import { RevealOnFirstPaint } from "./lib/revealWindow";
 import { startSystemAppearanceWatch } from "./features/settings/useSettingsStore";
 import "./index.css";
 
@@ -28,6 +29,11 @@ const isMergeWindow =
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
+    {/* The window is created hidden, so SOMETHING has to show it. Deliberately
+        a sibling of the boundary rather than a child: a throw from the app
+        below must not be able to swallow the reveal and leave the "something
+        went wrong" screen in a window nobody can see. */}
+    <RevealOnFirstPaint />
     {/* Outermost, so a throw anywhere still leaves a window that says what
         happened instead of an empty one. */}
     <PGErrorBoundary>

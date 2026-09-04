@@ -1,9 +1,26 @@
 <!doctype html>
-<html lang="en">
+<!-- The inline background is NOT a duplicate of index.css's `body` rule, and it
+     is not decoration: it is the colour of the only paint that happens before
+     any stylesheet has loaded. Without it the webview paints its default white,
+     which is the flash this app used to open with. The window layer is covered
+     separately by `backgroundColor` in src-tauri/tauri.conf.json — both layers
+     have to agree, and both track `--bg-0` of the default dark theme
+     (oklch(0.17 0.008 260) == #0d1013). `test/startupPaint.test.ts` fails the
+     build if they drift apart or go missing.
+
+     Dark, unconditionally, even though light themes exist: the CSS `:root`
+     palette already defaults to dark for the same pre-hydration window, so this
+     only agrees with a choice the design system had already made. A light-theme
+     user does not see it regardless — the window is created hidden and revealed
+     after the real theme is on the DOM (see src/lib/revealWindow.tsx). -->
+<html lang="en" style="background: #0d1013">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Tells the engine to paint its own canvas, scrollbars and form controls
+         dark from the first frame, rather than white-then-dark. -->
+    <meta name="color-scheme" content="dark light" />
     <title>platypusgit</title>
   </head>
 

@@ -42,6 +42,10 @@ vi.mock("@tauri-apps/api/window", () => {
     isMaximized: vi.fn().mockResolvedValue(false),
     onResized: vi.fn().mockResolvedValue(() => {}),
     setTitle: vi.fn().mockResolvedValue(undefined),
+    // The main window is created hidden and revealed on first commit
+    // (lib/revealWindow.tsx). Anything that mounts the app's root tree calls
+    // this, so it belongs in the shared mock rather than in one spec.
+    show: vi.fn().mockResolvedValue(undefined),
     // The OS appearance source (#236). `null` is the honest default here:
     // nothing under test runs against a real window, and "the window cannot
     // tell us" is the branch that has to keep working.
