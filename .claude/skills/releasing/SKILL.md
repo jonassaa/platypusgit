@@ -72,8 +72,10 @@ It never checks the pointer, the asset set, or the notes:
 gh api repos/jonassaa/platypusgit/releases/latest --jq .tag_name   # must be the new tag
 ```
 
-- Seven assets: `latest.json`, the `.dmg`, `.msi`, portable `.zip`,
-  `.msixbundle`, `.deb`, `.AppImage`.
+- Nine assets: `latest.json`, the `.dmg`, `.msi`, portable `.zip`,
+  `.msixbundle`, and a `.deb` + `.AppImage` for EACH Linux architecture
+  (`amd64` and `arm64` — separate matrix legs since #266, so a missing pair
+  points at one leg rather than the whole job).
 - `latest.json`'s `notes` is your release body — **a bare link means a
   `workflow_dispatch` run wrote it**, and that is what users will see.
 - `winget-publish` green means nothing was submitted when `WINGET_TOKEN` is

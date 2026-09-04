@@ -10,7 +10,7 @@ export const heroFeatures = [
   { icon: 'list', title: 'Interactive rebase', blurb: 'Pick/reword/edit/squash/fixup/drop, continue/abort, base picker.' },
   { icon: 'cloud', title: 'Remotes & network', blurb: 'Add/remove/rename/prune remotes, fetch/pull/push (with-lease/force), merge.' },
   { icon: 'link', title: 'Pull requests', blurb: 'GitHub + GitLab: list, check CI, open, check out, and create — without leaving the app.' },
-  { icon: 'folder', title: 'Multi-repo tabs', blurb: 'Several repositories open at once in one window, each with its own screen and badges.' },
+  { icon: 'folder', title: 'Multi-repo tabs & windows', blurb: 'Several repositories open at once — in tabs, or in separate windows side by side, each with its own screen and badges.' },
   { icon: 'search', title: 'Submodules, LFS & bisect', blurb: 'Submodule + linked-worktree screens, git-LFS objects, and bisect in the operation bar.' },
 ];
 
@@ -109,6 +109,7 @@ export const featureGroups = [
   ]},
   { title: 'Navigation & keyboard', blurb: 'Keyboard-first, fast everywhere.', items: [
     'Multi-repo tabs — several repositories open at once, with ⌘E, ⌥1–⌥9 and Ctrl+Tab',
+    'Several windows — open a repository in a new window (Mod+Shift+D) or move a tab out, each window with its own tab strip and session, restored on relaunch',
     'Command palette (⌘P) — branches, files, commits, and actions',
     'Rider-style default keymap, with a Classic preset',
     'Type-to-jump speed-search in lists',
@@ -143,6 +144,100 @@ export type ChangelogEntry = {
 };
 
 export const changelog: ChangelogEntry[] = [
+  {
+    version: '0.7.0',
+    date: '2026-09-04',
+    status: 'feature',
+    summary:
+      'Repositories open in several windows now, not only several tabs — one per monitor, each window the whole app with its own tab strip and its own session. Linux gains arm64: a `.deb` and an AppImage for aarch64, served from the same APT repository, so a Raspberry Pi or an arm64 cloud desktop installs exactly the way an x86_64 one does. And the diff size ceiling that landed with 0.6.x now takes an answer — a file it refused can be read anyway, on request. One fix here matters more than any of that: staging or discarding a file could untrack or even delete work that had been changed outside the app.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Open a repository in a second window',
+            detail:
+              'Tabs are for switching between repositories; windows are for looking at two of them at once. Every window is the whole app — its own tab strip, its own session, its own repository handles — so two repositories sit side by side, one per monitor, with a long rebase running in one while you work in the other. "New window" is Mod+Shift+D; "Open in new window" and "Move to new window" are on a tab\'s right-click menu, and all three are in the command palette. Windows are remembered the way you would expect: closing one while others are open forgets it, closing the last one remembers it, and a restored window comes back at the position and size it had. On macOS ⌘Q restores every window; on Windows and Linux the last one standing comes back, as in VS Code.',
+          },
+          {
+            title: 'Linux on arm64 — a .deb and an AppImage, from the same APT repository',
+            detail:
+              'Every release now builds both architectures, and the APT repository serves a `binary-arm64` index beside `binary-amd64`, so `apt install platypusgit` on a Raspberry Pi or an arm64 cloud desktop gets an arm64 package instead of nothing at all. The install script reads the architecture from `dpkg --print-architecture`, so the command on the download page is the one it always was and anyone already installed on x86_64 sees no change. The in-app updater knows the difference too — `latest.json` gained `linux-aarch64` entries, so an arm64 install is offered an arm64 update. Both legs build against glibc 2.35, which is what keeps the packages loading on Debian 12.',
+          },
+          {
+            title: 'A diff the size ceiling refused can be read anyway',
+            detail:
+              'The 5 MB blob ceiling says honestly why a file has no diff — "File too large to diff — 40 MB — over the 5.0 MB limit, so it was not read." The sentence was right and there was nothing to do about it, and leaving the app was the only route past it. That notice now carries a "Diff it anyway" button, on every diff surface, which re-reads that one file against a 64 MB ceiling. It is per file and per view rather than a setting, deliberately: a persisted "always diff huge files" is a footgun you forgot you armed. Two honest edges — over 64 MB the answer is "This is over the largest size the app will diff", and a waived diff stops at 100,000 lines and says "Diff shortened", because a 40 MB CSV is about a million diff lines and laying all of them out is not a favour to anyone.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Staging no longer untracks — or deletes — a file that changed outside the app',
+            detail:
+              'The most serious fix in this release. The app holds a git repository open and libgit2 keeps that repository\'s index in memory, so it held whatever snapshot this process last saw. Committing re-read the index first; staging, unstaging, discarding and deleting an untracked file did not, and each of them then writes the whole index back or decides from it whether to unlink a file. So with a file `git add`ed outside the app — in the built-in terminal, by a `pre-commit` hook that restages, or from a second window — staging or unstaging reverted it to untracked, and discard or delete **removed it from the working tree**: a path missing from a stale index reads as untracked, and untracked is the branch that unlinks instead of restoring. Discarding an unrelated file was enough to trigger it, because that writes the index back as well. All four paths now reload the index first, within the same lock they already held, and a six-case reproduction is kept as the regression test.',
+          },
+          {
+            title: 'Every diff path is capped, and a huge text file is called too large rather than binary',
+            detail:
+              'The size ceiling was set at exactly one of six diff builders, so the three that feed the commit panel and every commit diff — plus both stash diffs — inherited libgit2\'s 512 MB default. Clicking a checked-in 80 MB `bundle.min.js` diffed the whole file, allocated a string per line, shipped the lot across IPC as one JSON payload and then re-measured every row on every scroll event. All six are capped now, so the backend has one policy instead of one capped path and five uncapped ones. libgit2\'s own answer to an over-size blob is to flag it *binary*, which would have made this a two-line fix that told you your text file was binary; the delta now says why it has no text instead, so "binary" keeps meaning binary and image previews still work off it.',
+          },
+          {
+            title: 'The app opens on a drawn dark window instead of a white flash',
+            detail:
+              'Two independent causes, both below CSS. Nothing set a background colour, so with no stylesheet loaded yet the window layer and the webview layer both defaulted to white — and CSS cannot reach either before it has loaded. On Windows and Linux the native title bar was additionally stripped after the window had already been shown, so you saw the frame go. The window is now created hidden and revealed on the frontend\'s first paint, so it appears already drawn, which also makes the decoration strip invisible because it happens while nobody can see the window. A splash screen was considered and rejected: the gap is a few hundred milliseconds, and trading a white flash for a logo flash only makes startup feel longer. A timed fallback shows the window regardless, since a window that never gets shown is a process with no interface.',
+          },
+          {
+            title: 'The Store app\'s taskbar icon is no longer plated in your accent colour',
+            detail:
+              'A Microsoft Store install showed the app icon on a blue rounded square in the taskbar and in Start. Nothing was wrong with the icon: that is the Windows system icon plate, drawn in your accent colour, which Windows adds whenever a package offers no unplated candidate at the size it wants — and this mark is transparent by design, so it needs none. The package now ships the whole documented size ladder in all three candidate forms, plus the resource index that makes Windows read those filenames as candidates at all. Without that index a package carrying all forty-two assets behaves exactly like one carrying none, which is why the ladder alone was not the fix.',
+          },
+          {
+            title: 'A whitespace-only commit message is refused rather than accepted and then dropped',
+            detail:
+              'Under `commit.cleanup = verbatim` nothing is stripped, so a box holding only spaces survived cleanup non-empty, lit the Commit button, and was then reduced to an empty string on the way out — the button and the send path were asking different questions about the same message. They now ask the same one, and the backend refuses a blank message outright, ahead of the hooks so a refusal never runs your `pre-commit`.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'The Store package builds its two architectures in parallel',
+            detail:
+              'x64 and arm64 were packed back to back in one job, which made the Store bundle the release\'s long pole — a 17-minute job against 9 to 12 minutes for every other build, with every other channel finished while the release still waited. They are a matrix now, so the bundle lands alongside the rest instead of holding the release open for another seven minutes.',
+          },
+          {
+            title: 'CI stops paying for a full cache quota and a full CodeQL run on every change',
+            detail:
+              'The Actions cache had filled GitHub\'s 10 GB ceiling, so entries were being evicted — and the jobs that lose are the ones that run least often, which is precisely the release builds: a cold Rust build measured 577s against 259s warm. A daily pruner now clears caches belonging to dead branches, closed pull requests, superseded tags and stale generations. Separately, CodeQL moved off default setup so it can skip a language a pull request did not touch; pushes to `main` still analyse everything, because that is the run whose results describe the branch.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Two windows on one repository do not share a lock',
+            detail:
+              'Each window opens its own handle for a repository, and that is what keeps windows independent — closing a tab in one evicts nothing the other is using, and terminal and rebase state stay per window. The trade is that work you start on the same repository from two windows is not serialized by the app; git\'s own `index.lock` is the arbiter there, exactly as it is between any two git processes. The index-staleness fix above is what makes that safe for staging.',
+          },
+          {
+            title: 'A Store update lands hours after the release, not with it',
+            detail:
+              'Unchanged from 0.6.0. Submission is automatic; certification is not instant. Microsoft reviews each update before it reaches the Store, so a Store install trails the `.msi`, Scoop and winget by however long that takes — usually hours. Nothing is wrong when the Store still offers the previous version shortly after a release.',
+          },
+          {
+            title: 'Timestamps are shown in your timezone, not the author\'s',
+            detail:
+              'Unchanged from 0.5.0. Where `git log` prints the offset a commit was authored under, PlatypusGit shows that same instant on your own clock — a commit reaches the interface as unix seconds and nothing else, so matching git here is a change to what the backend sends rather than to how a date is written. The hover names the zone it used, so no stamp is ambiguous about which clock that was.',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '0.6.0',
     date: '2026-09-03',
