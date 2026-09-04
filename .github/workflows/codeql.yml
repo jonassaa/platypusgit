@@ -1,0 +1,162 @@
+name: codeql
+
+# CodeQL, moved off GitHub's DEFAULT SETUP so it can be path-filtered.
+#
+# Default setup analyses every configured language on every run and offers no
+# way to say "this diff cannot affect Rust". The bill was concrete: PR #391
+# touched `release.yml` and three markdown files, and `Analyze (rust)` still
+# ran for 9m20s — the slowest check in the repo, paid by docs-only PRs. The
+# same three analyses live here, with a filter in front of them.
+#
+# ⚠️ DEFAULT SETUP AND THIS FILE CANNOT BOTH BE ON. GitHub refuses results from
+# an advanced configuration while default setup is enabled, so this workflow
+# fails until default setup is turned off (Settings → Advanced Security → Code
+# scanning → CodeQL default setup, or
+# `gh api -X PATCH repos/jonassaa/platypusgit/code-scanning/default-setup
+#  -f state=not-configured`). Turning default setup back ON later disables this
+# workflow's results, not the workflow — it will keep running and keep failing.
+#
+# Languages: `actions`, `javascript-typescript`, `rust`. That is the same set
+# default setup had — it listed `javascript`/`typescript` and
+# `javascript-typescript` separately, which collapse to one analysis.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  # Security tooling should not go quiet because nobody pushed. A weekly run
+  # also re-analyses with whatever queries shipped since the last commit.
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Which languages can this diff possibly affect?
+  #
+  # PULL REQUESTS ONLY, and that asymmetry is deliberate rather than a
+  # limitation copied from tests.yml. A push to `main` is the run whose results
+  # become the branch's code-scanning state; skipping a language there would
+  # leave `main` described by an older commit's analysis. PR runs are advisory,
+  # so that is where the 9m of Rust is worth skipping. On push, schedule and
+  # dispatch the fallback `||` picks up the empty string of a skipped step and
+  # every language runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      languages: ${{ steps.filter.outputs.languages || '["actions","javascript-typescript","rust"]' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD)
+          echo "Changed files:"
+          echo "$changed" | sed 's/^/  /'
+
+          langs=()
+
+          # `actions` analyses workflow and action definitions themselves.
+          if echo "$changed" | grep -qE '^\.github/(workflows|actions)/'; then
+            langs+=('"actions"')
+          fi
+
+          # Everything the JS/TS extractor reads. `scripts/` is in because it
+          # holds .mjs run by CI, `site/` because it is a real TS app, and the
+          # root config files because a change there redirects what gets built.
+          if echo "$changed" | grep -qE '^(src/|e2e/|test/|site/|scripts/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$)'; then
+            langs+=('"javascript-typescript"')
+          fi
+
+          # Deliberately the WHOLE of src-tauri/, icons and fixtures included.
+          # A narrower filter here trades a security analysis for a couple of
+          # minutes, which is the wrong side of that trade.
+          if echo "$changed" | grep -qE '^src-tauri/'; then
+            langs+=('"rust"')
+          fi
+
+          # Join with commas without leaving a trailing one on an empty array.
+          IFS=,
+          echo "languages=[${langs[*]-}]" >> "$GITHUB_OUTPUT"
+          unset IFS
+          echo "Languages to analyse: [${langs[*]-}]"
+
+  analyze:
+    needs: changes
+    # An empty matrix vector is a workflow ERROR, not an empty job set, so the
+    # "nothing to analyse" case has to be caught here rather than by the matrix.
+    if: needs.changes.outputs.languages != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      security-events: write
+    strategy:
+      # One language failing must not cancel the analysis of the others — the
+      # alerts they would have produced are the point of the run.
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.changes.outputs.languages) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # `build-mode: none` for all three: none of these extractors needs a
+      # compiled artefact, and Rust in particular must NOT build here — that
+      # would trade the 9m this workflow exists to save for a cargo build. If a
+      # future language needs one, the init step fails and names it.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+
+  # The house gate pattern (see docs/dev/testing.md): one always-running job
+  # that reports for the whole workflow, so a branch ruleset can require a check
+  # that a path filter is allowed to skip. Nothing requires it today — if that
+  # changes, require THIS job, never `analyze`, or a filtered PR blocks forever.
+  codeql:
+    needs: [changes, analyze]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate
+        env:
+          RESULT: ${{ needs.analyze.result }}
+          LANGS: ${{ needs.changes.outputs.languages }}
+        run: |
+          set -euo pipefail
+          echo "languages: $LANGS"
+          case "$RESULT" in
+            success)
+              echo "CodeQL analysed $LANGS" ;;
+            skipped)
+              # Only legitimate when the filter found nothing to analyse.
+              if [ "$LANGS" = "[]" ]; then
+                echo "No language affected by this diff — nothing to analyse."
+              else
+                echo "analyze was skipped but the filter asked for $LANGS" >&2
+                exit 1
+              fi ;;
+            *)
+              echo "analyze: $RESULT" >&2
+              exit 1 ;;
+          esac

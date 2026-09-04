@@ -72,12 +72,18 @@ jobs:
           # the table skipped its own guard and reported green (issue 189, then
           # #210 — a README-only PR ran no suite at all).
           #
+          # `scripts/` is here for the same reason: `pruneCaches.test.ts`
+          # imports `scripts/prune-actions-caches.mjs` and pins which caches it
+          # is allowed to DELETE. Without this line, editing the pruner alone
+          # would skip the only suite that checks it — and the failure mode is
+          # deleting the cache of the release currently building.
+          #
           # `src-tauri/icons/msix/` is the newest entry and the same story
           # (#390): `msixIcons.test.ts` decodes those PNGs and fails if one has
           # an opaque corner. Re-rendering the ladder is the ONLY change that
           # can break it, and without this it is the one change that would not
           # run it.
-          if echo "$changed" | grep -qE '^(src/|e2e/|test/|src-tauri/icons/msix/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$|CLAUDE\.md$|README\.md$|CONTRIBUTING\.md$|docs/dev/|site/src/data/comparison\.json$|\.github/workflows/(tests|e2e)\.yml$)'; then
+          if echo "$changed" | grep -qE '^(src/|e2e/|test/|scripts/|src-tauri/icons/msix/|index\.html$|package\.json$|pnpm-lock\.yaml$|vite\.config\.ts$|tsconfig[a-z.]*\.json$|CLAUDE\.md$|README\.md$|CONTRIBUTING\.md$|docs/dev/|site/src/data/comparison\.json$|\.github/workflows/(tests|e2e)\.yml$)'; then
             echo "js=true" >> "$GITHUB_OUTPUT"
             echo "-> frontend sources touched, running the unit suite"
           else
