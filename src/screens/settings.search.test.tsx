@@ -15,6 +15,12 @@ function typeSearch(text: string) {
 beforeEach(() => {
   resetDialogs();
   useSettingsStore.getState().set("settingsPage", "general.appearance");
+  // Reset here, not just at the end of the test that mutates it: if that
+  // test's own assertion throws first, an end-of-test reset never runs and
+  // the value leaks into whichever test runs next. Resetting at the START of
+  // every test means a leak from a failing test heals itself on the very next
+  // one, same as the `settingsPage` reset above.
+  useSettingsStore.getState().set("diffContextLines", 3); // DEFAULTS
   mockInvoke("cli_shim_status", () => ({
     installed: true, shimPath: "/usr/local/bin/pgit",
     target: "/usr/bin/platypusgit", source: "package", pathState: "onPath",
@@ -91,7 +97,6 @@ describe("settings search", () => {
     expect(useSettingsStore.getState().diffContextLines).toBe(3); // DEFAULTS
     fireEvent.change(input, { target: { value: "7" } });
     expect(useSettingsStore.getState().diffContextLines).toBe(7);
-    useSettingsStore.getState().set("diffContextLines", 3); // leave defaults for later tests
   });
 
   // git.integrations' card is `dynamic: true` — its host list is data, not

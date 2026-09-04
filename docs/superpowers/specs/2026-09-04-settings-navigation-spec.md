@@ -333,14 +333,15 @@ the first focusable element in the screen.
 **Density-aware, reversed during implementation.** This plan originally called
 `PGSidebarRow` deliberately not density-aware, on the theory that making it
 read `--row-step` would move geometry in Branches and RepoBrowser and break
-their density tests. That reasoning was wrong: neither consumes
-`PGSidebarRow`, `PGSidebarGroup` or `PGPrimarySidebar` — `src/design/chrome.tsx`
-and `chrome.test.tsx` were, and remain, the only two call sites, this feature
-included. With no other sidebar's geometry at risk, there was no reason to
-withhold density from the settings side menu, so `PGSidebarRow` now sizes as
-`height: calc(22px + var(--row-step))`, matching every other list row's
-density mechanism, and the settings nav scales with it like the rest of the
-app.
+their density tests. That reasoning was wrong: Branches and RepoBrowser use
+none of `PGSidebarRow`, `PGSidebarGroup` or `PGPrimarySidebar` — the only
+consumers of those three primitives are `src/design/chrome.tsx` and
+`chrome.test.tsx`, plus this feature's own `SettingsNav.tsx` and
+`settings.nav.test.tsx`. With no other sidebar's geometry at risk, there was
+no reason to withhold density from the settings side menu, so `PGSidebarRow`
+now sizes as `height: calc(22px + var(--row-step))`, matching every other
+list row's density mechanism, and the settings nav scales with it like the
+rest of the app.
 
 ## Edge cases
 
