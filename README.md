@@ -144,7 +144,7 @@ TortoiseGit exists for.
 - **Remotes with working auth** — add/remove/rename/prune, fetch/fetch-all/pull, push with-lease or force; every network op prompts for credentials and retries, tag pushes and branch deletes included, and a clone, fetch, pull or push that hangs has a Cancel button — a cancelled clone cleans up the partial directory it left behind.
 - **Pull requests without the browser** — GitHub and GitLab, self-hosted included: list open requests, read the CI summary, check one out (forks too), or open one from the current branch.
 - **The repositories inside your repository** — submodule and linked-worktree screens, and a git-LFS panel with pointer-aware diffs.
-- **Several repos, one window** — multi-repo tabs, each with its own screen and badges, the active repository and branch named in the window title, plus resizable panes and a `?` cheat sheet.
+- **Several repos, in tabs or windows** — multi-repo tabs, each with its own screen and badges, the active repository and branch named in the window title; open a repository in a second window when you want two side by side, plus resizable panes and a `?` cheat sheet.
 
 The exhaustive list — every keybinding and option — lives at
 [platypusgit.com/features](https://www.platypusgit.com/features/).
