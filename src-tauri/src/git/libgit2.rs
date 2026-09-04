@@ -1155,6 +1155,45 @@ fn is_listed_submodule(submodule_paths: &std::collections::HashSet<String>, path
     submodule_paths.contains(path.trim_end_matches('/'))
 }
 
+/// The repository's index, reloaded from disk when it changed underneath us.
+///
+/// **Use this, not `repo.index()`, anywhere the index is read to decide
+/// something or written back.** `with_repo` hands back a CACHED
+/// `git2::Repository`, and libgit2 caches its index in memory, so `repo.index()`
+/// alone returns the snapshot from whenever *this process* last touched it. The
+/// staging ops are read-modify-writes of the WHOLE index, so writing that
+/// snapshot back silently reverts whatever something else staged in between.
+///
+/// This app has more of those "something else"s than most GUIs: the built-in
+/// terminal (#243) sits in the window `cd`-ed to the repository, a `pre-commit`
+/// hook that reformats and restages is an explicitly supported case (see
+/// `commit`), and a second window can drive the same repo.
+///
+/// Measured, not assumed — `tests/index_staleness.rs` is the reproduction, and
+/// all four staging call sites lost data without this call (`commit`, the fifth,
+/// had it already): `stage` and `unstage` reverted an externally staged file to
+/// untracked,
+/// `discard` **deleted** it from the worktree (a stale index reads it as
+/// untracked, and untracked is the delete branch), and `delete_untracked` did
+/// the same while its whole job is to refuse a tracked path. `stage_hunk` and
+/// friends were checked and are NOT affected: they either shell out to
+/// `git apply`, or go through libgit2's apply-to-index, which re-reads.
+///
+/// `read(false)` reloads only when the on-disk index actually changed, so it
+/// costs a stat in the common case — the same call and the same reasoning as
+/// the one in `commit`, which has been load-bearing there since hooks landed.
+///
+/// It closes the window we own (our own stale cache), not the one we do not:
+/// against a writer racing us *right now*, git's `index.lock` is the only
+/// arbiter. Which is why this must stay INSIDE the caller's single `with_repo`
+/// closure — refreshing under one lock acquisition and writing under another
+/// would open a fresh check-then-act gap of our own making.
+fn fresh_index(repo: &Repository) -> AppResult<git2::Index> {
+    let mut index = repo.index()?;
+    index.read(false)?;
+    Ok(index)
+}
+
 /// Whether the index tracks `rel` at ANY stage.
 ///
 /// Stage 0 is the ordinary merged entry, but a **conflicted** path has no stage-0
@@ -4134,7 +4173,9 @@ impl GitBackend for Libgit2Backend {
                     None => Ok(()),
                 };
             }
-            let mut index = repo.index()?;
+            // `fresh_index`, not `repo.index()`: this writes the whole index
+            // back, so a cached snapshot would revert an outside `git add`.
+            let mut index = fresh_index(repo)?;
             for p in stageable {
                 // `add_path` treats paths as repo-relative; it handles creates and modifications.
                 // For deletions from the worktree, we need `remove_path` instead.
@@ -4150,6 +4191,14 @@ impl GitBackend for Libgit2Backend {
     }
     fn unstage(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
+            // Both branches below write the whole index back, and both go
+            // through the repository's CACHED one — `reset_default` reaches for
+            // it internally, which is exactly why this refresh sits above the
+            // branch rather than inside the unborn arm. `fresh_index` hands back
+            // a handle to the same `git_index`, so refreshing it here is what
+            // `reset_default` then reads. See `fresh_index`.
+            let mut index = fresh_index(repo)?;
+
             // Resetting paths to HEAD is the equivalent of `git reset HEAD -- paths`.
             // If HEAD is unborn, just clear the entries from the index.
             let head = match repo.head() {
@@ -4163,7 +4212,6 @@ impl GitBackend for Libgit2Backend {
                     repo.reset_default(Some(commit.as_object()), paths)?;
                 }
                 None => {
-                    let mut index = repo.index()?;
                     for p in paths {
                         let _ = index.remove_path(p);
                     }
@@ -4199,7 +4247,13 @@ impl GitBackend for Libgit2Backend {
             // and returns Ok(()) — which is how discard used to report success
             // while leaving the file untouched. Split the batch: restore what
             // the index knows, delete what it doesn't.
-            let index = repo.index()?;
+            //
+            // `fresh_index` because that split is a DELETE decision: a path
+            // `git add`ed outside this process is missing from a cached index,
+            // reads as untracked, and gets removed from the worktree instead of
+            // restored. It also refreshes what `checkout_index` below writes
+            // back. See `fresh_index`.
+            let index = fresh_index(repo)?;
             let mut restore: Vec<&PathBuf> = Vec::new();
             let mut delete: Vec<PathBuf> = Vec::new();
             for p in discardable {
@@ -4262,7 +4316,12 @@ impl GitBackend for Libgit2Backend {
                 .workdir()
                 .ok_or_else(|| AppError::InvalidPath("bare repository has no workdir".into()))?
                 .to_path_buf();
-            let index = repo.index()?;
+            // `fresh_index`: the tracked check below is a refusal, and a cached
+            // index cannot refuse what it has not been told about. A file
+            // `git add`ed in the built-in terminal is tracked on disk and absent
+            // from our snapshot, so without this the one path this function
+            // exists to protect is the one it deletes. See `fresh_index`.
+            let index = fresh_index(repo)?;
 
             // ── Phase 1: validate everything, delete nothing ─────────────────
             //
@@ -4632,15 +4691,14 @@ impl GitBackend for Libgit2Backend {
 
             // Read the index HERE, after `pre-commit` — see the note above.
             //
-            // And `read(false)` is not optional. `with_repo` hands back a CACHED
-            // `git2::Repository`, and libgit2 caches its index in memory, so
-            // `index()` alone returns the snapshot from before the hook ran — a
-            // `pre-commit` that reformats and restages would silently commit the
-            // unformatted content. `read(false)` reloads only if the on-disk
-            // index actually changed, so it costs a stat in the common case.
-            // Pinned by `a_pre_commit_that_restages_is_honoured`.
-            let mut index = repo.index()?;
-            index.read(false)?;
+            // And it must be `fresh_index`, not `repo.index()`: the cached
+            // snapshot is the one from before the hook ran, so a `pre-commit`
+            // that reformats and restages would silently commit the unformatted
+            // content. This was the FIRST site to prove the staleness (pinned by
+            // `a_pre_commit_that_restages_is_honoured`); the staging ops later
+            // proved it too, which is why the reload is a named helper rather
+            // than a line that only happens to exist here.
+            let mut index = fresh_index(repo)?;
             let tree_oid = index.write_tree()?;
             let tree = repo.find_tree(tree_oid)?;
 
