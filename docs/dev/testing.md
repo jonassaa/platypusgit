@@ -69,13 +69,18 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
 
 ## What CI runs
 
-Two workflows, both on PRs to `main`, pushes to `main`, and `workflow_dispatch`:
+Three workflows on PRs to `main`, pushes to `main`, and `workflow_dispatch`:
 
 - `.github/workflows/tests.yml` — `unit` job (`pnpm tsc --noEmit`, `pnpm test`,
   and `pnpm exec tsc -p e2e/tsconfig.json --noEmit` — the ONLY e2e typecheck,
   since the root tsconfig excludes `e2e/`) + `rust` job (`cargo test`; installs
   the Tauri `-dev` packages to link, no xvfb).
 - `.github/workflows/e2e.yml` — the webview suite (see sharding below).
+- `.github/workflows/codeql.yml` — code scanning, plus a weekly schedule.
+
+...and one that runs on a schedule only: `.github/workflows/cache-prune.yml`.
+Neither of the last two gates anything; both exist because CI *time* is a cost
+the other two pay.
 
 Rules that keep the gates honest:
 
@@ -97,6 +102,45 @@ Rules that keep the gates honest:
   on `main` can differ from what the PR tested — the push run is the only
   thing that ever tests `main` itself. `concurrency: cancel-in-progress`
   collapses merge bursts. Revisit only if runner minutes become the constraint.
+
+## Two workflows that are not gates — they exist to buy CI time back
+
+**`cache-prune.yml` — the Actions cache has a 10 GB ceiling, and going over it
+costs the release five minutes a job.** Over the ceiling GitHub evicts
+least-recently-used entries, so the jobs that lose are the ones that run least
+often. Measured on the v0.6.0 release at 10.73 GB usage, `macos-universal` and
+`msix` both logged `No cache found.` while `linux` and `windows` got only a
+partial match — and a cold Rust build is 577s against 259s warm. Nothing was
+broken; the quota was full of caches nothing would ever read again.
+
+It runs **daily**, not weekly, because of the refill rate: CodeQL leaves a
+~96 MB overlay database per commit on `main`, and every toolchain or lockfile
+change strands a multi-hundred-MB rust-cache generation. The first real run
+freed 4 GB. The rules live in `scripts/prune-actions-caches.mjs`; the two that
+matter are pinned by `test/pruneCaches.test.ts`, because this is the one script
+here whose job is to delete things:
+
+- **A tag cache's ref arrives as `refs/heads/refs/tags/v0.6.0`** — `refs/heads/`
+  glued onto an already-qualified ref. Read naively that is a *branch* named
+  `refs/tags/v0.6.0`, which exists nowhere, so a "does this branch still exist"
+  rule deletes the caches of the release that is building right now.
+- **The newest generation is not the biggest.** On this repo the current
+  `v0-rust-build-Linux-x64` entry was 828 MB and the superseded one 1662 MB,
+  because a fresh entry is written from a partial restore. Sort by
+  `created_at`, never by size.
+
+**`codeql.yml` — CodeQL was moved off default setup so it can be
+path-filtered.** Default setup analyses every configured language on every run:
+PR #391 touched `release.yml` and three markdown files and still paid 9m20s for
+`Analyze (rust)`, the slowest check in the repo. The filter runs on
+`pull_request` ONLY — a push to `main` is the run whose results become the
+branch's code-scanning state, so skipping a language there would leave `main`
+described by an older commit's analysis.
+
+> ⚠️ **Default setup and `codeql.yml` cannot both be on.** GitHub refuses
+> results from an advanced configuration while default setup is enabled. If
+> code scanning ever goes quiet, check that setting first — re-enabling default
+> setup does not disable this workflow, it just makes it fail.
 
 ## The e2e gate is sharded (issue 189)
 

@@ -1,0 +1,69 @@
+name: cache-prune
+
+# Keeps the Actions cache under GitHub's 10 GB ceiling.
+#
+# Over the ceiling GitHub evicts least-recently-used entries, and the jobs that
+# lose are the ones that run least often — the release builds. Measured on the
+# v0.6.0 release with usage at 10.73 GB, `macos-universal` and `msix` both
+# logged "No cache found" while `linux` and `windows` got a partial match; a
+# cold Rust build is 577s against 259s warm, so the full quota was costing about
+# five minutes on each of those jobs, every release.
+#
+# DAILY, not weekly, because of the refill rate: CodeQL leaves a ~96 MB overlay
+# database per commit on `main`, and every lockfile bump strands a
+# multi-hundred-MB rust-cache generation. A week of that is more than the
+# headroom this buys.
+#
+# The rules and the reasoning live in scripts/prune-actions-caches.mjs.
+
+on:
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List what would be deleted without deleting it'
+        type: boolean
+        default: false
+
+# `actions: write` is what deletes a cache; `pull-requests: read` is what
+# distinguishes an open PR's cache from a merged one's. Nothing here reads or
+# writes repository content beyond the checkout.
+permissions:
+  contents: read
+  actions: write
+  pull-requests: read
+
+concurrency:
+  group: cache-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # No setup-node step on purpose: the runner image ships node, the script
+      # is dependency-free by design, and a `cache: pnpm` here would have this
+      # job writing to the very cache it is pruning.
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/prune-actions-caches.mjs \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            --repo "$GITHUB_REPOSITORY"
+
+      - name: Report remaining usage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The usage endpoint is eventually consistent and can still report the
+          # pre-delete total right after a prune, so the authoritative number is
+          # the sum of what the listing now returns.
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" --paginate \
+            --jq '[.actions_caches[] | .size_in_bytes] | add // 0' \
+            | awk '{ printf "cache now: %d MB of 10240 MB\n", $1/1024/1024 }' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
