@@ -106,3 +106,62 @@ export function resolveGraphDrop(
     )} first`,
   };
 }
+
+// ─── Branch folders ──────────────────────────────────────────────────────────
+
+/**
+ * Where a dragged branch was dropped: into a folder of the branch tree (#244),
+ * or back out to the top level.
+ */
+export type BranchMoveTarget =
+  | { kind: "folder"; path: string }
+  | { kind: "root" };
+
+export type BranchMove =
+  | { kind: "move"; from: string; to: string }
+  | { kind: "rejected"; reason: string };
+
+export interface BranchMoveContext {
+  /**
+   * Every LOCAL branch name in the repository. It answers both halves of
+   * legality at once: what may be dragged at all (a remote-tracking ref is not
+   * a branch git can move) and what the destination name would collide with.
+   */
+  local: readonly string[];
+}
+
+/** The last segment of a branch name — the part that travels between folders. */
+function leafOf(name: string): string {
+  const parts = name.split("/");
+  return parts[parts.length - 1] || name;
+}
+
+/**
+ * What dropping a branch on a folder means: a RENAME.
+ *
+ * A branch folder is not a git object — it is the `/` in a name — so moving a
+ * branch between folders is `git branch -m` and nothing else. Only the leaf
+ * travels, like a file dragged between directories: `feat/deep/c` dropped on
+ * `release` becomes `release/c`, not `release/deep/c`.
+ *
+ * Null means "nothing to do" (the payload is not a branch, or it already sits
+ * where it was dropped); a `rejected` result is a gesture with a meaning we
+ * refuse, so the reason can be shown on the ghost mid-drag.
+ */
+export function resolveBranchMoveDrop(
+  src: DragPayload,
+  target: BranchMoveTarget,
+  ctx: BranchMoveContext,
+): BranchMove | null {
+  if (src.kind !== "ref") return null;
+  // Not in the local list = a remote-tracking ref or a tag pill. Renaming
+  // either is not what the gesture looks like it does.
+  if (!ctx.local.includes(src.ref))
+    return { kind: "rejected", reason: "Only local branches can move between folders" };
+  const leaf = leafOf(src.ref);
+  const to = target.kind === "folder" ? `${target.path}/${leaf}` : leaf;
+  if (to === src.ref) return null;
+  if (ctx.local.includes(to))
+    return { kind: "rejected", reason: `${to} already exists` };
+  return { kind: "move", from: src.ref, to };
+}

@@ -74,6 +74,38 @@ describe("useBranchPins", () => {
     expect(pinnedIn("/a")).toBe(first);
   });
 
+  // A pin matches the name exactly, so a rename — including a branch dragged
+  // into a folder (#244) — has to carry the pin with it.
+  it("follows a renamed branch, keeping its place in the order", () => {
+    useBranchPins.getState().toggle("/a", "main");
+    useBranchPins.getState().toggle("/a", "foo");
+    useBranchPins.getState().toggle("/a", "other");
+    useBranchPins.getState().rename("/a", "foo", "feat/foo");
+    expect(pinnedIn("/a")).toEqual(["main", "feat/foo", "other"]);
+    expect(raw()).toEqual({ "/a": ["main", "feat/foo", "other"] });
+  });
+
+  it("does not pin a branch that was not pinned before the rename", () => {
+    useBranchPins.getState().toggle("/a", "main");
+    useBranchPins.getState().rename("/a", "foo", "feat/foo");
+    expect(pinnedIn("/a")).toEqual(["main"]);
+  });
+
+  it("never doubles up when the new name was already pinned", () => {
+    useBranchPins.getState().toggle("/a", "foo");
+    useBranchPins.getState().toggle("/a", "feat/foo");
+    useBranchPins.getState().rename("/a", "foo", "feat/foo");
+    expect(pinnedIn("/a")).toEqual(["feat/foo"]);
+  });
+
+  it("ignores a rename with nothing to do", () => {
+    useBranchPins.getState().toggle("/a", "foo");
+    useBranchPins.getState().rename("/a", "foo", "foo");
+    useBranchPins.getState().rename(null, "foo", "bar");
+    useBranchPins.getState().rename("/a", "foo", "");
+    expect(pinnedIn("/a")).toEqual(["foo"]);
+  });
+
   it("survives a corrupt payload", () => {
     localStorage.setItem(BRANCH_PINS_KEY, "{not json");
     reload();

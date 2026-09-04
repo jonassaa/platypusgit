@@ -122,6 +122,7 @@ import {
 } from "@/lib/tauri";
 import { isFilterEmpty } from "@/features/commits/logFilter";
 import { remoteOfUpstream } from "@/features/branches/fastForward";
+import { useBranchPins } from "@/features/branches/useBranchPins";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useRecentsStore } from "./useRecentsStore";
 import {
@@ -1699,6 +1700,11 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     try {
       await renameBranch(repo.id, from, to);
+      // A pin matches the name exactly, so the pin has to follow the branch —
+      // otherwise renaming a pinned branch (or dragging it into a folder,
+      // #244) silently unpins it. After the rename only: a failed one must
+      // leave the pin on the name that still exists.
+      useBranchPins.getState().rename(repo.path, from, to);
       await get().refreshAll();
     } catch (e) {
       setErrorFor(repo.id, e);

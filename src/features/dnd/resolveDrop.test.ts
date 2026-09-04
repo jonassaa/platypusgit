@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  resolveBranchMoveDrop,
   resolveGraphDrop,
   resolveStagingDrop,
+  type BranchMoveContext,
+  type BranchMoveTarget,
   type GraphContext,
   type GraphDropTarget,
 } from "./resolveDrop";
@@ -150,5 +153,92 @@ describe("resolveGraphDrop", () => {
     expect(
       resolveGraphDrop(ref("feature", false), refTarget("develop"), detached)?.kind,
     ).toBe("rejected");
+  });
+});
+
+describe("resolveBranchMoveDrop", () => {
+  const folder = (path: string): BranchMoveTarget => ({ kind: "folder", path });
+  const root: BranchMoveTarget = { kind: "root" };
+  const ctx: BranchMoveContext = {
+    local: ["main", "bugfix", "feat/a", "feat/b", "feat/deep/c", "release/x"],
+  };
+
+  it("moves a top-level branch into a folder", () => {
+    expect(resolveBranchMoveDrop(ref("bugfix", false), folder("feat"), ctx)).toEqual({
+      kind: "move",
+      from: "bugfix",
+      to: "feat/bugfix",
+    });
+  });
+
+  it("moves a branch from one folder to another", () => {
+    expect(resolveBranchMoveDrop(ref("feat/a", false), folder("release"), ctx)).toEqual({
+      kind: "move",
+      from: "feat/a",
+      to: "release/a",
+    });
+  });
+
+  it("moves a branch into a nested folder", () => {
+    expect(
+      resolveBranchMoveDrop(ref("bugfix", false), folder("feat/deep"), ctx),
+    ).toEqual({ kind: "move", from: "bugfix", to: "feat/deep/bugfix" });
+  });
+
+  it("moves a branch out to the top level", () => {
+    expect(resolveBranchMoveDrop(ref("feat/a", false), root, ctx)).toEqual({
+      kind: "move",
+      from: "feat/a",
+      to: "a",
+    });
+  });
+
+  // Only the leaf travels, like a file dragged between directories: the folder
+  // it came out of is not part of its new name.
+  it("carries only the last segment out of a deep folder", () => {
+    expect(
+      resolveBranchMoveDrop(ref("feat/deep/c", false), folder("release"), ctx),
+    ).toEqual({ kind: "move", from: "feat/deep/c", to: "release/c" });
+  });
+
+  // The current branch renames like any other — `git branch -m <new>` is
+  // exactly this — so the gesture is not gated on it.
+  it("moves the current branch", () => {
+    expect(resolveBranchMoveDrop(ref("main", true), folder("feat"), ctx)).toEqual({
+      kind: "move",
+      from: "main",
+      to: "feat/main",
+    });
+  });
+
+  it("is a no-op on the folder the branch already sits in", () => {
+    expect(resolveBranchMoveDrop(ref("feat/a", false), folder("feat"), ctx)).toBeNull();
+  });
+
+  it("is a no-op dropping a top-level branch onto the top level", () => {
+    expect(resolveBranchMoveDrop(ref("bugfix", false), root, ctx)).toBeNull();
+  });
+
+  it("rejects a name the repository already uses", () => {
+    expect(
+      resolveBranchMoveDrop(ref("bugfix", false), folder("release"), {
+        local: [...ctx.local, "release/bugfix"],
+      }),
+    ).toEqual({ kind: "rejected", reason: "release/bugfix already exists" });
+  });
+
+  // A remote-tracking ref is not a branch git can move. Reported rather than
+  // ignored, so the gesture explains itself mid-drag instead of going dead.
+  it("rejects a remote-tracking branch", () => {
+    expect(
+      resolveBranchMoveDrop(ref("origin/feat/a", false), folder("release"), ctx)?.kind,
+    ).toBe("rejected");
+  });
+
+  it("ignores payloads that are not refs", () => {
+    expect(resolveBranchMoveDrop(commit(HEAD_OID), folder("feat"), ctx)).toBeNull();
+    expect(
+      resolveBranchMoveDrop(files("unstaged", ["a.txt"]), folder("feat"), ctx),
+    ).toBeNull();
   });
 });

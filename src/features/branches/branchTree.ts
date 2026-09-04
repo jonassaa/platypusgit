@@ -162,6 +162,52 @@ export function branchTreeRows<T extends { name: string }>(
 }
 
 /**
+ * One ungrouped row per branch, under its FULL name — what a filter renders.
+ *
+ * A filter flattens the tree to its matches, as filters should: hiding a hit
+ * behind a folded folder is the one thing a search box must never do, and a
+ * bare `bar` with no `feat/foo` above it names nothing.
+ */
+export function branchLeafRows<T extends { name: string }>(
+  branches: readonly T[],
+): BranchTreeRow<T>[] {
+  return branches.map((branch) => ({
+    kind: "branch",
+    path: branch.name,
+    label: branch.name,
+    depth: 0,
+    branch,
+  }));
+}
+
+/**
+ * The display rows for an already filtered and ordered list, with the pinned
+ * branches (#238) HOISTED OUT of the tree rather than sorted to the front of
+ * it.
+ *
+ * Grouping only moves ordered rows into folders, so a pinned `feat/foo` would
+ * otherwise be the first row INSIDE `feat` — invisible whenever that folder is
+ * collapsed, which is the case pinning exists for. Hoisted rows render at depth
+ * 0 under their full names and are REMOVED from the tree rather than duplicated
+ * into it.
+ *
+ * Both surfaces that render the tree go through this, so the Branches screen
+ * and the titlebar picker can never disagree about one list.
+ */
+export function branchTreeRowsWithPins<T extends { name: string }>(
+  ordered: readonly T[],
+  pins: ReadonlySet<string>,
+  collapsed: ReadonlySet<string>,
+): BranchTreeRow<T>[] {
+  if (pins.size === 0) return branchTreeRows(ordered, collapsed);
+  const pinned = ordered.filter((b) => pins.has(b.name));
+  const rest = ordered.filter((b) => !pins.has(b.name));
+  // `ordered` is already pins-first, so the hoisted block and the tree below
+  // it stay one continuous order.
+  return [...branchLeafRows(pinned), ...branchTreeRows(rest, collapsed)];
+}
+
+/**
  * Every folder path the tree would render, expanded or not — what "collapse
  * all" writes. A compressed chain is ONE path (`feat/foo`), never one per
  * segment, or collapsing all would leave rows keyed on folders that don't exist.

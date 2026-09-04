@@ -12,7 +12,10 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
 import { mockInvoke, resetInvokeMock } from "@/test/invokeMock";
 import { WithDialogs, resetDialogs } from "@/test/dialog";
-import { BRANCH_FOLDERS_KEY } from "@/features/branches/useBranchFolders";
+import {
+  BRANCH_FOLDERS_KEY,
+  reloadCollapsedFolders,
+} from "@/features/branches/useBranchFolders";
 import { useBranchPins } from "@/features/branches/useBranchPins";
 import type { BranchInfo } from "@/lib/types";
 
@@ -78,6 +81,9 @@ beforeEach(() => {
   resetInvokeMock();
   resetDialogs();
   localStorage.clear();
+  // The folds are a shared store (two surfaces render the tree), so clearing
+  // the key is not enough to keep one case's folds out of the next.
+  reloadCollapsedFolders();
   useBranchPins.setState({ byRepo: {} });
   useKeymapStore.setState({ handlers: new Map(), lastShiftAt: 0 });
   useKeymapStore.getState().setPreset("rider");
@@ -105,6 +111,7 @@ describe("pinned branches on the Branches screen", () => {
     // The case pinning exists for: without the hoist the row would be the first
     // one INSIDE `feat`, and a collapsed `feat` would hide it entirely.
     localStorage.setItem(BRANCH_FOLDERS_KEY, JSON.stringify({ "/repo": ["feat"] }));
+    reloadCollapsedFolders();
     useBranchPins.setState({ byRepo: { "/repo": ["feat/beta"] } });
     setup();
 

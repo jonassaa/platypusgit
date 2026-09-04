@@ -57,6 +57,15 @@ interface BranchPinsState {
   byRepo: PinMap;
   /** Pin `name` in `repoPath`, or unpin it if it is already pinned. */
   toggle: (repoPath: string | null, name: string) => void;
+  /**
+   * Follow a renamed branch, keeping its pin and its position in the order.
+   *
+   * A pin matches the branch name exactly, so without this a rename — and
+   * since #244 that includes dragging a branch into a folder — would silently
+   * unpin it. The pin is an instruction about a branch, and a renamed branch
+   * is the same branch.
+   */
+  rename: (repoPath: string | null, from: string, to: string) => void;
   /** Re-read localStorage. Only a fresh app start needs this; tests use it. */
   reload: () => void;
 }
@@ -75,6 +84,21 @@ export const useBranchPins = create<BranchPinsState>((set, get) => ({
     // all removed leaves no entry behind.
     if (next.length === 0) delete byRepo[repoPath];
     else byRepo[repoPath] = next;
+    set({ byRepo });
+    persist(byRepo);
+  },
+
+  rename(repoPath, from, to) {
+    if (!repoPath || !from || !to || from === to) return;
+    const current = get().byRepo[repoPath] ?? EMPTY;
+    if (!current.includes(from)) return;
+    const byRepo = { ...get().byRepo };
+    // Mapped in place rather than removed and appended: the array's order is
+    // the pin order (#238), and a rename is not a re-pin. A `to` that was
+    // somehow already pinned would double up, so it is dropped first.
+    byRepo[repoPath] = current
+      .filter((n) => n === from || n !== to)
+      .map((n) => (n === from ? to : n));
     set({ byRepo });
     persist(byRepo);
   },
