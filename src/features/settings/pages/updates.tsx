@@ -6,6 +6,7 @@ import {
   type UpdateCheckMode,
 } from "@/features/settings/useSettingsStore";
 import { SettingsCard, SettingsRow } from "@/features/settings/layout/SettingsCard";
+import { Mono } from "@/features/settings/layout/text";
 import type { SettingsPageMeta } from "@/features/settings/nav/types";
 import { STORE_MANAGED_NOTE } from "@/features/update/packageHint";
 import {
@@ -36,25 +37,6 @@ export const meta: SettingsPageMeta = {
     },
   ],
 };
-
-function Mono({
-  children,
-  selectable,
-}: {
-  children: React.ReactNode;
-  selectable?: boolean;
-}) {
-  return (
-    <code
-      style={{
-        fontFamily: "var(--font-mono)",
-        ...(selectable ? { userSelect: "all" as const } : null),
-      }}
-    >
-      {children}
-    </code>
-  );
-}
 
 export function UpdatesPage() {
   const settings = useSettingsStore();

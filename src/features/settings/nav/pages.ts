@@ -1,11 +1,14 @@
 import { registerCardRows } from "@/features/settings/layout/SettingsCard";
 import * as appearance from "@/features/settings/pages/appearance";
+import * as backup from "@/features/settings/pages/backup";
+import * as cli from "@/features/settings/pages/cli";
 import * as commit from "@/features/settings/pages/commit";
 import * as diff from "@/features/settings/pages/diff";
 import * as integrations from "@/features/settings/pages/integrations";
 import * as keyboard from "@/features/settings/pages/keyboard";
 import * as remote from "@/features/settings/pages/remote";
 import * as updates from "@/features/settings/pages/updates";
+import * as workspace from "@/features/settings/pages/workspace";
 import type {
   SettingsGroupId,
   SettingsPageId,
@@ -39,17 +42,10 @@ export const PAGES: Record<SettingsPageId, SettingsPageModule> = {
   "git.diff": { meta: diff.meta, Page: diff.DiffPage },
   "git.remote": { meta: remote.meta, Page: remote.RemotePage },
   "git.integrations": { meta: integrations.meta, Page: integrations.IntegrationsPage },
-  // Task 6 adds the other three (advanced.cli, advanced.workspace,
-  // advanced.backup). Until then the mapped type below fails to compile,
-  // which is the point: a missing page cannot be forgotten.
-  //
-  // The double cast (via `unknown`) is needed because TS's excess-property
-  // check refuses a direct cast from an object with 7 of 10 keys straight to
-  // `Record<SettingsPageId, …>` — "insufficient overlap". Scaffolding only:
-  // Task 6 replaces this whole expression with a plain typed literal once all
-  // ten keys are present, at which point the cast is not just unneeded but
-  // would defeat the exhaustiveness the type exists to provide.
-} as unknown as Record<SettingsPageId, SettingsPageModule>;
+  "advanced.cli": { meta: cli.meta, Page: cli.CliPage },
+  "advanced.workspace": { meta: workspace.meta, Page: workspace.WorkspacePage },
+  "advanced.backup": { meta: backup.meta, Page: backup.BackupPage },
+};
 
 export const PAGE_ORDER: readonly SettingsPageId[] = GROUPS.flatMap((g) => g.pages);
 

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { mockInvoke } from "@/test/invokeMock";
 import type { CliPathState, CliShimSource } from "@/lib/types";
-import { SettingsScreen } from "./Settings";
+import { CliPage } from "@/features/settings/pages/cli";
 
 function mockShim(
   source: CliShimSource,
@@ -28,7 +28,7 @@ describe("Settings command line section", () => {
       manualCommand: null,
       pathState: "onPath",
     }));
-    render(<SettingsScreen />);
+    render(<CliPage />);
     expect(await screen.findByText(/not installed/i)).toBeInTheDocument();
     // Status refresh after install reports installed.
     mockShim("app");
@@ -49,7 +49,7 @@ describe("Settings command line section", () => {
       manualCommand: 'sudo ln -sf "/app/platypusgit" "/usr/local/bin/pgit"',
       pathState: "onPath",
     }));
-    render(<SettingsScreen />);
+    render(<CliPage />);
     await userEvent.click(
       await screen.findByRole("button", { name: /install pgit/i }),
     );
@@ -62,7 +62,7 @@ describe("Settings command line section", () => {
     // The whole point of #144's last note: dpkg / Homebrew / the MSI own the
     // file, so there must be nothing here that would overwrite it.
     mockShim("package", { shimPath: "/usr/bin/pgit" });
-    render(<SettingsScreen />);
+    render(<CliPage />);
     expect(
       await screen.findByText(/installed by your package manager/i),
     ).toBeInTheDocument();
@@ -77,7 +77,7 @@ describe("Settings command line section", () => {
 
   it("names a stranger's pgit without claiming it, and still offers an install", async () => {
     mockShim("foreign", { shimPath: "/opt/somewhere/pgit" });
-    render(<SettingsScreen />);
+    render(<CliPage />);
     expect(await screen.findByText(/not installed/i)).toBeInTheDocument();
     expect(
       screen.getByText(/is already on your PATH at/i),
@@ -90,7 +90,7 @@ describe("Settings command line section", () => {
 
   it("offers Reinstall for a shim we installed ourselves", async () => {
     mockShim("app", { shimPath: "/home/ada/.local/bin/pgit" });
-    render(<SettingsScreen />);
+    render(<CliPage />);
     expect(
       await screen.findByRole("button", { name: /reinstall pgit/i }),
     ).toBeInTheDocument();
@@ -103,7 +103,7 @@ describe("Settings command line section", () => {
       shimPath: "/Users/ada/.local/bin/pgit",
       pathState: "offPath",
     });
-    render(<SettingsScreen />);
+    render(<CliPage />);
     expect(
       await screen.findByText(/is not on your PATH/i),
     ).toBeInTheDocument();
@@ -120,7 +120,7 @@ describe("Settings command line section", () => {
       manualCommand: null,
       pathState: "pathAdded",
     }));
-    render(<SettingsScreen />);
+    render(<CliPage />);
     await userEvent.click(
       await screen.findByRole("button", { name: /install pgit/i }),
     );
@@ -131,7 +131,7 @@ describe("Settings command line section", () => {
     // The package put it on PATH; an offPath reading there would be our bug,
     // not something to hand the user a shell line about.
     mockShim("package", { shimPath: "/usr/bin/pgit", pathState: "offPath" });
-    render(<SettingsScreen />);
+    render(<CliPage />);
     expect(
       await screen.findByText(/installed by your package manager/i),
     ).toBeInTheDocument();

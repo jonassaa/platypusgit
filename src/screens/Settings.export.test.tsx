@@ -14,7 +14,7 @@ import { mockInvoke } from "@/test/invokeMock";
 import { WithDialogs, acceptDialog, dismissDialog, resetDialogs } from "@/test/dialog";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useKeymapStore } from "@/features/keymap";
-import { SettingsScreen } from "./Settings";
+import { BackupPage } from "@/features/settings/pages/backup";
 
 // jsdom's Blob has no `text()`, and both file-import paths in Settings read the
 // picked file with `file.text()` (the real WKWebView/WebKitGTK/WebView2 all have
@@ -30,15 +30,8 @@ if (typeof Blob.prototype.text !== "function") {
   };
 }
 
-/** The rest of the Settings screen loads too; give it what it asks for. */
+/** BackupPage's Diagnostics card loads too; give it what it asks for. */
 function mockRestOfSettings() {
-  mockInvoke("cli_shim_status", () => ({
-    installed: true,
-    shimPath: "/usr/local/bin/pgit",
-    target: "/usr/bin/platypusgit",
-    source: "package",
-    pathState: "onPath",
-  }));
   mockInvoke("diagnostics_report", () => ({
     logPath: "/tmp/platypusgit.log",
     logExists: false,
@@ -106,7 +99,7 @@ describe("Settings → Settings file: export", () => {
   it("offers both halves as buttons, with the file picker behind Import…", async () => {
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     expect(exportButton()).toBeTruthy();
@@ -120,7 +113,7 @@ describe("Settings → Settings file: export", () => {
   it("names the file it wrote", async () => {
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await userEvent.click(exportButton());
@@ -136,7 +129,7 @@ describe("Settings → Settings file: export", () => {
     useKeymapStore.getState().setPreset("platypusgit");
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await userEvent.click(exportButton());
@@ -161,7 +154,7 @@ describe("Settings → Settings file: import", () => {
   it("asks before replacing anything, and does nothing if declined", async () => {
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await pickFile(fileWith({ diffViewMode: "split" }));
@@ -177,7 +170,7 @@ describe("Settings → Settings file: import", () => {
   it("applies on confirm and reports the settings that changed", async () => {
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await pickFile(fileWith({ diffViewMode: "split", addSignoff: true }));
@@ -196,7 +189,7 @@ describe("Settings → Settings file: import", () => {
   it("says so when the file matches the machine already", async () => {
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await pickFile(fileWith({}));
@@ -210,7 +203,7 @@ describe("Settings → Settings file: import", () => {
     useKeymapStore.getState().setPreset("rider");
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await pickFile(fileWith({}, { keymap: { presetId: "platypusgit" } }));
@@ -225,7 +218,7 @@ describe("Settings → Settings file: import", () => {
     useKeymapStore.getState().setPreset("rider");
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await pickFile(fileWith({}, { keymap: { presetId: "emacs-someday" } }));
@@ -241,7 +234,7 @@ describe("Settings → Settings file: import", () => {
   it("shows a readable message for a file that isn't a settings export", async () => {
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await pickFile("<html>nope</html>", "notes.json");
@@ -257,7 +250,7 @@ describe("Settings → Settings file: import", () => {
   it("points a single-theme file at the Appearance button", async () => {
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     const themeJson = useSettingsStore.getState().exportTheme("dark-cool");
@@ -271,7 +264,7 @@ describe("Settings → Settings file: import", () => {
   it("names the keys it ignored", async () => {
     render(
       <WithDialogs>
-        <SettingsScreen />
+        <BackupPage />
       </WithDialogs>,
     );
     await pickFile(fileWith({ warpDriveEnabled: true }));

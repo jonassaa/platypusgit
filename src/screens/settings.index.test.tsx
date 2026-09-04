@@ -16,6 +16,7 @@
 import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { mockInvoke } from "@/test/invokeMock";
 import { WithDialogs, resetDialogs } from "@/test/dialog";
 import { GROUPS, PAGES, PAGE_ORDER, resolvePageId, FIRST_PAGE } from "@/features/settings/nav/pages";
 import type { SettingsPageId } from "@/features/settings/nav/types";
@@ -78,15 +79,6 @@ function applyState(state: RenderState): void {
   state.setup();
 }
 
-/**
- * Pages actually in the registry.
- *
- * TASK 6: revert every use of this back to PAGE_ORDER. `PAGES` is incomplete
- * until Task 6 registers the last three pages, so a case that walks all ten
- * ids would dereference `undefined` for the nine that do not exist yet.
- */
-const REGISTERED = PAGE_ORDER.filter((p) => p in PAGES);
-
 function renderedRowIds(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll("[data-setting-id]"))
     .map((el) => el.getAttribute("data-setting-id")!)
@@ -119,10 +111,15 @@ describe("settings registry", () => {
     // Every case starts from the default, unmanaged capability — a case that
     // sets it to "store-managed" (below) must not leak into its neighbours.
     useUpdateStore.setState({ capability: null });
+    // general.updates' useEffect calls loadCapability() on every mount here,
+    // capability: null or not — it does not short-circuit that call. Left
+    // unmocked, that is a real (if silently-swallowed) unmocked IPC call in
+    // every case in this suite.
+    mockInvoke("get_update_capability", () => "self-update");
   });
 
   it("declares exactly the rows each page renders", () => {
-    for (const pageId of REGISTERED) {
+    for (const pageId of PAGE_ORDER) {
       const { Page } = PAGES[pageId];
       const declared = declaredRowIds(pageId);
       const union = new Set<string>();
@@ -164,7 +161,7 @@ describe("settings registry", () => {
     // user never actually sees on screen. Checked across every render state so
     // a conditionally-rendered row (Appearance's light/dark/theme trio) is
     // checked in the state where it actually appears, not skipped entirely.
-    for (const pageId of REGISTERED) {
+    for (const pageId of PAGE_ORDER) {
       const { Page, meta } = PAGES[pageId];
       for (const state of renderStatesFor(pageId)) {
         applyState(state);
@@ -196,7 +193,7 @@ describe("settings registry", () => {
   });
 
   it("gives every row a unique id app-wide", () => {
-    const all = REGISTERED.flatMap((p) =>
+    const all = PAGE_ORDER.flatMap((p) =>
       PAGES[p].meta.cards.flatMap((c) => c.rows.map((r) => r.id)),
     );
     expect(new Set(all).size, `duplicate row id in ${all.join(", ")}`).toBe(all.length);
@@ -206,9 +203,9 @@ describe("settings registry", () => {
     for (const group of GROUPS) {
       expect(group.pages.length, `${group.id} has no pages`).toBeGreaterThan(0);
     }
-    const fromGroups = GROUPS.flatMap((g) => g.pages).filter((p) => REGISTERED.includes(p)).sort();
-    expect(fromGroups).toEqual([...REGISTERED].sort());
-    for (const pageId of REGISTERED) {
+    const fromGroups = GROUPS.flatMap((g) => g.pages).sort();
+    expect(fromGroups).toEqual([...PAGE_ORDER].sort());
+    for (const pageId of PAGE_ORDER) {
       expect(PAGES[pageId].meta.group, `${pageId} group mismatch`).toBe(
         GROUPS.find((g) => g.pages.includes(pageId))?.id,
       );
