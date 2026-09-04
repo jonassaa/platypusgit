@@ -159,8 +159,8 @@ describe("empty states", () => {
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /Open Settings/ }));
     expect(useNavStore.getState().intent).toEqual({
-      kind: "switch-screen",
-      screen: "settings",
+      kind: "open-settings",
+      page: "git.integrations",
     });
   });
 

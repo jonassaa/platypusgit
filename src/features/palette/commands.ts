@@ -6,6 +6,7 @@ import { openAppWindow } from "@/features/windows";
 import { useLfsStore } from "@/features/lfs/useLfsStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { PAGES, PAGE_ORDER } from "@/features/settings/nav/pages";
 import { useForgeStore } from "@/features/forge/useForgeStore";
 import { prNoun, prNumberLabel } from "@/features/forge/forgeLabels";
 import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
@@ -286,6 +287,26 @@ export function buildCommands(): PaletteItem[] {
       icon,
       actionId,
       run: direct(() => nav.setIntent({ kind: "switch-screen", screen: id })),
+    });
+  }
+
+  // -- settings pages --
+  //
+  // One row per Settings page, so the palette can jump straight to a page —
+  // deep-linked through `open-settings`, which carries a typed page id, rather
+  // than the plain `switch-screen` the loop above uses. Deliberately NOT one
+  // per setting: 37 more rows would swamp the palette, and page-level plus
+  // in-Settings search covers the same ground. Derived from the registry
+  // (`PAGE_ORDER` / `PAGES`) rather than a hand-written parallel list, so a
+  // page rename or reorder needs no second edit here.
+  for (const pageId of PAGE_ORDER) {
+    items.push({
+      type: "command",
+      id: `settings-page:${pageId}`,
+      search: `${PAGES[pageId].meta.title} settings ${pageId}`,
+      label: `Settings: ${PAGES[pageId].meta.title}`,
+      icon: PAGES[pageId].meta.icon,
+      run: direct(() => nav.setIntent({ kind: "open-settings", page: pageId })),
     });
   }
 

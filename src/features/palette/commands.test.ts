@@ -14,6 +14,8 @@ import { newTab } from "@/features/repo/tabs";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { paletteInitial, usePaletteStore } from "./usePaletteStore";
 import { useCompareStore } from "@/features/compare/useCompareStore";
+import { useNavStore } from "@/features/nav/useNavStore";
+import { PAGE_ORDER } from "@/features/settings/nav/pages";
 import type { PaletteStep } from "./types";
 import type { BranchInfo, CommitInfo, FileStatus, StashInfo } from "@/lib/types";
 
@@ -87,6 +89,29 @@ describe("buildCommands", () => {
     expect(byId.get("screen:settings")?.actionId).toBe("nav.settings");
     expect(byId.get("action:fetch-all")?.actionId).toBe("repo.fetch");
     expect(byId.get("action:refresh")?.actionId).toBe("repo.refresh");
+  });
+
+  it("offers one row per Settings page, and activating one fires open-settings", () => {
+    useNavStore.setState({ intent: null, deepOrigin: null });
+    const byId = new Map(buildCommands().map((i) => [i.id, i]));
+    // Derived from the registry: every PAGE_ORDER entry has a row, no more.
+    for (const pageId of PAGE_ORDER) {
+      expect(byId.has(`settings-page:${pageId}`)).toBe(true);
+    }
+    expect(
+      buildCommands().filter((i) => i.id.startsWith("settings-page:")),
+    ).toHaveLength(PAGE_ORDER.length);
+
+    byId.get("settings-page:git.diff")!.run();
+    // The intent this row fires is what AppShell routes into `useSettingsStore`
+    // and the Settings screen — proof the row does more than exist in the
+    // catalog (a `run()` that never reaches the store would look identical in
+    // a test that only checked the row's presence).
+    expect(useNavStore.getState().intent).toEqual({
+      kind: "open-settings",
+      page: "git.diff",
+    });
+    expect(usePaletteStore.getState().open).toBe(false);
   });
 
   it("includes clone/init rows wired to the keymap (chip derives live, not hardcoded)", () => {

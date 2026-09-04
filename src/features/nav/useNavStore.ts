@@ -3,6 +3,10 @@ import type { RebaseStep } from "@/lib/types";
 // A PURE module (no store, no IPC), so carrying a compare side here does not
 // make nav depend on the compare feature's store.
 import type { CompareSide } from "@/features/compare/compareSides";
+// Same reasoning: `nav/types.ts` holds only `import type` statements, so it
+// erases at build time and carries no runtime dependency on the settings
+// feature or its store.
+import type { SettingsPageId } from "@/features/settings/nav/types";
 
 /**
  * Cross-screen navigation intent. A context menu item can ask the app
@@ -45,7 +49,16 @@ export type NavIntent =
    */
   | { kind: "stash-diff"; oid: string; label: string; untracked: boolean }
   | { kind: "stash-vs-wt"; oid: string; label: string; untracked: boolean }
-  | { kind: "switch-screen"; screen: string };
+  | { kind: "switch-screen"; screen: string }
+  /**
+   * Open Settings, optionally on a named page.
+   *
+   * Its own kind rather than a field on `switch-screen`, whose `screen` is a
+   * bare `string`: this one carries a typed page id, so a deep link cannot name
+   * a page that does not exist. With no `page`, the screen lands on the
+   * remembered one.
+   */
+  | { kind: "open-settings"; page?: SettingsPageId };
 
 interface NavState {
   intent: NavIntent | null;

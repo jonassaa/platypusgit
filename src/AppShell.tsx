@@ -410,6 +410,15 @@ export function AppShell() {
         enterScreen(intent.screen as ScreenId);
         clearIntent();
         break;
+      case "open-settings":
+        // enterScreen, not setScreen — same reasoning as switch-screen: asking
+        // for Settings while already in Settings still means "put me there".
+        if (intent.page) {
+          useSettingsStore.getState().set("settingsPage", intent.page);
+        }
+        enterScreen("settings");
+        clearIntent();
+        break;
       default:
         // Every `NavIntent` kind must be routed above, and this is what forces
         // it. `stash-vs-wt` was declared in the union, emitted by the stash
