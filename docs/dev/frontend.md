@@ -565,6 +565,18 @@ const composer = useCommitComposer({ repoId, branch, ticketPattern, message, set
   - The one deviation from git: no trailing newline, in any mode, because the
     backend stores the message verbatim and `buildMessage` trims the end
     regardless.
+  - **The gate asks the SEND path's question, not a similar one.** `canCommit`
+    keys on `buildMessage(composer.cleaned, trailers)` — one memo, the same
+    value that is sent — because "cleaned is non-empty" and "what we send is
+    non-empty" are not the same question: under `commit.cleanup=verbatim`
+    nothing is stripped, so a box of spaces survived cleanup and then trimmed to
+    `""` on the way out, and Commit lit up for a message the backend received as
+    empty (#387). The fix is deliberately NOT a `trim()` in `canCommit` — that
+    is a second cleanup policy, and the two would drift. `buildMessage` returns
+    `""` rather than a lone trailer block for the same reason: a co-author is an
+    addition to a message, never a substitute for one. The backend refuses an
+    empty message too (`docs/dev/backend.md`, the hook chain) — this gate is the
+    convenience, not the guarantee.
   - Pinned by 134 differential cases against real `git commit` (all five modes,
     `-m` and a scripted editor) — re-run that comparison before changing
     anything here rather than reasoning from the docs.

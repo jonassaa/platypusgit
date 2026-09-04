@@ -2,6 +2,7 @@ mod support;
 
 use std::path::PathBuf;
 
+use platypusgit_lib::error::AppError;
 use platypusgit_lib::git::GitBackend;
 use platypusgit_lib::git::types::CommitOptions;
 
@@ -242,6 +243,91 @@ fn commit_without_signoff_leaves_message_untouched() {
 
     let tip = tr.repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(tip.message().unwrap(), "update readme");
+}
+
+/// git aborts on an empty commit message, and so must we — the frontend's
+/// gate is a convenience, not the guarantee (#387).
+#[test]
+fn commit_refuses_an_empty_message() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    write_file(tr.path(), "README.md", "hello world\n");
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .stage(&handle.id, &[PathBuf::from("README.md")])
+        .unwrap();
+
+    let err = backend
+        .commit(
+            &handle.id,
+            CommitOptions {
+                message: String::new(),
+                amend: false,
+                author_override: None,
+                signoff: false,
+                sign: None,
+                no_verify: false,
+            },
+        )
+        .expect_err("an empty message must be refused");
+    assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
+
+    // Refused before anything was created, and the staged work is still there.
+    let log = backend.log(&handle.id, None, 10).unwrap();
+    assert_eq!(log.len(), 1, "nothing may be committed");
+}
+
+/// A message of nothing but spaces is the same empty message wearing a
+/// disguise: every path that sends one trims its end on the way out, so it
+/// reaches here as "" or not at all (#387).
+#[test]
+fn commit_refuses_a_whitespace_only_message() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    write_file(tr.path(), "README.md", "hello world\n");
+    let (backend, handle) = tr.open_with_backend();
+    backend
+        .stage(&handle.id, &[PathBuf::from("README.md")])
+        .unwrap();
+
+    let err = backend
+        .commit(
+            &handle.id,
+            CommitOptions {
+                message: "  \t\n \n".into(),
+                amend: false,
+                author_override: None,
+                signoff: false,
+                sign: None,
+                no_verify: false,
+            },
+        )
+        .expect_err("a whitespace-only message must be refused");
+    assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
+}
+
+/// Amending is the same commit op and gets the same guard — `git commit
+/// --amend` with an empty message aborts too.
+#[test]
+fn amend_refuses_an_empty_message() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let (backend, handle) = tr.open_with_backend();
+
+    let err = backend
+        .commit(
+            &handle.id,
+            CommitOptions {
+                message: "   ".into(),
+                amend: true,
+                author_override: None,
+                signoff: false,
+                sign: None,
+                no_verify: false,
+            },
+        )
+        .expect_err("an empty amend message must be refused");
+    assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
+
+    let log = backend.log(&handle.id, None, 10).unwrap();
+    assert_eq!(log[0].summary, "initial", "the tip must be untouched");
 }
 
 #[test]

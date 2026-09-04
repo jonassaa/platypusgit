@@ -1101,6 +1101,16 @@ Commit-side hooks run in `Libgit2Backend::commit`, one per name, through
     pre-commit → read index → write tree → prepare-commit-msg → commit-msg
     → build/sign/move ref → post-commit
 
+- **An empty message is refused before any of it** (#387). `commit` returns
+  `InvalidArgument` for a message that is blank once trimmed — git's own
+  "Aborting commit due to empty commit message", made a guarantee of the method
+  rather than of whichever screen is driving it, and placed ahead of the hooks so
+  a refusal never runs somebody's `pre-commit`. Whitespace-only counts as empty:
+  that is a shade stricter than `git commit --cleanup=verbatim -m "   "`, which
+  really does record three spaces, but every caller here has already trimmed the
+  message's end (the composer's one deliberate deviation from git), so blanks
+  can only mean the text was lost on the way. Pinned by
+  `tests/stage_commit.rs::commit_refuses_{an_empty,a_whitespace_only}_message`.
 - **`pre-commit` runs before the index is read, and outside `with_repo`.** A hook
   that runs `git add` (lint-staged: reformat, restage) mutates the on-disk index,
   and only a read that happens afterwards sees it. Running it outside the lock
