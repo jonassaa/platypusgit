@@ -668,6 +668,48 @@ re-validation. That action stashes BEFORE it calls the backend, so any of those
 returning early would leave the user's work in a stash they never made. Only the
 refused take also raises a banner; a decline is a choice, not a failure.
 
+## The cached index goes stale — `fresh_index`, not `repo.index()` (#386)
+
+`with_repo` hands back a *cached* `git2::Repository`, and libgit2 keeps that
+repository's index in memory. `repo.index()` therefore returns the snapshot from
+whenever **this process** last touched it, not what is on disk. Every whole-file
+staging op is a read-modify-write of the entire index, so writing that snapshot
+back reverts anything staged in between — and this app has unusually many things
+that stage in between: the built-in terminal (#243) is in the window, `cd`-ed to
+the repo; a `pre-commit` that reformats and restages is explicitly supported; a
+second window can drive the same repo.
+
+`libgit2.rs::fresh_index` is the one answer (`repo.index()` + `read(false)`, so
+it costs a stat when nothing changed). Use it anywhere the index is written back
+or read to DECIDE something. Its call sites are `commit`, `stage`, `unstage`,
+`discard` and `delete_untracked`.
+
+- **Measured, not argued.** #386 was filed as *plausible* — one site reloaded,
+  four did not — and every one of the four lost data. `tests/index_staleness.rs`
+  is the reproduction and all six of its cases fail if the reload is removed:
+  `stage`/`unstage` reverted an externally staged file to untracked, and
+  `discard`/`delete_untracked` **deleted it from the worktree**. Those two are
+  the same cause wearing its worst face: a path missing from a stale index reads
+  as *untracked*, and untracked is the branch that unlinks instead of restoring.
+- **The refresh belongs above the branch, not inside it.** `unstage`'s
+  `reset_default` reaches for the repository's cached index *internally*, so
+  refreshing only in the unborn-HEAD arm fixes the arm that was already the less
+  common one. Same for `discard`, where `checkout_index(None, …)` writes the
+  cached index back even when the discarded path is unrelated to the clobbered
+  one — discarding `README.md` was enough to unstage someone else's `git add`.
+- **`fresh_index` must stay INSIDE the caller's `with_repo` closure.**
+  Refreshing under one lock acquisition and writing under another is the stash
+  TOCTOU rebuilt by hand.
+- **It closes the window we own, not the one we do not.** Against a writer
+  racing us right now, git's `index.lock` is the only arbiter; the fix narrows
+  "stale since this tab opened" to "stale for microseconds". Say that, rather
+  than claiming the ops are now concurrency-safe.
+- **The hunk/line ops were checked and are NOT affected.** `stage_hunk` and
+  friends either shell out to `git apply --cached` (which reads the on-disk
+  index) or go through libgit2's `ApplyLocation::Index`, which re-reads on its
+  own — verified by probe, not assumed, so a future change there has a stated
+  baseline to disagree with.
+
 ## Deleting an untracked file (#245)
 
 `GitBackend::delete_untracked` is on the trait despite being an unlink rather
@@ -1120,7 +1162,8 @@ Commit-side hooks run in `Libgit2Backend::commit`, one per name, through
   index in memory — so reading the index after the hook still returned the
   pre-hook snapshot, and a reformatting hook's work was silently dropped.
   `tests/hooks.rs::a_pre_commit_that_restages_is_honoured` found this and pins
-  it; it fails if either the read or the reload moves.
+  it; it fails if either the read or the reload moves. It is now
+  `libgit2.rs::fresh_index`, shared with the staging ops — see below.
 - **A non-zero `pre-commit`, `prepare-commit-msg` or `commit-msg` creates
   nothing** — no object, no ref move — the same guarantee the signing chain
   makes, for the same reason. The index is deliberately **not** rolled back: a
