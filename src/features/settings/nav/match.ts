@@ -1,5 +1,5 @@
 import { GROUPS, PAGES, PAGE_ORDER } from "./pages";
-import type { SettingRowMeta, SettingsPageId } from "./types";
+import type { SettingRowGate, SettingRowMeta, SettingsPageId } from "./types";
 
 export interface IndexedRow {
   row: SettingRowMeta;
@@ -23,8 +23,15 @@ export interface IndexedRow {
  *
  * Hints are NOT indexed — they are `React.ReactNode` and cannot be flattened to
  * text reliably. That is what `keywords` is for.
+ *
+ * `gates` is a `Record` over the whole `SettingRowGate` union rather than a
+ * bag of the gates this function happens to know about, so a new gate member
+ * fails to compile until every caller answers it. The lookup below is
+ * `gates[row.when]` for the same reason: an equality test per gate would make
+ * an unanswered gate read as "always render", which is the silent version of
+ * the bug gates exist to prevent.
  */
-export function buildIndex(gates: { updatable: boolean }): IndexedRow[] {
+export function buildIndex(gates: Record<SettingRowGate, boolean>): IndexedRow[] {
   const groupTitleOf = new Map(
     GROUPS.flatMap((g) => g.pages.map((p) => [p, g.title] as const)),
   );
@@ -33,7 +40,7 @@ export function buildIndex(gates: { updatable: boolean }): IndexedRow[] {
     const { meta } = PAGES[pageId];
     for (const card of meta.cards) {
       for (const row of card.rows) {
-        if (row.when === "updatable" && !gates.updatable) continue;
+        if (row.when && !gates[row.when]) continue;
         out.push({
           row,
           cardId: card.id,

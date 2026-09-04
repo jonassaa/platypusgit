@@ -1,11 +1,15 @@
 // THE guard test for the settings registry.
 //
-// Every page declares its rows as data (`meta`) so search can match without
-// rendering. That only stays true if the data cannot drift from what renders,
-// which is what this file enforces: mount each page, read `data-setting-id`
-// out of the DOM, and compare the two sets BOTH ways. A row that renders but
-// is not declared is invisible to search; a row declared but never rendered is
-// a dead search result.
+// Every page declares its rows and cards as data (`meta`) so search can match
+// without rendering. That only stays true if the data cannot drift from what
+// renders, which is what this file enforces: mount each page, read
+// `data-setting-id` and `data-settings-card` out of the DOM, and compare the
+// two sets BOTH ways. A row that renders but is not declared is invisible to
+// search; a row declared but never rendered is a dead search result. Cards get
+// the same treatment plus a title check, because `registerCardRows` keys its
+// module-global map by card id and `cardHasVisibleRow` answers false for a
+// card nobody registered — so a rendered card id that drifts from its declared
+// one drops every matching row on it out of the results pane, silently.
 //
 // Some pages render a mutually-exclusive subset of their declared rows
 // depending on other state (Appearance: the light/dark pair while following
@@ -86,17 +90,53 @@ function renderedRowIds(container: HTMLElement): string[] {
     .sort();
 }
 
+function renderedCards(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>("[data-settings-card]"));
+}
+
+function renderedCardIds(container: HTMLElement): string[] {
+  return renderedCards(container)
+    .map((el) => el.getAttribute("data-settings-card")!)
+    .sort();
+}
+
+function declaredCardIds(pageId: SettingsPageId): string[] {
+  return PAGES[pageId].meta.cards.map((c) => c.id).sort();
+}
+
+/**
+ * A rendered card's title, as the user reads it.
+ *
+ * `SettingsCard` renders `<section data-settings-card><header><div>{title}
+ * </div>{subtitle && <div>…</div>}</header>` — so the header's FIRST child
+ * div is the title and nothing else. Reading it positionally (rather than by
+ * text) is what makes the comparison below a real check: matching on the
+ * declared string would pass whatever the DOM said.
+ */
+function renderedCardTitle(card: HTMLElement): string | undefined {
+  return card.querySelector("header")?.firstElementChild?.textContent?.trim();
+}
+
 /**
  * Row ids a page declares.
  *
- * Gated rows (`when: "updatable"`) are included on purpose: the guard test
- * mounts every page under the DEFAULT update capability (`capability: null`,
- * `useUpdateStore`'s initial state), and `updatesManagedExternally(null)` is
- * `false` — so `UpdatesPage`'s ordinary branch renders, and its gated rows
- * genuinely appear in the DOM. Excluding them here would make `declared` a
- * subset of `rendered` and hide a real drift. The Store-managed case (where
- * the gated rows really are absent) gets its own case below, under "the
- * update gate".
+ * Gated rows (`when: …`) are included on purpose, and the render states are
+ * what makes that safe:
+ *
+ * - `when: "updatable"` — every page mounts under the DEFAULT update
+ *   capability (`capability: null`, `useUpdateStore`'s initial state), and
+ *   `updatesManagedExternally(null)` is `false`, so `UpdatesPage`'s ordinary
+ *   branch renders and its gated rows genuinely appear in the DOM. (The INDEX
+ *   reads `null` the other way — see `useSettingsIndex` — but that is the
+ *   index's call, not the page's, and this file checks the page.) The
+ *   Store-managed case gets its own case below, under "the update gate".
+ * - `when: "themeFixed"` / `"themeFollowsSystem"` — neither mode renders all
+ *   three Appearance rows, which is exactly what `PAGE_RENDER_STATES` is for:
+ *   each state's render is checked as a SUBSET of `declared`, and only the
+ *   union across states has to equal it.
+ *
+ * Excluding gated rows here would make `declared` a subset of `rendered` and
+ * hide a real drift.
  */
 function declaredRowIds(pageId: SettingsPageId): string[] {
   return PAGES[pageId].meta.cards
@@ -173,6 +213,74 @@ describe("settings registry", () => {
         [...union].sort(),
         `${pageId}: declared rows vs the union of every state's render`,
       ).toEqual(declared);
+    }
+  });
+
+  it("declares exactly the cards each page renders", () => {
+    // The card half of the drift guard, and it is not cosmetic:
+    // `registerCardRows` keys a module-global map by CARD id, and
+    // `cardHasVisibleRow` returns false for a card nobody registered. So a
+    // rendered `<SettingsCard id=…>` that disagrees with its declared
+    // `meta.cards[].id` — a typo, a one-sided rename — makes every matching
+    // row on that card silently vanish from the search results pane while
+    // every other test in the suite still passes. Both directions: an
+    // undeclared rendered card is unreachable by search, a declared card that
+    // never renders is a dead row group.
+    for (const pageId of PAGE_ORDER) {
+      const { Page } = PAGES[pageId];
+      const declared = declaredCardIds(pageId);
+      for (const state of renderStatesFor(pageId)) {
+        applyState(state);
+        const { container, unmount } = render(
+          <WithDialogs>
+            <Page />
+          </WithDialogs>,
+        );
+        expect(
+          renderedCardIds(container),
+          `${pageId} (${state.name}): rendered cards vs declared cards`,
+        ).toEqual(declared);
+        unmount();
+      }
+    }
+  });
+
+  it("gives every card a unique id app-wide", () => {
+    // `CARD_ROWS` in SettingsCard.tsx is one flat map keyed by card id and
+    // written once per card at module load — last write wins. Two pages
+    // sharing an id would cross-wire their row visibility: one page's card
+    // would decide whether it is empty from the OTHER page's row ids. (This
+    // very nearly happened between T5 and T6, when a leftover `workspace`
+    // card and `git.remote`'s `pull` card briefly overlapped.)
+    const all = PAGE_ORDER.flatMap((p) => declaredCardIds(p));
+    expect(new Set(all).size, `duplicate card id in ${all.join(", ")}`).toBe(all.length);
+  });
+
+  it("renders each card's title exactly as its meta declares", () => {
+    // Card titles are folded into the search haystack (`buildIndex` joins the
+    // row label, its keywords, the CARD title and the page title), so a title
+    // edited in the JSX but not in `meta` makes search match text the user
+    // cannot see anywhere — the same defect the row-label check below exists
+    // to catch, in the 14 title pairs above it.
+    for (const pageId of PAGE_ORDER) {
+      const { Page, meta } = PAGES[pageId];
+      for (const state of renderStatesFor(pageId)) {
+        applyState(state);
+        const { container, unmount } = render(
+          <WithDialogs>
+            <Page />
+          </WithDialogs>,
+        );
+        for (const card of renderedCards(container)) {
+          const id = card.getAttribute("data-settings-card")!;
+          const declared = meta.cards.find((c) => c.id === id);
+          expect(
+            renderedCardTitle(card),
+            `${pageId}/${id} card title (${state.name})`,
+          ).toBe(declared?.title);
+        }
+        unmount();
+      }
     }
   });
 
@@ -299,6 +407,24 @@ describe("the update gate", () => {
     expect(ids).not.toContain("updates.check");
     expect(ids).not.toContain("updates.channel");
     unmount();
+  });
+});
+
+describe("the theme-mode gates", () => {
+  it("gates Appearance's mutually-exclusive rows to the mode that renders them", () => {
+    // `PAGE_RENDER_STATES` above already proves each of these three renders in
+    // exactly one of the two modes; this pins WHICH one to the gate the index
+    // filters on, so light/dark and the single picker cannot be swapped
+    // without a failure. Getting it wrong the other way round would put the
+    // light/dark pair in the index while the theme is fixed — a search hit
+    // that renders an empty card.
+    const rows = PAGES["general.appearance"].meta.cards.flatMap((c) => c.rows);
+    const gateOf = (id: string) => rows.find((r) => r.id === id)?.when;
+    expect(gateOf("appearance.light")).toBe("themeFollowsSystem");
+    expect(gateOf("appearance.dark")).toBe("themeFollowsSystem");
+    expect(gateOf("appearance.theme")).toBe("themeFixed");
+    // The mode toggle is how you reach either branch — never gated.
+    expect(gateOf("appearance.follow")).toBeUndefined();
   });
 });
 

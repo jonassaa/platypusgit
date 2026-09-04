@@ -1101,7 +1101,13 @@ a result is the actual control, never a copy of it that could drift — see
   render. The same test also asserts **label equality**: the text a row
   actually shows must equal `meta`'s declared label exactly, because search
   matches on `label` and a drifted label would surface a result showing the
-  user text they never see on screen.
+  user text they never see on screen. **Cards are guarded the same way** —
+  `data-settings-card` ids per page both directions, ids unique app-wide, and
+  title equality — because `registerCardRows` keys a module-global map by card
+  id and `cardHasVisibleRow` answers `false` for a card nobody registered: a
+  rendered card id that drifts from its declared one takes every matching row
+  on that card out of the results pane, silently, and a colliding id
+  cross-wires two pages' row visibility (the map is last-write-wins).
 - **The `keywords` convention exists because hints are not indexed.** A row's
   `hint` is `ReactNode` — often JSX with `<code>` tags — and cannot be
   flattened to text reliably, so `buildIndex`'s haystack folds in only
@@ -1112,14 +1118,34 @@ a result is the actual control, never a copy of it that could drift — see
   `dynamic` card carries this furthest: its rows are synthetic (a host list
   is data, not fixed rows), so `keywords` is the ONLY thing search has to go
   on — see its `integrations.token` row.
-- **The index is Store-gated, like every other update surface.**
-  `useSettingsIndex` reads `useUpdateStore`'s `capability` and excludes
-  `when: "updatable"` rows via the same `updatesManagedExternally` predicate
-  `UpdatesPage` itself renders behind — so a Store install's search cannot
-  surface "Check for updates" or the channel picker either. Folding a new
-  gated surface into the index without reusing that predicate would reopen
-  the exact violation `docs/dev/distribution.md`'s Store rule exists to
-  prevent, just reachable by typing instead of clicking.
+- **The index is Store-gated, like every other update surface — and it treats
+  "not known yet" as gated.** `useSettingsIndex` reads `useUpdateStore`'s
+  `capability` and excludes `when: "updatable"` rows via the same
+  `updatesManagedExternally` predicate `UpdatesPage` itself renders behind, so
+  a Store install's search cannot surface "Check for updates" or the channel
+  picker either. It composes
+  `capability !== null && !updatesManagedExternally(capability)`: the
+  predicate answers `false` for `null` so the update PANEL does not hide for a
+  frame on an ordinary install, and the index deliberately calls that window
+  the other way. `loadCapability()` is async, so the capability is null for a
+  moment after Settings opens and permanently if the probe fails — for a
+  search, briefly missing a row is recoverable, briefly NAMING a check is the
+  v0.4.0 certification failure. `SettingsScreen` primes `loadCapability()` on
+  mount to keep the window short (the flat screen it replaced primed it by
+  always mounting `UpdatesSection`; per-page mounting is what made priming
+  conditional on visiting the Updates page). Folding a new gated surface into
+  the index without reusing that predicate would reopen the exact violation
+  `docs/dev/distribution.md`'s Store rule exists to prevent, just reachable by
+  typing instead of clicking.
+- **A gate exists for any row the page renders conditionally, not just the
+  Store one.** Appearance's light/dark pair and its single theme picker are
+  mutually exclusive (`themeFollowsSystem` / `themeFixed`), and while they were
+  declared ungated a search reported a hit and rendered an empty card — the
+  card renders when a DECLARED row matches, so "light theme" on a fresh
+  install (mode `"fixed"`) drew a header with nothing under it. `buildIndex`
+  takes `gates: Record<SettingRowGate, boolean>` for this reason: widening
+  `SettingRowGate` is a compile error until `useSettingsIndex` answers the new
+  member, where a per-gate equality test would have made it silently "always".
 - **`data-setting-id` is selected exactly, never with `*=`, in both specs and
   e2e.** These are dotted, two-part ids (`card.row`), and one is a genuine
   substring of another today — `commit.sign` is a literal prefix of

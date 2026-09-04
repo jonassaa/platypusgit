@@ -8,12 +8,27 @@ import { SettingsResults } from "@/features/settings/nav/SettingsResults";
 import { useSettingsIndex } from "@/features/settings/nav/useSettingsIndex";
 import { PAGES } from "@/features/settings/nav/pages";
 import { resolvePageId } from "@/features/settings/nav/types";
+import { useUpdateStore } from "@/features/update/useUpdateStore";
 
 export function SettingsScreen() {
   const s = useSettingsStore();
   const pageId = resolvePageId(s.settingsPage);
   const [query, setQuery] = React.useState("");
   const { Page, meta } = PAGES[pageId];
+
+  // Prime the update capability whenever Settings OPENS, not just when the
+  // Updates page mounts. The flat screen this replaced rendered
+  // `UpdatesSection` unconditionally, so its own mount effect primed the
+  // capability for the whole screen; per-page mounting broke that, and the
+  // search index (below) is a second reader of it — one that must not name an
+  // update check on a Microsoft Store install even for a frame (policy 10.2.5;
+  // v0.4.0 failed certification on a notification). `loadCapability` returns
+  // early when the capability is already known, so this is idempotent and
+  // costs one IPC call per app run. Read through `getState()` rather than a
+  // selector: this screen wants the action, not a subscription.
+  React.useEffect(() => {
+    void useUpdateStore.getState().loadCapability();
+  }, []);
 
   const index = useSettingsIndex();
   const searching = query.trim().length > 0;

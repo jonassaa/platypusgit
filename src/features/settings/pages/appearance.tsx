@@ -35,9 +35,14 @@ export const meta: SettingsPageMeta = {
       subtitle: "Pick a theme, or customize every color and export it as a sharable file.",
       rows: [
         { id: "appearance.follow", label: "Appearance", keywords: "follow system os auto light dark mode" },
-        { id: "appearance.light", label: "Light theme" },
-        { id: "appearance.dark", label: "Dark theme", keywords: "dark mode" },
-        { id: "appearance.theme", label: "Theme", keywords: "colors palette custom editor export" },
+        // The next three are mutually exclusive — `following ? pair : picker`
+        // below — so each is gated to the mode that actually renders it.
+        // Ungated, the index described all three at once and a search for
+        // "light theme" on a fresh install (mode "fixed") reported "1 result"
+        // and drew a card header with no rows under it.
+        { id: "appearance.light", label: "Light theme", when: "themeFollowsSystem" },
+        { id: "appearance.dark", label: "Dark theme", keywords: "dark mode", when: "themeFollowsSystem" },
+        { id: "appearance.theme", label: "Theme", keywords: "colors palette custom editor export", when: "themeFixed" },
         { id: "appearance.density", label: "UI density", keywords: "compact cozy comfortable row height spacing" },
         { id: "appearance.dateFormat", label: "Date format", keywords: "relative absolute iso timestamp" },
         { id: "appearance.headMarks", label: "Current position (HEAD)", keywords: "bar tint ring marker" },

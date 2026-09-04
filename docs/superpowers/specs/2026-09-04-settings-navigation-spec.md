@@ -123,8 +123,8 @@ export type SettingsPageId =
   | "git.commit" | "git.diff" | "git.remote" | "git.integrations"
   | "advanced.cli" | "advanced.workspace" | "advanced.backup";
 
-/** The only conditional today. See "Conditional rows and the Store gate". */
-export type SettingRowGate = "updatable";
+/** Every member must be answered in `useSettingsIndex`. See "Conditional rows". */
+export type SettingRowGate = "updatable" | "themeFixed" | "themeFollowsSystem";
 
 export interface SettingRowMeta {
   /** Unique app-wide. Rendered as `data-setting-id`. */
@@ -223,16 +223,44 @@ like every other one. Two consequences:
 
 - `SettingRowMeta.when` marks a gated row. `"Check for updates"` and
   `"Release channel"` carry `when: "updatable"`.
-- The index is therefore **not** a module-load constant. `nav/pages.ts` exposes a
-  `useSettingsIndex()` hook that resolves gates against `useUpdateStore`'s
-  capability via `updatesManagedExternally`, so a gated-out row is absent from
-  search results, absent from the side-menu badge count, and absent from the
-  palette. A search for "update" on a Store build finds the version row and
-  nothing that names a check.
+- The index is therefore **not** a module-load constant.
+  `nav/useSettingsIndex.ts` exposes a `useSettingsIndex()` hook that resolves
+  every gate against runtime state, so a gated-out row is absent from search
+  results, absent from the side-menu badge count, and absent from the palette.
+  A search for "update" on a Store build finds the version row and nothing
+  that names a check. (The hook lives in its own module, not `nav/pages.ts`:
+  `match.ts` imports `pages.ts`, so a hook in `pages.ts` that imported
+  `match.ts` would close a cycle.)
 
-Everything else stays a pure module-load computation; only the gate resolution
-needs the hook. The page component keeps its existing `storeManaged` branch
-unchanged — this adds no second place where that decision is made.
+The index still spells the store-managed condition with
+`updatesManagedExternally` — one predicate, as CLAUDE.md requires — but it
+composes `capability !== null && !updatesManagedExternally(capability)`, and
+that `null` handling is deliberately the OPPOSITE of what the predicate
+answers on its own. The predicate reads a not-yet-loaded capability as "not
+managed" so the update panel does not hide for a frame on an ordinary install;
+a search has no such frame to protect. `loadCapability()` is asynchronous, so
+`capability` is null for a moment after Settings opens and permanently if the
+probe fails, and an ungated index would spend that window offering live update
+controls in the results pane on the very install that must never mention one.
+Briefly missing a row is recoverable; briefly naming a check is the v0.4.0
+certification failure. `SettingsScreen` also primes `loadCapability()` on
+mount, so the window is as short as it can be — the flat screen it replaces
+primed it by mounting `UpdatesSection` unconditionally, and per-page mounting
+would otherwise have narrowed that to "only once the Updates page mounts".
+
+The page component keeps its existing `storeManaged` branch unchanged — this
+adds no second place where that decision is made.
+
+The other two gates are Appearance's, and they exist for a different failure:
+`appearance.light`/`appearance.dark` render only while the theme follows the
+OS, `appearance.theme` only while it is fixed. Declared ungated, the index
+described all three at once — so a fresh install (mode `"fixed"`) searching
+"light theme" reported "1 result" and drew a card header with no rows under
+it, because the card renders when a DECLARED row matches. `useSettingsIndex`
+resolves both from `themePreference.mode` as exact complements of
+`AppearancePage`'s own `following` boolean, and `buildIndex` takes
+`gates: Record<SettingRowGate, boolean>` so a future gate is a compile error
+rather than a row that silently renders always.
 
 ## File layout
 
@@ -377,13 +405,23 @@ New:
    global `invoke` mock in `src/test/setup.ts` makes mounting all ten pages viable
    — today's tests already mount all thirteen cards at once.
 
-   The both-directions check runs **under both update capabilities**, since gated
-   rows legitimately render in one and not the other. Plus one absence assertion
-   in the shape `test/privacy.test.ts` uses: with a store-managed capability, the
-   resolved index contains no row gated `"updatable"` — so no search, badge or
-   palette entry can name an update check on a Store build. That is the assertion
-   standing between this feature and a repeat of the v0.4.0 certification
-   failure, and it must fail the build if someone drops the gate.
+   The both-directions check runs **per named render state** (update capability,
+   theme mode), since gated rows legitimately render in one and not the other:
+   each state's render must be a subset of what the page declares, and the union
+   across states must equal it exactly. Cards are checked the same way, plus a
+   title comparison — `registerCardRows` keys a module-global map by card id and
+   `cardHasVisibleRow` answers false for an unregistered card, so a rendered card
+   id that drifts from its declared one would drop every matching row on it out
+   of the results pane with nothing failing.
+
+   Plus one absence assertion in the shape `test/privacy.test.ts` uses, over the
+   **resolved** index (`SettingsScreen` rendered, a query typed) and not just
+   `buildIndex`'s boolean argument: with a store-managed capability, no search
+   result, side-menu badge or palette entry names an update check. That is the
+   assertion standing between this feature and a repeat of the v0.4.0
+   certification failure, and it must fail the build if someone drops the gate —
+   including by composing it wrongly in `useSettingsIndex`, which a test that
+   passes `buildIndex` its own booleans cannot catch.
 2. **`settings.nav.test.tsx`** — the group tree renders; clicking switches page;
    only that page's rows are in the DOM; selection round-trips through
    `settingsPage`; an unrecognised id falls back.

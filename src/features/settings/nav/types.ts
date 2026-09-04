@@ -77,14 +77,29 @@ export function resolvePageId(raw: unknown): SettingsPageId {
 /**
  * A condition under which a row exists at all.
  *
- * `"updatable"` is the only one, and it is not cosmetic: on a Microsoft Store
- * install `UpdatesPage` renders no check and no channel, because
- * `StoreManaged` gates the CHECK and not just the install — Store policy 10.2.5
- * makes *notifying* the violation, and v0.4.0 failed certification on it. The
- * search index is a new surface that reads `UpdateCapability`, so it gates on
- * the same `updatesManagedExternally` predicate the card already uses.
+ * Every member has to be resolved in `useSettingsIndex` — `buildIndex` takes a
+ * `Record<SettingRowGate, boolean>`, so adding a member here is a compile
+ * error until it is answered there. That is the point of the record: an
+ * `if (row.when === "updatable")` equality test would turn a new gate into a
+ * silent no-op, and a gate that silently answers "always" is the same defect
+ * as declaring the row ungated.
+ *
+ * - `"updatable"` is not cosmetic: on a Microsoft Store install `UpdatesPage`
+ *   renders no check and no channel, because `StoreManaged` gates the CHECK
+ *   and not just the install — Store policy 10.2.5 makes *notifying* the
+ *   violation, and v0.4.0 failed certification on it. The search index is a
+ *   surface that reads `UpdateCapability`, so it gates on the same
+ *   `updatesManagedExternally` predicate the card already uses (see
+ *   `useSettingsIndex` for the one deliberate difference: `null`).
+ * - `"themeFixed"` / `"themeFollowsSystem"` are the two halves of
+ *   `AppearancePage`'s `following ? … : …` ternary. They exist because a row
+ *   the index describes but the page cannot currently render is a search hit
+ *   that renders an EMPTY card: on a fresh install (`themePreference.mode`
+ *   defaults to `"fixed"`) a search for "light theme" matched
+ *   `appearance.light`, reported "1 result", and drew a card header with no
+ *   rows under it.
  */
-export type SettingRowGate = "updatable";
+export type SettingRowGate = "updatable" | "themeFixed" | "themeFollowsSystem";
 
 export interface SettingRowMeta {
   /** Unique app-wide. Rendered as `data-setting-id`. */
