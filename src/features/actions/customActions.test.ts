@@ -31,6 +31,7 @@ const action = (over: Partial<CustomAction> = {}): CustomAction => ({
   showOutput: false,
   refreshAfter: true,
   surfaces: ["repo"],
+  chord: "",
   ...over,
 });
 

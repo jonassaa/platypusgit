@@ -38,6 +38,7 @@ import {
   applyRebaseProgress,
   useRepoStore,
 } from "@/features/repo/useRepoStore";
+import { useCustomActionChords } from "@/features/actions/useCustomActionChords";
 import { useFsWatch } from "@/features/repo/useFsWatch";
 import { startAutoFetch } from "@/features/repo/autoFetch";
 import { ActivityStatus } from "@/features/repo/ActivityStatus";
@@ -268,6 +269,11 @@ export function AppShell() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
+
+  // The chords that are DATA rather than catalog entries — a user-defined
+  // action's shortcut (#225). Next to the listener that consumes them, and the
+  // only place they are fed in, so the table always matches Settings.
+  useCustomActionChords();
 
   // Check for a newer release shortly after launch — non-blocking, and silent
   // on failure (offline, rate-limited). Manual re-check lives in Settings.

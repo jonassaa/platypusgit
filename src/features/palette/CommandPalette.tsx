@@ -4,7 +4,7 @@ import { PGIcon, PGSearchInput } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "./usePaletteStore";
-import { chordFor, useKeymapStore } from "@/features/keymap";
+import { chordFor, formatChord, useKeymapStore } from "@/features/keymap";
 import { branchItems, buildCommands, commitItems, fileItems } from "./commands";
 import { fuzzyMatch } from "./fuzzyMatch";
 import { frecencyScore, bumpFrecency, loadFrecency, recentIds } from "./frecency";
@@ -309,7 +309,11 @@ export function CommandPalette() {
   const renderRow = (row: ScoredRow, flatIndex: number) => {
     const { item, labelIndices } = row;
     const active = flatIndex === activeIndex;
-    const chord = item.actionId ? chordFor(item.actionId) : "";
+    const chord = item.chord
+      ? formatChord(item.chord)
+      : item.actionId
+        ? chordFor(item.actionId)
+        : "";
     return (
       <div
         key={item.id}

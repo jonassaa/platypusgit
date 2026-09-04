@@ -89,6 +89,32 @@ describe("buildCommands", () => {
     expect(byId.get("action:refresh")?.actionId).toBe("repo.refresh");
   });
 
+  it("gives a custom action's row its own chord chip (#225)", async () => {
+    // A user-defined shortcut is a value in Settings, not a preset binding, so
+    // the row carries the chord itself — through `boundChord`, the same gate
+    // the dispatcher asks, so the chip cannot advertise a dead key.
+    const { useSettingsStore } = await import(
+      "@/features/settings/useSettingsStore"
+    );
+    useSettingsStore.setState({ customActions: [
+      {
+        id: "a1", name: "Deploy", command: "deploy $REPO",
+        showOutput: false, refreshAfter: false, surfaces: ["repo"],
+        chord: "Mod+Shift+X",
+      },
+      {
+        id: "a2", name: "Parked", command: "parked $REPO",
+        showOutput: false, refreshAfter: false, surfaces: ["repo"],
+        chord: "Mod+K",
+      },
+    ] });
+    const byId = new Map(buildCommands().map((i) => [i.id, i]));
+    expect(byId.get("custom-action:a1")?.chord).toBe("Mod+Shift+X");
+    // ⌘K belongs to the catalog; the chip must not claim it.
+    expect(byId.get("custom-action:a2")?.chord).toBe("");
+    useSettingsStore.setState({ customActions: [] });
+  });
+
   it("includes clone/init rows wired to the keymap (chip derives live, not hardcoded)", () => {
     const byId = new Map(buildCommands().map((i) => [i.id, i]));
     expect(byId.get("action:clone")?.actionId).toBe("repo.clone");

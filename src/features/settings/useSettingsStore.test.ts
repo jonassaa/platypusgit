@@ -453,8 +453,10 @@ describe("useSettingsStore custom actions", () => {
   it("keeps an action saved before surfaces existed in the palette", async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ customActions: [legacy] }));
     const { useSettingsStore } = await freshStore();
+    // ...and reads it as having no shortcut (#225): `chord` arrived with the
+    // same load, and an absent one is unbound, never a key that starts firing.
     expect(useSettingsStore.getState().customActions).toEqual([
-      { ...legacy, surfaces: ["repo"] },
+      { ...legacy, surfaces: ["repo"], chord: "" },
     ]);
   });
 

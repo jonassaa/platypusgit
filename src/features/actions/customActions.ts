@@ -9,6 +9,7 @@
 // This file is the list, its validation, WHERE each action shows up
 // (`ActionSurface`), and the `ActionContext` each surface hands it.
 
+import { DOUBLE_SHIFT } from "@/features/keymap/chord";
 import type { ActionContext } from "@/lib/types";
 
 /**
@@ -62,6 +63,12 @@ export interface CustomAction {
    * `normalizeSurfaces` and `isSavableAction`.
    */
   surfaces: ActionSurface[];
+  /**
+   * Its keyboard shortcut, in the keymap's own chord syntax
+   * (`"Mod+Shift+G"`, `"F6"`), or `""` for none. See `boundChord` for when a
+   * stored chord actually fires.
+   */
+  chord: string;
 }
 
 /** The placeholders the backend substitutes, for the Settings hint. */
@@ -82,8 +89,71 @@ export function blankAction(): CustomAction {
     showOutput: true,
     refreshAfter: true,
     surfaces: [...DEFAULT_SURFACES],
+    chord: "",
   };
 }
+
+/** Function keys, which are bindable on their own — nothing types one. */
+const FUNCTION_KEY = /^F(?:[1-9]|1[0-2])$/;
+
+/** Said when a chord carries nothing that stops it typing a character. */
+export const CHORD_NEEDS_ACCELERATOR =
+  "A shortcut needs ⌘ or Ctrl, or a function key.";
+
+/** Said for the one modifier combination a keyboard produces by itself. */
+export const CHORD_IS_ALTGR =
+  "Ctrl+Alt with a letter is AltGr on Windows — it would fire while typing.";
+
+/**
+ * Why `chord` cannot be a user-defined action's shortcut, or null when it can.
+ *
+ * Two rules, both about a shortcut that must not go off by itself:
+ *
+ * 1. **It carries ⌘/Ctrl, or it is a function key.** A bare `G` would fire
+ *    while arrowing through a file list and would swallow that letter from the
+ *    speed-search fallback — the dispatcher suppresses bare chords inside text
+ *    inputs, but a list is not a text input, and "typing in a list stopped
+ *    working" is not a bug anyone would trace back to Settings. `Alt` alone
+ *    does not count: on macOS ⌥ with a character key TYPES a character (⌥E is a
+ *    dead key), so the chord would fight the caret in exactly the commit
+ *    message box. This is also what lets a custom chord dispatch inside inputs
+ *    with no further rule, the same reasoning the catalog's modifier chords
+ *    already run on.
+ * 2. **Not ⌘/Ctrl+Alt+letter.** That is AltGr on Windows and Linux, so
+ *    `Mod+Alt+E` is what a Norwegian keyboard sends for `€`. `presets.test.ts`
+ *    fails the build for a preset that adds one; a chord the user records is
+ *    the same hazard, made worse by the fact that a custom chord runs with the
+ *    caret in a text field.
+ *
+ * `DoubleShift` falls to rule 1, which is the right answer twice over: it is
+ * the palette's chord in both presets, and every custom action is IN the
+ * palette.
+ */
+export function chordRefusal(chord: string): string | null {
+  if (!chord || chord === DOUBLE_SHIFT) return CHORD_NEEDS_ACCELERATOR;
+  const segs = chord.split("+");
+  const base = segs[segs.length - 1];
+  const mods = segs.slice(0, -1);
+  if (FUNCTION_KEY.test(base)) return null;
+  if (!mods.includes("Mod") && !mods.includes("Ctrl")) {
+    return CHORD_NEEDS_ACCELERATOR;
+  }
+  if (mods.includes("Alt") && /^[A-Za-z]$/.test(base)) return CHORD_IS_ALTGR;
+  return null;
+}
+
+/** Whether `chord` is one a user-defined action may take. */
+export function isBindableChord(chord: string): boolean {
+  return chordRefusal(chord) === null;
+}
+
+/** Coerce a stored or hand-edited chord. Anything unusable reads as unbound. */
+export function normalizeChord(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+// Whether a stored chord actually FIRES is `boundChord`, in `actionChords.ts`
+// — it has to know the keymap, and this file deliberately does not.
 
 /**
  * Coerce a stored or hand-edited surface list into a usable one.
@@ -111,6 +181,7 @@ export function normalizeAction(a: CustomAction): CustomAction {
     name: a.name.trim(),
     command: a.command.trim(),
     surfaces: normalizeSurfaces(a.surfaces),
+    chord: normalizeChord(a.chord),
   };
 }
 
@@ -168,6 +239,11 @@ export function coerceCustomActions(value: unknown): CustomAction[] | null {
         showOutput: o.showOutput !== false,
         refreshAfter: o.refreshAfter !== false,
         surfaces: surfaces.length ? surfaces : [...DEFAULT_SURFACES],
+        // Kept as written even when it is unbindable or already taken: what
+        // FIRES is `boundChord`'s question, asked fresh every time, and
+        // silently dropping a chord here would lose the value the user typed
+        // while leaving the field that shows it empty. #225.
+        chord: normalizeChord(o.chord),
       }),
     );
   }

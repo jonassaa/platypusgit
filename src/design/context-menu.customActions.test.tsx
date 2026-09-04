@@ -39,6 +39,7 @@ const action = (id: string, surfaces: ActionSurface[]): CustomAction => ({
   showOutput: false,
   refreshAfter: false,
   surfaces,
+  chord: "",
 });
 
 const labels = (items: ContextMenuItem[]) =>

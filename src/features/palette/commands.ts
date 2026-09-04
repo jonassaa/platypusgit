@@ -17,6 +17,7 @@ import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { activePins } from "@/features/branches/pins";
 import { summarizeFastForward } from "@/features/branches/fastForward";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
+import { boundChord } from "@/features/actions/actionChords";
 import { actionsFor } from "@/features/actions/customActions";
 import { runAction } from "@/features/actions/runAction";
 import { usePaletteStore } from "./usePaletteStore";
@@ -312,6 +313,11 @@ export function buildCommands(): PaletteItem[] {
         search: `${action.name} custom action ${action.command}`,
         label: action.name,
         icon: "terminal",
+        // The row carries its own chord rather than an `actionId`: a
+        // user-defined shortcut is a value in Settings, not a preset binding
+        // (#225). `boundChord` is the one gate on whether it fires, so the chip
+        // and the dispatcher cannot disagree.
+        chord: boundChord(action),
         run: direct(() => void runAction(action)),
       });
     }

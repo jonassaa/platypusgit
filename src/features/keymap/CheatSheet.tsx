@@ -28,10 +28,40 @@ function formatBindings(chords: string[]): string {
   return chords.map((c) => formatChord(c)).join(" / ");
 }
 
+/** One reference row. Shared so a custom action's row cannot drift from a
+ *  built-in one — they are the same thing to the person reading the sheet. */
+function Row({ title, keys }: { title: string; keys: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 24,
+        padding: "3px 0",
+      }}
+    >
+      <span>{title}</span>
+      <span
+        style={{
+          color: "var(--fg-1)",
+          fontFamily: "var(--font-mono, monospace)",
+        }}
+      >
+        {keys}
+      </span>
+    </div>
+  );
+}
+
 export function CheatSheet() {
   const open = useOverlayStore((s) => s.cheatSheetOpen);
   const close = useOverlayStore((s) => s.closeCheatSheet);
   const presetId = useKeymapStore((s) => s.activePresetId);
+  // User-defined shortcuts (#225) belong on the same sheet as everything else —
+  // straight from the dispatcher's own table, so a chord that fires is a chord
+  // that is listed. They are not catalog actions and have no preset binding, so
+  // they get their own section rather than a category.
+  const userBindings = useKeymapStore((s) => s.userBindings);
   if (!open) return null;
   const preset = presetById(presetId);
 
@@ -93,29 +123,33 @@ export function CheatSheet() {
                 {cat}
               </div>
               {ids.map((id) => (
-                <div
+                <Row
                   key={id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 24,
-                    padding: "3px 0",
-                  }}
-                >
-                  <span>{ACTIONS[id].title}</span>
-                  <span
-                    style={{
-                      color: "var(--fg-1)",
-                      fontFamily: "var(--font-mono, monospace)",
-                    }}
-                  >
-                    {formatBindings(preset.bindings[id] ?? [])}
-                  </span>
-                </div>
+                  title={ACTIONS[id].title}
+                  keys={formatBindings(preset.bindings[id] ?? [])}
+                />
               ))}
             </div>
           );
         })}
+        {userBindings.size > 0 && (
+          <div style={{ marginBottom: 16 }} data-testid="cheat-sheet-custom">
+            <div
+              style={{
+                color: "var(--fg-2)",
+                fontSize: 11,
+                letterSpacing: ".05em",
+                textTransform: "uppercase",
+                marginBottom: 6,
+              }}
+            >
+              Custom actions
+            </div>
+            {[...userBindings].map(([chord, binding]) => (
+              <Row key={chord} title={binding.title} keys={formatChord(chord)} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

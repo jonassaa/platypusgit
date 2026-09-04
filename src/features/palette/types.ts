@@ -24,6 +24,12 @@ export interface PaletteItem {
    */
   actionId?: import("@/features/keymap").ActionId;
   /**
+   * A literal chord, for a row whose shortcut is not a catalog action — a
+   * user-defined action (#225), whose binding is a value in Settings rather
+   * than a preset entry. Rendered the same way `actionId` is.
+   */
+  chord?: string;
+  /**
    * Executes the item. May act directly, push a param step, or fire a nav
    * intent. The component closes the palette *before* calling run() only for
    * non-step items — see CommandPalette.activate.
