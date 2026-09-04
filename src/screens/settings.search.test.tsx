@@ -142,7 +142,15 @@ describe("settings search: the Store gate", () => {
     // Nowhere in the DOM — not a disabled control, not a hidden one.
     expect(document.querySelector('[data-setting-id="updates.check"]')).toBeNull();
     expect(document.querySelector('[data-setting-id="updates.channel"]')).toBeNull();
-    // And the side menu counts what it renders: one hit, not three.
+    // The COUNT is the load-bearing assertion in this state, so do not drop
+    // it as redundant: with the capability known to be store-managed,
+    // `UpdatesPage` takes its own `storeManaged` branch and renders neither
+    // control whatever the index says, so the two queries above pass even
+    // with the index gate removed. A badge reading "3" is what leaks — and it
+    // is itself a statement that this page has three update settings.
+    // (The state where the index gate is the ONLY thing standing between a
+    // Store install and a live "Check for updates" button is `capability ===
+    // null`, which the case below covers.)
     expect(navRow("general.updates").textContent).toContain("1");
     expect(navRow("general.updates").textContent).not.toContain("3");
   });

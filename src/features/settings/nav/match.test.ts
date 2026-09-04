@@ -16,9 +16,9 @@ import type { SettingRowGate } from "./types";
  * below want to search against.
  */
 function gates(
-  closed: Partial<Record<SettingRowGate, boolean>> = {},
+  overrides: Partial<Record<SettingRowGate, boolean>> = {},
 ): Record<SettingRowGate, boolean> {
-  return { updatable: true, themeFixed: true, themeFollowsSystem: true, ...closed };
+  return { updatable: true, themeFixed: true, themeFollowsSystem: true, ...overrides };
 }
 
 const FULL = buildIndex(gates());

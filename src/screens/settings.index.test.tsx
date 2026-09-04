@@ -249,9 +249,10 @@ describe("settings registry", () => {
     // `CARD_ROWS` in SettingsCard.tsx is one flat map keyed by card id and
     // written once per card at module load — last write wins. Two pages
     // sharing an id would cross-wire their row visibility: one page's card
-    // would decide whether it is empty from the OTHER page's row ids. (This
-    // very nearly happened between T5 and T6, when a leftover `workspace`
-    // card and `git.remote`'s `pull` card briefly overlapped.)
+    // would decide whether it is empty from the OTHER page's row ids. (Not
+    // hypothetical: mid-refactor a card still left behind in `Settings.tsx`
+    // and `git.remote`'s new card both carried the id `pull` for two commits.
+    // It was inert only because no search existed yet.)
     const all = PAGE_ORDER.flatMap((p) => declaredCardIds(p));
     expect(new Set(all).size, `duplicate card id in ${all.join(", ")}`).toBe(all.length);
   });
@@ -261,7 +262,8 @@ describe("settings registry", () => {
     // row label, its keywords, the CARD title and the page title), so a title
     // edited in the JSX but not in `meta` makes search match text the user
     // cannot see anywhere — the same defect the row-label check below exists
-    // to catch, in the 14 title pairs above it.
+    // to catch, one level up. Every declared card duplicates its title string
+    // between `meta` and the JSX beside it; this is what keeps the two equal.
     for (const pageId of PAGE_ORDER) {
       const { Page, meta } = PAGES[pageId];
       for (const state of renderStatesFor(pageId)) {
