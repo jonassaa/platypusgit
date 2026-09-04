@@ -1074,6 +1074,62 @@ that is only partly here — which is the whole reason the notice exists.
   conditional entries would move the bar's geometry between repos. LFS is a
   panel on the Remote screen (its transfers are remote-object ops).
 
+## Settings is a registry, not a screen
+
+Ten pages under `features/settings/pages/` (`layout/`, `nav/` and `theme/`
+hold the machinery around them — see architecture.md's `features/` tree).
+Each page module exports a pure `meta: SettingsPageMeta` — title, group,
+icon, and `cards[].rows[]` — beside its component. `nav/match.ts::buildIndex`
+flattens every page's `meta` into a searchable index over plain data; **a
+search box that has to render a page to know whether it matches has already
+lost** — matching runs over the registry, and only a HIT renders anything
+(`SettingsResults` mounts the real page component under a filter context, so
+a result is the actual control, never a copy of it that could drift — see
+`screens/settings.search.test.tsx`).
+
+- **The guard test is the anti-drift mechanism.** `meta` and the component it
+  sits beside are two independent things a person can edit without touching
+  the other, so `screens/settings.index.test.tsx` mounts every page and
+  diffs `data-setting-id` in the DOM against the declared row ids **both
+  directions**: a row that renders but isn't declared is invisible to
+  search, and a row declared but never rendered is a dead search result that
+  looks live. Some pages render a mutually-exclusive subset of their rows
+  depending on other state (Appearance: the light/dark pair while following
+  the OS, one theme picker while fixed) — no single render contains every
+  declared row, so the check runs **across named render states**
+  (`PAGE_RENDER_STATES`) and compares the union to `declared`, not one flat
+  render. The same test also asserts **label equality**: the text a row
+  actually shows must equal `meta`'s declared label exactly, because search
+  matches on `label` and a drifted label would surface a result showing the
+  user text they never see on screen.
+- **The `keywords` convention exists because hints are not indexed.** A row's
+  `hint` is `ReactNode` — often JSX with `<code>` tags — and cannot be
+  flattened to text reliably, so `buildIndex`'s haystack folds in only
+  `label`, `keywords`, and the card/page titles. A word that a user would
+  reasonably search for but that lives only in prose inside a hint (GPG,
+  say, for the "Sign commits" row) has to be duplicated into that row's
+  `keywords` string, or it is simply unfindable. `git.integrations`'s
+  `dynamic` card carries this furthest: its rows are synthetic (a host list
+  is data, not fixed rows), so `keywords` is the ONLY thing search has to go
+  on — see its `integrations.token` row.
+- **The index is Store-gated, like every other update surface.**
+  `useSettingsIndex` reads `useUpdateStore`'s `capability` and excludes
+  `when: "updatable"` rows via the same `updatesManagedExternally` predicate
+  `UpdatesPage` itself renders behind — so a Store install's search cannot
+  surface "Check for updates" or the channel picker either. Folding a new
+  gated surface into the index without reusing that predicate would reopen
+  the exact violation `docs/dev/distribution.md`'s Store rule exists to
+  prevent, just reachable by typing instead of clicking.
+- **`data-setting-id` is selected exactly, never with `*=`, in both specs and
+  e2e.** These are dotted, two-part ids (`card.row`), and one is a genuine
+  substring of another today — `commit.sign` is a literal prefix of
+  `commit.signoff`. A `*=` (partial-text) selector on either compiles to an
+  XPath `contains()` test, which does not care about word boundaries: it can
+  silently resolve to the wrong row, or to neither, exactly the failure mode
+  `test/e2eSelectors.test.ts` documents for `data-testid`.
+  `e2e/specs/settings.e2e.ts`'s `clickSettingsToggleRow` selects by the full,
+  exact id for this reason.
+
 ## State management
 
 - **Zustand per feature**, colocated with its owner. Cross-feature state

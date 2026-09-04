@@ -621,8 +621,24 @@ features/            Components + Zustand store colocated per feature:
 │                    useRowReorder, StageDropBar. See frontend.md
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
 ├── settings/        useSettingsStore (autoFetch, defaultPullMode, …), headMarks,
-│                   systemAppearance (OS light/dark → themePreference)
-│                    + HeadMarksControl
+│                    systemAppearance (OS light/dark → themePreference)
+│                    + HeadMarksControl. The searchable, side-menu-navigated
+│                    screen lives in four subdirectories:
+│   ├── layout/      SettingsCard / SettingsRow — the one card/row pair every
+│   │                page renders through — plus filterContext (which row ids
+│   │                are visible: null outside a search) and highlightContext
+│   │                (search terms to bold in a label), and Mono (shared
+│   │                path/command display)
+│   ├── nav/         The registry: pages.ts (GROUPS + PAGES, the side menu's
+│   │                order and content), types.ts (SettingsPageId, PAGE_ORDER),
+│   │                match.ts (buildIndex / matchRows, pure), useSettingsIndex
+│   │                (the Store-gated hook wrapping buildIndex), SettingsNav
+│   │                (the tree), SettingsResults (the flat search-hit list)
+│   ├── pages/       The ten pages themselves, one file each, every one
+│   │                exporting a pure `meta` beside its component — see
+│   │                frontend.md's "Settings is a registry" section
+│   └── theme/       ColorEditor + ThemeEditorDialog, split out of the
+│                    Appearance page for size
 ├── palette/         usePaletteStore (step stack + chips), commands catalog,
 │                    frecency, CommandPalette (⌘P; rows show live keymap chords)
 ├── keymap/          actions.ts (catalog + default runners), presets.ts (rider +

@@ -75,4 +75,38 @@ describe("settings search", () => {
     fireEvent.click(screen.getByRole("button", { name: /Clear search/ }));
     expect(document.querySelector('[data-settings-page="general.appearance"]')).toBeTruthy();
   });
+
+  // Every other test here is presence-based — it proves a row with the right
+  // id showed up, not that firing its control does anything. The whole design
+  // rests on a result being the REAL row (Page renders itself under a filter
+  // context, per SettingsResults), not a copy of it that could drift; this is
+  // the one test that would catch a copy.
+  it("firing a control rendered in the results pane mutates the store", () => {
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    typeSearch("context lines");
+    const input = document.querySelector(
+      '[data-setting-id="diff.context"] input',
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(useSettingsStore.getState().diffContextLines).toBe(3); // DEFAULTS
+    fireEvent.change(input, { target: { value: "7" } });
+    expect(useSettingsStore.getState().diffContextLines).toBe(7);
+    useSettingsStore.getState().set("diffContextLines", 3); // leave defaults for later tests
+  });
+
+  // git.integrations' card is `dynamic: true` — its host list is data, not
+  // fixed rows, so SettingsResults reveals the whole card when ANY of its
+  // synthetic rows match rather than filtering row by row. That branch
+  // (SettingsResults.tsx) has no other direct coverage.
+  it("renders the dynamic Integrations card when a search hits its synthetic rows", () => {
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    typeSearch("github"); // keyword on the "Forge token" synthetic row
+    expect(document.querySelector('[data-settings-card="integrations"]')).toBeTruthy();
+    // No repo is open in this test, so the row ForgeSettings actually renders
+    // is "No forge detected" (id integrations.none) — a DIFFERENT synthetic
+    // id than the one that literally matched ("integrations.token"). Only
+    // the `dynamic` branch, which reveals every declared row on the card once
+    // any one of them matches, keeps this one visible.
+    expect(document.querySelector('[data-setting-id="integrations.none"]')).toBeTruthy();
+  });
 });

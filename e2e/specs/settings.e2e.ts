@@ -300,4 +300,23 @@ describe("settings", () => {
     );
     expect(await confirmCallCount()).toBe(0);
   });
+
+  // Navigation + search in the real webview. The unit tests cover matching and
+  // filtering; what only a real run proves is that the side menu switches the
+  // rendered page and that a search reaches rows on pages nobody navigated to.
+  it("navigates to a page and searches across pages", async () => {
+    await openSettings("git.diff");
+    await expect($('[data-setting-id="diff.layout"]')).toBeExisting();
+    // A page the user did not navigate to is genuinely not rendered.
+    await expect($('[data-setting-id="appearance.zoom"]')).not.toBeExisting();
+
+    await $('[data-testid="settings-search"]').setValue("theme");
+    // Appearance rows appear without navigating to Appearance…
+    await $('[data-setting-id="appearance.theme"]').waitForExist({
+      timeout: 10_000,
+      timeoutMsg: "search never surfaced the Appearance theme row",
+    });
+    // …and a non-matching row on the page we WERE on is filtered out.
+    await expect($('[data-setting-id="diff.context"]')).not.toBeExisting();
+  });
 });

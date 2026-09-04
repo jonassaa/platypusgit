@@ -210,6 +210,13 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   commit. The write is global and the form names the file; per-repo identities
   (#233) add a scope control there, never a second form.
   (`docs/dev/frontend.md`)
+- **Settings is a registry, not a screen** — every page under
+  `features/settings/pages/` exports pure `meta` beside its component, so search
+  matches without rendering. A new setting joins its page's `meta.cards[].rows`
+  or `settings.index.test.tsx` fails the build; a word that lives only in a
+  `hint` goes in `keywords`, because hints are `ReactNode` and are NOT indexed.
+  The index reads `UpdateCapability`, so it gates on `updatesManagedExternally`
+  like every other update surface. (`docs/dev/frontend.md`)
 - **The log is paged** — `s.commits` is a prefix of history, never the answer
   to "does X exist / is X an ancestor"; ask the backend.
   (`docs/dev/frontend.md`)

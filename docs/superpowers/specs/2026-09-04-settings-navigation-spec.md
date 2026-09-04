@@ -330,10 +330,17 @@ the `ForgeSettings` duplication this change deletes.
 Left/Right collapse and expand a group, Enter and Space select. The search box is
 the first focusable element in the screen.
 
-**Deliberately not density-aware.** `PGSidebarRow` is a fixed `height: 22` and
-does not read `--row-step`. Making it density-aware would move geometry in
-Branches and RepoBrowser and break their density tests, so the settings side menu
-inherits the same fixed height as every other sidebar in the app.
+**Density-aware, reversed during implementation.** This plan originally called
+`PGSidebarRow` deliberately not density-aware, on the theory that making it
+read `--row-step` would move geometry in Branches and RepoBrowser and break
+their density tests. That reasoning was wrong: neither consumes
+`PGSidebarRow`, `PGSidebarGroup` or `PGPrimarySidebar` — `src/design/chrome.tsx`
+and `chrome.test.tsx` were, and remain, the only two call sites, this feature
+included. With no other sidebar's geometry at risk, there was no reason to
+withhold density from the settings side menu, so `PGSidebarRow` now sizes as
+`height: calc(22px + var(--row-step))`, matching every other list row's
+density mechanism, and the settings nav scales with it like the rest of the
+app.
 
 ## Edge cases
 
@@ -437,7 +444,6 @@ Deliberately excluded, with reasons:
 - **Indexing hint prose.** `keywords` covers what matters; see "What search reads".
 - **Nesting beyond the three groups.** Ten pages do not need a deeper tree.
 - **Per-repo settings scope.** That is #233's own concern.
-- **Density on `PGSidebarRow`.** It would move geometry in other sidebars.
 - **A keyboard shortcut for the search box.** `Mod+F` is `diff.find` and
   `Mod+Shift+F` is `tree.find`, both pane-scoped. A pane-scoped `settings.search`
   on `Mod+F` would not break `presets.test.ts` — there is no exact reverse-map
