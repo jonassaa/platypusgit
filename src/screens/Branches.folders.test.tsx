@@ -11,7 +11,10 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
 import { mockInvoke, resetInvokeMock } from "@/test/invokeMock";
 import { WithDialogs, resetDialogs } from "@/test/dialog";
-import { BRANCH_FOLDERS_KEY } from "@/features/branches/useBranchFolders";
+import {
+  BRANCH_FOLDERS_KEY,
+  reloadCollapsedFolders,
+} from "@/features/branches/useBranchFolders";
 import type { BranchInfo } from "@/lib/types";
 
 const mkBranch = (over: Partial<BranchInfo> & { name: string }): BranchInfo => ({
@@ -93,6 +96,9 @@ describe("Branches folder tree", () => {
     resetInvokeMock();
     resetDialogs();
     localStorage.clear();
+    // The folds are a shared store (two surfaces render the tree), so clearing
+    // the key is not enough to keep one case's folds out of the next.
+    reloadCollapsedFolders();
     useKeymapStore.setState({ handlers: new Map(), lastShiftAt: 0 });
     useKeymapStore.getState().setPreset("rider");
     useFocusStore.setState({

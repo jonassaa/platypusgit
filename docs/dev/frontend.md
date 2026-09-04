@@ -945,7 +945,9 @@ that is only partly here — which is the whole reason the notice exists.
   #135's default-branch pin is the app guessing what belongs on top; a user pin
   is an instruction, and an instruction that loses to a guess is not a pin. With
   no pins the order is exactly #135's, which is why its tests are untouched.
-- **Pins are HOISTED OUT of the folder tree, not sorted to the front of it.**
+- **Pins are HOISTED OUT of the folder tree, not sorted to the front of it**
+  (`branchTree.ts::branchTreeRowsWithPins` — the rule lives there because both
+  the Branches screen and the titlebar picker render through it).
   Grouping runs after ordering and only moves rows into folders, so a pinned
   `feat/foo` would otherwise be the first row INSIDE `feat` — invisible whenever
   that folder is collapsed, which is the case pinning exists for. Hoisted rows
@@ -986,13 +988,18 @@ that is only partly here — which is the whole reason the notice exists.
 - **A filter flattens the tree to its matches, showing full names.** Hiding a
   hit behind a folded folder is the one thing a search box must never do, and a
   bare `bar` with no `feat/foo` above it names nothing.
-- **Fold state is the EXCEPTIONS, per repository, outside the store.**
+- **Fold state is the EXCEPTIONS, per repository, outside `useRepoStore`.**
   `useBranchFolders` persists the set of COLLAPSED paths in localStorage keyed by
   repository path (`pg-branch-folders-v1`), pruning a repository's entry once it
   is empty. Not in `useRepoStore`: that holds one repository's live git state and
-  every field must join `RepoSlice`, whereas this has to outlive the tab. It is
-  re-read on every repository change, or one tab's folds would be written back
-  under another tab's path.
+  every field must join `RepoSlice`, whereas this has to outlive the tab.
+- **The folds are ONE zustand store, for the reason the pins are** — since the
+  titlebar picker grew folders (#244) two surfaces render the tree at once, and
+  with a copy of the state per hook the last one to write silently dropped the
+  other's folds. Keyed by repository path and selected on read, so a tab switch
+  cannot apply one repository's folds to another's branches. A test that seeds
+  the key must `reloadCollapsedFolders()`, and so must one that needs a case's
+  folds gone — `localStorage.clear()` alone no longer resets it.
 - **Folding the folder the selection sits in moves the selection onto it.**
   Otherwise `flatIndex` goes to -1 and the next ArrowDown restarts at the top.
   ← on a folder folds it and on anything else climbs to `parentFolderPath`.
@@ -1004,10 +1011,53 @@ that is only partly here — which is the whole reason the notice exists.
   branch it cannot ask about is reported unmerged, the safe direction. The
   confirm names every branch in a scrolling list — "8 branches" is not something
   anyone can check before clicking Delete.
-- **Drag and drop is deliberately NOT wired to folder rows yet.** When it is, a
-  branch dragged onto or out of a folder resolves through `resolveDrop.ts` like
-  every other drop, with a keyboard equivalent — see the drag-and-drop rules
-  below.
+- **Dragging a branch onto a folder is `git branch -m` and nothing else.** A
+  folder is not a git object, it is the `/` in the name, so the only meaning a
+  drop can have is a rename — and only the LEAF travels, like a file dragged
+  between directories (`feat/deep/c` onto `release` is `release/c`, never
+  `release/deep/c`). `resolveBranchMoveDrop` (`features/dnd/resolveDrop.ts`)
+  owns every legality question: null for a no-op (dropped on the folder it
+  already sits in), a `rejected` reason for a remote-tracking ref or a name
+  that is taken. The drop then CONFIRMS, like the graph's drops do — a stray
+  pointer release must not rename a branch.
+- **The "out of a folder" target only exists mid-gesture.** The refs table is
+  one grid with no root header to aim at, so `BranchFolderDropBar` appears for
+  the duration of the drag and vanishes again, the way `StageDropBar` does for
+  the Files screen. It is shown only for a drag it can actually serve — a local
+  branch currently inside a folder — because a permanently dead target is worse
+  than none. The folder rows are where a remote drag gets its explanation.
+- **The keyboard equivalent is "Move to folder…"** in `branchMenuItems`, so it
+  reaches every branch surface and not just this screen. It prompts for the
+  folder (empty = top level) and routes the answer through the SAME resolver as
+  the drop, which is what keeps the two gestures from disagreeing about a
+  collision. Typing the destination is the confirmation, so it asks once where
+  the drop asks twice — the shape "Rename…" beside it already has.
+- **A pin follows a renamed branch** (`useBranchPins.rename`, called from
+  `useRepoStore.renameBranch` after the rename succeeds). A pin matches the
+  name exactly, so without this, dragging a pinned branch into a folder would
+  silently unpin it. Mapped in place, never re-appended: the array's order is
+  the pin order.
+- **Folders are in the titlebar `BranchPicker` too, off the same fold set.**
+  One repository has one notion of which folders are folded, so the picker
+  reads and writes `useBranchFolders` under the same repository path — and each
+  SECTION trees on its own, which is why folding `origin` cannot fold the local
+  `feat` beside it. A folder row there is not checkout-able: Enter toggles it,
+  → opens it, ← folds it or climbs out. The documented resting rule extends
+  rather than bends — the cursor rests on HEAD's row, or, when HEAD is folded
+  away, on the folder holding it, so a stray Enter is still a no-op. Rows carry
+  `data-picker-row` for anything indexed by position (the cursor, the scroll,
+  the actions menu) and branch rows keep `data-branch-row` plus a
+  `data-branch-name` with the FULL name, since a row's label is only the
+  segments it owns.
+- **Acting on a row claims the picker's cursor.** Enter, → and ← all change the
+  row set — a fold adds or removes rows — and the resting rule would otherwise
+  re-park the cursor on HEAD the instant a folder opens, yanking it out from
+  under the key that just opened it. For the same class of reason the
+  length-clamp effect uses the `setActiveIndex(i => …)` updater form: it runs in
+  the same commit as the resting effect, and reading `activeIndex` out of the
+  render closure would overwrite the position that effect just chose (typing a
+  query shrinks the list and re-parks the cursor at once, which is exactly when
+  the two collide).
 
 ## Navigation model
 
@@ -1938,7 +1988,8 @@ same rule stated twice:
   drop returns a reason (shown on the ghost), never silence.
 - **Every drag has a keyboard equivalent** — staging → Space/checkbox, reorder →
   Mod+Shift+↑/↓ and chevrons, repository tabs → Mod+Shift+←/→ and the tab menu's
-  Move left/right, graph ops → menus/palette/Branches. A new gesture without one
+  Move left/right, graph ops → menus/palette/Branches, a branch into or out of a
+  folder (#244) → the branch menu's "Move to folder…". A new gesture without one
   is not done. Escape cancels, from one capture-phase listener.
 - **`useRowReorder` takes an `axis`** (`"y"` default, `"x"` for the repository
   tab strip, #238). The axis is a table of accessors — `clientX`/`clientY`,

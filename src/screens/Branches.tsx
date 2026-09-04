@@ -29,13 +29,23 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { orderBranches } from "@/features/branches/orderBranches";
 import {
   branchFolderPaths,
-  branchTreeRows,
+  branchLeafRows,
+  branchTreeRowsWithPins,
   branchesInFolder,
   parentFolderPath,
   type BranchTreeRow,
 } from "@/features/branches/branchTree";
 import { useBranchFolders } from "@/features/branches/useBranchFolders";
+import { BranchFolderDropBar } from "@/features/branches/BranchFolderDropBar";
 import { usePinSet } from "@/features/branches/usePinSet";
+import {
+  resolveBranchMoveDrop,
+  useDragSource,
+  useDropZone,
+  type BranchMove,
+  type DragPayload,
+  type DropResolution,
+} from "@/features/dnd";
 import {
   deleteMergedCandidates,
   findMergedBranches,
@@ -304,31 +314,19 @@ export function BranchesScreen() {
   // behind a folded folder is the one thing a search box must never do. Rows
   // then show their FULL names, because a bare `bar` with no `feat/foo` above
   // it names nothing.
+  // Pinned branches are hoisted OUT of the tree rather than sorted to the
+  // front of it (#238) — the rule, and the reason for it, live in
+  // `branchTreeRowsWithPins`, which the titlebar picker renders through too.
+  // The default branch escapes the hoist today only because `main` has no `/`
+  // and is therefore already a root-level leaf.
   const filtering = filter.length > 0;
-  const displayRows = React.useMemo<BranchTreeRow<BranchRow>[]>(() => {
-    const flat = (b: BranchRow) => ({
-      kind: "branch" as const,
-      path: b.name,
-      label: b.name,
-      depth: 0,
-      branch: b,
-    });
-    if (filtering) return rows.map(flat);
-    // Pinned branches are HOISTED OUT of the tree (#238), not just sorted to
-    // the front of it. Grouping only moves ordered rows into folders, so a
-    // pinned `feat/foo` would otherwise be the first row INSIDE `feat` — and
-    // invisible whenever that folder is collapsed, which is the case pinning
-    // exists for. The default branch escapes this today only because `main`
-    // has no `/` and is therefore already a root-level leaf.
-    //
-    // They render at depth 0 under their FULL names (a bare `foo` with no
-    // `feat/` above it names nothing) and are REMOVED from the tree rather
-    // than duplicated into it. `rows` is already ordered pins-first, so the
-    // hoisted block and the tree below it are in one continuous order.
-    const pinned = rows.filter((b) => pins.has(b.name));
-    const rest = rows.filter((b) => !pins.has(b.name));
-    return [...pinned.map(flat), ...branchTreeRows(rest, folders.collapsed)];
-  }, [rows, filtering, folders.collapsed, pins]);
+  const displayRows = React.useMemo<BranchTreeRow<BranchRow>[]>(
+    () =>
+      filtering
+        ? branchLeafRows(rows)
+        : branchTreeRowsWithPins(rows, pins, folders.collapsed),
+    [rows, filtering, folders.collapsed, pins],
+  );
 
   const visibleTags = React.useMemo(() => {
     if (view === "stashes") return [];
@@ -381,6 +379,92 @@ export function BranchesScreen() {
     if (folders.collapsed.has(path)) folders.expand([path]);
     else collapseFolder(path);
   };
+
+  // ─── Moving a branch between folders (#244) ─────────────────────────────────
+  //
+  // A branch folder is not a git object — it is the `/` in the name — so
+  // dragging a branch into one is `git branch -m` and nothing else. Which drops
+  // are legal is decided entirely by `resolveBranchMoveDrop`; this half does the
+  // DOM work and calls the op, the same split the graph's drops keep.
+  const localNames = React.useMemo(
+    () => branches.filter((b) => !b.isRemote).map((b) => b.name),
+    [branches],
+  );
+
+  const applyBranchMove = async (move: { from: string; to: string }) => {
+    const ok = await pgConfirm({
+      title: `Move ${move.from} to ${move.to}?`,
+      body: 'A folder is the "/" in a branch name, so this renames the branch. Its commits, reflog and upstream tracking are unchanged, and the remote branch it tracks keeps the name it has.',
+      confirmLabel: "Move",
+    });
+    if (!ok) return;
+    await useRepoStore.getState().renameBranch(move.from, move.to);
+    // The store reports a failed rename on the banner and leaves the old name
+    // in place, so the new one is only worth selecting if it now exists — the
+    // branch list is already refreshed by the time that call resolves.
+    if (!useRepoStore.getState().branches.some((b) => b.name === move.to)) return;
+    // Land the selection where the branch now lives, and open whatever was
+    // folded over it: a move you cannot see the result of reads as a branch
+    // that vanished.
+    const holding = [...folders.collapsed].filter((p) =>
+      move.to.startsWith(`${p}/`),
+    );
+    if (holding.length) folders.expand(holding);
+    setSelection({ kind: "branch", name: move.to });
+  };
+
+  const branchDragSource = useDragSource(
+    React.useCallback(
+      (target: HTMLElement): DragPayload | null => {
+        const rowEl = target.closest("[data-branch-name]") as HTMLElement | null;
+        const name = rowEl?.getAttribute("data-branch-name");
+        if (!name) return null;
+        // A remote row IS draggable on purpose: the resolver refuses it with a
+        // reason on the ghost, which beats a row that silently does nothing.
+        return {
+          kind: "ref",
+          ref: name,
+          isHead: !!branches.find((b) => b.name === name && !b.isRemote)?.isHead,
+          label: name,
+        };
+      },
+      [branches],
+    ),
+  );
+
+  const resolveFolderDrop = React.useCallback(
+    (el: HTMLElement, p: DragPayload): DropResolution | null => {
+      const folderEl = el.closest("[data-folder]") as HTMLElement | null;
+      const path = folderEl?.getAttribute("data-folder");
+      if (!folderEl || !path) return null;
+      const drop = resolveBranchMoveDrop(
+        p,
+        { kind: "folder", path },
+        { local: localNames },
+      );
+      if (!drop) return null;
+      if (drop.kind === "rejected")
+        return { key: "", el: folderEl, reason: drop.reason };
+      // The key round-trips the decision so `onDrop` does not resolve twice —
+      // by the time the confirm answers, the pointer is long gone.
+      return { key: JSON.stringify(drop), el: folderEl };
+    },
+    [localNames],
+  );
+
+  const folderZone = useDropZone({
+    id: "branches.folders",
+    accepts: (p) => p.kind === "ref",
+    resolve: resolveFolderDrop,
+    onDrop: (_p, key) => {
+      if (!key) return;
+      const drop = JSON.parse(key) as BranchMove;
+      if (drop.kind === "move") void applyBranchMove(drop);
+    },
+    // The ghost carried the reason mid-gesture; this is for the user who let go
+    // without reading it, so a refused drop is never silence.
+    onReject: (_p, reason) => pgFlash(reason),
+  });
 
   usePaneList({
     paneId: "branches.list",
@@ -523,7 +607,15 @@ export function BranchesScreen() {
           }}
         >
           <FocusableScroll ariaLabel="Refs list" style={{ flex: 1 }}>
-          <div style={{ minWidth: totalWidth }}>
+          {/* One delegated drag source and one delegated drop zone for the
+              whole table (#244): the rows stay plain markup carrying
+              `data-branch-name` / `data-folder`, and no per-row closure is
+              threaded through them. */}
+          <div
+            ref={folderZone.ref}
+            {...branchDragSource}
+            style={{ minWidth: totalWidth }}
+          >
             <div
               style={{
                 display: "grid",
@@ -715,6 +807,8 @@ export function BranchesScreen() {
                 onContextMenu={(e) => onBranchCtx(e, b)}
                 data-pg-row=""
                 data-testid="branch-row"
+                // What the delegated drag source reads off the row (#244).
+                data-branch-name={b.name}
                 data-selected={
                   selection?.kind === "branch" && selection.name === b.name
                     ? ""
@@ -1031,6 +1125,13 @@ export function BranchesScreen() {
             ))}
           </div>
           </FocusableScroll>
+          {/* The "out of a folder" target, which the grid has no room for
+              permanently — see BranchFolderDropBar. */}
+          <BranchFolderDropBar
+            local={localNames}
+            onMove={(m) => void applyBranchMove(m)}
+            onReject={(reason) => pgFlash(reason)}
+          />
         </PGPane>
 
         <PGResizeHandle

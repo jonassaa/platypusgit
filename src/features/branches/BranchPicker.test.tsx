@@ -34,9 +34,13 @@ function setup(branches: BranchInfo[]) {
   return render(<BranchPicker anchor={anchor} open onClose={() => {}} />);
 }
 
+// The FULL name off the row, not the label inside it: since #244 the picker
+// groups on `/`, so a row shows only the segments it owns (`origin/main` renders
+// as `main` under an `origin` folder). Every expectation below is unchanged by
+// that — grouping nests rows, it never reorders them.
 const rowNames = () =>
   Array.from(document.querySelectorAll("[data-branch-row]")).map((el) =>
-    el.querySelector("span")?.textContent,
+    el.getAttribute("data-branch-name"),
   );
 
 const activeName = () =>

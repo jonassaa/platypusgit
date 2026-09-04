@@ -2,8 +2,11 @@
 // other per-surface view preferences: localStorage, best-effort, never fatal.
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { act, renderHook } from "@testing-library/react";
 import {
   readCollapsedFolders,
+  reloadCollapsedFolders,
+  useBranchFolders,
   writeCollapsedFolders,
   BRANCH_FOLDERS_KEY,
 } from "./useBranchFolders";
@@ -93,5 +96,70 @@ describe("collapsed branch folders", () => {
     writeCollapsedFolders("/repos/a", new Set(["feat", "chore"]));
 
     expect(readCollapsedFolders("/repos/b")).toEqual(new Set(["fix"]));
+  });
+});
+
+// Two surfaces render the tree at once — the Branches screen and the titlebar
+// picker (#244) — so the folds have to be ONE live set. With a copy per hook,
+// the last one to write would silently drop the other's folds.
+describe("useBranchFolders", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    reloadCollapsedFolders();
+  });
+
+  it("shows one surface's fold to the other immediately", () => {
+    const screen = renderHook(() => useBranchFolders("/repos/a"));
+    const picker = renderHook(() => useBranchFolders("/repos/a"));
+
+    act(() => picker.result.current.collapse(["feat"]));
+
+    expect([...screen.result.current.collapsed]).toEqual(["feat"]);
+    expect(readCollapsedFolders("/repos/a")).toEqual(new Set(["feat"]));
+  });
+
+  it("does not let one surface's write drop the other's folds", () => {
+    const screen = renderHook(() => useBranchFolders("/repos/a"));
+    const picker = renderHook(() => useBranchFolders("/repos/a"));
+
+    act(() => picker.result.current.collapse(["feat"]));
+    act(() => screen.result.current.collapse(["release"]));
+
+    expect([...picker.result.current.collapsed].sort()).toEqual([
+      "feat",
+      "release",
+    ]);
+  });
+
+  it("keeps two open repositories apart", () => {
+    const a = renderHook(() => useBranchFolders("/repos/a"));
+    const b = renderHook(() => useBranchFolders("/repos/b"));
+
+    act(() => a.result.current.toggle("feat"));
+
+    expect([...a.result.current.collapsed]).toEqual(["feat"]);
+    expect([...b.result.current.collapsed]).toEqual([]);
+  });
+
+  it("keeps the set's reference stable while the folds do not change", () => {
+    const a = renderHook(() => useBranchFolders("/repos/a"));
+    const first = a.result.current.collapsed;
+
+    // Another repository's write must not rebuild this one's Set — the Branches
+    // screen memoizes its whole row list on the reference.
+    const b = renderHook(() => useBranchFolders("/repos/b"));
+    act(() => b.result.current.collapse(["fix"]));
+    a.rerender();
+
+    expect(a.result.current.collapsed).toBe(first);
+  });
+
+  it("has nowhere to write for a repository that is not open", () => {
+    const none = renderHook(() => useBranchFolders(null));
+
+    act(() => none.result.current.collapse(["feat"]));
+
+    expect([...none.result.current.collapsed]).toEqual([]);
+    expect(localStorage.getItem(BRANCH_FOLDERS_KEY)).toBeNull();
   });
 });

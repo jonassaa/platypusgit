@@ -24,6 +24,11 @@ import {
   selectedLinesToText,
 } from "@/lib/diffCopy";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
+import { branchFolderPaths } from "@/features/branches/branchTree";
+// The MODULE, not the `features/dnd` barrel: the barrel re-exports
+// `StageDropBar`, which imports `@/design` — going through it would close a
+// cycle back through this file. `resolveDrop.ts` itself imports only its types.
+import { resolveBranchMoveDrop } from "@/features/dnd/resolveDrop";
 import { activePins, pinItem } from "@/features/branches/pins";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import {
@@ -1393,6 +1398,48 @@ export function branchMenuItems(
           mono: true,
         });
         if (to && to !== name) useRepoStore.getState().renameBranch(name, to);
+      },
+    },
+    {
+      icon: "folder",
+      // The keyboard equivalent of dragging a branch onto a folder row (#244),
+      // and the only way to do it from the other branch surfaces. Typing the
+      // destination IS the confirmation, which is why this asks once where the
+      // drop asks twice — the same shape "Rename…" above already has.
+      label: "Move to folder…",
+      disabled: !name,
+      onClick: async () => {
+        if (!name) return;
+        const store = useRepoStore.getState();
+        const locals = store.branches.filter((b) => !b.isRemote);
+        const folders = branchFolderPaths(locals);
+        const cut = name.lastIndexOf("/");
+        const next = await pgPrompt({
+          title: `Move ${name}`,
+          body: folders.length
+            ? `Folder to move it into — empty moves it to the top level. This repository has ${folders.join(", ")}.`
+            : "Folder to move it into — empty moves it to the top level.",
+          initialValue: cut < 0 ? "" : name.slice(0, cut),
+          placeholder: "feat/deep",
+          confirmLabel: "Move",
+          mono: true,
+        });
+        // Empty submission means the top level; dismissal means no answer.
+        if (next === null) return;
+        const folder = next.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+        const move = resolveBranchMoveDrop(
+          { kind: "ref", ref: name, isHead: isCurrent, label: name },
+          folder ? { kind: "folder", path: folder } : { kind: "root" },
+          { local: locals.map((b) => b.name) },
+        );
+        // Null = it already sits there. One legality path with the drop, so
+        // the two gestures can never disagree about a collision.
+        if (!move) return;
+        if (move.kind === "rejected") {
+          pgFlash(move.reason);
+          return;
+        }
+        useRepoStore.getState().renameBranch(move.from, move.to);
       },
     },
     {
