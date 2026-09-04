@@ -318,9 +318,13 @@ that no existing caller changes:
 
 1. `PGSidebarGroup` gains optional controlled `open` + `onOpenChange`. A search
    must force groups with hits open. Uncontrolled when omitted, as today.
-2. `PGSidebarRow` gains optional `role`, `tabIndex`, `onKeyDown`, `id` and
-   `dimmed` passthrough — for the tree ARIA, roving focus, and the greyed
-   "no matches here" state.
+2. `PGSidebarRow` gains optional `role`, `tabIndex`, `onKeyDown`,
+   `ariaSelected`, `dimmed` and `testId` passthrough — for the tree ARIA,
+   roving focus, and the greyed "no matches here" state. `testId`, not `id`:
+   a DOM `id` of e.g. `git.diff` needs CSS dot-escaping everywhere it is
+   selected, and `PGToggle`/`PGSearchInput` already establish `testId` →
+   `data-testid` as this codebase's convention for an element a test needs to
+   find.
 
 Extending these beats hand-rolling a settings side menu: hand-rolling is precisely
 the `ForgeSettings` duplication this change deletes.
