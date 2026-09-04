@@ -172,9 +172,11 @@ gh api repos/jonassaa/platypusgit/releases/latest --jq .tag_name   # must be the
 ```
 
 - **The pointer**, above — nothing in CI checks it.
-- **Seven assets attached**: `latest.json`, `PlatypusGit_universal.dmg`,
+- **Nine assets attached**: `latest.json`, `PlatypusGit_universal.dmg`,
   `PlatypusGit_x64.msi`, `PlatypusGit_x64_portable.zip`, `PlatypusGit.msixbundle`,
-  `PlatypusGit_amd64.deb`, `PlatypusGit_amd64.AppImage`.
+  `PlatypusGit_amd64.deb`, `PlatypusGit_amd64.AppImage`, `PlatypusGit_arm64.deb`,
+  `PlatypusGit_arm64.AppImage` — the two Linux architectures are separate matrix
+  legs (#266), so a missing pair points at one leg, not at the whole job.
 - **`latest.json`'s `notes` is your release body, not a bare link.** A link means
   a `workflow_dispatch` run wrote it (see the promotion trap) and users will see
   that link instead of your notes.

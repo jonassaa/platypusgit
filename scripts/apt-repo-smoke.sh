@@ -33,6 +33,7 @@ set -eu
 
 PKG=platypusgit
 SUITE=stable
+COMPONENT=main
 PORT=8000
 
 # The path both this script and src-tauri/src/update.rs care about. The
@@ -45,13 +46,20 @@ KEYRING_PATH=/etc/apt/keyrings/platypusgit.gpg
 CLIENT_IMAGE=debian:bookworm
 SERVE_IMAGE=python:3-slim
 
-# The repository ships amd64 only, so the client must BE amd64 or apt will fetch
-# the index, verify it, and then report "Unable to locate package" — which is
-# what happens by default on an Apple Silicon Mac, where debian:bookworm runs
-# arm64. Pinned rather than inferred: on an amd64 CI runner this is a no-op, and
-# on a developer's Mac it is the difference between a real test and a confusing
-# one. Change it when an arm64 .deb actually exists (#266).
-PLATFORM=linux/amd64
+# ONE RUN PROVES ONE ARCHITECTURE. The client must BE the architecture under
+# test or apt fetches the index, verifies it, and then reports "Unable to locate
+# package" — which reads as a broken repository rather than a wrong client. That
+# is what happens by default on an Apple Silicon Mac, where debian:bookworm runs
+# arm64.
+#
+# So the architecture is pinned rather than inferred, and `--platform` follows it
+# unless it is given explicitly. Callers that publish several architectures run
+# this once per architecture (release.yml's `apt-publish` does); running it once
+# and calling the repository proven is the mistake this pairing exists to make
+# hard.
+ARCH=amd64
+PLATFORM=
+PLATFORM_EXPLICIT=no
 
 REPO_DIR=
 VERSION=
@@ -85,14 +93,17 @@ Options:
                      use minutes for a live check, Pages publishes async)
   --installer PATH   install by running this script (the real one-liner) instead
                      of a hand-written sources file
+  --arch ARCH        the architecture to prove installable (default amd64). One
+                     run proves one architecture: it reads that architecture's
+                     Packages and installs in a client of that architecture
   --expect-git       also assert Depends: git resolved, and that Section: vcs and
                      Provides/Replaces/Conflicts are in the control data. Only true of a
                      .deb built after that config change, so it is opt-in.
   --client-image IMG default debian:bookworm
   --serve-image IMG  default python:3-slim
-  --platform P       docker platform for the client (default linux/amd64; the
-                     repository ships amd64 only, and an arm64 client would fetch
-                     the index and then fail to locate the package)
+  --platform P       docker platform for the client (default linux/<arch>).
+                     amd64 and arm64 are spelled the same by docker and by
+                     Debian, so this is an escape hatch for one that is not
   -h, --help         this text
 USAGE
 }
@@ -108,10 +119,11 @@ while [ $# -gt 0 ]; do
         --wait) [ $# -ge 2 ] || die "--wait needs a value"; WAIT_SECS="$2"; shift 2 ;;
         --version) [ $# -ge 2 ] || die "--version needs a value"; VERSION="$2"; shift 2 ;;
         --installer) [ $# -ge 2 ] || die "--installer needs a value"; INSTALLER="$2"; shift 2 ;;
+        --arch) [ $# -ge 2 ] || die "--arch needs a value"; ARCH="$2"; shift 2 ;;
         --expect-git) EXPECT_GIT=yes; shift ;;
         --client-image) [ $# -ge 2 ] || die "--client-image needs a value"; CLIENT_IMAGE="$2"; shift 2 ;;
         --serve-image) [ $# -ge 2 ] || die "--serve-image needs a value"; SERVE_IMAGE="$2"; shift 2 ;;
-        --platform) [ $# -ge 2 ] || die "--platform needs a value"; PLATFORM="$2"; shift 2 ;;
+        --platform) [ $# -ge 2 ] || die "--platform needs a value"; PLATFORM="$2"; PLATFORM_EXPLICIT=yes; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         --) shift; break ;;
         *) die "unknown option '$1' (try --help)" ;;
@@ -122,6 +134,12 @@ done
 case "$WAIT_SECS" in
     ''|*[!0-9]*) die "--wait must be a positive integer, got '$WAIT_SECS'" ;;
 esac
+case "$ARCH" in
+    ''|*[!a-z0-9-]*) die "--arch must be a Debian architecture name, got '$ARCH'" ;;
+esac
+if [ "$PLATFORM_EXPLICIT" = no ]; then
+    PLATFORM="linux/$ARCH"
+fi
 
 if [ -n "$EXTERNAL_URL" ] && [ -n "$REPO_DIR" ]; then
     die "--repo and --url are alternatives, not both"
@@ -132,6 +150,11 @@ if [ -z "$EXTERNAL_URL" ]; then
     [ -f "$REPO_DIR/dists/$SUITE/InRelease" ] \
         || die "$REPO_DIR has no dists/$SUITE/InRelease — run apt-repo-publish.sh first"
     [ -f "$REPO_DIR/key.gpg" ] || die "$REPO_DIR has no key.gpg"
+    # Named here rather than discovered as "Unable to locate package" eight
+    # container-minutes later. A gate that says "you asked for arm64 and this
+    # tree has no arm64 index" is the difference between a typo and a hunt.
+    [ -f "$REPO_DIR/dists/$SUITE/$COMPONENT/binary-$ARCH/Packages" ] \
+        || die "$REPO_DIR has no $COMPONENT/binary-$ARCH index — was a $ARCH .deb published?"
 fi
 if [ -n "$INSTALLER" ]; then
     [ -f "$INSTALLER" ] || die "not a file: $INSTALLER"
@@ -221,15 +244,20 @@ ok "repository reachable at $PG_BASE_URL (after ${i}s)"
 #
 # So wait for the expected version to actually be LISTED. In local mode the pool
 # was just built, so this returns on the first try and costs nothing.
+#
+# Read from THIS architecture's index, not from a fixed one: with two of them
+# published, `binary-amd64` answering is no evidence at all that `binary-arm64`
+# is there — and the arm64 leg would then wait on the wrong file, pass, and
+# install nothing.
 i=0
-until curl -fsS "$PG_BASE_URL/dists/stable/main/binary-amd64/Packages" 2> /dev/null \
+until curl -fsS "$PG_BASE_URL/dists/stable/main/binary-$PG_ARCH/Packages" 2> /dev/null \
     | grep -qx "Version: $PG_EXPECT_VERSION"; do
     i=$((i + 1))
     [ "$i" -lt "$PG_WAIT_SECS" ] \
-        || fail "index at $PG_BASE_URL never listed version $PG_EXPECT_VERSION after ${PG_WAIT_SECS}s"
+        || fail "$PG_ARCH index at $PG_BASE_URL never listed version $PG_EXPECT_VERSION after ${PG_WAIT_SECS}s"
     sleep 1
 done
-ok "index lists version $PG_EXPECT_VERSION (after ${i}s)"
+ok "$PG_ARCH index lists version $PG_EXPECT_VERSION (after ${i}s)"
 
 # --- install ---------------------------------------------------------------
 
@@ -247,7 +275,7 @@ Types: deb
 URIs: $PG_BASE_URL
 Suites: stable
 Components: main
-Architectures: amd64
+Architectures: $PG_ARCH
 Signed-By: $PG_KEYRING_PATH
 SOURCES
     apt-get update -qq
@@ -289,6 +317,16 @@ got="$(awk '/^Version:/ { print $2; exit }' /tmp/status)"
 [ "$got" = "$PG_EXPECT_VERSION" ] \
     || fail "installed version is '$got', expected '$PG_EXPECT_VERSION'"
 ok "dpkg reports version $got"
+
+# The assertion the whole --arch pairing exists for. In installer mode the
+# sources file was written from the container's own `dpkg --print-architecture`,
+# so this compares what the client asked for against what the repository served
+# — the one thing a second architecture can get wrong without any other symptom
+# until someone's machine runs the wrong binary.
+got_arch="$(awk '/^Architecture:/ { print $2; exit }' /tmp/status)"
+[ "$got_arch" = "$PG_ARCH" ] \
+    || fail "installed architecture is '$got_arch', expected '$PG_ARCH'"
+ok "dpkg reports architecture $got_arch"
 
 [ -x /usr/bin/pgit ] || fail "/usr/bin/pgit is missing or not executable"
 ok "/usr/bin/pgit is executable"
@@ -359,12 +397,13 @@ else
     say "apt-repo-smoke: installing from the live $EXTERNAL_URL (waiting up to ${WAIT_SECS}s)"
 fi
 
-say "apt-repo-smoke: installing in $CLIENT_IMAGE on $PLATFORM (mode: $MODE)"
+say "apt-repo-smoke: installing $ARCH in $CLIENT_IMAGE on $PLATFORM (mode: $MODE)"
 set -- \
     --rm --network "$NETWORK_ARG" --platform "$PLATFORM" \
     -v "$WORK/client.sh:/client.sh:ro" \
     -e "PG_WAIT_SECS=$WAIT_SECS" \
     -e "PG_BASE_URL=$BASE_URL" \
+    -e "PG_ARCH=$ARCH" \
     -e "PG_EXPECT_VERSION=$VERSION" \
     -e "PG_EXPECT_GIT=$EXPECT_GIT" \
     -e "PG_MODE=$MODE" \
