@@ -82,6 +82,7 @@ describe("the surface toggles on a custom action", () => {
         showOutput: false,
         refreshAfter: false,
         surfaces: ["file", "commit"],
+        chord: "",
       },
     ]);
     render(<CustomActionsSettings />);

@@ -1041,6 +1041,25 @@ that is only partly here — which is the whole reason the notice exists.
   in the diff pane). Register pane handlers as declining (`() => false`) when
   idle, or they swallow the chord. Prefer a second catalog entry over
   overloading one id (`presets.test.ts` enforces the asymmetry).
+- **A chord that is DATA, not a catalog entry, goes through `userBindings`**
+  (#225) — the dispatcher's one seam for a binding the user typed. A custom
+  action has no `ActionId` and must not be given one: that union is closed and
+  `presets.test.ts` checks every member is bound in every preset. So the keymap
+  store takes `chord → { title, run }` and knows nothing about custom actions;
+  `features/actions/useCustomActionChords` (mounted in AppShell, next to the
+  listener) fills it from Settings. **Offered LAST**, after every built-in on
+  that chord has declined, so a setting can never take a key away from the app —
+  the ordering is what makes that true even for a hand-edited file. The cheat
+  sheet renders the table straight from the store, so a chord that fires is a
+  chord that is listed.
+- **Recording a shortcut is a dispatcher MODE (`beginCapture`), not a
+  listener.** The global keydown listener is capture-phase on `window` and is
+  registered first, so nothing registered later — wherever it sits — can stop it:
+  a field with its own listener would record ⌘K *and* commit. While a capture is
+  set, every chord goes to it (`preventDefault` **and** `stopPropagation`) and
+  nothing runs. The stopper only clears its own callback, so a field unmounting
+  late cannot kill the recording that replaced it — a capture nobody clears eats
+  every key in the app.
 - **A pane action sharing a chord with a GLOBAL one makes BINDING ORDER
   load-bearing** (#158): a global with a default runner never declines, so the
   pane entry must come first in the preset table (`COMMON` is spread before the
@@ -1917,6 +1936,48 @@ same rule stated twice:
   lives in `ui-helpers.tsx` for `features/keymap`.
 - The parser stays in Rust. `customActions.ts` fills a context and filters a
   list; it never turns a command string into argv.
+
+### Custom actions: a shortcut is the PALETTE invocation (#225)
+
+- **`boundChord(a)` is the one gate on whether a shortcut is live**
+  (`features/actions/actionChords.ts`), asked by the dispatcher's table, the
+  cheat sheet, the palette chip and the Settings row alike. Three things have to
+  hold, and each is its own kind of wrong:
+  1. **The chord is bindable** — `chordRefusal` in `customActions.ts`. It
+     carries ⌘/Ctrl or is a function key; `Alt` alone does not count (⌥ with a
+     character key TYPES on macOS), and a bare key would fire while arrowing
+     through a file list *and* swallow that letter from the speed-search
+     fallback. Requiring an accelerator is also what lets a custom chord
+     dispatch inside text inputs with no further rule — it cannot type a
+     character, which is the catalog's own reasoning for modifier chords.
+     **`Mod+Alt+<letter>` is refused**: that is AltGr on Windows and Linux, the
+     rule `presets.test.ts` already enforces for shipped bindings — and it bites
+     harder here, because a custom chord runs with the caret in the commit
+     message box.
+  2. **The action is on the palette.** A key press carries no selection, so
+     `$FILE` and `$SHA` — filled by the menu that named a file or a commit —
+     have nothing behind a chord. A shortcut therefore IS the palette
+     invocation, with the repository context, and an action off the palette
+     cannot have one. The stored chord SURVIVES unticking `repo` (parked, not
+     cleared): re-ticking gives it back rather than asking the user to remember
+     what it was.
+  3. **No built-in owns the chord** — checked against the union of ALL presets,
+     not the active one, because presets are switchable and the collision would
+     be silent (the built-in always wins). A chip or a cheat-sheet row
+     advertising a key that does something else is worse than no shortcut.
+- **`coerceCustomActions` keeps a chord it cannot use.** What fires is
+  `boundChord`'s question, asked fresh every time; dropping the value on load
+  would empty the field that displays it. Same reasoning as parking a chord on a
+  surface change.
+- **Settings refuses the collision up front** (`ChordField` +
+  `chordConflict`), naming what already owns the key — a built-in action and its
+  preset, or the other custom action. The dispatcher's ordering makes the app
+  safe; this is what stops the user recording a shortcut that would simply never
+  fire. A refused press KEEPS recording: the next one is the correction.
+- The chord lives on the action, in `customActions`, so it is in the settings
+  file and hand-editable like everything else. `actionChords.ts` is the only
+  half of the feature that imports the keymap — `customActions.ts` stays a list
+  and its validation, and `presets.ts` imports nothing from either.
 
 ## Drag and drop
 

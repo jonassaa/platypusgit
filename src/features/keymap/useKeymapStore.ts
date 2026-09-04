@@ -89,6 +89,23 @@ interface HandlerEntry {
   paneIds?: readonly string[];
 }
 
+/**
+ * A chord that is DATA rather than a catalog entry — today, a user-defined
+ * action's shortcut (#225).
+ *
+ * The seam exists because a custom action has no `ActionId` and cannot be given
+ * one: `ActionId` is a closed union that `presets.test.ts` checks is bound in
+ * every preset, and a value the user typed in Settings has no business in it.
+ * So the keymap keeps taking chords as data, and the feature that owns the
+ * actions fills this in (`features/actions/useCustomActionChords`).
+ */
+export interface UserBinding {
+  /** What it is called — the cheat sheet renders from this, so it stays live. */
+  title: string;
+  /** Returns `false` to decline, exactly like a catalog runner. */
+  run: () => boolean | void;
+}
+
 export interface RegisterOpts {
   /** One pane, or several — a screen whose chord answers from any of the panes
    *  it owns (F7 hunk nav from either the file list or the diff view) needs ONE
@@ -109,7 +126,23 @@ interface KeymapState {
   lastShiftAt: number;
   /** Panes that opted into speed-search (usePaneList with searchText). */
   speedPanes: Set<string>;
+  /** Chord → user-defined binding. Offered after every built-in; see `dispatch`. */
+  userBindings: ReadonlyMap<string, UserBinding>;
+  /** While set, EVERY chord goes here instead of running — shortcut recording. */
+  capture: ((chord: string) => void) | null;
   setPreset: (id: string) => void;
+  /** Replace the whole user-binding table (the owner rebuilds it wholesale). */
+  setUserBindings: (bindings: ReadonlyMap<string, UserBinding>) => void;
+  /**
+   * Route the next chords to `fn` instead of running them; returns the stopper.
+   *
+   * Recording a shortcut cannot be done with a listener of its own: the global
+   * dispatcher runs in the CAPTURE phase on `window` and is registered first,
+   * so a later listener — wherever it sits — never gets to stop it. The field
+   * would record ⌘K and commit at the same time. So the dispatcher itself holds
+   * the mode.
+   */
+  beginCapture: (fn: (chord: string) => void) => () => void;
   register: (
     id: ActionId,
     handler: ActionHandler,
@@ -147,6 +180,24 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
     return eventToChord(e);
   }
 
+  /**
+   * Run the user-defined binding for `chord`, if there is one (#225).
+   *
+   * No text-input rule of its own, deliberately: a bindable user chord always
+   * carries a real modifier or is a function key (`isBindableChord`), so it
+   * cannot type a character, which is the same reason the catalog's modifier
+   * chords already dispatch with the caret in a field.
+   *
+   * The terminal check is NOT the same kind of rule and is kept: in there the
+   * shell owns the keyboard, and a user command is not one of the two escapes.
+   */
+  function runUserBinding(chord: string, e: KeyboardEvent): boolean {
+    const binding = get().userBindings.get(chord);
+    if (!binding) return false;
+    if (inTerminal(e.target)) return false;
+    return binding.run() !== false;
+  }
+
   // Speed-search fallback: a keydown no binding claimed, carrying a single
   // printable character (or Backspace) without Mod/Ctrl/Alt, aimed at a
   // non-editable target, feeds the focused pane's query when that pane opted
@@ -174,6 +225,22 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
     handlers: new Map(),
     lastShiftAt: 0,
     speedPanes: new Set(),
+    userBindings: new Map(),
+    capture: null,
+
+    setUserBindings(bindings) {
+      set({ userBindings: bindings });
+    },
+
+    beginCapture(fn) {
+      set({ capture: fn });
+      return () => {
+        // Only clear our own: two fields cannot record at once, but a stale
+        // stopper firing after the next one started would leave the app with a
+        // dead capture that eats every key.
+        if (get().capture === fn) set({ capture: null });
+      };
+    },
 
     setPreset(id) {
       try {
@@ -215,8 +282,26 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
     dispatch(e) {
       const chord = resolveChord(e);
       if (!chord) return false;
+
+      // Recording a shortcut owns the keyboard outright — before any binding is
+      // consulted, or the chord being recorded would also RUN. `stopPropagation`
+      // as well as `preventDefault`: this listener is on `window` in the capture
+      // phase, so stopping here is what keeps the key out of the field's own
+      // input and out of every handler beneath it.
+      const capture = get().capture;
+      if (capture) {
+        e.preventDefault();
+        e.stopPropagation();
+        capture(chord);
+        return true;
+      }
+
       const ids = get().reverse.get(chord);
       if (!ids || ids.length === 0) {
+        if (runUserBinding(chord, e)) {
+          e.preventDefault();
+          return true;
+        }
         if (speedFallback(e)) {
           e.preventDefault();
           return true;
@@ -263,6 +348,15 @@ export const useKeymapStore = create<KeymapState>((set, get) => {
           e.preventDefault();
           return true;
         }
+      }
+
+      // A user-defined shortcut is offered LAST, once every built-in bound to
+      // this chord has declined. A setting can never shadow one of the app's
+      // own shortcuts — Settings refuses such a chord up front, and this is what
+      // makes that true even for a hand-edited file.
+      if (runUserBinding(chord, e)) {
+        e.preventDefault();
+        return true;
       }
       return false;
     },

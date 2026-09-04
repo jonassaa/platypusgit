@@ -9,7 +9,11 @@
 import * as React from "react";
 
 import { PGButton, PGInput, PGToggle } from "@/design";
+import { formatChord } from "@/features/keymap/chord";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+
+import { boundChord } from "./actionChords";
+import { ChordField } from "./ChordField";
 
 import {
   ACTION_SURFACES,
@@ -60,7 +64,11 @@ export function CustomActionsSettings() {
           {PLACEHOLDERS.join(" ")}
         </code>
         . They run in the repository&rsquo;s directory and are never given a
-        token or credential.
+        token or credential. A palette action can also take a keyboard
+        shortcut, which runs it against the repository — a key press names no
+        file or commit, so <code style={{ fontFamily: "var(--font-mono)" }}>$FILE</code>{" "}
+        and <code style={{ fontFamily: "var(--font-mono)" }}>$SHA</code> come
+        from the menus.
       </div>
 
       {actions.length === 0 && !draft && (
@@ -74,6 +82,7 @@ export function CustomActionsSettings() {
           <ActionEditor
             key={a.id}
             draft={draft}
+            actions={actions}
             onChange={setDraft}
             onSave={save}
             onCancel={() => setDraft(null)}
@@ -101,6 +110,21 @@ export function CustomActionsSettings() {
                   list that only shows names cannot answer. */}
               <div style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                 {surfaceSummary(a)}
+                {/* Only a chord that would actually FIRE — `boundChord`, the
+                    same gate the dispatcher asks. A row advertising a shortcut
+                    that does nothing is the surprise this feature has to avoid
+                    most. */}
+                {boundChord(a) && (
+                  <>
+                    {" · "}
+                    <span
+                      style={{ fontFamily: "var(--font-mono)" }}
+                      data-testid="custom-action-row-chord"
+                    >
+                      {formatChord(boundChord(a))}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
             <PGButton
@@ -126,6 +150,7 @@ export function CustomActionsSettings() {
       {draft && !actions.some((a) => a.id === draft.id) && (
         <ActionEditor
           draft={draft}
+          actions={actions}
           onChange={setDraft}
           onSave={save}
           onCancel={() => setDraft(null)}
@@ -151,11 +176,13 @@ export function CustomActionsSettings() {
 
 function ActionEditor({
   draft,
+  actions,
   onChange,
   onSave,
   onCancel,
 }: {
   draft: CustomAction;
+  actions: readonly CustomAction[];
   onChange: (a: CustomAction) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -207,6 +234,7 @@ function ActionEditor({
           />
         ))}
       </div>
+      <ChordField draft={draft} actions={actions} onChange={onChange} />
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <PGToggle
