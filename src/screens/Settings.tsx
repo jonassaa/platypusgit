@@ -1,84 +1,66 @@
-import { PGButton, PGIcon } from "@/design";
+import React from "react";
+import { PGIcon } from "@/design";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { AppearancePage } from "@/features/settings/pages/appearance";
-import { BackupPage } from "@/features/settings/pages/backup";
-import { CliPage } from "@/features/settings/pages/cli";
-import { CommitPage } from "@/features/settings/pages/commit";
-import { DiffPage } from "@/features/settings/pages/diff";
-import { IntegrationsPage } from "@/features/settings/pages/integrations";
-import { KeyboardPage } from "@/features/settings/pages/keyboard";
-import { RemotePage } from "@/features/settings/pages/remote";
-import { UpdatesPage } from "@/features/settings/pages/updates";
-import { WorkspacePage } from "@/features/settings/pages/workspace";
+import { SettingsFilterProvider } from "@/features/settings/layout/filterContext";
+import { SettingsNav } from "@/features/settings/nav/SettingsNav";
+import { PAGES } from "@/features/settings/nav/pages";
+import { resolvePageId } from "@/features/settings/nav/types";
 
 export function SettingsScreen() {
   const s = useSettingsStore();
+  const pageId = resolvePageId(s.settingsPage);
+  const [query, setQuery] = React.useState("");
+  const { Page, meta } = PAGES[pageId];
 
   return (
-    <div
-      style={{
-        flex: 1,
-        minHeight: 0,
-        overflow: "auto",
-        background: "var(--bg-0)",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 820,
-          margin: "0 auto",
-          padding: "28px 32px 64px",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            marginBottom: 4,
-          }}
-        >
-          <PGIcon name="settings" size={20} style={{ color: "var(--accent)" }} />
-          <h1
+    <div style={{ flex: 1, minHeight: 0, display: "flex", background: "var(--bg-0)" }}>
+      <SettingsNav
+        pageId={pageId}
+        onSelect={(id) => s.set("settingsPage", id)}
+        query={query}
+        onQueryChange={setQuery}
+        matchCounts={null}
+        onReset={s.reset}
+      />
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        <div style={{ maxWidth: 820, margin: "0 auto", padding: "28px 32px 64px" }}>
+          <div
             style={{
-              margin: 0,
-              fontSize: "var(--fs-20)",
-              fontFamily: "var(--font-display)",
-              letterSpacing: "-0.01em",
-              color: "var(--fg-0)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 4,
             }}
           >
-            Settings
-          </h1>
-          <div style={{ flex: 1 }} />
-          <PGButton size="sm" variant="ghost" onClick={s.reset}>
-            Reset to defaults
-          </PGButton>
+            <PGIcon name="settings" size={20} style={{ color: "var(--accent)" }} />
+            <h1
+              style={{
+                margin: 0,
+                fontSize: "var(--fs-20)",
+                fontFamily: "var(--font-display)",
+                letterSpacing: "-0.01em",
+                color: "var(--fg-0)",
+              }}
+            >
+              {meta.title}
+            </h1>
+          </div>
+          <p
+            style={{
+              margin: "0 0 24px",
+              color: "var(--fg-2)",
+              fontSize: "var(--fs-12)",
+            }}
+          >
+            Preferences are saved locally and apply to every repository.
+          </p>
+
+          <SettingsFilterProvider visibleRowIds={null}>
+            <div data-settings-page={pageId}>
+              <Page />
+            </div>
+          </SettingsFilterProvider>
         </div>
-        <p
-          style={{
-            margin: "0 0 24px",
-            color: "var(--fg-2)",
-            fontSize: "var(--fs-12)",
-          }}
-        >
-          Preferences are saved locally and apply to every repository.
-        </p>
-
-        <CommitPage />
-
-        <AppearancePage />
-
-        <RemotePage />
-
-        <DiffPage />
-
-        <IntegrationsPage />
-        <KeyboardPage />
-        <CliPage />
-        <WorkspacePage />
-        <UpdatesPage />
-        <BackupPage />
       </div>
     </div>
   );

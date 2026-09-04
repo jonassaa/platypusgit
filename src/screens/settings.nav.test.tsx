@@ -1,0 +1,81 @@
+// The side menu: three groups, ten pages, one page rendered at a time.
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { mockInvoke } from "@/test/invokeMock";
+import { WithDialogs, resetDialogs } from "@/test/dialog";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { SettingsScreen } from "./Settings";
+
+beforeEach(() => {
+  resetDialogs();
+  useSettingsStore.getState().set("settingsPage", "general.appearance");
+  mockInvoke("cli_shim_status", () => ({
+    installed: true, shimPath: "/usr/local/bin/pgit",
+    target: "/usr/bin/platypusgit", source: "package", pathState: "onPath",
+  }));
+});
+
+describe("settings side menu", () => {
+  it("lists all three groups and lands on the remembered page", () => {
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    expect(screen.getByText("General")).toBeTruthy();
+    expect(screen.getByText("Git")).toBeTruthy();
+    expect(screen.getByText("Advanced")).toBeTruthy();
+    // Appearance is rendered…
+    expect(document.querySelector('[data-settings-page="general.appearance"]')).toBeTruthy();
+    // …and nothing else is.
+    expect(document.querySelector('[data-settings-page="git.diff"]')).toBeNull();
+  });
+
+  it("switches page on click and remembers the choice", () => {
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    fireEvent.click(screen.getByRole("treeitem", { name: /Diff/ }));
+    expect(document.querySelector('[data-settings-page="git.diff"]')).toBeTruthy();
+    expect(document.querySelector('[data-settings-page="general.appearance"]')).toBeNull();
+    expect(useSettingsStore.getState().settingsPage).toBe("git.diff");
+  });
+
+  it("marks the current page selected", () => {
+    useSettingsStore.getState().set("settingsPage", "git.diff");
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    expect(
+      screen.getByRole("treeitem", { name: /Diff/ }).getAttribute("aria-selected"),
+    ).toBe("true");
+  });
+
+  it("falls back to the first page when the persisted id is unknown", () => {
+    // Bypass the typed setter the way a hand-edited localStorage payload would.
+    useSettingsStore.setState({ settingsPage: "nope.gone" as never });
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    expect(document.querySelector('[data-settings-page="general.appearance"]')).toBeTruthy();
+  });
+
+  it("moves between pages with the arrow keys", () => {
+    useSettingsStore.getState().set("settingsPage", "general.appearance");
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    const first = screen.getByRole("treeitem", { name: /Appearance/ });
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(useSettingsStore.getState().settingsPage).toBe("general.keyboard");
+  });
+
+  it("selects a focused row with Enter or Space, same as a click", () => {
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    const diffRow = screen.getByRole("treeitem", { name: /Diff/ });
+    fireEvent.keyDown(diffRow, { key: "Enter" });
+    expect(useSettingsStore.getState().settingsPage).toBe("git.diff");
+    fireEvent.keyDown(screen.getByRole("treeitem", { name: /Commit/ }), { key: " " });
+    expect(useSettingsStore.getState().settingsPage).toBe("git.commit");
+  });
+
+  it("collapses the enclosing group with the left arrow", () => {
+    render(<WithDialogs><SettingsScreen /></WithDialogs>);
+    const appearanceRow = screen.getByRole("treeitem", { name: /Appearance/ });
+    // Sibling in the same ("General") group, present while it's expanded.
+    expect(screen.getByRole("treeitem", { name: /Keyboard/ })).toBeTruthy();
+    fireEvent.keyDown(appearanceRow, { key: "ArrowLeft" });
+    expect(screen.queryByRole("treeitem", { name: /Keyboard/ })).toBeNull();
+    // A page in an unrelated ("Git") group is unaffected.
+    expect(screen.getByRole("treeitem", { name: /Diff/ })).toBeTruthy();
+  });
+});

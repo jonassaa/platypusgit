@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { mockInvoke } from "@/test/invokeMock";
 import { WithDialogs, resetDialogs } from "@/test/dialog";
 import { GROUPS, PAGES, PAGE_ORDER, resolvePageId, FIRST_PAGE } from "@/features/settings/nav/pages";
+import { PAGE_ORDER as RESOLUTION_ORDER } from "@/features/settings/nav/types";
 import type { SettingsPageId } from "@/features/settings/nav/types";
 import { UpdatesPage } from "@/features/settings/pages/updates";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -248,6 +249,16 @@ describe("settings registry", () => {
       "advanced.backup": true,
     };
     expect([...PAGE_ORDER].sort()).toEqual(Object.keys(expected).sort());
+  });
+
+  it("keeps types.ts's resolution-order list in sync with GROUPS, members AND order", () => {
+    // The mapped-type check above ("registers every SettingsPageId") catches
+    // a new union member missing from GROUPS, but not the two lists drifting
+    // in ORDER — and a GROUPS reorder would leave FIRST_PAGE (and
+    // resolvePageId's fallback) disagreeing with the side menu's own first
+    // row, which is user-visible. toEqual on arrays checks order too, so this
+    // is a stronger claim than the sorted-and-compared check above.
+    expect(RESOLUTION_ORDER).toEqual(PAGE_ORDER);
   });
 
   it("resolves an unrecognised persisted page id to the first page", () => {

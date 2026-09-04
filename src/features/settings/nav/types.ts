@@ -18,15 +18,19 @@ export type SettingsPageId =
 /**
  * `SettingsPageId`s in side-menu display order.
  *
- * A private duplicate of `pages.ts`'s `GROUPS`-derived `PAGE_ORDER`, kept ONLY
- * so `FIRST_PAGE` and `resolvePageId` can live here too — see the note on
- * those below for why. `pages.ts`'s `PAGE_ORDER` (and `GROUPS`, which the
- * guard test in `settings.index.test.tsx` cross-checks against it) stays the
- * one source of truth for the actual menu; this list only has to agree with
- * it, which the "defaults to the first page" test in
- * `useSettingsStore.export.test.ts` pins for the one entry that matters here.
+ * A duplicate of `pages.ts`'s `GROUPS`-derived `PAGE_ORDER`, kept ONLY so
+ * `FIRST_PAGE` and `resolvePageId` can live here too — see the note on those
+ * below for why. `pages.ts`'s `PAGE_ORDER` (and `GROUPS`, which the guard
+ * test in `settings.index.test.tsx` cross-checks against it) stays the one
+ * source of truth for the actual menu; this list only has to agree with it —
+ * both in members AND in order, since a `GROUPS` reorder that left this list
+ * behind would disagree with the side menu's first row about what "the first
+ * page" is. `settings.index.test.tsx`'s order guard pins full agreement;
+ * `useSettingsStore.export.test.ts`'s "defaults to the first page" test pins
+ * the one entry that matters most. Exported for that guard test only — every
+ * other importer wants `FIRST_PAGE` or `resolvePageId`, not the list itself.
  */
-const PAGE_ORDER: readonly SettingsPageId[] = [
+export const PAGE_ORDER: readonly SettingsPageId[] = [
   "general.appearance",
   "general.keyboard",
   "general.updates",

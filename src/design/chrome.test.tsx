@@ -160,7 +160,7 @@ describe("PGSidebarGroup controlled open", () => {
 });
 
 describe("PGSidebarRow a11y passthrough", () => {
-  it("forwards role, tabIndex, aria-selected and keydown", () => {
+  it("forwards role, tabIndex, aria-selected, keydown, dimmed and testId", () => {
     const onKeyDown = vi.fn();
     render(
       <PGSidebarRow
@@ -169,6 +169,8 @@ describe("PGSidebarRow a11y passthrough", () => {
         tabIndex={0}
         ariaSelected
         onKeyDown={onKeyDown}
+        dimmed
+        testId="settings-nav-git.diff"
       />,
     );
     const row = screen.getByRole("treeitem");
@@ -176,5 +178,7 @@ describe("PGSidebarRow a11y passthrough", () => {
     expect(row.getAttribute("tabindex")).toBe("0");
     fireEvent.keyDown(row, { key: "ArrowDown" });
     expect(onKeyDown).toHaveBeenCalled();
+    expect(row.style.opacity).toBe("0.45");
+    expect(screen.getByTestId("settings-nav-git.diff")).toBe(row);
   });
 });

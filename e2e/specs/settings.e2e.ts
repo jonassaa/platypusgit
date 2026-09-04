@@ -17,39 +17,29 @@ async function clickPaletteRow(text: string): Promise<void> {
 }
 
 /**
- * Click a Settings-screen toggle row identified by its label text.
+ * Click a Settings-screen toggle row identified by its `data-setting-id`.
  *
- * DOM deviation from the task brief: `Row`'s label renders in a `<div>` (not
- * a `<span>`), and — critically — that div lives in a *sibling* column from
- * the `PGToggle` control (`Row` renders `<label-column><div/></label-column>
- * <control-column>{control}</control-column>` as two side-by-side divs under
- * one row div). `PGToggle` here is rendered without its own `label` prop
- * (see `src/screens/Settings.tsx`'s "Confirm force-push" row), so there is no
- * text node inside the actual clickable `<label>` element — clicking the
- * row's label text does nothing. Verified via
- * `browser.execute(() => ...outerHTML)` against the real DOM. Contrast with
- * the CommitPanel signoff checkbox below, where `PGCheckbox` DOES render its
- * `label` text as a `<span>` child of the same native `<label>` that wraps
- * the hidden `<input type="checkbox">` — native label-click-forwarding makes
- * `span*=...` work there without this helper.
+ * Replaces a DOM-walking helper that depended on `Row`'s exact shape (`Row`
+ * renders `<label-column><div/></label-column><control-column>{control}
+ * </control-column>` as two side-by-side divs under one row div, and
+ * `PGToggle` here is rendered without its own `label` prop — see
+ * `src/features/settings/pages/remote.tsx`'s "Confirm force-push" row — so
+ * there is no text node inside the actual clickable `<label>` element).
+ * `SettingsRow` stamps `data-setting-id` on the row itself, which is stable
+ * regardless of internal DOM shape.
+ *
+ * executeOnce: a driver-retry re-run would click the toggle twice, flipping
+ * the setting straight back (issue #35).
  */
-async function clickSettingsToggleRow(labelText: string): Promise<void> {
-  // executeOnce: a driver-retry re-run would click the toggle twice,
-  // flipping the setting straight back (issue #35).
-  const ok = await executeOnce((text: string) => {
-    const divs = Array.from(document.querySelectorAll("div"));
-    const labelDiv = divs.find(
-      (d) => d.children.length === 0 && d.textContent?.trim() === text,
-    );
-    if (!labelDiv) return false;
-    // labelDiv -> (label+hint column) -> (row div, sibling holds control column)
-    const row = labelDiv.parentElement?.parentElement;
+async function clickSettingsToggleRow(labelText: string, settingId: string): Promise<void> {
+  const ok = await executeOnce((id: string) => {
+    const row = document.querySelector(`[data-setting-id="${id}"]`);
     const toggle = row?.querySelector("label");
     if (!toggle) return false;
     (toggle as HTMLElement).click();
     return true;
-  }, labelText);
-  if (!ok) throw new Error(`settings toggle row not found: ${labelText}`);
+  }, settingId);
+  if (!ok) throw new Error(`settings toggle row not found: ${labelText} (${settingId})`);
 }
 
 /**
@@ -121,7 +111,7 @@ describe("settings", () => {
   // so Settings renders standalone (this used to be its own spec file with a
   // whole app session + temp repo behind it).
   it("Updates section shows the running version and a check button", async () => {
-    await openSettings();
+    await openSettings("general.updates");
 
     const section = $('[data-testid="settings-updates"]');
     await section.waitForExist({
@@ -142,7 +132,7 @@ describe("settings", () => {
     pair = remoteRepo();
     makeDiverged(pair);
     await openRepo(pair.repo.path);
-    await openSettings();
+    await openSettings("git.remote");
     await $("button*=FF-only").click();
     await browser.waitUntil(
       async () => (await $('button[aria-pressed="true"]*=FF-only').isExisting()),
@@ -157,7 +147,7 @@ describe("settings", () => {
     await reopenRepo(pair.repo.path);
     const raw = await browser.execute(() => localStorage.getItem("pg-settings-v2"));
     expect(raw).toContain('"defaultPullMode":"FastForward"');
-    await openSettings();
+    await openSettings("git.remote");
     await $('button[aria-pressed="true"]*=FF-only').waitForDisplayed({
       timeout: 10_000, timeoutMsg: "persisted FF-only not active after reload",
     });
@@ -176,7 +166,7 @@ describe("settings", () => {
     pair = remoteRepo();
     makeDiverged(pair);
     await openRepo(pair.repo.path);
-    await openSettings();
+    await openSettings("git.remote");
     await $("button*=Merge").click();
     await browser.waitUntil(
       async () => (await $('button[aria-pressed="true"]*=Merge').isExisting()),
@@ -266,7 +256,7 @@ describe("settings", () => {
       changeRow: 24, branchRow: 28, commitRow: 26, graphSvg: 26,
     });
 
-    await openSettings();
+    await openSettings("general.appearance");
     await $("button*=Comfortable").click();
     await browser.waitUntil(
       async () => $('button[aria-pressed="true"]*=Comfortable').isExisting(),
@@ -280,7 +270,7 @@ describe("settings", () => {
       changeRow: 28, branchRow: 32, commitRow: 30, graphSvg: 30,
     });
 
-    await openSettings();
+    await openSettings("general.appearance");
     await $("button*=Compact").click();
     await browser.waitUntil(
       async () => $('button[aria-pressed="true"]*=Compact').isExisting(),
@@ -293,11 +283,11 @@ describe("settings", () => {
     pair = remoteRepo();
     makeDiverged(pair);
     await openRepo(pair.repo.path);
-    await openSettings();
+    await openSettings("git.remote");
     // Toggle "Confirm force-push" off (defaults on). See clickSettingsToggleRow
     // doc: the row label div is not inside the PGToggle's clickable <label>,
-    // so this requires the DOM-traversal helper rather than a text selector.
-    await clickSettingsToggleRow("Confirm force-push");
+    // so this requires the data-setting-id selector rather than a text one.
+    await clickSettingsToggleRow("Confirm force-push", "push.confirmForce");
     await switchScreen("repo");
     const localHead = pair.repo.git("rev-parse", "HEAD").trim();
     await stubNativeDialogs({ confirm: false }); // would block if consulted
