@@ -16,9 +16,9 @@
 # reads stdin — stdin is the script itself, so there are no prompts and every
 # choice is a flag or an environment variable.
 #
-# Debian and Ubuntu only, amd64 only. Anything else is told so and pointed at
-# the AppImage rather than quietly handed a different package format than the
-# one this script advertises.
+# Debian and Ubuntu only, on the architectures we build (amd64 and arm64).
+# Anything else is told so and pointed at the AppImage rather than quietly handed
+# a different package format than the one this script advertises.
 #
 # Spec: docs/superpowers/specs/2026-08-26-apt-repository-spec.md
 set -eu
@@ -29,7 +29,11 @@ DEFAULT_APT_URL=https://apt.platypusgit.com
 
 SUITE=stable
 COMPONENT=main
-WANT_ARCH=amd64
+# The architectures release.yml's `linux` matrix builds and apt-publish pools
+# (#266). Kept as a list rather than a single value so adding the next one is a
+# word here — the sources file below is written from the DETECTED architecture,
+# not from this list, so an existing amd64 install is unaffected by a widening.
+SUPPORTED_ARCHES="amd64 arm64"
 
 # `Signed-By:` points at the keyring, so these two paths travel together.
 #
@@ -69,8 +73,8 @@ Options:
 Environment:
   PLATYPUSGIT_APT_URL   same as --apt-url
 
-Debian/Ubuntu on amd64. On any other system this script tells you so and stops;
-use the AppImage instead — it also updates itself in-app.
+Debian/Ubuntu on amd64 or arm64. On any other system this script tells you so and
+stops; use the AppImage instead — it also updates itself in-app.
 USAGE
 }
 
@@ -103,7 +107,7 @@ done
 APT_URL="${APT_URL%/}"
 [ -n "$APT_URL" ] || die "--apt-url cannot be empty"
 
-# ─── is this even a Debian-family amd64 box? ─────────────────────────────────
+# ─── is this even a Debian-family box we build for? ─────────────────────────
 
 # Detect-then-refuse, never substitute. A script that advertises an apt install
 # and silently drops an AppImage somewhere is the kind of surprise that costs
@@ -143,17 +147,21 @@ detect_arch() {
 }
 
 ARCH="$(detect_arch)"
-# Widening this is #266 (build + publish an arm64 .deb). Until then, a sentence
-# beats apt reporting "Unable to locate package" after a successful update.
-if [ "$ARCH" != "$WANT_ARCH" ]; then
-    warn "install-platypusgit: platypusgit is not built for '$ARCH' yet — only $WANT_ARCH."
-    warn "install-platypusgit: adding the repository would leave apt with nothing to install."
-    warn ""
-    warn "Use the AppImage if one exists for your machine, or build from source:"
-    warn ""
-    warn "    $APPIMAGE_URL"
-    exit 1
-fi
+# A sentence beats apt reporting "Unable to locate package" after a successful
+# update — adding a repository that cannot serve this machine is worse than not
+# adding it, because the failure then looks like a broken repository.
+case " $SUPPORTED_ARCHES " in
+    *" $ARCH "*) ;;
+    *)
+        warn "install-platypusgit: platypusgit is not built for '$ARCH' — only $SUPPORTED_ARCHES."
+        warn "install-platypusgit: adding the repository would leave apt with nothing to install."
+        warn ""
+        warn "Use the AppImage if one exists for your machine, or build from source:"
+        warn ""
+        warn "    $APPIMAGE_URL"
+        exit 1
+        ;;
+esac
 
 # ─── how we fetch, and how we get root ───────────────────────────────────────
 
@@ -235,9 +243,14 @@ $SUDO install -m 0644 "$tmp_key" "$KEYRING_PATH"
 say "install-platypusgit: signing key -> $KEYRING_PATH"
 
 # deb822 rather than a one-line entry: supported since apt 1.1 (Debian 9,
-# Ubuntu 16.04), and readable by whoever inherits the machine. `Architectures:`
-# is explicit so that when an arm64 build exists, an amd64 box keeps asking for
-# amd64 instead of warning on every update about an index it cannot use.
+# Ubuntu 16.04), and readable by whoever inherits the machine.
+#
+# `Architectures:` is written from the DETECTED architecture, not from
+# SUPPORTED_ARCHES, and that is what made adding arm64 (#266) a no-op for
+# everyone already installed: an amd64 box keeps asking for amd64 rather than
+# starting to fetch a second index it has no use for. It is also why widening
+# the list above needs no migration — the sources file describes the machine,
+# not the repository.
 printf '%s\n' "$SOURCES_BODY" | $SUDO tee "$SOURCES_PATH" > /dev/null
 say "install-platypusgit: sources -> $SOURCES_PATH"
 

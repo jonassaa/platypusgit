@@ -17,7 +17,7 @@ export const site = {
 export const downloads = [
   { key: 'macos', label: 'macOS', anchor: '/download/#macos', note: 'Apple Silicon & Intel · .dmg', available: true },
   { key: 'windows', label: 'Windows', anchor: '/download/#windows', note: 'Windows 10 & 11 · Store, .msi or Scoop', available: true },
-  { key: 'linux', label: 'Linux', anchor: '/download/#linux', note: '.deb & AppImage', available: true },
+  { key: 'linux', label: 'Linux', anchor: '/download/#linux', note: 'x86_64 & arm64 · .deb & AppImage', available: true },
 ] as const;
 
 // Direct download links to the stable-named assets the release workflow
@@ -28,7 +28,19 @@ export const assets = {
   windowsMsi: releaseAsset('PlatypusGit_x64.msi'),
   linuxDeb: releaseAsset('PlatypusGit_amd64.deb'),
   linuxAppImage: releaseAsset('PlatypusGit_amd64.AppImage'),
+  linuxDebArm64: releaseAsset('PlatypusGit_arm64.deb'),
+  linuxAppImageArm64: releaseAsset('PlatypusGit_arm64.AppImage'),
 };
+
+// The Linux architectures release.yml's `linux` matrix builds (#266), in the
+// order the download page lists them. The `file` suffix is the Debian spelling
+// (it is what the release assets and the apt pool use); `label` is what a reader
+// recognises, which is not the same string — `uname -m` on the same machine says
+// `x86_64`/`aarch64`, and latest.json's updater keys use those.
+export const linuxArches = [
+  { key: 'amd64', label: 'x86_64 (Intel/AMD)', deb: assets.linuxDeb, appImage: assets.linuxAppImage },
+  { key: 'arm64', label: 'arm64 (aarch64)', deb: assets.linuxDebArm64, appImage: assets.linuxAppImageArm64 },
+] as const;
 
 // The Scoop bucket (#187, Windows half). Its own repo, like the Homebrew tap and
 // the apt repo — but unlike the apt repo it needs no host of its own, because

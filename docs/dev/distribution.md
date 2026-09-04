@@ -496,10 +496,49 @@ the *why*; this is the operational summary.
 3. **Idempotency is decided on `Packages`, never on the tree.** `apt-ftparchive
    release` stamps a `Date:`, so `Release` always differs. The job compares the
    freshly generated `Packages` and, if identical, leaves the whole tree alone.
-4. **The smoke client must be `--platform linux/amd64`.** We ship amd64 only, so
-   an arm64 client (the default on an Apple Silicon Mac) verifies the signature,
-   fetches `Packages`, and then says "Unable to locate package" — which reads as
-   a broken repository rather than a wrong architecture.
+4. **The smoke client must BE the architecture under test.** `--arch` picks both
+   the `binary-<arch>` index it waits on and the `--platform` it runs the client
+   under, because a mismatch there verifies the signature, fetches `Packages`,
+   and then says "Unable to locate package" — which reads as a broken repository
+   rather than a wrong client. It is also why one run is not a gate for a
+   two-architecture repository: see below.
+
+### Two architectures (#266)
+
+The repository serves **amd64 and arm64**. The layout was built for it — the
+pool has always been `dists/stable/main/binary-<arch>/` — so adding one was a
+directory, not a migration.
+
+- **`release.yml`'s `linux` job is a matrix**, `ubuntu-22.04` and
+  `ubuntu-22.04-arm`. Native builds, not a cross-compile: `ubuntu-*-arm` runners
+  are free for public repositories, and cross-linking webkit2gtk is a project of
+  its own. **Both legs pin 22.04 and have to move together** — the runner image's
+  glibc is the floor of what the bundles load on (22.04 is 2.35, 24.04 is 2.39),
+  so a newer image on one leg ships a package that installs on Debian 12 and then
+  dies in the loader.
+- **A matrix job cannot carry the updater signatures in its `outputs`.** Those
+  are merged across legs and the last to finish wins, so
+  `needs.linux.outputs.deb_sig` would be a coin flip between two architectures —
+  and the wrong one is not a build failure, it is an unverifiable update for
+  every machine of the other architecture. They travel as artifacts
+  (`linux-sigs-<arch>`), the same way `msix-build` hands packages to `msix`.
+- **`latest.json` spells the architecture Rust's way.** The plugin builds
+  `{os}-{arch}` from `std::env::consts::ARCH`, so the keys are `linux-aarch64`,
+  `linux-aarch64-appimage`, `linux-aarch64-deb` — while the same machine's assets
+  and pool entries say `arm64`. Mixing the two publishes a manifest no client
+  matches, which presents as "no update available" rather than as an error.
+- **`apt-repo-publish.sh` derives the architecture set from the pool**, and reads
+  each package's own `Architecture` field with `dpkg-deb -f` rather than trusting
+  the `PlatypusGit_<arch>.deb` filename. `KEEP` is applied **per architecture**,
+  so ten still means ten releases rather than five of each.
+- **The pre-push gate runs twice**, once per architecture, which is why
+  `apt-publish` sets up qemu: the gate has to share a job with the push it
+  protects, so the arm64 client is emulated there. `apt-verify-live` runs after
+  the push and is therefore a matrix over native runners instead.
+- **`install-platypusgit.sh` still writes `Architectures:` from
+  `dpkg --print-architecture`**, which is what made this a no-op for everyone
+  already installed: an amd64 box keeps asking for amd64 instead of starting to
+  fetch a second index it has no use for.
 
 ### Deliberate non-expiry
 
@@ -583,17 +622,28 @@ docker run --rm -v "$PWD/fixtures:/out" debian:bookworm sh -c '...gen-key...'
 
 export APT_GPG_PRIVATE_KEY="$(cat fixtures/test-private.asc)"
 export APT_GPG_PASSPHRASE=testpass
-scripts/apt-repo-publish.sh --repo /tmp/aptrepo --deb PlatypusGit_amd64.deb \
-    --version 0.0.17 --docker
+scripts/apt-repo-publish.sh --repo /tmp/aptrepo --version 0.0.17 --docker \
+    --deb PlatypusGit_amd64.deb --deb PlatypusGit_arm64.deb
 
-scripts/apt-repo-smoke.sh --repo /tmp/aptrepo --version 0.0.17 \
-    --installer scripts/install-platypusgit.sh
+for arch in amd64 arm64; do
+    scripts/apt-repo-smoke.sh --repo /tmp/aptrepo --version 0.0.17 \
+        --arch "$arch" --installer scripts/install-platypusgit.sh
+done
 ```
+
+Both smoke legs work on an Apple Silicon Mac — the amd64 client is the emulated
+one there, which is the same shape as CI, where the arm64 one is.
 
 Drop `--installer` for the isolation mode (a hand-written sources file), which
 answers "is the index broken, or is the installer broken?". Add `--expect-git`
 when the `.deb` was built after the `Depends: git` change. To prove the gate can
 fail, corrupt a byte of `InRelease` and re-run — expect `BADSIG` and exit 100.
+
+You do not need a real `.deb` to exercise any of this. A package with the right
+control fields and two shell scripts at `/usr/bin/pgit` and
+`/usr/bin/platypusgit` satisfies every assertion the gate makes, which is how
+the two-architecture path was verified before a single arm64 Tauri build
+existed.
 
 ### Release-time notes
 
@@ -606,10 +656,16 @@ fail, corrupt a byte of `InRelease` and re-run — expect `BADSIG` and exit 100.
 - **A prerelease never reaches apt.** Same gate as `bump-cask` and
   `updater-manifest`: the `.deb` is attached to the GitHub release and stays
   invisible to `apt upgrade`. That is correct, and it is not a bug report.
-- The pool keeps the **newest 10** releases and logs what it pruned. Older
+- The pool keeps the **newest 10 releases per architecture** and logs what it
+  pruned — ~228 MB across the two, against a 1 GB published-Pages cap. Older
   `.deb`s remain on GitHub Releases.
 - A `workflow_dispatch` against a tag built **before** the `Depends: git` change
   fails the pre-push gate, by design.
+- A `workflow_dispatch` against a tag built **before arm64** (#266) fails at the
+  download, also by design and with a message that says so. `workflow_dispatch`
+  runs `main`'s copy of `release.yml` against an older tag's assets, and
+  publishing only what that tag has would put an `Architectures: amd64` index in
+  front of arm64 clients that already had one.
 
 ### The manual setup
 

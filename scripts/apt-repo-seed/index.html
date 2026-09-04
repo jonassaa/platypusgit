@@ -66,7 +66,7 @@
   <p class="lead">
     The signed Debian/Ubuntu package repository for
     <a href="https://www.platypusgit.com/">platypusgit</a>, a developer-focused
-    git desktop app. amd64, one suite (<code>stable</code>).
+    git desktop app. amd64 and arm64, one suite (<code>stable</code>).
   </p>
 
   <h2>Install</h2>
@@ -81,12 +81,12 @@
 curl -fsSL https://apt.platypusgit.com/key.gpg \
   | sudo tee /etc/apt/keyrings/platypusgit.gpg &gt; /dev/null
 sudo chmod 0644 /etc/apt/keyrings/platypusgit.gpg
-sudo tee /etc/apt/sources.list.d/platypusgit.sources &gt; /dev/null &lt;&lt;'EOF'
+sudo tee /etc/apt/sources.list.d/platypusgit.sources &gt; /dev/null &lt;&lt;EOF
 Types: deb
 URIs: https://apt.platypusgit.com
 Suites: stable
 Components: main
-Architectures: amd64
+Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/platypusgit.gpg
 EOF
 sudo apt update &amp;&amp; sudo apt install platypusgit</pre>
@@ -116,10 +116,11 @@ sudo apt update &amp;&amp; sudo apt install platypusgit</pre>
 
   <h2>What is in here</h2>
   <pre>dists/stable/InRelease                      signed index
-dists/stable/main/binary-amd64/Packages     the package list
+dists/stable/main/binary-amd64/Packages     the package list, amd64
+dists/stable/main/binary-arm64/Packages     the package list, arm64
 pool/main/p/platypusgit/                   the .deb files</pre>
   <p>
-    The pool keeps the ten most recent releases. Older versions stay available
+    The pool keeps the ten most recent releases per architecture. Older versions stay available
     as
     <a href="https://github.com/jonassaa/platypusgit/releases">GitHub release
     assets</a> — nothing is deleted there.

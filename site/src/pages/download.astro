@@ -3,7 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import CTAButton from '../components/CTAButton.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 import OsIcon from '../components/OsIcon.astro';
-import { site, assets, apt, scoop, msStore } from '../data/site.ts';
+import { site, assets, apt, linuxArches, scoop, msStore } from '../data/site.ts';
 import { descriptions, softwareApplicationSchema, ORIGIN } from '../data/seo.ts';
 
 // The two installer URLs. Built from `site` in astro.config.mjs rather than
@@ -26,12 +26,12 @@ const aptManual = `sudo install -d -m 0755 /etc/apt/keyrings
 curl -fsSL ${apt.url}/key.gpg \\
   | sudo tee /etc/apt/keyrings/platypusgit.gpg > /dev/null
 sudo chmod 0644 /etc/apt/keyrings/platypusgit.gpg
-sudo tee /etc/apt/sources.list.d/platypusgit.sources > /dev/null <<'EOF'
+sudo tee /etc/apt/sources.list.d/platypusgit.sources > /dev/null <<EOF
 Types: deb
 URIs: ${apt.url}
 Suites: stable
 Components: main
-Architectures: amd64
+Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/platypusgit.gpg
 EOF
 sudo apt update && sudo apt install ${apt.pkg}`;
@@ -102,7 +102,7 @@ const platforms = [
     label: 'Linux',
     iconSize: 20,
     blurb: 'One-line apt install, or a portable AppImage.',
-    specs: ['webkit2gtk 4.1 required', 'x86_64', 'apt handles updates'],
+    specs: ['webkit2gtk 4.1 required', 'x86_64 & arm64', 'apt handles updates'],
   },
 ] as const;
 ---
@@ -454,32 +454,53 @@ const platforms = [
                 </details>
               </article>
 
+              {/* Both architectures get their own button, filename and commands
+                  rather than one set with "substitute your architecture" in
+                  prose. The whole point of naming the file is that it can be
+                  copied; a reader on a Pi who has to edit the line first is a
+                  reader who can get it wrong. */}
               <article class="card">
                 <h3>AppImage</h3>
                 <p class="card-lead">Fedora, Arch, and anything not Debian-based.</p>
-                <CTAButton href={assets.linuxAppImage} external>Download .AppImage</CTAButton>
-                <p class="filename mono">PlatypusGit_amd64.AppImage</p>
-                <CodeBlock code={'chmod +x PlatypusGit_amd64.AppImage\n./PlatypusGit_amd64.AppImage'} lang="bash" />
+                {linuxArches.map((a) => (
+                  <div class="arch">
+                    <p class="arch-head mono">{a.label}</p>
+                    <CTAButton href={a.appImage} external>Download .AppImage</CTAButton>
+                    <p class="filename mono">PlatypusGit_{a.key}.AppImage</p>
+                    <CodeBlock
+                      code={`chmod +x PlatypusGit_${a.key}.AppImage\n./PlatypusGit_${a.key}.AppImage`}
+                      lang="bash"
+                    />
+                  </div>
+                ))}
                 <p class="card-note">
                   Download, make it executable, run — nothing is installed.
                   <strong>This is the only Linux build that updates itself:</strong> an AppImage can
                   replace its own file, so platypusgit offers the update in-app, which is exactly what the
                   <code>.deb</code> cannot do. Because nothing is installed and no hook executes, the
                   <a href="#cli"><code>pgit</code></a> command is a separate one-liner.
+                  Not sure which one you want? <code>uname -m</code> prints
+                  <code>x86_64</code> or <code>aarch64</code>.
                 </p>
               </article>
 
               <article class="card">
                 <h3>Debian package, by hand</h3>
                 <p class="card-lead">For an air-gapped box, or a one-off.</p>
-                <CTAButton href={assets.linuxDeb} external>Download .deb</CTAButton>
-                <p class="filename mono">PlatypusGit_amd64.deb</p>
-                <CodeBlock code={'sudo apt install ./PlatypusGit_amd64.deb'} lang="bash" />
+                {linuxArches.map((a) => (
+                  <div class="arch">
+                    <p class="arch-head mono">{a.label}</p>
+                    <CTAButton href={a.deb} external>Download .deb</CTAButton>
+                    <p class="filename mono">PlatypusGit_{a.key}.deb</p>
+                    <CodeBlock code={`sudo apt install ./PlatypusGit_${a.key}.deb`} lang="bash" />
+                  </div>
+                ))}
                 <p class="card-note">
                   The same package the repository serves, installed straight from the file. Updates are
                   then manual — repeat the download for every release, because apt has no repository to
                   upgrade from. platypusgit notices, and offers you the one-liner above rather than
-                  pretending <code>apt upgrade</code> will work.
+                  pretending <code>apt upgrade</code> will work. <code>dpkg --print-architecture</code>
+                  names the one your machine takes.
                 </p>
               </article>
             </>
@@ -772,6 +793,14 @@ const platforms = [
   .card-note a, .matrix-note a { color: var(--accent); }
   .filename { font-size: 11.5px; color: var(--fg-3); margin: var(--s-4) 0 0; }
   .card :global(.cta) { margin-top: var(--s-2); }
+
+  /* One block per Linux architecture (#266). A rule between them rather than a
+     heading level: the card already has an h3, and the two blocks are siblings
+     of equal weight, not sections under it. */
+  .arch + .arch { margin-top: var(--s-6); padding-top: var(--s-6);
+    border-top: 1px solid var(--border-0); }
+  .arch-head { font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--fg-2); margin: 0 0 var(--s-4); }
   /* A download button and a command are a sequence — get the file, then run the
      thing that consumes it — so they need air between them in either order. */
   .card :global(.codeblock) + :global(.cta) { margin-top: var(--s-5); }

@@ -61,8 +61,7 @@ sudo apt update && sudo apt upgrade platypusgit                      # update
 ```
 
 The script adds a signed APT repository at `apt.platypusgit.com` and installs
-`platypusgit` from it — amd64 only so far
-([#266](https://github.com/jonassaa/platypusgit/issues/266)), and it says why
+`platypusgit` from it — amd64 and arm64. On any other architecture it says why
 and stops rather than quietly substituting a package format you did not ask
 for. It is POSIX `sh`, never reads stdin, takes
 `--dry-run`, and is a build-time copy of
@@ -78,8 +77,10 @@ one-liner above, which upgrades and moves the install onto the repository in the
 same step. On any other distribution take the AppImage: it installs no `pgit`,
 but it does update itself in place.
 
-[`.deb`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_amd64.deb) ·
-[`.AppImage`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_amd64.AppImage) ·
+[`.deb` amd64](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_amd64.deb) ·
+[`.deb` arm64](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_arm64.deb) ·
+[`.AppImage` amd64](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_amd64.AppImage) ·
+[`.AppImage` arm64](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_arm64.AppImage) ·
 [`.dmg`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_universal.dmg) ·
 [`.msi`](https://github.com/jonassaa/platypusgit/releases/latest/download/PlatypusGit_x64.msi) ·
 [all releases](https://github.com/jonassaa/platypusgit/releases)
@@ -216,7 +217,7 @@ is implemented, not a roadmap). Known gaps, stated plainly:
 - macOS builds are ad-hoc signed and not notarized; the Windows `.msi` is not code-signed.
 - No `winget` package yet — that one really does wait on the code signing above, which is what separates it from Scoop ([#187](https://github.com/jonassaa/platypusgit/issues/187)). Windows installs from the `.msi` or in one line from Scoop; the `.msi` self-updates from then on, Scoop owns updates on its own installs, and so does the Linux AppImage.
 - No in-app update on macOS: Homebrew owns upgrades there, and a `.dmg` drag-install is told a new version exists rather than fetching it.
-- The APT repository is amd64 only ([#266](https://github.com/jonassaa/platypusgit/issues/266)), and there is no `.rpm` or AUR package, so every other Linux takes the AppImage. Scoop is x64 only for the same reason.
+- The APT repository serves amd64 and arm64 only, and there is no `.rpm` or AUR package, so every other Linux takes the AppImage. Scoop is x64 only.
 - Changed images are reported as binary rather than previewed side by side ([#224](https://github.com/jonassaa/platypusgit/issues/224)).
 - Standalone GUI only: no icon overlays or context menus inside Finder and Explorer themselves, which is a different thing from the app's own reveal-in-file-manager action. Mercurial is out of scope too.
 

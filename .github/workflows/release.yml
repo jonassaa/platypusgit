@@ -6,7 +6,8 @@ name: release
 # and attaches them to that same release:
 #   - macOS  universal .dmg   (PlatypusGit_universal.dmg)
 #   - Windows x64 .msi         (PlatypusGit_x64.msi)
-#   - Linux  amd64 .deb + .AppImage (PlatypusGit_amd64.deb / .AppImage)
+#   - Linux  amd64 + arm64 .deb and .AppImage
+#     (PlatypusGit_amd64.deb / _arm64.deb / _amd64.AppImage / _arm64.AppImage)
 #
 # Nothing releases on a plain push to main — you control when "latest" moves by
 # choosing when to publish. Mark a release as a "prerelease" to build + attach
@@ -651,12 +652,38 @@ jobs:
           files: PlatypusGit.msixbundle
           fail_on_unmatched_files: true
 
+  # Both Linux architectures (#266). arm64 is a matrix entry rather than a
+  # cross-compile: `ubuntu-*-arm` runners are free for public repositories, and a
+  # native build sidesteps the whole cross-linking story for webkit2gtk.
+  #
+  # BOTH LEGS PIN 22.04, and they have to move together. The runner image's glibc
+  # is the FLOOR of what the .deb and the AppImage will load on — 22.04 is 2.35,
+  # 24.04 is 2.39 — so building arm64 on a newer image than amd64 would ship an
+  # arm64 package that installs cleanly on Debian 12 and then dies in the loader.
+  # The apt gate catches it (it runs `pgit --help` in debian:bookworm, glibc
+  # 2.36), which is exactly why that assertion is worth having, but the cheaper
+  # fix is not to create the mismatch.
+  #
+  # NO JOB OUTPUTS. A matrix job's `outputs` are merged across legs and the last
+  # leg to finish wins, so `needs.linux.outputs.deb_sig` would be a coin flip
+  # between two architectures' signatures — and latest.json would hand half the
+  # world a payload whose signature does not verify. The signatures travel as
+  # artifacts instead, one per architecture, the same way `msix-build` hands its
+  # packages to `msix`.
   linux:
     needs: version
-    runs-on: ubuntu-22.04
-    outputs:
-      appimage_sig: ${{ steps.sig.outputs.appimage_sig }}
-      deb_sig: ${{ steps.sig.outputs.deb_sig }}
+    strategy:
+      # NOT fail-fast, for the reason spelled out on msix-build: when one
+      # architecture breaks, whether the other broke too is the first thing you
+      # need to know.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -687,10 +714,14 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # `key` keeps the two legs in SEPARATE cache entries — see msix-build for
+      # what happens without it (both legs compute the same key, race to save
+      # under it, and each restores the other's target directory).
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.arch }}
 
       - name: Inject version ${{ needs.version.outputs.version }}
         run: |
@@ -710,13 +741,30 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
+      # The stable names carry the ARCHITECTURE, not the runner's idea of it:
+      # tauri names the .deb `platypusgit_<version>_<arch>.deb` and the AppImage
+      # `platypusgit_<version>_aarch64.AppImage`, two different spellings of the
+      # same machine. `matrix.arch` is the one the download page, latest.json and
+      # the pool all agree on.
       - name: Rename bundles to stable names
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           deb_dir="src-tauri/target/release/bundle/deb"
           appimage_dir="src-tauri/target/release/bundle/appimage"
-          cp "$(ls "$deb_dir"/*.deb | head -n1)" "$deb_dir/PlatypusGit_amd64.deb"
-          cp "$(ls "$appimage_dir"/*.AppImage | head -n1)" "$appimage_dir/PlatypusGit_amd64.AppImage"
+          cp "$(ls "$deb_dir"/*.deb | head -n1)" "$deb_dir/PlatypusGit_${ARCH}.deb"
+          cp "$(ls "$appimage_dir"/*.AppImage | head -n1)" "$appimage_dir/PlatypusGit_${ARCH}.AppImage"
+          # The bundler builds for the host and nothing asserts that anywhere
+          # else, so a matrix entry pointing at the wrong runner would attach an
+          # amd64 payload under an arm64 name and the first symptom would be a
+          # user's "cannot execute binary file". dpkg says what it actually is.
+          got="$(dpkg-deb -f "$deb_dir/PlatypusGit_${ARCH}.deb" Architecture)"
+          if [ "$got" != "$ARCH" ]; then
+            echo "Built a '$got' .deb on the '$ARCH' matrix leg — check runs-on" >&2
+            exit 1
+          fi
+          echo "deb architecture: $got"
 
       # Attach BEFORE reading the signature — see the windows job for why.
       - name: Attach bundles to release
@@ -724,8 +772,8 @@ jobs:
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           files: |
-            src-tauri/target/release/bundle/deb/PlatypusGit_amd64.deb
-            src-tauri/target/release/bundle/appimage/PlatypusGit_amd64.AppImage
+            src-tauri/target/release/bundle/deb/PlatypusGit_${{ matrix.arch }}.deb
+            src-tauri/target/release/bundle/appimage/PlatypusGit_${{ matrix.arch }}.AppImage
           fail_on_unmatched_files: true
 
       # BOTH Linux bundles are updater artifacts, so both get a signature.
@@ -736,10 +784,15 @@ jobs:
       #
       # minisign signs CONTENT, not filenames, so the stable-name `cp` above
       # leaves both signatures valid for the renamed copies we attach.
+      #
+      # Written to FILES rather than to $GITHUB_OUTPUT — see the job comment: a
+      # matrix job's outputs collapse to one leg's values, and the wrong one is
+      # not a build failure, it is an unverifiable update on every machine of the
+      # other architecture.
       - name: Read updater signatures
-        id: sig
         run: |
           set -euo pipefail
+          mkdir -p sigs
           # Called directly (never in a $(...) subshell) so `exit 1` aborts the
           # job rather than just the substitution.
           emit() {
@@ -754,10 +807,26 @@ jobs:
               echo "Updater signature file $file is empty" >&2
               exit 1
             fi
-            echo "$name=$sig" >> "$GITHUB_OUTPUT"
+            printf '%s' "$sig" > "sigs/$name"
           }
-          emit appimage_sig src-tauri/target/release/bundle/appimage '*.AppImage.sig'
-          emit deb_sig      src-tauri/target/release/bundle/deb      '*.deb.sig'
+          emit appimage src-tauri/target/release/bundle/appimage '*.AppImage.sig'
+          emit deb      src-tauri/target/release/bundle/deb      '*.deb.sig'
+          ls -la sigs
+
+      # The only thing that crosses to `updater-manifest`. Named by architecture
+      # because that is what the download pattern globs on.
+      #
+      # `retention-days` short of the 90-day default (throwaway intermediates)
+      # but not 1: re-running a failed `updater-manifest` pulls artifacts from
+      # the ORIGINAL run, so a week buys a Monday re-run of a Friday release
+      # without rebuilding both architectures.
+      - name: Upload the ${{ matrix.arch }} updater signatures
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-sigs-${{ matrix.arch }}
+          path: sigs/
+          if-no-files-found: error
+          retention-days: 7
 
   # Pin the Homebrew cask to this release: rewrite version + sha256 in
   # jonassaa/homebrew-platypusgit and commit straight to that tap's main.
@@ -1041,11 +1110,36 @@ jobs:
   # `update::capability` has always gated Linux self-update behind the APPIMAGE
   # env var (a .deb install gets `notify` and never invokes the plugin). Same
   # reasoning for `windows-x86_64` -> msi, the only Windows bundle we ship.
+  #
+  # ARCH IS THE RUST SPELLING, not Debian's. The plugin builds `{os}-{arch}` from
+  # `std::env::consts::ARCH`, so the arm64 keys are `linux-aarch64…` while the
+  # same machine's package is `PlatypusGit_arm64.deb`. Two names for one
+  # architecture, and mixing them up publishes a manifest that no client ever
+  # matches — which looks exactly like "no update available" rather than an
+  # error.
   updater-manifest:
     needs: [version, windows, linux]
     runs-on: ubuntu-latest
     if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
     steps:
+      # `linux` is a matrix job, so its signatures cannot travel as job outputs —
+      # see the comment on that job. One step per architecture, each naming its
+      # artifact and its destination, the way `msix` collects its two packages:
+      # a `pattern:` download would work, but the directory it lands things in is
+      # then a property of how many artifacts matched, and a missing one would be
+      # discovered as an absent file rather than as a failed download.
+      - name: Download the amd64 updater signatures
+        uses: actions/download-artifact@v8
+        with:
+          name: linux-sigs-amd64
+          path: sigs/amd64
+
+      - name: Download the arm64 updater signatures
+        uses: actions/download-artifact@v8
+        with:
+          name: linux-sigs-arm64
+          path: sigs/arm64
+
       - name: Build latest.json
         # Values reach the shell as env vars, never as `${{ }}` interpolated
         # into the script body — RELEASE_BODY is user-authored text.
@@ -1053,21 +1147,31 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           TAG: ${{ needs.version.outputs.tag }}
           MSI_SIG: ${{ needs.windows.outputs.msi_sig }}
-          APPIMAGE_SIG: ${{ needs.linux.outputs.appimage_sig }}
-          DEB_SIG: ${{ needs.linux.outputs.deb_sig }}
           RELEASE_BODY: ${{ github.event.release.body }}
           RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
         run: |
           set -euo pipefail
           # An empty signature publishes `"signature": ""`, which every client
           # rejects at install time — fail loudly instead (same guard shape as
-          # bump-cask's sha256 check).
-          for name in MSI_SIG APPIMAGE_SIG DEB_SIG; do
-            if [ -z "${!name}" ]; then
-              echo "Empty updater signature ($name) — refusing to publish latest.json" >&2
-              exit 1
-            fi
+          # bump-cask's sha256 check). Checked directly, never inside a `$(...)`,
+          # so `exit 1` ends the job rather than the substitution.
+          if [ -z "${MSI_SIG}" ]; then
+            echo "Empty updater signature (MSI_SIG) — refusing to publish latest.json" >&2
+            exit 1
+          fi
+          for arch in amd64 arm64; do
+            for kind in appimage deb; do
+              f="sigs/${arch}/${kind}"
+              if [ ! -s "$f" ]; then
+                echo "Missing or empty $f — did the ${arch} linux leg finish?" >&2
+                exit 1
+              fi
+            done
           done
+          APPIMAGE_SIG_AMD64="$(cat sigs/amd64/appimage)"
+          DEB_SIG_AMD64="$(cat sigs/amd64/deb)"
+          APPIMAGE_SIG_ARM64="$(cat sigs/arm64/appimage)"
+          DEB_SIG_ARM64="$(cat sigs/arm64/deb)"
           base="https://github.com/jonassaa/platypusgit/releases/download/${TAG}"
           # Real release notes; fall back to a link for workflow_dispatch runs
           # (no release payload) or an empty body.
@@ -1087,20 +1191,27 @@ jobs:
             --arg pub_date "$pub_date" \
             --arg msi_sig "$MSI_SIG" \
             --arg msi_url "${base}/PlatypusGit_x64.msi" \
-            --arg appimage_sig "$APPIMAGE_SIG" \
+            --arg appimage_sig "$APPIMAGE_SIG_AMD64" \
             --arg appimage_url "${base}/PlatypusGit_amd64.AppImage" \
-            --arg deb_sig "$DEB_SIG" \
+            --arg deb_sig "$DEB_SIG_AMD64" \
             --arg deb_url "${base}/PlatypusGit_amd64.deb" \
+            --arg appimage_sig_arm "$APPIMAGE_SIG_ARM64" \
+            --arg appimage_url_arm "${base}/PlatypusGit_arm64.AppImage" \
+            --arg deb_sig_arm "$DEB_SIG_ARM64" \
+            --arg deb_url_arm "${base}/PlatypusGit_arm64.deb" \
             '{
               version: $version,
               notes: $notes,
               pub_date: $pub_date,
               platforms: {
-                "windows-x86_64":        { signature: $msi_sig,      url: $msi_url },
-                "windows-x86_64-msi":    { signature: $msi_sig,      url: $msi_url },
-                "linux-x86_64":          { signature: $appimage_sig, url: $appimage_url },
-                "linux-x86_64-appimage": { signature: $appimage_sig, url: $appimage_url },
-                "linux-x86_64-deb":      { signature: $deb_sig,      url: $deb_url }
+                "windows-x86_64":         { signature: $msi_sig,          url: $msi_url },
+                "windows-x86_64-msi":     { signature: $msi_sig,          url: $msi_url },
+                "linux-x86_64":           { signature: $appimage_sig,     url: $appimage_url },
+                "linux-x86_64-appimage":  { signature: $appimage_sig,     url: $appimage_url },
+                "linux-x86_64-deb":       { signature: $deb_sig,          url: $deb_url },
+                "linux-aarch64":          { signature: $appimage_sig_arm, url: $appimage_url_arm },
+                "linux-aarch64-appimage": { signature: $appimage_sig_arm, url: $appimage_url_arm },
+                "linux-aarch64-deb":      { signature: $deb_sig_arm,      url: $deb_url_arm }
               }
             }' > latest.json
           echo "--- latest.json ---"
@@ -1171,20 +1282,57 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           path: apt
 
-      # The same asset users download, rather than a job artifact — so what
+      # Emulating the arm64 client for the pre-push gate below. It is the only
+      # way to run that container on this runner, and the gate has to share a job
+      # with the push it protects — a separate arm64 job could only check the
+      # index after it was already public.
+      #
+      # `apt-verify-live` needs none of this: it runs after the push, so it can
+      # be a matrix over native runners.
+      - name: Enable arm64 containers
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # The same assets users download, rather than job artifacts — so what
       # lands in the pool is provably the published bundle, and a
       # workflow_dispatch against an existing tag works identically.
-      - name: Download the release .deb
+      #
+      # `--pattern` twice rather than a glob: `PlatypusGit_*.deb` would also
+      # match an asset added later, and pooling a .deb nobody named here is how a
+      # repository grows an architecture by accident.
+      #
+      # Every architecture is REQUIRED, and the check comes first so the reason
+      # is a sentence rather than `gh`'s "no assets match the file pattern". A
+      # workflow_dispatch against a tag cut before #266 lands here, because
+      # workflow_dispatch runs main's copy of this file against an older tag's
+      # assets — and publishing what that tag does have would put an
+      # `Architectures: amd64` index in front of arm64 clients that had one.
+      - name: Download the release .deb files
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
+          assets="$(gh release view "$TAG" --repo jonassaa/platypusgit \
+            --json assets --jq '.assets[].name')"
+          missing=
+          for arch in amd64 arm64; do
+            printf '%s\n' "$assets" | grep -qx "PlatypusGit_${arch}.deb" \
+              || missing="$missing PlatypusGit_${arch}.deb"
+          done
+          if [ -n "$missing" ]; then
+            echo "Release $TAG is missing:$missing" >&2
+            echo "Every architecture the repository advertises has to be publishable together." >&2
+            echo "If this is a tag from before the arm64 build (#266), it cannot be published to apt by this workflow." >&2
+            exit 1
+          fi
           gh release download "$TAG" \
             --repo jonassaa/platypusgit \
             --pattern PlatypusGit_amd64.deb \
+            --pattern PlatypusGit_arm64.deb \
             --clobber
-          ls -la PlatypusGit_amd64.deb
+          ls -la PlatypusGit_amd64.deb PlatypusGit_arm64.deb
 
       - name: Build + sign the index
         env:
@@ -1203,27 +1351,39 @@ jobs:
           scripts/apt-repo-publish.sh \
             --repo apt \
             --deb PlatypusGit_amd64.deb \
+            --deb PlatypusGit_arm64.deb \
             --version "$VERSION"
 
-      # THE GATE. A real `apt-get install` from this exact index, in a clean
-      # debian:bookworm, running the same installer the download page tells
-      # people to pipe into a shell.
+      # THE GATE, ONCE PER ARCHITECTURE. A real `apt-get install` from this exact
+      # index, in a clean debian:bookworm of that architecture, running the same
+      # installer the download page tells people to pipe into a shell.
+      #
+      # Both legs are required. One run proves one architecture — the client
+      # writes `Architectures:` from its own `dpkg --print-architecture`, so an
+      # amd64-only gate says nothing at all about whether `binary-arm64` was
+      # published, signed, or built for the machine it claims.
       #
       # --expect-git additionally asserts Depends: git resolved and that
       # Provides:/Section: landed in the control data. A workflow_dispatch
       # against a tag built BEFORE those keys existed will fail here, by design:
       # such a package installs without git and breaks at runtime, so it should
-      # not reach the repository.
-      - name: Gate — install it in a container before publishing
+      # not reach the repository. A dispatch against a tag from before arm64
+      # existed fails one step earlier, at the download, for the same reason.
+      - name: Gate — install both architectures in containers before publishing
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          scripts/apt-repo-smoke.sh \
-            --repo apt \
-            --version "$VERSION" \
-            --installer scripts/install-platypusgit.sh \
-            --expect-git
+          for arch in amd64 arm64; do
+            echo "::group::apt gate — $arch"
+            scripts/apt-repo-smoke.sh \
+              --repo apt \
+              --version "$VERSION" \
+              --arch "$arch" \
+              --installer scripts/install-platypusgit.sh \
+              --expect-git
+            echo "::endgroup::"
+          done
 
       - name: Commit & push to the apt repository
         env:
@@ -1470,15 +1630,28 @@ jobs:
   # readiness loop doubles as the retry — hence the long --wait rather than a
   # sleep. A failure here means users cannot install even though the index is
   # correct, which is worth failing the run for.
+  # One leg per architecture, each on a runner that IS that architecture — no
+  # qemu, unlike the pre-push gate, because this runs after the push and is free
+  # to be two jobs. Not fail-fast: "did arm64 publish and amd64 not" is the
+  # question this job exists to answer, and a cancelled sibling withholds half
+  # the answer.
   apt-verify-live:
     needs: [version, apt-publish]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
-      - name: Install from apt.platypusgit.com
+      - name: Install ${{ matrix.arch }} from apt.platypusgit.com
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
@@ -1486,6 +1659,7 @@ jobs:
           scripts/apt-repo-smoke.sh \
             --url https://apt.platypusgit.com \
             --version "$VERSION" \
+            --arch ${{ matrix.arch }} \
             --installer scripts/install-platypusgit.sh \
             --expect-git \
             --wait 900

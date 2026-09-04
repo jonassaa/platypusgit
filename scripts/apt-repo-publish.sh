@@ -1,12 +1,13 @@
 #!/bin/sh
 # Build and sign the platypusgit APT repository (#187).
 #
-# Adds one .deb to the pool, prunes the pool to the newest N, regenerates the
-# whole index from whatever the pool now holds, and signs it. Called by
-# release.yml's `apt-publish` job against a checkout of
+# Adds one .deb PER ARCHITECTURE to the pool, prunes each architecture to the
+# newest N, regenerates the whole index from whatever the pool now holds, and
+# signs it. Called by release.yml's `apt-publish` job against a checkout of
 # jonassaa/apt-platypusgit, and by a developer against a scratch directory.
 #
-#   scripts/apt-repo-publish.sh --repo <dir> --deb <file> --version 0.0.18
+#   scripts/apt-repo-publish.sh --repo <dir> --version 0.0.18 \
+#       --deb PlatypusGit_amd64.deb --deb PlatypusGit_arm64.deb
 #
 # STATELESS BY DESIGN. There is no database: the pool directory IS the state and
 # git IS the history, so the index is a pure function of the pool. That is what
@@ -14,6 +15,15 @@
 # and this script then reproduces the same index and says so instead of
 # committing a no-op. `aptly` and `reprepro` both keep a second source of truth
 # that can desync from the pool; this has none to desync.
+#
+# THE ARCHITECTURE SET IS DERIVED, NEVER CONFIGURED (#266). Every `binary-<arch>`
+# directory, and the `Architectures:` line in `Release`, comes from the pool's
+# own filenames — so publishing an arm64 `.deb` creates its directory, and an
+# architecture that leaves the pool entirely takes its directory with it. A
+# constant would be a second source of truth for exactly the thing "stateless"
+# exists to avoid, and the failure mode is the ugly one: an `Architectures:`
+# line promising an index that is not there makes `apt update` warn on every
+# client that asked for it.
 #
 # Runs on Linux (needs apt-ftparchive from apt-utils, and gnupg). macOS has
 # neither, so `--docker` re-execs the whole thing inside debian:bookworm with
@@ -35,43 +45,56 @@
 # Spec: docs/superpowers/specs/2026-08-26-apt-repository-spec.md
 set -eu
 
-# Repository shape. These four strings are the layout; changing any of them is a
-# breaking change for every client that already has a .sources file.
+# Repository shape. These three strings are the layout; changing any of them is a
+# breaking change for every client that already has a .sources file. The
+# architecture is deliberately NOT one of them — see the header.
 SUITE=stable
 COMPONENT=main
-ARCH=amd64
 PKG=platypusgit
 
 ORIGIN=platypusgit
 LABEL=platypusgit
 DESCRIPTION="platypusgit APT repository"
 
-# How many .deb files stay in the pool. Every GitHub Pages deploy re-uploads the
-# whole tree, so the pool's size is paid on every publish, not once; and the
-# published-site cap is 1 GB against ~11.4 MB per package. Ten is ~114 MB, and
-# GitHub Releases still holds every historical .deb for anyone who needs one.
+# How many .deb files stay in the pool PER ARCHITECTURE. Every GitHub Pages
+# deploy re-uploads the whole tree, so the pool's size is paid on every publish,
+# not once; and the published-site cap is 1 GB against ~11.4 MB per package. Ten
+# per architecture is ~114 MB each — ~228 MB for the two we build — and GitHub
+# Releases still holds every historical .deb for anyone who needs one.
+#
+# Per-architecture rather than overall so that KEEP still means "ten releases".
+# Counted across the whole pool, adding arm64 would have silently halved the
+# history the repository serves.
 KEEP=10
 
 REPO_DIR=
-DEB=
+# Newline-separated, because POSIX sh has no arrays and the parse loop below is
+# already using the positional parameters. Paths may contain spaces; a path
+# containing a NEWLINE is the one thing this cannot carry, and nothing produces
+# one.
+DEBS=
 VERSION=
 IN_DOCKER=no
 DOCKER_IMAGE=debian:bookworm
 
 usage() {
     cat <<'USAGE'
-Usage: apt-repo-publish.sh --repo DIR --deb FILE --version X.Y.Z [options]
+Usage: apt-repo-publish.sh --repo DIR --deb FILE [--deb FILE ...] --version X.Y.Z [options]
 
-Adds one .deb to an APT repository tree, prunes, regenerates the index and
-signs it. Idempotent: a second run with the same pool changes nothing.
+Adds one .deb per architecture to an APT repository tree, prunes, regenerates
+the index and signs it. Idempotent: a second run with the same pool changes
+nothing.
 
 Required:
   --repo DIR       the repository tree (a checkout of apt-platypusgit)
-  --deb FILE       the .deb to publish
-  --version X.Y.Z  the version that .deb carries
+  --deb FILE       a .deb to publish; repeat once per architecture. The
+                   architecture is read out of the package, never guessed from
+                   the filename
+  --version X.Y.Z  the version those .deb files carry
 
 Options:
-  --keep N         .deb files to retain in the pool (default 10)
+  --keep N         .deb files to retain in the pool, per architecture
+                   (default 10)
   --docker         re-exec inside debian:bookworm; for macOS, where neither
                    apt-ftparchive nor gpg exists
   --image NAME     image for --docker (default debian:bookworm)
@@ -88,10 +111,17 @@ say() { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*" >&2; }
 die() { warn "apt-repo-publish: $*"; exit 1; }
 
+# The separator DEBS is built with, and what `IFS` is set to when iterating it.
+# Every such loop restores the normal IFS for its BODY and puts the newline-only
+# one back at the bottom, because a body running with IFS=newline splits command
+# substitutions wrongly — which is a silent misparse, not an error.
+NL='
+'
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo) [ $# -ge 2 ] || die "--repo needs a value"; REPO_DIR="$2"; shift 2 ;;
-        --deb) [ $# -ge 2 ] || die "--deb needs a value"; DEB="$2"; shift 2 ;;
+        --deb) [ $# -ge 2 ] || die "--deb needs a value"; DEBS="${DEBS}${DEBS:+$NL}$2"; shift 2 ;;
         --version) [ $# -ge 2 ] || die "--version needs a value"; VERSION="$2"; shift 2 ;;
         --keep) [ $# -ge 2 ] || die "--keep needs a value"; KEEP="$2"; shift 2 ;;
         --docker) IN_DOCKER=yes; shift ;;
@@ -103,10 +133,18 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$REPO_DIR" ] || die "--repo is required"
-[ -n "$DEB" ] || die "--deb is required"
+[ -n "$DEBS" ] || die "--deb is required (repeat it once per architecture)"
 [ -n "$VERSION" ] || die "--version is required"
 [ -d "$REPO_DIR" ] || die "not a directory: $REPO_DIR"
-[ -f "$DEB" ] || die "not a file: $DEB"
+
+OLDIFS=$IFS
+IFS=$NL
+for deb in $DEBS; do
+    IFS=$OLDIFS
+    [ -f "$deb" ] || die "not a file: $deb"
+    IFS=$NL
+done
+IFS=$OLDIFS
 
 case "$KEEP" in
     ''|*[!0-9]*) die "--keep must be a positive integer, got '$KEEP'" ;;
@@ -118,41 +156,74 @@ esac
 #
 # The private key travels as an environment variable, so it never appears in
 # `docker inspect`'s command line. The repo is mounted read-write (it is the
-# output); the .deb and this script read-only.
+# output); the .deb files and this script read-only.
+#
+# No --platform: an amd64 `.deb` is just a file to dpkg-deb and apt-ftparchive,
+# so an arm64 container indexes it correctly. Only the SMOKE client has to match
+# the package's architecture, and that is a different script.
 # ---------------------------------------------------------------------------
 if [ "$IN_DOCKER" = yes ]; then
     command -v docker > /dev/null 2>&1 || die "--docker needs docker on PATH"
     self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
     repo_abs="$(cd "$REPO_DIR" && pwd)"
-    deb_abs="$(cd "$(dirname "$DEB")" && pwd)/$(basename "$DEB")"
-    say "apt-repo-publish: re-execing in $DOCKER_IMAGE"
-    exec docker run --rm \
-        -v "$repo_abs:/repo" \
-        -v "$deb_abs:/pkg.deb:ro" \
+
+    # `$@` becomes the docker argument list, one `-v` per .deb. Each host path
+    # is quoted into its own `-v`, so a directory with a space in it survives;
+    # the container-internal names are /pkg-1.deb, /pkg-2.deb, … precisely so
+    # that the inner shell has nothing awkward to re-quote.
+    set -- --rm -v "$repo_abs:/repo"
+    inner=
+    n=0
+    OLDIFS=$IFS
+    IFS=$NL
+    for deb in $DEBS; do
+        IFS=$OLDIFS
+        n=$((n + 1))
+        deb_abs="$(cd "$(dirname "$deb")" && pwd)/$(basename "$deb")"
+        set -- "$@" -v "$deb_abs:/pkg-$n.deb:ro"
+        inner="$inner /pkg-$n.deb"
+        IFS=$NL
+    done
+    IFS=$OLDIFS
+
+    set -- "$@" \
         -v "$self:/apt-repo-publish.sh:ro" \
         -e APT_GPG_PRIVATE_KEY \
         -e APT_GPG_PASSPHRASE \
-        -e APT_GPG_KEY_ID \
+        -e APT_GPG_KEY_ID
+
+    say "apt-repo-publish: re-execing in $DOCKER_IMAGE with $n .deb file(s)"
+    # shellcheck disable=SC2086 # $inner is a list of container-internal paths
+    # this script chose itself; word splitting is exactly what is wanted.
+    exec docker run "$@" \
         "$DOCKER_IMAGE" \
         sh -c 'set -eu
+               version="$1"; keep="$2"; shift 2
                export DEBIAN_FRONTEND=noninteractive
                apt-get update -qq
                apt-get install -y -qq --no-install-recommends apt-utils gnupg > /dev/null
-               exec sh /apt-repo-publish.sh --repo /repo --deb /pkg.deb \
-                    --version "$1" --keep "$2"' \
-        sh "$VERSION" "$KEEP"
+               args=""
+               for d in "$@"; do args="$args --deb $d"; done
+               exec sh /apt-repo-publish.sh --repo /repo \
+                   --version "$version" --keep "$keep" $args' \
+        sh "$VERSION" "$KEEP" $inner
 fi
 
 command -v apt-ftparchive > /dev/null 2>&1 \
     || die "apt-ftparchive not found (apt-utils). On macOS, pass --docker."
 command -v gpg > /dev/null 2>&1 \
     || die "gpg not found. On macOS, pass --docker."
+# Part of `dpkg`, so it is present wherever the two above are — demanded by name
+# so that if it ever is not, the failure says which tool rather than surfacing as
+# a package with an empty architecture.
+command -v dpkg-deb > /dev/null 2>&1 \
+    || die "dpkg-deb not found (dpkg). On macOS, pass --docker."
 
 POOL_DIR="$REPO_DIR/pool/$COMPONENT/$(printf '%s' "$PKG" | cut -c1)/$PKG"
 DIST_DIR="$REPO_DIR/dists/$SUITE"
-BIN_DIR="$DIST_DIR/$COMPONENT/binary-$ARCH"
+COMPONENT_DIR="$DIST_DIR/$COMPONENT"
 
-mkdir -p "$POOL_DIR" "$BIN_DIR"
+mkdir -p "$POOL_DIR" "$COMPONENT_DIR"
 
 # ---------------------------------------------------------------------------
 # Key material.
@@ -163,8 +234,10 @@ mkdir -p "$POOL_DIR" "$BIN_DIR"
 # GNUPGHOME, hence the 0700.
 # ---------------------------------------------------------------------------
 TMP_GNUPG=
+TMP_WORK=
 cleanup() {
     [ -n "$TMP_GNUPG" ] && rm -rf "$TMP_GNUPG"
+    [ -n "$TMP_WORK" ] && rm -rf "$TMP_WORK"
     return 0
 }
 trap cleanup EXIT INT TERM
@@ -195,59 +268,168 @@ gpg --batch --yes --export "$KEY_ID" > "$REPO_DIR/key.gpg"
 gpg --batch --yes --armor --export "$KEY_ID" > "$REPO_DIR/key.asc"
 
 # ---------------------------------------------------------------------------
-# Pool: add, then prune.
+# Pool: add, then prune — one .deb and one prune window per architecture.
+#
+# The architecture is READ OUT OF THE PACKAGE, never parsed from the filename.
+# The release assets are named `PlatypusGit_<arch>.deb` by a `cp` in
+# release.yml, which makes the filename a convention a human can get wrong;
+# `dpkg-deb -f` is the package itself saying what it is, and a mislabelled pool
+# entry is invisible until an arm64 machine installs an amd64 binary.
+#
+# TWO PASSES: every .deb is read and checked before any of them is copied, so a
+# bad argument list leaves the pool exactly as it found it. One pass would pool
+# the first package and then refuse the second, which is the worst of both — a
+# failed run that still changed the tree it is about to be re-run against.
 # ---------------------------------------------------------------------------
-target="$POOL_DIR/${PKG}_${VERSION}_${ARCH}.deb"
-cp "$DEB" "$target"
-say "apt-repo-publish: pooled $(basename "$target")"
+# Split in two so that `die` is never reached from inside a `$(...)`, where its
+# `exit 1` would end the subshell and leave the caller carrying on with an empty
+# architecture. Same trap release.yml's signature-reading `emit()` is written
+# around.
+deb_arch() {
+    dpkg-deb -f "$1" Architecture 2> /dev/null | tr -d '[:space:]'
+}
+check_arch() {
+    case "$1" in
+        '') die "no Architecture field in $2 — is it a .deb?" ;;
+        *[!a-z0-9-]*) die "implausible architecture '$1' in $2" ;;
+    esac
+}
+
+seen_arches=
+OLDIFS=$IFS
+IFS=$NL
+for deb in $DEBS; do
+    IFS=$OLDIFS
+    arch="$(deb_arch "$deb")"
+    check_arch "$arch" "$deb"
+    # Two packages of the same architecture would write the same pool filename,
+    # so the second would replace the first and the run would report success
+    # having published one architecture fewer than it was handed.
+    case " $seen_arches " in
+        *" $arch "*) die "two --deb files are both $arch; pass one per architecture" ;;
+    esac
+    seen_arches="$seen_arches${seen_arches:+ }$arch"
+    IFS=$NL
+done
+
+for deb in $DEBS; do
+    IFS=$OLDIFS
+    arch="$(deb_arch "$deb")"
+    check_arch "$arch" "$deb"
+    target="$POOL_DIR/${PKG}_${VERSION}_${arch}.deb"
+    cp "$deb" "$target"
+    say "apt-repo-publish: pooled $(basename "$target")"
+    IFS=$NL
+done
+IFS=$OLDIFS
+
+# Every filename in the pool was written by the loop above as
+# <pkg>_<version>_<arch>.deb, so the last underscore-separated field IS the
+# architecture — no second source of truth to drift.
+# shellcheck disable=SC2012 # `ls` is safe here: none of those names contains
+# whitespace, and `find` gives no ordering, which the prune loop needs.
+pool_arches() {
+    ls "$POOL_DIR"/*.deb 2> /dev/null \
+        | sed -n 's|.*_\([^_/]*\)\.deb$|\1|p' \
+        | sort -u
+}
 
 # `sort -V` orders by the version embedded in the filename. It is not dpkg's
 # comparison algorithm and the two can disagree on exotic versions; release tags
 # are plain X.Y.Z (release.yml strips a leading v), where they agree.
 # `head -n -N` is GNU coreutils, which is what Debian and the runners have.
+#
+# Pruned PER ARCHITECTURE. Across the whole pool, `--keep 10` with two
+# architectures would mean five releases of each, and the first arm64 publish
+# would quietly delete half of amd64's history.
 pruned=0
-# shellcheck disable=SC2012 # `ls` is safe here: every filename in this
-# directory was written by this script as <pkg>_<version>_<arch>.deb, so none
-# contains whitespace — and `find` gives no ordering, which is the whole point.
-for old in $(ls "$POOL_DIR"/*.deb 2>/dev/null | sort -V | head -n -"$KEEP"); do
-    rm -f "$old"
-    say "apt-repo-publish: pruned $(basename "$old") (keeping newest $KEEP)"
-    pruned=$((pruned + 1))
+for arch in $(pool_arches); do
+    # shellcheck disable=SC2012 # see pool_arches
+    for old in $(ls "$POOL_DIR"/*_"$arch".deb 2> /dev/null | sort -V | head -n -"$KEEP"); do
+        rm -f "$old"
+        say "apt-repo-publish: pruned $(basename "$old") (keeping newest $KEEP per architecture)"
+        pruned=$((pruned + 1))
+    done
 done
 if [ "$pruned" -eq 0 ]; then
     say "apt-repo-publish: nothing to prune"
 fi
 
+# One space-separated list, used for the loop below and verbatim as the
+# `Architectures:` line. `sort -u` makes it deterministic, which matters because
+# Release is compared against nothing but is read by humans.
+ARCHES="$(pool_arches | tr '\n' ' ')"
+ARCHES="${ARCHES% }"
+[ -n "$ARCHES" ] || die "the pool holds no .deb files — nothing to index"
+say "apt-repo-publish: architectures in the pool: $ARCHES"
+
 # ---------------------------------------------------------------------------
 # Packages, and the no-op short-circuit.
 #
-# Generated to a temp file and compared BEFORE anything else is touched.
+# Generated to temp files and compared BEFORE anything else is touched.
 # `apt-ftparchive release` stamps a Date: field, so Release differs on every run
 # by construction — comparing the tree would never short-circuit. Packages is
 # deterministic, so it is the honest thing to compare, and an unchanged pool
 # therefore leaves the whole tree untouched and `git diff --quiet` clean.
 #
+# EVERY architecture has to be unchanged for the short-circuit to fire, and a
+# `binary-<arch>` directory for an architecture the pool no longer holds counts
+# as a change: leaving it would keep a stale Packages listed inside a freshly
+# signed Release, which is the shape of index corruption that reads to a client
+# as a hash mismatch it can do nothing about.
+#
 # Run from the repo root so `Filename:` is repo-relative, which is how apt
 # resolves it.
 # ---------------------------------------------------------------------------
-tmp_pkgs="$(mktemp)"
-( cd "$REPO_DIR" && apt-ftparchive --arch "$ARCH" packages "pool" ) > "$tmp_pkgs"
+TMP_WORK="$(mktemp -d)"
 
-[ -s "$tmp_pkgs" ] || { rm -f "$tmp_pkgs"; die "apt-ftparchive produced an empty Packages"; }
+changed=no
+for arch in $ARCHES; do
+    ( cd "$REPO_DIR" && apt-ftparchive --arch "$arch" packages "pool" ) > "$TMP_WORK/$arch"
+    [ -s "$TMP_WORK/$arch" ] || die "apt-ftparchive produced an empty Packages for $arch"
+    if ! cmp -s "$TMP_WORK/$arch" "$COMPONENT_DIR/binary-$arch/Packages" 2> /dev/null; then
+        changed=yes
+    fi
+done
 
-if [ -f "$BIN_DIR/Packages" ] && cmp -s "$tmp_pkgs" "$BIN_DIR/Packages"; then
-    rm -f "$tmp_pkgs"
-    say "apt-repo-publish: Packages unchanged — already up to date, index left alone"
+# Directories for architectures that are no longer in the pool.
+stale=
+for dir in "$COMPONENT_DIR"/binary-*; do
+    [ -d "$dir" ] || continue
+    dir_arch="${dir##*/binary-}"
+    case " $ARCHES " in
+        *" $dir_arch "*) continue ;;
+    esac
+    stale="$stale$NL$dir"
+    changed=yes
+done
+
+if [ "$changed" = no ]; then
+    say "apt-repo-publish: Packages unchanged for every architecture — index left alone"
     exit 0
 fi
 
-mv "$tmp_pkgs" "$BIN_DIR/Packages"
-chmod 0644 "$BIN_DIR/Packages"
-# -n omits the filename and timestamp from the gzip header. Without it every run
-# produces different bytes for identical content, and the short-circuit above
-# would be dead code.
-gzip -n -9 -c "$BIN_DIR/Packages" > "$BIN_DIR/Packages.gz"
-say "apt-repo-publish: wrote $(grep -c '^Package:' "$BIN_DIR/Packages") package(s) to the index"
+OLDIFS=$IFS
+IFS=$NL
+for dir in $stale; do
+    IFS=$OLDIFS
+    rm -rf "$dir"
+    say "apt-repo-publish: removed $(basename "$dir") — no such architecture in the pool"
+    IFS=$NL
+done
+IFS=$OLDIFS
+
+for arch in $ARCHES; do
+    bin_dir="$COMPONENT_DIR/binary-$arch"
+    mkdir -p "$bin_dir"
+    mv "$TMP_WORK/$arch" "$bin_dir/Packages"
+    chmod 0644 "$bin_dir/Packages"
+    # -n omits the filename and timestamp from the gzip header. Without it every
+    # run produces different bytes for identical content, and the short-circuit
+    # above would be dead code.
+    gzip -n -9 -c "$bin_dir/Packages" > "$bin_dir/Packages.gz"
+    say "apt-repo-publish: $arch — $(grep -c '^Package:' "$bin_dir/Packages") package(s) indexed"
+done
 
 # ---------------------------------------------------------------------------
 # Release, InRelease, Release.gpg.
@@ -276,7 +458,7 @@ apt-ftparchive \
     -o "APT::FTPArchive::Release::Label=$LABEL" \
     -o "APT::FTPArchive::Release::Suite=$SUITE" \
     -o "APT::FTPArchive::Release::Codename=$SUITE" \
-    -o "APT::FTPArchive::Release::Architectures=$ARCH" \
+    -o "APT::FTPArchive::Release::Architectures=$ARCHES" \
     -o "APT::FTPArchive::Release::Components=$COMPONENT" \
     -o "APT::FTPArchive::Release::Description=$DESCRIPTION" \
     release "$DIST_DIR" > "$tmp_rel"
