@@ -289,7 +289,35 @@ describe("CommitPanel drag vs the diff pane's line cursor (#91 × #122)", () => 
 
     // Space means nothing until the line cursor is on a line, so move it first
     // (#122's own precondition — ArrowDown is list.down for this pane).
-    expect(press("ArrowDown")).toBe(true);
+    //
+    // The press is INSIDE the wait, not after it (#384). The row and the
+    // handler that answers ArrowDown land on different beats: the row is in the
+    // COMMIT, while `usePaneList` re-registers `list.down` with the loaded
+    // `count` in a passive EFFECT, which React flushes in a separately
+    // scheduled task. `findByTestId` can resolve from a MutationObserver
+    // microtask fired during that commit, so a starved runner resumes with the
+    // row on screen and the pane still holding its mount-time closure —
+    // `guard` sees `count === 0`, declines, and `dispatch` returns false.
+    // Waiting for the REGISTRATION instead would be vacuous: `commit.diff` is
+    // in the `list.down` registry from mount, long before the diff loads. (The
+    // sibling CommitPanel.lineFocus.test.tsx buys the same flush with
+    // `settleDiff()`, whose `act(async …)` loop is what makes it safe there.)
+    //
+    // Retrying the press is safe by construction, not by assumption: ArrowDown
+    // is bound, so dispatch never reaches the side-effectful speed-search
+    // fallback; `list.down` is pane-scoped with no default runner, so the
+    // global `def.run` branch cannot fire; out-of-scope handlers are skipped
+    // without being called; and `guard` returns false WITHOUT calling
+    // `onSelect` on an empty list. An unhandled press moves nothing.
+    //
+    // Keep the wait's body to the press alone: `waitFor` stops at the first
+    // callback that does not throw, so exactly one press is HANDLED, and a
+    // handled press does move the cursor. A second assertion in here would
+    // press again and stage the wrong line.
+    await waitFor(() => expect(press("ArrowDown")).toBe(true));
+    // Deliberately not in a wait: `press` dispatches inside `act`, which
+    // flushes the cursor's re-render and the `diff.toggleLine` re-registration
+    // synchronously before returning. A retry here would stage a second line.
     expect(press(" ")).toBe(true);
 
     await waitFor(() => expect(lineStageCalls().length).toBe(1));
