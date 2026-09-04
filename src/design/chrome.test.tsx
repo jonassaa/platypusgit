@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 const platformMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/platform", () => ({
@@ -7,7 +7,13 @@ vi.mock("@/lib/platform", () => ({
   __esModule: true,
 }));
 
-import { PGTabStrip, PGTitlebar, type PGTabItem } from "./chrome";
+import {
+  PGSidebarGroup,
+  PGSidebarRow,
+  PGTabStrip,
+  PGTitlebar,
+  type PGTabItem,
+} from "./chrome";
 
 beforeEach(() => {
   platformMock.mockReset();
@@ -121,5 +127,54 @@ describe("PGTabStrip", () => {
     const { container } = render(<PGTabStrip tabs={stripTabs(1)} />);
     const rows = Array.from(container.querySelectorAll('[data-testid="repo-tab"]'));
     expect(tracked.calls).toEqual([rows[1]]);
+  });
+});
+
+describe("PGSidebarGroup controlled open", () => {
+  it("stays uncontrolled when `open` is omitted", () => {
+    render(<PGSidebarGroup title="G"><div>child</div></PGSidebarGroup>);
+    expect(screen.getByText("child")).toBeTruthy();
+    fireEvent.click(screen.getByText("G"));
+    expect(screen.queryByText("child")).toBeNull();
+  });
+
+  it("obeys `open` and reports clicks when controlled", () => {
+    const onOpenChange = vi.fn();
+    const { rerender } = render(
+      <PGSidebarGroup title="G" open={false} onOpenChange={onOpenChange}>
+        <div>child</div>
+      </PGSidebarGroup>,
+    );
+    expect(screen.queryByText("child")).toBeNull();
+    fireEvent.click(screen.getByText("G"));
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    // Controlled: the click alone must not open it.
+    expect(screen.queryByText("child")).toBeNull();
+    rerender(
+      <PGSidebarGroup title="G" open onOpenChange={onOpenChange}>
+        <div>child</div>
+      </PGSidebarGroup>,
+    );
+    expect(screen.getByText("child")).toBeTruthy();
+  });
+});
+
+describe("PGSidebarRow a11y passthrough", () => {
+  it("forwards role, tabIndex, aria-selected and keydown", () => {
+    const onKeyDown = vi.fn();
+    render(
+      <PGSidebarRow
+        label="Diff"
+        role="treeitem"
+        tabIndex={0}
+        ariaSelected
+        onKeyDown={onKeyDown}
+      />,
+    );
+    const row = screen.getByRole("treeitem");
+    expect(row.getAttribute("aria-selected")).toBe("true");
+    expect(row.getAttribute("tabindex")).toBe("0");
+    fireEvent.keyDown(row, { key: "ArrowDown" });
+    expect(onKeyDown).toHaveBeenCalled();
   });
 });

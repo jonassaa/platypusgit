@@ -607,6 +607,8 @@ export interface PGSidebarGroupProps {
   title: ReactNode;
   icon?: IconName | string;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   actions?: ReactNode;
   count?: number;
   children?: ReactNode;
@@ -616,15 +618,25 @@ export function PGSidebarGroup({
   title,
   icon,
   defaultOpen = true,
+  open: controlledOpen,
+  onOpenChange,
   actions,
   count,
   children,
 }: PGSidebarGroupProps) {
-  const [open, setOpen] = React.useState(defaultOpen);
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen);
+  // Optionally controlled: `open` omitted keeps today's local-state behaviour,
+  // so no existing caller changes. A search needs to force groups with hits
+  // open, which local state cannot express.
+  const open = controlledOpen ?? uncontrolledOpen;
+  const toggle = () => {
+    if (controlledOpen === undefined) setUncontrolledOpen(!open);
+    onOpenChange?.(!open);
+  };
   return (
     <div style={{ borderBottom: "1px solid var(--border-0)" }}>
       <div
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         style={{
           display: "flex",
           alignItems: "center",
@@ -677,6 +689,12 @@ export interface PGSidebarRowProps {
   indent?: number;
   status?: ReactNode;
   onContextMenu?: (e: React.MouseEvent) => void;
+  role?: string;
+  tabIndex?: number;
+  onKeyDown?: React.KeyboardEventHandler;
+  ariaSelected?: boolean;
+  dimmed?: boolean;
+  testId?: string;
 }
 
 export function PGSidebarRow({
@@ -689,6 +707,12 @@ export function PGSidebarRow({
   indent = 0,
   status,
   onContextMenu,
+  role,
+  tabIndex,
+  onKeyDown,
+  ariaSelected,
+  dimmed,
+  testId,
 }: PGSidebarRowProps) {
   const [hover, setHover] = React.useState(false);
   return (
@@ -697,6 +721,11 @@ export function PGSidebarRow({
       onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      role={role}
+      tabIndex={tabIndex}
+      onKeyDown={onKeyDown}
+      aria-selected={ariaSelected}
+      data-testid={testId}
       style={{
         display: "flex",
         alignItems: "center",
@@ -712,6 +741,7 @@ export function PGSidebarRow({
         fontFamily: "var(--font-mono)",
         cursor: "pointer",
         position: "relative",
+        opacity: dimmed ? 0.45 : undefined,
       }}
     >
       {selected && (
