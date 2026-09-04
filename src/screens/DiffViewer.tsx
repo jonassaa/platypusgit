@@ -29,7 +29,7 @@ import {
   useDiffGaps,
   useExpandedGaps,
 } from "@/features/diff/useDiffGaps";
-import { isTextualDiff, statusMark } from "@/lib/derive";
+import { isTextualDiff, oversizedDiffNotice, statusMark } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { ImageDiffOrEmpty, ImageDiffView } from "@/features/diff/ImageDiffView";
 import { diffImageSides } from "@/features/diff/useImagePreviews";
@@ -83,6 +83,9 @@ export function DiffViewerScreen() {
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [diffError, setDiffError] = React.useState<string | null>(null);
+  // Non-null only when the backend declined to read the blob because of its
+  // size (#385) — the surfaces must not call a 40 MB text file "binary".
+  const oversized = oversizedDiffNotice(diff);
   // The file list may take everything the split allows, as long as the diff it
   // is a list OF keeps enough width to read a line of code (#162).
   const layout = useElementSize();
@@ -610,8 +613,12 @@ export function DiffViewerScreen() {
                 new: { kind: "worktree" },
                 oldPath: diff.oldPath,
               })}
-              title="Binary file"
-            />
+              title={oversized?.title ?? "Binary file"}
+            >
+              {/* Only the size can say WHY libgit2 called it binary; over the
+                  ceiling it is usually a text file we declined to read (#385). */}
+              {oversized?.detail}
+            </ImageDiffOrEmpty>
           )}
           {/* An LFS pointer is TEXT, so `binary` is honestly false — without this
               the pane would render "2 lines changed" for a multi-megabyte asset

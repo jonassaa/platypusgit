@@ -349,6 +349,32 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   does not match `README.md`, so one test over both trees would be skipped by
   exactly the change it polices. See `docs/dev/testing.md`.
 
+## One blob ceiling, on every diff path (#131, made universal by #385)
+
+- **`MAX_WORKDIR_BLOB` (5 MB, `libgit2.rs`) is now set at every diff-options
+  site**, not just `diff_ref_to_workdir`'s. It used to be one capped path and
+  three uncapped ones: `diff` (one file — the commit panel's workhorse),
+  `diff_commit` and `diff_commits` inherited libgit2's 512 MB default, so
+  clicking a checked-in 80 MB `bundle.min.js` xdiff'd the whole file, allocated
+  a `String` per line in `diff_to_file_diffs`, and shipped the lot across IPC as
+  one JSON payload. `diff_stash`'s two builders are capped for the same reason —
+  a stash holds whatever the worktree held.
+- **Over the ceiling the answer is `FileDiff.oversized { size, limit }`, not
+  just "binary".** libgit2's own answer to `max_size` is `GIT_DIFF_FLAG_BINARY`,
+  which is a dishonest thing to show a user about a text file; `binary` keeps
+  its meaning (it stays true, and the image-preview branch still runs off it)
+  and this says WHY. The limit travels with the size so the sentence the user
+  reads is built from the value that was applied — see `docs/dev/frontend.md`.
+- **The size is read INSIDE the print callback, never before it.** libgit2 fills
+  `git_diff_file.size` in place while loading the patch (an ODB header read for
+  a tree side, a stat for a workdir one), so `delta.new_file().size()` is 0 for
+  a tree delta until then. Same load-order trap the `binary` seeding in
+  `diff_to_file_diffs` already documents; `oversized_delta` carries the note.
+- **Line STATS are deliberately not capped.** `diff_line_stats` feeds the file
+  rows' `+/−` counts, and capping it would silently change those numbers.
+  `src-tauri/tests/diff_blob_ceiling.rs` covers the four diff entry points and
+  the control case: an ordinary text file must still diff exactly as before.
+
 ## Image previews: the only reader that returns BYTES (#224)
 
 - **`read_image_preview` is the fourth file reader**, and the only one that can

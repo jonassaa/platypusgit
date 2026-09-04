@@ -43,6 +43,7 @@ import {
   isTextualDiff,
   isUnstaged,
   isUntracked,
+  oversizedDiffNotice,
   statusMark,
 } from "@/lib/derive";
 import { commitDateText, commitDateTitle } from "@/lib/commitDate";
@@ -179,6 +180,9 @@ export function RepoBrowserScreen() {
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
+  // Non-null only when the backend declined to read the blob because of its
+  // size (#385) — the surfaces must not call a 40 MB text file "binary".
+  const oversized = oversizedDiffNotice(diff);
   const [fileContent, setFileContent] = React.useState<FileContent | null>(null);
   const [filterMode, setFilterMode] = React.useState<
     "all" | "changes" | "conflicts"
@@ -1274,9 +1278,11 @@ export function RepoBrowserScreen() {
                   new: { kind: "worktree" },
                   oldPath: diff.oldPath,
                 })}
-                title="Binary file"
+                title={oversized?.title ?? "Binary file"}
               >
-                Binary diffs aren&apos;t shown.
+                {/* Over the ceiling this is usually a checked-in artifact, i.e.
+                    text — "binary" would be the wrong answer (#385). */}
+                {oversized?.detail ?? "Binary diffs aren't shown."}
               </ImageDiffOrEmpty>
             )}
             {selectedFile && !diffLoading && diff?.lfs && (

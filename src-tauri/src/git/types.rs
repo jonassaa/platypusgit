@@ -369,6 +369,31 @@ pub struct FileDiff {
     /// The hunks are left intact: this is derived FROM them, by parsing the
     /// pointer out of the diff's own `+`/`-` lines, so it costs no extra I/O.
     pub lfs: Option<LfsDiff>,
+    /// Set when a side of this delta is over `MAX_WORKDIR_BLOB` and the diff
+    /// engine therefore never looked at it (#385).
+    ///
+    /// libgit2's answer to `max_size` is to flag the file BINARY, which is a
+    /// dishonest thing to show a user about a checked-in `bundle.min.js` — it
+    /// is text, we simply declined to diff six megabytes of it. `binary` keeps
+    /// its own meaning (it stays true, and the image-preview branch still runs
+    /// off it); this says WHY, so the surfaces can name the real reason and the
+    /// size instead of saying "binary file".
+    pub oversized: Option<OversizedBlob>,
+}
+
+/// Why a diff has no text: the blob was bigger than the ceiling (#385).
+///
+/// Carries the limit as well as the size so the sentence the user reads is
+/// built from the value that was actually applied — a frontend constant would
+/// be a second copy of the policy, free to drift from the one in `libgit2.rs`.
+/// Same shape as `ImagePreview::TooLarge`, for the same reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OversizedBlob {
+    /// The larger of the two sides, in bytes.
+    pub size: u64,
+    /// The ceiling that was applied, in bytes.
+    pub limit: u64,
 }
 
 /// The two sides of an LFS pointer change. Either side is `None` for an added or

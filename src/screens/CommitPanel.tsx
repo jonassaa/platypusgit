@@ -57,6 +57,7 @@ import {
   isTextualDiff,
   isUnstaged,
   isUntracked,
+  oversizedDiffNotice,
   sideAdditions,
   sideDeletions,
   statusMark,
@@ -227,6 +228,9 @@ export function CommitPanelScreen() {
   const [diff, setDiff] = React.useState<FileDiff | null>(null);
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [diffError, setDiffError] = React.useState<string | null>(null);
+  // Non-null only when the backend declined to read the blob because of its
+  // size (#385) — the surfaces must not call a 40 MB text file "binary".
+  const oversized = oversizedDiffNotice(diff);
 
   // Folder rows (tree mode only) get the batch menu over everything beneath
   // them — stage / unstage / discard all — same as a multi-row selection.
@@ -1589,9 +1593,11 @@ export function CommitPanelScreen() {
               repoId={repo?.id ?? null}
               path={diff.path}
               sides={commitPanelImageSides}
-              title="Binary file"
+              title={oversized?.title ?? "Binary file"}
             >
-              Binary diffs aren&apos;t shown.
+              {/* Over the ceiling this is usually a checked-in artifact, i.e.
+                  text — "binary" would be the wrong answer (#385). */}
+              {oversized?.detail ?? "Binary diffs aren't shown."}
             </ImageDiffOrEmpty>
           )}
           {!diffLoading && !diffError && diff?.lfs && (

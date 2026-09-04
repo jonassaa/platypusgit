@@ -40,7 +40,7 @@ import type { FindMark } from "@/lib/diffFind";
 import { DiffFindBar } from "./DiffFindBar";
 import { useDiffFind } from "./useDiffFind";
 import type { DiffToolTarget, FileDiff } from "@/lib/types";
-import { isTextualDiff } from "@/lib/derive";
+import { isTextualDiff, oversizedDiffNotice } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { ImageDiffView } from "./ImageDiffView";
 import { diffImageSides } from "./useImagePreviews";
@@ -226,6 +226,9 @@ export function CommitDiffPanel({
   // Fall back to the first file so the diff pane is populated immediately when
   // a new diff arrives, before the selection-sync effect runs.
   const current = shown.find((d) => d.path === selected) ?? shown[0] ?? null;
+  // Non-null only for a blob the backend declined to read (#385); the sentence
+  // is shared with the other diff surfaces.
+  const oversized = oversizedDiffNotice(current);
 
   // Right-click to copy. This panel is the read-only diff behind Compare,
   // CommitDiff and History, so there is no line selection to offer — the dragged
@@ -631,7 +634,12 @@ export function CommitDiffPanel({
                   // adding "Binary file" under it would say it twice.
                   current.lfs ? null : (
                     <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-12)" }}>
-                      Binary file — no textual diff.
+                      {/* An over-ceiling blob is flagged binary by libgit2, and
+                          calling a 40 MB `bundle.min.js` "binary" is a lie the
+                          user cannot act on — name the real reason (#385). */}
+                      {oversized
+                        ? `${oversized.title}: ${oversized.detail}`
+                        : "Binary file — no textual diff."}
                     </div>
                   )
                 }
