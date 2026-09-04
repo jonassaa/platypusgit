@@ -56,9 +56,19 @@ export function SettingsNav({
   const groupOf = (id: SettingsPageId): SettingsGroup =>
     GROUPS.find((g) => g.pages.includes(id))!;
 
-  const visible = GROUPS.flatMap((g) =>
+  // A collapsed group's pages are not in the DOM at all, so both the arrow-
+  // key traversal below and the roving-tabindex fallback further down must
+  // agree with `groupOpen` on what is actually rendered — not just with
+  // `matchCounts` — or Up/Down can select a page with no row to land on.
+  const visible = GROUPS.filter((g) => groupOpen(g)).flatMap((g) =>
     g.pages.filter((p) => !matchCounts || (matchCounts.get(p) ?? 0) > 0),
   );
+
+  // The roving tabindex normally follows the selected page, but that page's
+  // row may not be rendered (its group collapsed after selection, e.g. via a
+  // direct header click) — fall back to the first visible row so the tree
+  // always has exactly one Tab stop.
+  const tabbablePageId = visible.includes(pageId) ? pageId : visible[0];
 
   const focusRow = (id: SettingsPageId) => {
     treeRef.current
@@ -121,6 +131,9 @@ export function SettingsNav({
             key={group.id}
             title={group.title}
             open={groupOpen(group)}
+            // Deferred: while a search forces this open, a header click still
+            // writes `localOpen` — unreachable today (matchCounts is null),
+            // left for the search task to decide.
             onOpenChange={(open) => setGroupOpen(group.id, open)}
           >
             <div role="group" aria-label={group.title}>
@@ -134,7 +147,7 @@ export function SettingsNav({
                     selected={id === pageId}
                     ariaSelected={id === pageId}
                     role="treeitem"
-                    tabIndex={id === pageId ? 0 : -1}
+                    tabIndex={id === tabbablePageId ? 0 : -1}
                     dimmed={matchCounts ? hits === 0 : undefined}
                     meta={hits ? String(hits) : undefined}
                     testId={`settings-nav-${id}`}
