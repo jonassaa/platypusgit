@@ -1154,13 +1154,160 @@ sides and builds the argv; `commands/diff.rs::open_in_difftool` spawns it.
 
 ## Async / threading
 
-- `git2::Repository` is `Send` but not `Sync`. Each opened repo is
-  `Arc<Mutex<Repository>>` inside a `Mutex<HashMap<RepoId, …>>`; `with_repo`
-  clones the Arc and RELEASES the map lock before the op — different repos run
-  in parallel, same-repo ops serialize on the inner mutex (the stash TOCTOU
-  note relies on this). `close` is the only removal.
+- `git2::Repository` is `Send` but not `Sync`. Each opened repo is an
+  `Arc<RepoLock<Repository>>` inside a `Mutex<HashMap<RepoId, …>>`; `repo_cell`
+  clones the Arc and RELEASES the map lock before the op, so different repos run
+  in parallel. `close` is the only removal.
+- Same-repo **writes** serialize; same-repo **reads** do not — see below.
 - Always wrap git2 work in `spawn_blocking` from Tauri commands — don't block
   the async runtime.
+
+### Reads run concurrently; writes do not (#400)
+
+Each repository sits behind a `RepoLock` (`git/repo_locks.rs`), which is two
+things at once: the single cached `git2::Repository` every write uses, and a
+factory that mints a handle for one read to keep to itself. An `RwLock` gate
+orders them — reads share it, writes take it alone.
+
+Concurrent reads could not have come from swapping the mutex for an `RwLock`:
+`Repository` is not `Sync`, so several threads may not hold `&Repository` at
+once. The parallelism has to come from separate handles.
+
+**Four helpers, and the naming is a trap worth reading twice.**
+
+| helper | concurrency | handle |
+| --- | --- | --- |
+| `with_repo` | exclusive | the cached one, `&Repository` |
+| `with_repo_mut` | exclusive | the cached one, `&mut Repository` |
+| `with_repo_read` | shared | a private one, `&Repository` |
+| `with_repo_read_mut` | shared | a private one, `&mut Repository` |
+
+`with_repo` vs `with_repo_mut` is **not** a read/write split, and reading it as
+one is how you would break the index. `with_repo` carries most of the writes in
+this backend — `stage`/`unstage`/`discard` read-modify-write the whole index
+through it, `commit` writes an object and moves a ref, `checkout_branch` and
+`reset` rewrite the worktree. `git2` takes `&self` for nearly all of that.
+`with_repo_mut` exists only for the seven places libgit2's C signatures demand
+`&mut git_repository` (`stash_foreach`, `stash_drop`).
+
+The real split is `_read` or not. **An op joins the `_read` helpers only once it
+is established to write nothing** — no index write-back, no ref move, no object
+written, no worktree change. Exclusive is the safe default and where an
+unexamined op belongs.
+
+**What the gate is for.** Not single-file atomicity: git already provides that,
+and it was checked rather than assumed — removing the gate entirely leaves
+`tests/concurrent_reads.rs` green, because libgit2 writes the index to
+`.git/index.lock` and renames it into place, so a reader sees the whole old
+index or the whole new one. The gate protects the **in-process, multi-call**
+invariants, where a guarantee spans several git calls inside one closure and no
+single rename covers it: the stash verify-then-drop pair, the fast-forward
+ancestry-check-then-ref-move, `fresh_index`'s whole-index write-back, `init`'s
+guard/write/cleanup window. All of those run under the exclusive gate, which
+still excludes every reader and every other writer, so all of them remain
+literally true. The only exclusion dropped is read-vs-read, and nothing was
+relying on it — neither party writes. The test that fails without the gate is
+the unit test `shared_and_exclusive_never_overlap`.
+
+The app also already tolerates concurrent readers and writers it does not
+control: the built-in terminal (#243) sits in the window `cd`-ed to the
+repository, a `pre-commit` hook that reformats and restages is supported, and a
+second window (#402) drives the same repository. In-process concurrent reads are
+strictly weaker than that.
+
+**Two rules come with a private handle.**
+
+*Anything reading the index still goes through `fresh_index`.* A newly opened
+handle's in-memory index is whatever was on disk a moment ago — the same
+staleness a cached handle has, arriving by a different route.
+
+> **`status` used to refresh the index for everybody, and moving it broke two
+> screens.** This is the one regression this change actually caused, and it is
+> worth reading before touching either side of it.
+>
+> libgit2's `git_status_list_new` reloads the index from disk unless
+> `GIT_STATUS_OPT_NO_REFRESH` is set. While `status` ran on the shared cached
+> handle, every refresh — and the app refreshes constantly — was silently
+> re-reading the index on behalf of every other op on that handle. Several ops
+> read `repo.index()` directly and were correct only because of it.
+>
+> Moving `status` to a private handle took that away, and the failures were not
+> subtle. `accept_side` reads the index's conflict entries to decide which side
+> to take; against a stale snapshot it finds none, concludes the file was
+> deleted on the chosen side, and **deletes it from the worktree** — the user
+> asks to keep a version of a file and the file disappears. `conflict_sides`
+> seeds the merge window's regions the same way, so the window rendered nothing
+> to accept and Apply never enabled.
+>
+> The trigger is worth naming because it is not obvious: `merge_branch` shells
+> out to real `git merge` (`commands/branches.rs`), so conflict stages land on
+> disk with nothing telling libgit2, and the History screen's diff has already
+> loaded that handle's index while the tree was clean.
+>
+> Fixed by obeying the rule `fresh_index` already stated at every exclusive-path
+> site that reads the index to DECIDE or to WRITE BACK: `accept_side`,
+> `conflict_sides`, `mark_resolved`, `save_resolution`, `continue_operation`,
+> `read_file_content_at_index`, `read_image_preview`. Deliberately NOT changed:
+> the rebase engine's `finish_pick`/`apply_merge`/`finish_merge`, and
+> `cherry_pick`/`revert`, which read the index *after* modifying it in their own
+> closure — there the in-memory index is the authority and a reload could only
+> lose work.
+>
+> The whole Rust suite was green throughout, because every conflict test in
+> `tests/conflict.rs` opens the backend AFTER the conflict exists and so always
+> sees a fresh index. `accept_ours_survives_a_conflict_created_under_a_live_handle`
+> is the one that pins the app's real ordering; it is the only test in that file
+> that can tell `fresh_index` from `repo.index()`.
+
+*Never call a repo-lock helper from inside another one for the same repository.*
+It returns `AppError::Internal("re-entrant repository lock…")` rather than
+deadlocking, but it is a bug. Pass an already-borrowed `&Repository` down
+instead, the way `stash_pairs` and the fast-forward helpers do. The guard exists
+because a shared gate makes this hazard *intermittent*: two `read()`
+acquisitions on one thread succeed whenever no writer is waiting and deadlock
+when one is — a hang that appears under load, in release, on a user's machine,
+and never in a test. An error is something a test can catch. Nesting two
+*different* repositories stays legal; they share no lock.
+
+**Reads reopen the gitdir**, captured from the handle `open` already resolved.
+Opening the path the user named also works — libgit2 follows the `.git` file in
+a linked worktree's workdir — but the gitdir is the same repository by
+construction rather than by re-deriving it, skips that indirection on every
+read, and cannot be changed by anything happening at the user's path afterwards.
+
+**What was measured** (macOS/APFS, warm; twelve reads of the shapes `refreshAll`
+issues):
+
+| shape | wall clock |
+| --- | --- |
+| serial through one mutex | 16.9 ms |
+| parallel, a fresh handle per read | 10.6 ms |
+| parallel, a pre-warmed handle pool | 10.9 ms |
+
+`Repository::open` is ~1.1 ms warm. **A handle pool is measurably worthless** —
+do not add one without a profile that disagrees, and note that the factory lives
+behind `RepoLock::new` precisely so a pool could be added later without touching
+a call site.
+
+The 1.6× serial→parallel figure understates the fix: on APFS the fan-out is
+dominated by one slow read, so parallelising the other ten wins little. The
+reported bug is the case where every read costs the same ~9 s — twelve of those
+serialized is ~108 s and parallel is ~9 s. The win scales with how uniformly slow
+the filesystem is, which is the `/mnt/c` shape. **These numbers are all APFS**;
+no WSL machine was in the loop, so the pool conclusion rests on a ratio (1 ms
+against 9,000 ms) rather than a direct measurement.
+
+**Which ops are shared today:** `status`, `branches`, `tags`, `stashes`,
+`remotes`, `log`/`log_page`, `repo_state`, `rebase_status`, `bisect_status`,
+`head_info`, `shallow_info`, `diff_commit`/`diff_commit_over_ceiling`,
+`verify_commit`, `worktrees`. That is `refreshAll`'s eleven-read fan-out plus the
+ops behind the history-arrowing ladder in #400. Every other read-only op —
+`log_filtered`, `diff`, `diff_commits`, `file_history`, `blame_file`,
+`read_file_content*`, `commits_since`, `ahead_behind`, `submodules`,
+`lfs_status`, `commit_notes`, `read_reflog`, `list_all_files`,
+`list_files_at_rev`, `commit_template`, `difftool_plan`, `conflict_sides` — is
+still exclusive. Not because it must be, but because each needs its own proof it
+writes nothing, and moving one is a one-word change.
 
 ## Reading the log (#274)
 

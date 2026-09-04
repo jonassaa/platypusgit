@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::error::{AppError, AppResult};
 use crate::git::image;
 use crate::git::ownership;
+use crate::git::repo_locks::RepoLock;
 use crate::git::shallow as shallow_mod;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -77,7 +78,7 @@ pub struct RebaseState {
 }
 
 pub struct Libgit2Backend {
-    repos: Mutex<HashMap<RepoId, Arc<Mutex<Repository>>>>,
+    repos: Mutex<HashMap<RepoId, Arc<RepoLock<Repository>>>>,
     rebases: Mutex<HashMap<RepoId, RebaseState>>,
     /// Serializes the guard → write → cleanup window in `init` to prevent two
     /// concurrent calls on the same path from interfering. Without this lock, call
@@ -95,16 +96,20 @@ impl Libgit2Backend {
         }
     }
 
-    /// Clone the repo's own `Arc<Mutex<_>>` out of the map and RELEASE the map
-    /// lock before running `f`. The map guard used to stay alive for the whole
+    /// Clone the repo's own lock out of the map and RELEASE the map lock
+    /// before running `f`. The map guard used to stay alive for the whole
     /// operation, so every git op in the process — any repository, any window —
     /// serialized on one mutex: a 500-commit log walk in one tab blocked a
     /// status refresh in another, and `refreshAll`'s parallel commands ran
-    /// strictly one after another. Same-repo ops still serialize on the inner
-    /// mutex (`git2::Repository` is Send but not Sync — that part is
-    /// load-bearing, e.g. the stash TOCTOU note relies on it); different repos
-    /// now genuinely run in parallel.
-    fn repo_cell(&self, repo_id: &RepoId) -> AppResult<Arc<Mutex<Repository>>> {
+    /// strictly one after another. Different repos now genuinely run in
+    /// parallel.
+    ///
+    /// Same-repo ops used to serialize on the inner mutex too. They no longer
+    /// all do: `RepoLock` runs writes one at a time on the cached handle and
+    /// lets reads run together on handles of their own (#400). What still
+    /// holds — and what the stash TOCTOU note relies on — is that a write
+    /// excludes everything.
+    fn repo_cell(&self, repo_id: &RepoId) -> AppResult<Arc<RepoLock<Repository>>> {
         let map = self
             .repos
             .lock()
@@ -114,26 +119,64 @@ impl Libgit2Backend {
             .ok_or_else(|| AppError::UnknownRepo(repo_id.0.clone()))
     }
 
+    /// An op that runs ALONE on this repository — no other read, no other
+    /// write.
+    ///
+    /// The default, and where an op belongs unless it has been established to
+    /// write nothing. Despite the name this is very much the WRITE path:
+    /// `stage`, `unstage`, `discard` and `delete_untracked` read-modify-write
+    /// the whole index through it, `commit` writes an object and moves a ref
+    /// through it, and `checkout_branch`/`reset`/the rebase engine mutate the
+    /// worktree through it. `git2` takes `&self` for most of that, which is
+    /// why the borrow says nothing about it.
     fn with_repo<F, T>(&self, repo_id: &RepoId, f: F) -> AppResult<T>
     where
         F: FnOnce(&Repository) -> AppResult<T>,
     {
-        let cell = self.repo_cell(repo_id)?;
-        let repo = cell
-            .lock()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        f(&repo)
+        self.repo_cell(repo_id)?.exclusive(|repo| f(repo))
     }
 
+    /// `with_repo`, for the seven ops libgit2 makes take `&mut Repository`
+    /// (`stash_foreach`, `stash_drop`).
     fn with_repo_mut<F, T>(&self, repo_id: &RepoId, f: F) -> AppResult<T>
     where
         F: FnOnce(&mut Repository) -> AppResult<T>,
     {
-        let cell = self.repo_cell(repo_id)?;
-        let mut repo = cell
-            .lock()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        f(&mut repo)
+        self.repo_cell(repo_id)?.exclusive(f)
+    }
+
+    /// A READ-ONLY op, on a handle of its own, alongside other reads (#400).
+    ///
+    /// Only for an op that writes nothing — no index write-back, no ref move,
+    /// no object written, no worktree change. A write here would interleave
+    /// with other writes with nothing to stop it.
+    ///
+    /// Two rules come with the private handle:
+    ///
+    /// - **Anything reading the index still goes through `fresh_index`.** The
+    ///   handle is newly opened rather than cached, so its in-memory index is
+    ///   whatever was on disk a moment ago — the same staleness `with_repo`
+    ///   has, arriving by a different route.
+    /// - **Never call one of these from inside another repo-lock closure for
+    ///   the same repository.** It is refused with `Internal` rather than
+    ///   deadlocking, but it is still a bug. The existing helpers that take an
+    ///   already-borrowed `&Repository` (`stash_pairs`, the fast-forward pair)
+    ///   are the pattern to follow.
+    fn with_repo_read<F, T>(&self, repo_id: &RepoId, f: F) -> AppResult<T>
+    where
+        F: FnOnce(&Repository) -> AppResult<T>,
+    {
+        self.repo_cell(repo_id)?.shared(f)
+    }
+
+    /// `with_repo_read`, for a read that needs `&mut` to satisfy libgit2 —
+    /// `stashes` and its `stash_foreach`. The handle belongs to this call
+    /// alone, so the mutable borrow is invisible to anyone else.
+    fn with_repo_read_mut<F, T>(&self, repo_id: &RepoId, f: F) -> AppResult<T>
+    where
+        F: FnOnce(&mut Repository) -> AppResult<T>,
+    {
+        self.repo_cell(repo_id)?.shared_mut(f)
     }
 
     /// The in-process blame: libgit2, HEAD, no subprocess.
@@ -1189,6 +1232,30 @@ fn is_listed_submodule(submodule_paths: &std::collections::HashSet<String>, path
 /// arbiter. Which is why this must stay INSIDE the caller's single `with_repo`
 /// closure — refreshing under one lock acquisition and writing under another
 /// would open a fresh check-then-act gap of our own making.
+/// Another handle on the same repository, for one read to keep to itself
+/// (#400).
+///
+/// Opens the GITDIR rather than the path the user named. Both work — that was
+/// checked, not assumed: `Repository::open` on a linked worktree's workdir
+/// follows the `.git` FILE there and lands on the same repository. The gitdir
+/// is the better of two working choices, for three reasons:
+///
+/// - It is the path libgit2 itself resolved during `open`, so a read handle is
+///   the same repository as the cached one BY CONSTRUCTION, rather than by
+///   re-deriving the answer and trusting it to come out the same.
+/// - It skips the `.git`-file indirection on every single read. On a linked
+///   worktree that is an extra file read per op, and the whole point of #400 is
+///   filesystems where a file read is not free.
+/// - Nothing that happens at the user-supplied path afterwards can change where
+///   a read lands — a rewritten `.git` file, a replaced workdir.
+///
+/// `report_as` is the path the USER named, kept only for the error message — a
+/// `DubiousOwnership` naming an internal `.git/worktrees/…` path would be about
+/// a directory they never chose.
+fn open_read_handle(gitdir: &Path, report_as: &Path) -> AppResult<Repository> {
+    Repository::open(gitdir).map_err(|e| ownership::map_open_error(report_as, &e))
+}
+
 fn fresh_index(repo: &Repository) -> AppResult<git2::Index> {
     let mut index = repo.index()?;
     index.read(false)?;
@@ -2674,7 +2741,26 @@ fn accept_side(
     ours: bool,
 ) -> AppResult<()> {
     backend.with_repo(repo_id, |repo| {
-        let index = repo.index()?;
+        // `fresh_index`, not `repo.index()`, and this one is load-bearing in a
+        // way that cost two e2e specs to find (#400).
+        //
+        // The decision below is "which side of the conflict do we take", read
+        // out of the index's conflict entries. A CACHED index that predates the
+        // merge has no conflict entries at all, so the loop finds nothing,
+        // `target_oid` stays None, `side_existed` stays false — and the
+        // `None if !side_existed` arm reads that as "deleted on the chosen
+        // side" and DELETES the file from the worktree. The user asked to keep
+        // a version of a file and the file disappears.
+        //
+        // This held together for a long time by accident: `status` used to run
+        // on this same cached handle, and libgit2's `git_status_list_new`
+        // reloads the index from disk unless `GIT_STATUS_OPT_NO_REFRESH` is
+        // set, so every status refresh was silently re-reading the index for
+        // everyone. Moving reads onto private handles (#400) took that away and
+        // turned a latent bug into a reproducible one. The lesson is the rule
+        // `fresh_index` already states: an index read that DECIDES something
+        // needs its own refresh, not somebody else's side effect.
+        let index = fresh_index(repo)?;
         let path_bytes = path.to_string_lossy().as_bytes().to_vec();
 
         let mut target_oid: Option<git2::Oid> = None;
@@ -2716,7 +2802,7 @@ fn accept_side(
                 }
                 std::fs::write(&full, blob.content())
                     .map_err(|e| AppError::Io(e.to_string()))?;
-                let mut index = repo.index()?;
+                let mut index = fresh_index(repo)?;
                 let _ = index.remove_path(path);
                 index.add_path(path)?;
                 index.write()?;
@@ -2726,7 +2812,7 @@ fn accept_side(
                 if full.exists() {
                     std::fs::remove_file(&full).map_err(|e| AppError::Io(e.to_string()))?;
                 }
-                let mut index = repo.index()?;
+                let mut index = fresh_index(repo)?;
                 let _ = index.remove_path(path);
                 index.write()?;
             }
@@ -3144,11 +3230,19 @@ impl GitBackend for Libgit2Backend {
             .map(super::repo_path_key)
             .unwrap_or_else(|| path.to_path_buf());
 
+        // Reads get handles of their own (#400), minted from the gitdir this
+        // open already resolved rather than by re-running discovery — see
+        // `open_read_handle`. Captured here because this is the only place
+        // that knows both paths.
+        let gitdir = repo.path().to_path_buf();
+        let report_as = path.to_path_buf();
+        let lock = RepoLock::new(repo, move || open_read_handle(&gitdir, &report_as));
+
         let mut map = self
             .repos
             .lock()
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        map.insert(id.clone(), Arc::new(Mutex::new(repo)));
+        map.insert(id.clone(), Arc::new(lock));
 
         Ok(RepoHandle {
             id,
@@ -3306,7 +3400,7 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn status(&self, repo_id: &RepoId) -> AppResult<Vec<FileStatus>> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             // Per-file line stats for each side separately, so the staged and
             // unstaged rows can report their own numbers. Degrades to empty
             // (→ 0/0 counts) rather than failing status.
@@ -3416,7 +3510,7 @@ impl GitBackend for Libgit2Backend {
         cursor: Option<&[String]>,
         limit: usize,
     ) -> AppResult<LogPage> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             let ref_map = collect_ref_map(repo);
             let mut walk = repo.revwalk()?;
             walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
@@ -4110,7 +4204,7 @@ impl GitBackend for Libgit2Backend {
         let rel = path.to_path_buf();
         let path_str = rel.to_string_lossy().into_owned();
         self.with_repo(repo_id, |repo| {
-            let index = repo.index()?;
+            let index = fresh_index(repo)?;
             // Stage 0 is the normal, non-conflicted entry. A conflicted path has
             // stages 1-3 and no 0, so it lands in the same "not in the index"
             // branch as an untracked one — correct either way, because neither
@@ -4183,7 +4277,7 @@ impl GitBackend for Libgit2Backend {
                     read_worktree_side(&workdir.join(&rel))?
                 }
                 BlobSource::Index => {
-                    let index = repo.index()?;
+                    let index = fresh_index(repo)?;
                     match index.get_path(&rel, 0) {
                         // A `160000` gitlink HAS a stage-0 entry and its oid is
                         // a commit in the submodule's object database, so
@@ -4196,7 +4290,7 @@ impl GitBackend for Libgit2Backend {
                     }
                 }
                 BlobSource::Stage { stage } => {
-                    let index = repo.index()?;
+                    let index = fresh_index(repo)?;
                     match index.get_path(&rel, i32::from(*stage)) {
                         Some(e) if e.mode != u32::from(git2::FileMode::Commit) => {
                             read_blob_side(repo, e.id)?
@@ -4292,7 +4386,7 @@ impl GitBackend for Libgit2Backend {
         ignore_whitespace: bool,
         raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             let commit = repo.revparse_single(oid)?.peel_to_commit()?;
             let to_tree = commit.tree()?;
             // First parent for merges; None (empty tree) for the root commit.
@@ -5071,7 +5165,7 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn branches(&self, repo_id: &RepoId) -> AppResult<Vec<BranchInfo>> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             let head_ref = repo.head().ok();
             let head_name = head_ref
                 .as_ref()
@@ -5151,7 +5245,7 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn tags(&self, repo_id: &RepoId) -> AppResult<Vec<TagInfo>> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             let mut out = Vec::new();
             repo.tag_foreach(|oid, name_bytes| {
                 let name = std::str::from_utf8(name_bytes)
@@ -5189,7 +5283,7 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn stashes(&self, repo_id: &RepoId) -> AppResult<Vec<StashInfo>> {
-        self.with_repo_mut(repo_id, |repo| {
+        self.with_repo_read_mut(repo_id, |repo| {
             // Two passes, not one: `stash_foreach` holds the repository mutably
             // for the duration of the walk, so the closure cannot `find_commit`
             // to read a parent count. Collect the raw triples first, resolve
@@ -5222,7 +5316,7 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn remotes(&self, repo_id: &RepoId) -> AppResult<Vec<RemoteInfo>> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             let mut out = Vec::new();
             for name in repo.remotes()?.iter().flatten().flatten() {
                 let url = repo
@@ -5934,7 +6028,7 @@ impl GitBackend for Libgit2Backend {
     /// read leaves the count 0 while `shallow` stays true, since the boolean is
     /// what every surface actually branches on.
     fn shallow_info(&self, repo_id: &RepoId) -> AppResult<ShallowInfo> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             let shallow = repo.is_shallow();
             let boundary_count = if shallow {
                 std::fs::read_to_string(repo.commondir().join("shallow"))
@@ -6320,7 +6414,7 @@ impl GitBackend for Libgit2Backend {
         // ONE repo-lock acquisition for both small file reads (state + summary);
         // this is polled by every refreshStatus, so a second acquisition was a
         // second queue-up behind whatever op the repo is busy with.
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             let mut status = match in_memory {
                 Some(status) => status,
                 // No in-memory entry: either there is no rebase, or this process
@@ -6393,7 +6487,12 @@ impl GitBackend for Libgit2Backend {
         // hex check above could only approximate), and what reaches argv is a
         // full oid we produced, not caller text — the same reason
         // `bisect::resolve` exists.
-        let (full_oid, signed) = self.with_repo(repo_id, |repo| {
+        // `with_repo_read`, not `with_repo`: this resolves a revision and reads
+        // a signature, writing nothing — and it is the op that made the #400
+        // ladder a ladder. Held exclusively, the `git show` below stalled every
+        // unrelated read in the process for as long as gpg took, once per
+        // commit the user arrowed onto.
+        let (full_oid, signed) = self.with_repo_read(repo_id, |repo| {
             let commit = repo
                 .revparse_single(oid)
                 .and_then(|obj| obj.peel_to_commit())
@@ -6531,7 +6630,7 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn repo_state(&self, repo_id: &RepoId) -> AppResult<RepoState> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             // Our own rebase wins: libgit2 only sees the CHERRY_PICK_HEAD /
             // MERGE_HEAD a paused step leaves behind, which would report the
             // step's mechanism instead of the operation the user started.
@@ -6557,7 +6656,7 @@ impl GitBackend for Libgit2Backend {
     }
 
     fn head_info(&self, repo_id: &RepoId) -> AppResult<HeadInfo> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             // Same split `WorktreeInfo`'s listing already uses: `head()` errors
             // on an unborn branch (leaving both fields `None`), and a detached
             // HEAD resolves to a reference literally named "HEAD" whose
@@ -6577,7 +6676,11 @@ impl GitBackend for Libgit2Backend {
 
     fn conflict_sides(&self, repo_id: &RepoId, path: &Path) -> AppResult<ConflictSides> {
         self.with_repo(repo_id, |repo| {
-            let index = repo.index()?;
+            // `fresh_index` for the same reason as `accept_side` — see the long
+            // note there. This is what seeds the merge window's regions, so a
+            // cached index that predates the merge yields NO sides, the window
+            // renders nothing to accept, and Apply never enables (#400).
+            let index = fresh_index(repo)?;
             let path_str = path.to_string_lossy().to_string();
             let path_bytes = path.to_string_lossy().as_bytes().to_vec();
 
@@ -6642,7 +6745,7 @@ impl GitBackend for Libgit2Backend {
 
     fn mark_resolved(&self, repo_id: &RepoId, paths: &[PathBuf]) -> AppResult<()> {
         self.with_repo(repo_id, |repo| {
-            let mut index = repo.index()?;
+            let mut index = fresh_index(repo)?;
             for p in paths {
                 // remove_path drops all three stages; add_path re-inserts the worktree version as stage 0.
                 let _ = index.remove_path(p);
@@ -6678,7 +6781,7 @@ impl GitBackend for Libgit2Backend {
                 .ok_or_else(|| AppError::InvalidPath("bare repository".into()))?;
             std::fs::write(workdir.join(path), content)
                 .map_err(|e| AppError::Io(e.to_string()))?;
-            let mut index = repo.index()?;
+            let mut index = fresh_index(repo)?;
             // remove_path drops all three conflict stages; add_path re-inserts
             // the just-written worktree version as stage 0 (same dance as
             // mark_resolved).
@@ -6756,7 +6859,7 @@ impl GitBackend for Libgit2Backend {
 
         self.with_repo(repo_id, |repo| {
             let sig = crate::git::signature::default_signature(repo)?.to_owned();
-            let mut index = repo.index()?;
+            let mut index = fresh_index(repo)?;
             let tree_oid = index.write_tree()?;
             let tree = repo.find_tree(tree_oid)?;
             let head_commit = repo.head()?.peel_to_commit()?;
@@ -6982,7 +7085,7 @@ impl GitBackend for Libgit2Backend {
     // ─── Linked worktrees (#93) ───────────────────────────────────────────────
 
     fn worktrees(&self, repo_id: &RepoId) -> AppResult<Vec<WorktreeInfo>> {
-        self.with_repo(repo_id, |repo| {
+        self.with_repo_read(repo_id, |repo| {
             let current = repo.workdir().map(|p| p.to_path_buf());
             let names = repo.worktrees()?;
             let mut out = Vec::new();
@@ -7147,7 +7250,10 @@ impl GitBackend for Libgit2Backend {
     // ─── Bisect (#93) ─────────────────────────────────────────────────────────
 
     fn bisect_status(&self, repo_id: &RepoId) -> AppResult<BisectStatus> {
-        self.with_repo(repo_id, crate::git::bisect::status)
+        // Read-only, and it shells out to `git rev-list --bisect-vars` for its
+        // progress numbers — so holding this exclusively blocked every other
+        // read for the length of a subprocess (#400).
+        self.with_repo_read(repo_id, crate::git::bisect::status)
     }
 
     fn bisect_start(

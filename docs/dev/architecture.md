@@ -264,6 +264,16 @@ git/
 │                summary in a second file. Deliberately NOT git's own
 │                rebase-merge/ dir — a half-compatible one would let git claim
 │                a rebase it cannot drive
+├── repo_locks.rs  RepoLock<T> — how ONE repository's git2 handles are ordered
+│                (#400). One cached handle behind a mutex for writes, a factory
+│                minting a private handle per read, an RwLock gate ordering the
+│                two. `with_repo`/`with_repo_mut` are the exclusive path,
+│                `with_repo_read`/`with_repo_read_mut` the shared one — the
+│                `_mut` suffix is about libgit2's C signatures, NOT reads vs
+│                writes. Read-vs-read exclusion is the only thing dropped; a
+│                write still excludes everything. Carries its own unit tests
+│                with a fake handle, proving overlap by barrier rather than by
+│                wall clock. See backend.md
 ├── update_refs.rs  Stacked branches (#240) — git's `rebase --update-refs`,
 │                IMPLEMENTED not passed through, because our rebase is our own
 │                libgit2 replay with no `git rebase` process to hand a flag to.

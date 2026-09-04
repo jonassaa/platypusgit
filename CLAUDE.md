@@ -216,8 +216,14 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
 - **Drag and drop:** pointer events via `features/dnd`, never HTML5 dnd; every
   drag has a keyboard equivalent. (`docs/dev/frontend.md`)
 - **`git2::Repository` is `Send` not `Sync`** — wrap git2 work in
-  `spawn_blocking`; per-repo ops serialize on an inner mutex. Verify and mutate
-  under ONE lock acquisition (stash TOCTOU). (`docs/dev/backend.md`)
+  `spawn_blocking`. Per-repo WRITES serialize on one cached handle; reads run
+  concurrently on private handles (`git/repo_locks.rs`). `with_repo` is the
+  exclusive/write path and `with_repo_read` the shared one — the `_mut` suffix
+  is about libgit2's C signatures, NOT reads vs writes, and `with_repo` carries
+  most of this backend's writes. An op joins the `_read` helpers only once
+  established to write nothing. Verify and mutate under ONE lock acquisition
+  (stash TOCTOU); never nest two lock helpers on one repository.
+  (`docs/dev/backend.md`)
 - **Tauri permissions:** shared set in `capabilities/default.json`; privileged
   ones (updater, e2e) stay in their scoped capability files. A new window label
   must match a pattern in that file's `windows` list (`pg-*` since #256) or the
