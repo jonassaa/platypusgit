@@ -93,6 +93,16 @@ export async function openMergeWindow(repoId: string, path?: string): Promise<vo
     minWidth: 900,
     minHeight: 500,
     title: path ? `Resolve: ${path}` : "Resolve conflicts",
+    // Same reason the main window carries it in tauri.conf.json: without it
+    // both the window and webview layers default to white, and opening the
+    // resolver flashes a white rectangle before the dark UI arrives. Kept as
+    // the literal `--bg-0` of the default dark theme; `startupPaint.test.ts`
+    // fails the build if this and the main window's value drift apart.
+    //
+    // Left VISIBLE, unlike the main window: this one opens in response to a
+    // click, where a window that appears instantly (correctly coloured, then
+    // filled) beats one that appears a beat after the click that asked for it.
+    backgroundColor: "#0d1013",
   });
   // Any exit path (Apply-through-last-file, Esc, OS close button) must leave
   // the main window showing disk truth — but only for the repository this

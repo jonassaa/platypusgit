@@ -216,6 +216,15 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
 - **Tauri permissions:** shared set in `capabilities/default.json`; privileged
   ones (updater, e2e) stay in their scoped capability files.
   (`docs/dev/distribution.md`)
+- **The main window starts HIDDEN** (`"visible": false`) and the frontend shows
+  it on React's first commit (`src/lib/revealWindow.tsx`) — that is what makes
+  the app open already-drawn instead of flashing white. Delete the reveal and
+  you ship a process with no UI, and **e2e cannot catch it**: WebDriver attaches
+  to the webview, not the window, so the suite passes green against an invisible
+  app. `test/startupPaint.test.ts` plus a `SHOW_WINDOW_FALLBACK_MS` thread in
+  `lib.rs` are the guards; the window and document background colours track
+  `--bg-0` and fail the build when they drift. Startup slowness is NOT the
+  bundle — the 1.4 MB entry compiles in ~15ms. (`docs/dev/distribution.md`)
 
 ## Things deliberately NOT in codebase
 

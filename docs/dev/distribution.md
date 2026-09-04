@@ -224,10 +224,12 @@ makes no request whatever the channel is set to.
 ## Permissions (Tauri 2)
 
 - Shared permissions in `src-tauri/capabilities/default.json`: `core:default`,
-  window minimize/toggle-maximize/close/start-dragging/set-title, webview
-  create-webview-window + set-webview-zoom (the `view.zoom*` chords),
+  window minimize/toggle-maximize/close/start-dragging/set-title/**show**,
+  webview create-webview-window + set-webview-zoom (the `view.zoom*` chords),
   `dialog:default` + `dialog:allow-open`, `os:default`, `log:default`. Scoped
-  `windows: ["main", "merge"]`.
+  `windows: ["main", "merge"]`. `allow-show` is not optional decoration — the
+  main window is created hidden and the frontend is what shows it; see
+  "The window starts hidden" below.
 - **Self-update permissions are narrower:** `updater:default` +
   `process:allow-restart` live in `src-tauri/capabilities/updater.json` with
   `windows: ["main"]` — the merge resolver must not be able to swap the binary
@@ -241,6 +243,74 @@ makes no request whatever the channel is set to.
 - New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`,
   register `.plugin(tauri_plugin_X::init())` in `lib.rs`, add its permissions
   to the capability file.
+
+## The window starts hidden, and the first paint is dark
+
+The app used to open with a white flash on macOS and Windows. Two independent
+causes, both at the window layer rather than in anything React does:
+
+1. **Nothing set a background colour.** With no `backgroundColor` on the window
+   config and no inline background in `index.html`, both the window layer and
+   the webview layer default to **white**. The sequence was: OS window appears
+   white → `index-*.css` loads → `body { background: var(--bg-0) }` finally
+   paints dark. CSS cannot reach the frames before it has loaded, so this is not
+   fixable in the stylesheet.
+2. **Windows/Linux additionally showed the native frame being stripped.**
+   `lib.rs` calls `set_decorations(false)` in `setup` (macOS keeps its frame for
+   `titleBarStyle: "Overlay"`), so the window was created decorated, shown, and
+   then lost its title bar — a shape change on top of the white.
+
+### What it is NOT: the JS bundle
+
+Measured before changing anything, because "it spends time setting up the
+titlebar" sounds like parse cost: V8 compiles the 1.41 MB entry chunk in
+**14–18 ms**. Code splitting the app would do nothing measurable for startup.
+Don't reach for `manualChunks` to fix a launch complaint — the flash is window
+plumbing, and the *time-to-usable* cost is the boot invoke batch (nine calls
+queueing on the per-repo mutex, ~350–430 ms each; see `docs/dev/backend.md`).
+
+`@xterm/xterm` *is* statically in that entry chunk, so lazy-loading it is a
+legitimate size/memory change. It is not a startup change.
+
+### The fix, and the trade it makes
+
+- `backgroundColor: "#0d1013"` on the main window (`tauri.conf.json`) covers the
+  window **and** webview layers. `openMergeWindow.ts` passes the same value.
+- An inline `background` on `<html>` plus `<meta name="color-scheme">` in
+  `index.html` covers the document's paint before any stylesheet lands.
+- `"visible": false` on the main window, revealed by the frontend on React's
+  first commit (`src/lib/revealWindow.tsx`). This is what makes the app open
+  *already drawn* rather than showing a correctly-coloured empty frame — and it
+  is what makes cause (2) invisible for free, since the decoration strip now
+  happens while nobody can see the window.
+
+`#0d1013` is `--bg-0` of the default dark theme (`oklch(0.17 0.008 260)`)
+converted to sRGB. It is dark unconditionally, matching the choice `:root`
+already makes for the pre-hydration window; a light-theme user never sees it,
+because the window is revealed only after the real theme is on the DOM.
+
+**A splash screen was considered and rejected.** The pre-paint gap is a few
+hundred milliseconds; a splash would replace a white flash with a logo flash and
+add a visual state, which makes startup *feel* longer, not shorter.
+
+### Two traps
+
+- **`"decorations": false` cannot be moved into a per-platform config file.**
+  Tauri merges `tauri.windows.conf.json` / `tauri.linux.conf.json` with
+  `json_patch::merge` — RFC 7396 semantics, which **replace arrays wholesale**.
+  A platform file containing `windows: [{ "decorations": false }]` discards
+  title, size and min-size. Either duplicate the whole window object per
+  platform (three copies, guaranteed drift) or leave it in `setup`, which is
+  what we do.
+- **E2E cannot catch a window that is never shown.** WebDriver attaches to the
+  webview, not the window, so the entire suite passes green against an app with
+  no visible UI. That blind spot is why the wiring is asserted statically in
+  `test/startupPaint.test.ts`, and why `lib.rs` keeps a
+  `SHOW_WINDOW_FALLBACK_MS` thread that shows the window anyway if the frontend
+  never gets there (a module-scope throw, a bundle that fails to load). A
+  visible broken window is a bug report; an invisible one is a ghost process.
+  Note `SHOW_WINDOW_FALLBACK_MS` is about the *window* — unrelated to
+  `src-tauri/src/reveal.rs`, which reveals files in the OS file manager.
 
 ## App icons — one master, transparent, regenerated (#206)
 
