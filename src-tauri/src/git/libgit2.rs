@@ -30,6 +30,7 @@ use super::{
         DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileStatus, HeadInfo, ImagePreview,
         LfsStatus,
         LogFilter, LogPage,
+        OversizedBlob,
         RebaseAction, RebaseProgress, RebaseProgressSink, RebaseStatus, RebaseStep, RebaseSummary,
         ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, ShallowInfo, StashInfo, StashSaveOptions,
@@ -1922,6 +1923,9 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
             deletions: 0,
             hunks: Vec::new(),
             lfs: None,
+            // Same load-order trap as `binary` above: sizes are filled in
+            // during `print`, so this is decided in the callback, not here.
+            oversized: None,
         });
     }
 
@@ -1951,6 +1955,10 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
         }
         if d.flags().contains(git2::DiffFlags::BINARY) {
             out[idx].binary = true;
+            // A blob over `MAX_WORKDIR_BLOB` is flagged binary by libgit2 and
+            // arrives here indistinguishable from a PNG. Record the size so the
+            // UI can say which it is (#385).
+            out[idx].oversized = out[idx].oversized.or_else(|| oversized_delta(&d));
             return true;
         }
         if let Some(h) = hunk {
@@ -2064,11 +2072,29 @@ enum UntrackedMode {
 /// reviewer reads either.
 const MAX_UNTRACKED_FILES: usize = 200;
 
-/// Per-blob ceiling for the same op. Larger blobs report as binary, which is
-/// what libgit2 does for anything over `DiffOptions::max_size` anyway — this
-/// just sets it far below the 512MB default, because a 5MB "text" file is a
-/// generated artifact, not something anyone diffs in a GUI.
-const MAX_WORKDIR_BLOB: i64 = 5 * 1024 * 1024;
+/// Per-blob ceiling for EVERY diff path (#131 set it, #385 made it universal).
+/// Larger blobs report as binary, which is what libgit2 does for anything over
+/// `DiffOptions::max_size` anyway — this just sets it far below the 512MB
+/// default, because a 5MB "text" file is a generated artifact, not something
+/// anyone diffs in a GUI.
+///
+/// `pub` so an integration test can assert the limit the UI is told about is
+/// the limit that was applied.
+pub const MAX_WORKDIR_BLOB: i64 = 5 * 1024 * 1024;
+
+/// Did libgit2 skip this delta because a side is over the ceiling? (#385)
+///
+/// Read from the DELTA rather than from a separate blob lookup: libgit2 fills
+/// `git_diff_file.size` in place while loading the patch (an ODB header read
+/// for a tree side, a stat for a workdir one), and every caller of this asks
+/// from inside a `print`/`foreach` callback — i.e. after the load. Reading it
+/// before the load would see zeros for a tree delta, which is the trap the
+/// `binary` seeding a few lines below already documents.
+fn oversized_delta(delta: &git2::DiffDelta<'_>) -> Option<OversizedBlob> {
+    let limit = MAX_WORKDIR_BLOB as u64;
+    let size = delta.old_file().size().max(delta.new_file().size());
+    (size > limit).then_some(OversizedBlob { size, limit })
+}
 
 /// Every stash entry as `(oid, reflog message)`, newest first (#133).
 ///
@@ -3545,6 +3571,13 @@ impl GitBackend for Libgit2Backend {
             opts.disable_pathspec_match(true);
             opts.context_lines(context_lines);
             opts.ignore_whitespace(ignore_whitespace);
+            // One path, but one path is all it takes: a checked-in
+            // `bundle.min.js` is a single click in the commit panel, and
+            // without this libgit2's 512MB default let it xdiff the whole file
+            // and serialise a String per line through IPC (#385). Same ceiling
+            // as `diff_ref_to_workdir` — one policy, not one capped path and
+            // three uncapped ones.
+            opts.max_size(MAX_WORKDIR_BLOB);
             // Include untracked files as if their full content were a new addition
             // so the diff viewer shows file contents for newly created files.
             if matches!(kind, DiffKind::WorktreeToIndex | DiffKind::WorktreeToHead) {
@@ -3581,6 +3614,7 @@ impl GitBackend for Libgit2Backend {
             let mut current_path: Option<String> = None;
             let mut old_path: Option<String> = None;
             let mut binary = false;
+            let mut oversized: Option<OversizedBlob> = None;
             let mut additions: u32 = 0;
             let mut deletions: u32 = 0;
             let mut hunks: Vec<DiffHunk> = Vec::new();
@@ -3601,6 +3635,10 @@ impl GitBackend for Libgit2Backend {
                 }
                 if delta.flags().contains(git2::DiffFlags::BINARY) {
                     binary = true;
+                    // Why it is "binary": a real PNG, or a text blob we
+                    // declined to read (#385). Only the size can tell them
+                    // apart, and it is populated by now (see `oversized_delta`).
+                    oversized = oversized.or_else(|| oversized_delta(&delta));
                     return true;
                 }
                 let origin = line.origin();
@@ -3613,6 +3651,7 @@ impl GitBackend for Libgit2Backend {
                     'H' | 'F' => return true,
                     'B' => {
                         binary = true;
+                        oversized = oversized.or_else(|| oversized_delta(&delta));
                         return true;
                     }
                     _ => {}
@@ -3684,6 +3723,7 @@ impl GitBackend for Libgit2Backend {
                 deletions,
                 hunks,
                 lfs: None,
+                oversized,
             };
             crate::git::lfs::annotate(&mut file_diff);
             Ok(file_diff)
@@ -4039,6 +4079,10 @@ impl GitBackend for Libgit2Backend {
             let mut opts = DiffOptions::new();
             opts.context_lines(context_lines);
             opts.ignore_whitespace(ignore_whitespace);
+            // One ceiling for every diff path (#385) — this one fans out over a
+            // whole comparison, so a single checked-in artifact would otherwise
+            // dominate the payload.
+            opts.max_size(MAX_WORKDIR_BLOB);
             let mut diff =
                 repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))?;
 
@@ -4069,6 +4113,9 @@ impl GitBackend for Libgit2Backend {
             let mut opts = DiffOptions::new();
             opts.context_lines(context_lines);
             opts.ignore_whitespace(ignore_whitespace);
+            // One ceiling for every diff path (#385): this feeds every commit
+            // the user clicks in the log.
+            opts.max_size(MAX_WORKDIR_BLOB);
             let mut diff = repo.diff_tree_to_tree(
                 from_tree.as_ref(),
                 Some(&to_tree),
@@ -5624,6 +5671,9 @@ impl GitBackend for Libgit2Backend {
             let mut opts = DiffOptions::new();
             opts.context_lines(context_lines);
             opts.ignore_whitespace(ignore_whitespace);
+            // One ceiling for every diff path (#385) — a stash holds whatever
+            // the worktree held, generated artifacts included.
+            opts.max_size(MAX_WORKDIR_BLOB);
             // base → stash, so the stashed work reads as ADDITIONS.
             let mut diff = repo.diff_tree_to_tree(
                 Some(&base.tree()?),
@@ -5645,6 +5695,7 @@ impl GitBackend for Libgit2Backend {
                 let mut u_opts = DiffOptions::new();
                 u_opts.context_lines(context_lines);
                 u_opts.ignore_whitespace(ignore_whitespace);
+                u_opts.max_size(MAX_WORKDIR_BLOB);
                 let u_diff =
                     repo.diff_tree_to_tree(None, Some(&untracked.tree()?), Some(&mut u_opts))?;
                 files.extend(diff_to_file_diffs(&u_diff)?);

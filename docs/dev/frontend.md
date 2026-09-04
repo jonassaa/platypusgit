@@ -54,6 +54,30 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   type back — silent truncation is worse than the overflow.
 - **Gate text rendering on `isTextualDiff(diff)`, not `!diff.binary`** (#93) —
   an LFS pointer is honestly text; the surfaces render `LfsDiffNotice` instead.
+- **"Binary" is a LIE about a file we simply declined to read (#385).** The
+  backend now caps EVERY diff path at `MAX_WORKDIR_BLOB` (it used to cap exactly
+  one, and `diff`/`diff_commit`/`diff_commits` — the commit panel's own
+  workhorses — inherited libgit2's 512 MB default). libgit2's answer to
+  `max_size` is to flag the delta BINARY, so without a second signal a
+  checked-in `bundle.min.js` reaches the surfaces indistinguishable from a PNG
+  and reads as "Binary file — no textual diff.": untrue about a text file, and
+  it hides the one fact that explains the pane. So the delta carries
+  `oversized: { size, limit }` and `oversizedDiffNotice` (`lib/derive.ts`) turns
+  it into the shared sentence — "File too large to diff" / "40 MB — over the
+  5.0 MB limit, so it was not read."
+  * **The LIMIT comes off the wire.** A frontend constant would be a second copy
+    of a policy that lives in `libgit2.rs`, free to drift from the one that was
+    actually applied. `test/diffOversized.test.ts` greps the four surfaces for
+    the helper AND for a hardcoded ceiling, and counts the backend's `max_size`
+    call sites — the bug was a policy split, not a rendering one.
+  * **`isTextualDiff` excludes it too**, belt and braces: the backend only ever
+    sets `oversized` on a delta libgit2 already called binary, so that arm
+    cannot fire alone today. It is there so "we did not read this blob" can
+    never come to mean "render its hunks".
+  * **No "show it anyway" override yet** — deliberately out of scope of the fix,
+    and tracked as #396: the ceiling had to become one policy before an escape
+    hatch from it could mean anything, and the row model has to survive the
+    result first (`windowVariable` reduces over every height on every scroll).
 - **The complement of `isTextualDiff` is not automatically a dead end** (#224).
   When the binary is an IMAGE, all five diff surfaces render the shared
   `ImageDiffView` (`features/diff/`) — old beside new, each with pixel

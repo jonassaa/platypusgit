@@ -317,6 +317,24 @@ export interface FileDiff {
    * rendering on `isTextualDiff` (`lib/derive.ts`) rather than on `binary` alone.
    */
   lfs?: LfsDiff | null;
+  /**
+   * Set when the blob was over the backend's ceiling and never diffed (#385).
+   *
+   * libgit2 answers `max_size` by flagging the file BINARY, so `binary` is true
+   * here too and the image-preview branch still runs — but "Binary file" is a
+   * dishonest thing to tell someone about a checked-in `bundle.min.js`. This
+   * says the real reason, and `oversizedDiffNotice` (`lib/derive.ts`) turns it
+   * into the sentence every surface prints.
+   */
+  oversized?: OversizedBlob | null;
+}
+
+/** Why a diff has no text: the blob was bigger than the ceiling (#385). */
+export interface OversizedBlob {
+  /** The larger of the two sides, in bytes. */
+  size: number;
+  /** The ceiling that was applied, in bytes — the backend owns the policy. */
+  limit: number;
 }
 
 /** The two sides of an LFS pointer change; either is null for an add/delete. */

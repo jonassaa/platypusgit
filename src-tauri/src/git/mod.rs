@@ -226,6 +226,13 @@ pub trait GitBackend: Send + Sync {
     /// not the hunks git would apply, so a hunk index taken from such a diff
     /// must never be fed to `stage_hunk`/`unstage_hunk`/`discard_hunk` — see
     /// the note on those.
+    ///
+    /// **Per-blob size is capped at `MAX_WORKDIR_BLOB`, as it now is on every
+    /// diff path (#385).** One path is still one enormous path: a checked-in
+    /// `bundle.min.js` is a single click in the commit panel. Over the ceiling
+    /// the blob is never read and `FileDiff.oversized` carries the size and the
+    /// limit, so the UI can say "too large to diff" rather than the "binary"
+    /// that libgit2's own answer to `max_size` would otherwise imply.
     fn diff(
         &self,
         repo_id: &RepoId,
@@ -368,8 +375,9 @@ pub trait GitBackend: Send + Sync {
     /// reads one file; this walks the whole tree. Over `MAX_UNTRACKED_FILES`
     /// untracked entries the untracked side is dropped entirely and the count
     /// comes back as `WorkdirDiff::untracked_omitted` for the UI to report.
-    /// Per-blob size is capped too (`MAX_WORKDIR_BLOB`), so one enormous file
-    /// reports as binary rather than being serialised.
+    /// Per-blob size is capped too (`MAX_WORKDIR_BLOB`) — the cap started here
+    /// and is now on every diff path (#385), reported as `FileDiff.oversized`
+    /// rather than left to read as "binary".
     fn diff_ref_to_workdir(
         &self,
         repo_id: &RepoId,

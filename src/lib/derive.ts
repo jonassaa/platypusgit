@@ -1,3 +1,4 @@
+import { formatBytes } from "./bytes";
 import type {
   BranchInfo,
   CommitInfo,
@@ -51,15 +52,45 @@ export function isConflicted(s: FileStatus): boolean {
 /**
  * Should this diff be rendered as text at all? (#93)
  *
- * Two ways it should not: libgit2 called the blob binary, or it is a git-LFS
- * **pointer** change. The second is why this exists as a helper rather than a
- * `!diff.binary` test at each of the four diff surfaces — a pointer IS text, so
- * `binary` is honestly false, and rendering its hunks claims "2 lines changed"
- * for a multi-megabyte asset. Every surface must agree, or the same file reads
- * differently depending on which pane you opened it in.
+ * Three ways it should not: libgit2 called the blob binary, it is a git-LFS
+ * **pointer** change, or it is over the backend's blob ceiling (#385). The
+ * second is why this exists as a helper rather than a `!diff.binary` test at
+ * each of the four diff surfaces — a pointer IS text, so `binary` is honestly
+ * false, and rendering its hunks claims "2 lines changed" for a multi-megabyte
+ * asset. Every surface must agree, or the same file reads differently depending
+ * on which pane you opened it in.
+ *
+ * `oversized` is belt and braces: the backend only ever sets it on a delta
+ * libgit2 already flagged binary, so this arm cannot fire alone today. It is
+ * here so that "we did not read this blob" can never mean "render its hunks",
+ * whichever half of the pair a future change touches.
  */
 export function isTextualDiff(diff: FileDiff | null | undefined): boolean {
-  return !!diff && !diff.binary && !diff.lfs;
+  return !!diff && !diff.binary && !diff.lfs && !diff.oversized;
+}
+
+/**
+ * The honest reason a large file has no diff, and its size (#385).
+ *
+ * The backend caps every diff path at `MAX_WORKDIR_BLOB`, and libgit2's answer
+ * to that cap is to flag the file BINARY — so without this a checked-in
+ * `bundle.min.js` read as "Binary file — no textual diff.", which is simply not
+ * true about a text file. One helper rather than a sentence per surface, for
+ * the reason `isTextualDiff`'s own doc comment gives: a file must not read
+ * differently depending on which pane you opened it in.
+ *
+ * The limit comes off the wire, never from a constant here — a second copy of
+ * the policy is free to drift from the one that was applied.
+ */
+export function oversizedDiffNotice(
+  diff: FileDiff | null | undefined,
+): { title: string; detail: string } | null {
+  const over = diff?.oversized;
+  if (!over) return null;
+  return {
+    title: "File too large to diff",
+    detail: `${formatBytes(over.size)} — over the ${formatBytes(over.limit)} limit, so it was not read.`,
+  };
 }
 
 /**

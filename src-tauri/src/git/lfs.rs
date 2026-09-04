@@ -304,6 +304,7 @@ mod tests {
                 lines,
             }],
             lfs: None,
+            oversized: None,
         }
     }
 
