@@ -116,6 +116,26 @@ describe("settings registry", () => {
     // unmocked, that is a real (if silently-swallowed) unmocked IPC call in
     // every case in this suite.
     mockInvoke("get_update_capability", () => "self-update");
+    // advanced.cli's CliPage and advanced.backup's BackupPage each fire a real
+    // IPC call on mount too — cli_shim_status and diagnostics_report — whose
+    // rejection an empty catch swallows silently. Same reasoning as
+    // get_update_capability above; see Settings.cli.test.tsx and
+    // Settings.diagnostics.test.tsx for the shapes.
+    mockInvoke("cli_shim_status", () => ({
+      installed: false,
+      shimPath: "/usr/local/bin/pgit",
+      target: "/Applications/PlatypusGit.app/Contents/MacOS/platypusgit",
+      source: "none",
+      pathState: "onPath",
+    }));
+    mockInvoke("diagnostics_report", () => ({
+      logPath: "/home/jonas/.local/share/io.github.jonassaa.platypusgit/logs/platypusgit.log",
+      logExists: true,
+      logSizeBytes: 4096,
+      environment:
+        "host os=linux arch=x86_64 kernel=5.15.153.1-microsoft-standard-WSL2 wsl=Ubuntu-24.04 git=2.43.0",
+      version: "0.1.0",
+    }));
   });
 
   it("declares exactly the rows each page renders", () => {

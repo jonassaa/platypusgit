@@ -9,11 +9,20 @@ import * as keyboard from "@/features/settings/pages/keyboard";
 import * as remote from "@/features/settings/pages/remote";
 import * as updates from "@/features/settings/pages/updates";
 import * as workspace from "@/features/settings/pages/workspace";
+import { FIRST_PAGE, resolvePageId } from "./types";
 import type {
   SettingsGroupId,
   SettingsPageId,
   SettingsPageModule,
 } from "./types";
+
+// Re-exported so existing importers of this module keep working. Both are
+// DEFINED in `./types` rather than here — see that file's comment on
+// `FIRST_PAGE` for why: this module imports all ten page modules, which
+// import `useSettingsStore`, so `useSettingsStore` importing `FIRST_PAGE`
+// FROM HERE would be a real cycle. `useSettingsStore` imports straight from
+// `./types` instead; this re-export is for everyone else.
+export { FIRST_PAGE, resolvePageId };
 
 export interface SettingsGroup {
   id: SettingsGroupId;
@@ -48,23 +57,6 @@ export const PAGES: Record<SettingsPageId, SettingsPageModule> = {
 };
 
 export const PAGE_ORDER: readonly SettingsPageId[] = GROUPS.flatMap((g) => g.pages);
-
-/** First page of the first group. The `settingsPage` default, and the fallback. */
-export const FIRST_PAGE: SettingsPageId = PAGE_ORDER[0];
-
-/**
- * Coerce a persisted or deep-linked page id.
- *
- * `coerceSettings`' scalar guard compares against `typeof DEFAULTS[key]` and so
- * waves through ANY string, and a deep link can name a page a later build
- * removed. Resolving here rather than trusting the caller is the same defensive
- * shape as `normalizeThemePreference`'s "an unknown mode reads as fixed".
- */
-export function resolvePageId(raw: unknown): SettingsPageId {
-  return typeof raw === "string" && (PAGE_ORDER as readonly string[]).includes(raw)
-    ? (raw as SettingsPageId)
-    : FIRST_PAGE;
-}
 
 // Hand the layout pair each card's declared rows, so a card can decide whether
 // it is empty before its children render. Runs once, at module load.
