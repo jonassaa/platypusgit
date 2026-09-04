@@ -11,9 +11,15 @@
 //   linux            Restored ... full match: false.
 //   windows          Restored ... full match: false.
 //
-// A cold Rust build measured 577s against 259s warm, so eviction was costing
-// roughly five minutes on each of those jobs, every release. Nothing was
-// broken; the quota was simply full of caches nothing would ever read again.
+// A cold Rust build measured 577s against 259s warm. Nothing was broken; the
+// quota was simply full of caches nothing would ever read again.
+//
+// Only the macOS miss there was eviction — it had a main-scoped entry on
+// 2026-08-31 and had lost it by 2026-09-03 while its siblings survived. `msix`
+// never had one to lose. Pruning buys the headroom for a warm release cache to
+// SURVIVE; it cannot create one, because a tag-triggered release saves to the
+// tag's own scope and only a workflow_dispatch run writes to `main`. See
+// docs/dev/testing.md.
 //
 // WHAT IT DELETES. Four rules, each logged with its reason:
 //

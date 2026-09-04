@@ -113,6 +113,22 @@ often. Measured on the v0.6.0 release at 10.73 GB usage, `macos-universal` and
 partial match — and a cold Rust build is 577s against 259s warm. Nothing was
 broken; the quota was full of caches nothing would ever read again.
 
+**Only `macos-universal` there was eviction, and the difference is the useful
+part.** A release runs on a TAG ref, which can read its own scope and the
+default branch's — and nothing else. A tag-triggered release therefore *saves*
+to the tag's scope, which the next tag cannot read, so **the only thing that
+ever warms a release job on `main` is a `workflow_dispatch` run of
+`release.yml`**. One such run on 2026-08-31 saved main-scoped caches for
+`linux`, `windows` and `macos-universal`; by 2026-09-03 the macOS entry was
+gone while its two siblings survived (largest, least recently used). `msix` in
+that same run logged `No cache found.` and then failed, and rust-cache does not
+save on a failed job — so it never had a main-scoped entry to lose.
+
+The practical reading: pruning buys the headroom for a warm release cache to
+*survive*, but it cannot create one. If a release build looks cold after a
+prune, the question is whether a successful `workflow_dispatch` run has ever
+written that job's key on `main` — not whether the quota is full.
+
 It runs **daily**, not weekly, because of the refill rate: CodeQL leaves a
 ~96 MB overlay database per commit on `main`, and every toolchain or lockfile
 change strands a multi-hundred-MB rust-cache generation. The first real run
