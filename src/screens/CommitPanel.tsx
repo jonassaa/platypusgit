@@ -1103,12 +1103,23 @@ export function CommitPanelScreen() {
   // Only the first line counts against the subject budget; everything below it
   // is body text nobody truncates.
   const subjectLength = composer.subjectLength;
-  // The CLEANED message decides, not the raw box: a template whose comment lines
-  // are all that is left is what git calls an empty commit message, and Commit
-  // has to be disabled for it rather than writing one. A hand-typed `#123 fix`
+  // The message a commit would actually STORE: git's cleanup applied to the box
+  // (in the mode git would use), then `buildMessage` — the same value the send
+  // path uses, computed once. The gate has to ask THIS question rather than a
+  // similar one about `composer.cleaned`, because the two can disagree: under
+  // `commit.cleanup=verbatim` nothing is stripped, so a box of spaces survives
+  // cleanup non-empty and then trims to "" on the way out — Commit lit up for a
+  // message the backend received as empty (#387).
+  const outgoingMessage = React.useMemo(
+    () => buildMessage(composer.cleaned, coAuthorTrailers(coAuthors)),
+    [composer.cleaned, coAuthors],
+  );
+  // Which also covers what the cleanup itself removes: a template whose comment
+  // lines are all that is left is what git calls an empty commit message, and
+  // Commit is disabled for it rather than writing one. A hand-typed `#123 fix`
   // is NOT that — nothing is stripped there, so it stays committable.
   const canCommit =
-    (amend || staged.length > 0) && !!composer.cleaned && !authorInvalid;
+    (amend || staged.length > 0) && !!outgoingMessage && !authorInvalid;
   const canCommitAndPush = canCommit && !!headBranch && !!defaultRemote;
   const committerLine = identityLine(committerIdentity);
   const committerFrom = identityOrigin(committerIdentity);
@@ -1120,14 +1131,15 @@ export function CommitPanelScreen() {
     if (committingRef.current) return null;
     committingRef.current = true;
     try {
-      // git's own cleanup, in the mode git would use: whitespace only for a
-      // message the user typed (this box is `git commit -m`, where `#123 fix`
+      // The message `canCommit` was computed from — one value, so what the
+      // button allows and what the backend receives cannot drift. The cleanup
+      // behind it is git's own, in the mode git would use: whitespace only for
+      // a message the user typed (this box is `git commit -m`, where `#123 fix`
       // is an ordinary subject), plus comment stripping once commit.template
       // has seeded it. Applied here rather than in the backend so the box can
       // show what it removes before anyone presses Commit.
-      const full = buildMessage(composer.cleaned, coAuthorTrailers(coAuthors));
       const result = await commitAction(
-        full,
+        outgoingMessage,
         amend,
         signoff,
         authorIdentity,
@@ -2133,8 +2145,19 @@ export function coAuthorTrailers(raw: string): string[] {
   return out;
 }
 
+/**
+ * The exact message a commit will store: the cleaned box with its end trimmed,
+ * plus any co-author trailers.
+ *
+ * This is the ONE question `canCommit` and the send path both ask (#387) — an
+ * empty answer means an empty commit message, whatever cleanup mode produced
+ * it. Hence the guard below: a trailer is an addition to a message, never a
+ * substitute for one, and letting one carry an empty message through would put
+ * a commit whose subject is `Co-Authored-By:` into history.
+ */
 function buildMessage(message: string, coAuthors: string[] = []): string {
   const trimmed = message.trimEnd();
+  if (!trimmed) return "";
   // Trailers go in their own block after one blank line — that separation is
   // what `git interpret-trailers` (and GitHub) key on. Skip any the message
   // already spells out, so hand-written and generated trailers can't double up.

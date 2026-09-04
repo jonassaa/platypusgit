@@ -4557,6 +4557,26 @@ impl GitBackend for Libgit2Backend {
             Ok(())
         }
 
+        // An empty commit message is refused HERE, not only in the panel that
+        // usually asks (#387). git aborts on one ("Aborting commit due to empty
+        // commit message") and every caller of this method is a caller that
+        // meant to write history, so the guarantee belongs on this side of the
+        // IPC boundary rather than in whichever screen happens to be driving.
+        //
+        // Whitespace-only counts as empty. That is fractionally stricter than
+        // `git commit --cleanup=verbatim -m "   "`, which really does record
+        // three spaces — but every path that reaches this method has already
+        // trimmed the end of the message (the composer's one deliberate
+        // deviation from git), so a message that is nothing but blanks can only
+        // mean the text was lost on the way here.
+        //
+        // Before the hooks: a refusal must not have run anybody's `pre-commit`.
+        if opts.message.trim().is_empty() {
+            return Err(AppError::InvalidArgument(
+                "the commit message is empty".to_string(),
+            ));
+        }
+
         let repo_path = self.repo_path(repo_id)?;
 
         // `pre-commit` runs BEFORE the index is read, and OUTSIDE `with_repo`.

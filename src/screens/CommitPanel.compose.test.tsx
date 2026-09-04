@@ -308,6 +308,46 @@ describe("a message the user typed is `git commit -m`", () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// commit.cleanup = verbatim (#387)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Verbatim means verbatim: the cleanup keeps every space, so `cleaned` is a
+// poor question for the gate to ask. What is SENT is `cleaned` with its end
+// trimmed — this app's one deviation from git — so a box holding nothing but
+// spaces is an empty commit message however verbatim the mode. The gate and
+// the send path have to ask that one question, or Commit lights up for a
+// message the backend receives as "".
+describe("commit.cleanup=verbatim", () => {
+  it("keeps Commit off for a box holding nothing but spaces and tabs", async () => {
+    setup({ template: template({ cleanup: "verbatim" }) });
+    await screen.findByTestId("commit-type");
+    type("   \t \n  \t\n");
+    expect(screen.getByTestId<HTMLButtonElement>("commit-button").disabled).toBe(true);
+  });
+
+  it("does not let a co-author trailer stand in for the message", async () => {
+    setup({ template: template({ cleanup: "verbatim" }) });
+    await screen.findByTestId("commit-type");
+    type("   ");
+    fireEvent.change(screen.getByTestId("commit-coauthors"), {
+      target: { value: "Ada <ada@x.com>" },
+    });
+    // A trailer is an addition to a message, never a substitute for one.
+    expect(screen.getByTestId<HTMLButtonElement>("commit-button").disabled).toBe(true);
+  });
+
+  it("still commits whitespace that has words around it, untouched", async () => {
+    setup({ template: template({ cleanup: "verbatim" }) });
+    await screen.findByTestId("commit-type");
+    type("  subject   \n\n\n# kept\n");
+    expect(screen.getByTestId<HTMLButtonElement>("commit-button").disabled).toBe(false);
+    fireEvent.click(screen.getByTestId("commit-button"));
+    await waitFor(() => expect(commitCall()).toBeDefined());
+    expect(commitCall()!.args.message).toBe("  subject   \n\n\n# kept");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // TICKET PREFIX
 // ═════════════════════════════════════════════════════════════════════════════
 
