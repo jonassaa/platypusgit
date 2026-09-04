@@ -344,6 +344,22 @@ export function MergeWindow() {
     };
   }, []);
 
+  // Say which repository this window is on, whenever it changes (#256).
+  //
+  // Every repository window needs the answer, and only this window has it: the
+  // `repoId` lives in this window's URL and no other webview can read it back.
+  // Before multiple windows existed, the one window that could open a resolver
+  // was also the one that had to guard against evicting its repository, so it
+  // could just remember what it had asked for. Now the resolver may have been
+  // opened by a window that is not the one closing a tab — and since each
+  // window opens its OWN `RepoId` for a repository, closing a tab in a
+  // different window cannot hurt this one. Broadcasting the id is what lets the
+  // guard tell those two cases apart instead of confirming in both.
+  React.useEffect(() => {
+    if (!repoId) return;
+    void emit("merge://holding", { repoId });
+  }, [repoId]);
+
   // --- Chord table: window-level keydown, capture phase (beats CM keymap) --
   // Rebuilt each render so the listener always sees latest closures.
   const actions = React.useRef<Record<string, () => void>>({});

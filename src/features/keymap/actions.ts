@@ -33,6 +33,7 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
+import { openAppWindow } from "@/features/windows";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { createBranchInputStep, switchRepoStep } from "@/features/palette/steps";
 import { useFocusStore } from "./useFocusStore";
@@ -119,7 +120,10 @@ export type ActionId =
   | "tab.moveLeft"
   | "tab.moveRight"
   | "tab.select"
-  | "tab.switch";
+  | "tab.switch"
+  | "window.new"
+  | "window.newWithRepo"
+  | "window.moveTabOut";
 
 export interface ActionDef {
   id: ActionId;
@@ -580,6 +584,52 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
     scope: "global",
     run: () => {
       usePaletteStore.getState().pushStep(switchRepoStep());
+      return true;
+    },
+  },
+
+  // ── repository windows (#256) ────────────────────────────────────────────
+  // Tabs are for switching, windows are for comparing. All three are ordinary
+  // catalog actions rather than AppShell wiring, so they reach the palette and
+  // the cheat sheet for free — and `window.new` is the only one with a default
+  // chord, because the other two are about a specific tab and read better from
+  // the tab's own context menu.
+  "window.new": {
+    id: "window.new",
+    title: "New window",
+    category: "Repository",
+    scope: "global",
+    run: () => {
+      void openAppWindow();
+      return true;
+    },
+  },
+  "window.newWithRepo": {
+    id: "window.newWithRepo",
+    title: "Open this repository in a new window",
+    category: "Repository",
+    scope: "global",
+    run: () => {
+      const path = useTabsStore.getState().activePath;
+      if (!path) return false;
+      void useTabsStore.getState().openInNewWindow(path);
+      return true;
+    },
+  },
+  "window.moveTabOut": {
+    id: "window.moveTabOut",
+    title: "Move this repository to a new window",
+    category: "Repository",
+    scope: "global",
+    run: () => {
+      const { activePath, tabs } = useTabsStore.getState();
+      if (!activePath) return false;
+      // Moving the ONLY tab out would close this window's last tab to open an
+      // identical window next to it — a no-op the user has to clean up. The
+      // "open in a new window" action is the one that makes sense there, and it
+      // is one row away in the same palette.
+      if (tabs.length < 2) return false;
+      void useTabsStore.getState().moveTabToNewWindow(activePath);
       return true;
     },
   },

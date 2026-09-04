@@ -6,9 +6,10 @@
 //
 // `useTabsStore` is the thin store on top; `RepoTabs` is the strip.
 
+import { OPEN_REPOS_KEY } from "@/features/windows/windowKind";
+
 import type { RepoSlice } from "./repoSlice";
 
-const OPEN_REPOS_KEY = "pg-open-repos";
 /** Bound on the persisted open set. Generous — it exists so a corrupted or
  *  runaway value can't make startup pathological, not to police workflow. */
 const OPEN_LIMIT = 20;
@@ -211,15 +212,22 @@ export function labelTabs(tabs: RepoTab[]): string[] {
 // with separate meanings: recents are where you have BEEN, the open set is
 // where you ARE. Opening a repository still pushes a recent, so the two stay
 // consistent without one becoming the other.
+//
+// Both take a `key`, because since #256 the open set is PER WINDOW: `main`
+// keeps writing the bare `pg-open-repos` it has written since #90 and a sibling
+// window writes `pg-open-repos:<label>` (`features/windows/windowKind.ts` owns
+// that mapping). The default keeps every caller that means "this window" —
+// which, in a single-window build, was every caller — reading the same key it
+// always did.
 
 export interface OpenRepos {
   paths: string[];
   active: string | null;
 }
 
-export function loadOpenRepos(): OpenRepos {
+export function loadOpenRepos(key: string = OPEN_REPOS_KEY): OpenRepos {
   try {
-    const raw = localStorage.getItem(OPEN_REPOS_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return { paths: [], active: null };
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object") return { paths: [], active: null };
@@ -246,7 +254,13 @@ export function loadOpenRepos(): OpenRepos {
   }
 }
 
-export function saveOpenRepos(tabs: RepoTab[], active: string | null): void {
+/** `tabs` is read for its paths only, so a caller seeding a window it has not
+ *  opened yet can pass bare `{ path }` records (`openAppWindow`). */
+export function saveOpenRepos(
+  tabs: Pick<RepoTab, "path">[],
+  active: string | null,
+  key: string = OPEN_REPOS_KEY,
+): void {
   try {
     const paths = tabs.map((t) => repoPathKey(t.path)).slice(0, OPEN_LIMIT);
     const activeKey = active ? repoPathKey(active) : null;
@@ -254,7 +268,7 @@ export function saveOpenRepos(tabs: RepoTab[], active: string | null): void {
       paths,
       active: activeKey && paths.includes(activeKey) ? activeKey : (paths[0] ?? null),
     };
-    localStorage.setItem(OPEN_REPOS_KEY, JSON.stringify(value));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // quota errors are non-fatal — the session just won't restore
   }

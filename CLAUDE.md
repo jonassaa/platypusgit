@@ -214,8 +214,16 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   `spawn_blocking`; per-repo ops serialize on an inner mutex. Verify and mutate
   under ONE lock acquisition (stash TOCTOU). (`docs/dev/backend.md`)
 - **Tauri permissions:** shared set in `capabilities/default.json`; privileged
-  ones (updater, e2e) stay in their scoped capability files.
+  ones (updater, e2e) stay in their scoped capability files. A new window label
+  must match a pattern in that file's `windows` list (`pg-*` since #256) or the
+  window silently has no permissions at all.
   (`docs/dev/distribution.md`)
+- **There can be several repository windows** (`main`, `pg-1`, …) — so anything
+  that is "the one live X on the ACTIVE repository" is keyed by WINDOW LABEL,
+  never global, and anything the backend emits to "the app" picks a window
+  instead of broadcasting. Two windows on one repository get two `RepoId`s on
+  purpose; per-window session state hangs off `openReposKey`.
+  (`docs/dev/frontend.md`)
 - **The main window starts HIDDEN** (`"visible": false`) and the frontend shows
   it on React's first commit (`src/lib/revealWindow.tsx`) — that is what makes
   the app open already-drawn instead of flashing white. Delete the reveal and

@@ -225,19 +225,35 @@ makes no request whatever the channel is set to.
 
 - Shared permissions in `src-tauri/capabilities/default.json`: `core:default`,
   window minimize/toggle-maximize/close/start-dragging/set-title/**show**,
-  webview create-webview-window + set-webview-zoom (the `view.zoom*` chords),
-  `dialog:default` + `dialog:allow-open`, `os:default`, `log:default`. Scoped
-  `windows: ["main", "merge"]`. `allow-show` is not optional decoration — the
-  main window is created hidden and the frontend is what shows it; see
+  set-size/set-position + outer-size/outer-position (a repository window
+  remembers where it was — #256), webview create-webview-window +
+  set-webview-zoom (the `view.zoom*` chords), `dialog:default` +
+  `dialog:allow-open`, `os:default`, `log:default`. Scoped
+  `windows: ["main", "merge", "pg-*"]`. `allow-show` is not optional decoration
+  — every window is created hidden and the frontend is what shows it; see
   "The window starts hidden" below.
+- **A window label that matches no pattern in that list has NO permissions at
+  all**, and fails silently — no error, just an app window where nothing works.
+  `pg-*` is what covers the repository windows #256 creates at runtime
+  (`pg-1`, `pg-2`, …), and it is why those labels are a deterministic shape
+  rather than an opaque id. A new kind of window means a new pattern here, in
+  the same commit.
 - **Self-update permissions are narrower:** `updater:default` +
   `process:allow-restart` live in `src-tauri/capabilities/updater.json` with
-  `windows: ["main"]` — the merge resolver must not be able to swap the binary
-  or relaunch mid-conflict. Keep new privileged permissions out of the shared
-  capability unless both windows genuinely need them.
+  `windows: ["main", "pg-*"]` — the merge resolver must not be able to swap the
+  binary or relaunch mid-conflict, and it is the ONLY window left out. A sibling
+  repository window is the whole app and carries the same chip and panel, so
+  omitting `pg-*` would have shipped an Install button that fails with a
+  permission error, and would have left a user who closed the main window with
+  no update surface at all. (N windows still cost one check: the throttle is
+  `lastCheckedAt` in localStorage, which every window shares.) Keep new
+  privileged permissions out of the shared capability unless every window
+  genuinely needs them.
 - **E2E-only permissions** (`core:window:allow-set-focus` +
   `wdio-webdriver:default`) live in the inline `e2e-focus` capability in
-  `src-tauri/tauri.e2e.conf.json`, loaded only via `--config`; the
+  `src-tauri/tauri.e2e.conf.json`, loaded only via `--config` — scoped to the
+  same three patterns, so a sibling window gets the focus self-heal and the
+  bridge that `multi-window.e2e.ts` drives it through; the
   `tauri-plugin-wdio-webdriver` crate is an optional dep behind the `e2e` cargo
   feature — never compiled into or permitted in dev/production builds.
 - New plugin: `cargo add tauri-plugin-X`, `pnpm add @tauri-apps/plugin-X`,

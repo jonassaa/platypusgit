@@ -36,6 +36,15 @@ vi.mock("@tauri-apps/plugin-os", () => ({
 
 vi.mock("@tauri-apps/api/window", () => {
   const win = {
+    // Multiple windows (#256): every window asks for its OWN label, and the
+    // label decides which storage key its tab strip persists under. `main` is
+    // the right default here — it is what a single-window build was, so every
+    // pre-#256 test keeps reading the key it always read.
+    label: "main",
+    // Physical bounds, read when a new window cascades off this one and when a
+    // sibling writes back where it was moved to.
+    outerPosition: vi.fn().mockResolvedValue({ x: 0, y: 0 }),
+    outerSize: vi.fn().mockResolvedValue({ width: 1200, height: 800 }),
     minimize: vi.fn(),
     toggleMaximize: vi.fn(),
     close: vi.fn(),
@@ -68,6 +77,8 @@ vi.mock("@tauri-apps/api/webviewWindow", () => {
       this.label = label;
     }
     once = vi.fn().mockResolvedValue(() => {});
+    setPosition = vi.fn().mockResolvedValue(undefined);
+    setSize = vi.fn().mockResolvedValue(undefined);
     setFocus = vi.fn().mockResolvedValue(undefined);
     close = vi.fn().mockResolvedValue(undefined);
   }

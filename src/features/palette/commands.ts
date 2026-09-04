@@ -2,6 +2,7 @@
 import { pgConfirm, pgFlash } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
+import { openAppWindow } from "@/features/windows";
 import { useLfsStore } from "@/features/lfs/useLfsStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -364,6 +365,44 @@ export function buildCommands(): PaletteItem[] {
     run: step(() => switchRepoStep()),
   });
   const tabs = useTabsStore.getState();
+
+  // -- repository windows (#256) --
+  // "New window" is always listed: an empty window is a starting point, not
+  // something you need a repository to reach. The other two name the ACTIVE
+  // repository, so they appear only when there is one — and moving out needs a
+  // second tab to be left behind, or the window closes its last tab to open an
+  // identical one beside it.
+  items.push({
+    type: "command", id: "action:new-window",
+    search: "New window open second monitor side by side",
+    label: "New window", icon: "plus", actionId: "window.new",
+    run: direct(() => void openAppWindow()),
+  });
+  if (tabs.activePath) {
+    items.push({
+      type: "command", id: "action:repo-new-window",
+      search: "Open repository in new window second monitor compare",
+      label: "Open this repository in a new window", icon: "repo",
+      actionId: "window.newWithRepo",
+      run: direct(() => {
+        const path = useTabsStore.getState().activePath;
+        if (path) void useTabsStore.getState().openInNewWindow(path);
+      }),
+    });
+  }
+  if (tabs.activePath && tabs.tabs.length > 1) {
+    items.push({
+      type: "command", id: "action:move-tab-window",
+      search: "Move repository tab to new window detach",
+      label: "Move this repository to a new window", icon: "repo",
+      actionId: "window.moveTabOut",
+      run: direct(() => {
+        const path = useTabsStore.getState().activePath;
+        if (path) void useTabsStore.getState().moveTabToNewWindow(path);
+      }),
+    });
+  }
+
   if (tabs.activePath) {
     items.push({
       type: "command", id: "action:close-repo-tab",

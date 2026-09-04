@@ -184,6 +184,22 @@ const COMMON = {
   "tab.moveLeft": ["Mod+Shift+ArrowLeft"],
   "tab.moveRight": ["Mod+Shift+ArrowRight"],
   "tab.switch": ["Mod+E"],
+  // Windows (#256). No free letter says "window": ⌘⇧N — the chord every other
+  // app uses for one — is New repository here and has been since the keymap
+  // shipped, and ⌘⇧W reads as *close* window everywhere, which is the worst
+  // possible thing for a chord that opens one. So the family is keyed on D for
+  // **d**etach, the one verb that fits all three.
+  //
+  // ⌘⇧G and ⌘⇧B carry no meaning; they are simply keys nothing else claims.
+  // That is on purpose rather than a placeholder: both actions are context-menu
+  // and palette actions first (they are about a NAMED tab, which is what the
+  // menu gives them and a chord cannot), every preset must bind every action,
+  // and an unmemorable chord is better than one that collides with muscle
+  // memory — ⌘⇧P, ⌘⇧F, ⌘⇧R, ⌘⇧V and ⌘⇧X are all spoken for elsewhere in the
+  // world, for the reasons the platypusgit preset's own comment lists.
+  "window.new": ["Mod+Shift+D"],
+  "window.newWithRepo": ["Mod+Shift+G"],
+  "window.moveTabOut": ["Mod+Shift+B"],
 } satisfies Partial<Record<ActionId, string[]>>;
 
 export const RIDER_PRESET: KeymapPreset = {
