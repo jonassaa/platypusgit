@@ -33,18 +33,6 @@ export const meta: SettingsPageMeta = {
       id: "appearance",
       title: "Appearance",
       subtitle: "Pick a theme, or customize every color and export it as a sharable file.",
-      // Not a data-driven list — `dynamic` is repurposed here for the other
-      // case the guard test's per-row DOM check cannot model: `appearance.light`
-      // and `appearance.dark` render only while following the OS, and
-      // `appearance.theme` only while fixed — a real, mutually-exclusive
-      // either/or in the component's own JSX (see AppearancePage), not a search
-      // gate. No single render of this card can show every declared row at
-      // once, so both directions of the strict id/label check are skipped for
-      // it; `Settings.appearance.test.tsx` covers the actual toggle behaviour
-      // with real assertions instead. `registerCardRows` still registers all
-      // eight ids under this card's own id, so a search match on "dark theme"
-      // still surfaces the card correctly.
-      dynamic: true,
       rows: [
         { id: "appearance.follow", label: "Appearance", keywords: "follow system os auto light dark mode" },
         { id: "appearance.light", label: "Light theme" },

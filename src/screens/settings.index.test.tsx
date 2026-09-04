@@ -6,6 +6,13 @@
 // out of the DOM, and compare the two sets BOTH ways. A row that renders but
 // is not declared is invisible to search; a row declared but never rendered is
 // a dead search result.
+//
+// Some pages render a mutually-exclusive subset of their declared rows
+// depending on other state (Appearance: the light/dark pair while following
+// the OS, one theme picker while fixed) — no SINGLE render can contain every
+// declared row for those pages, so the both-directions check runs across a
+// small set of named render states per page (`PAGE_RENDER_STATES`) and
+// compares per-state subsets plus the union, rather than one flat render.
 import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -13,7 +20,63 @@ import { WithDialogs, resetDialogs } from "@/test/dialog";
 import { GROUPS, PAGES, PAGE_ORDER, resolvePageId, FIRST_PAGE } from "@/features/settings/nav/pages";
 import type { SettingsPageId } from "@/features/settings/nav/types";
 import { UpdatesPage } from "@/features/settings/pages/updates";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
+
+interface RenderState {
+  name: string;
+  setup: () => void;
+}
+
+/**
+ * Render states a page must be checked in.
+ *
+ * Some pages render mutually-exclusive row sets: Appearance shows the
+ * light/dark pair while following the OS and the single theme picker
+ * otherwise (`AppearancePage`'s `following ? (...) : (...)`), so no ONE
+ * render can contain every declared row. Checking the union across states
+ * keeps both directions of the drift guard intact — a declared row that never
+ * renders in any state is missing from the union, and a rendered row that is
+ * not declared breaks the per-state subset check.
+ *
+ * `dynamic` is NOT the tool for this: it means "data-driven, no stable
+ * per-row ids" (a list of forge hosts, say) and changes how search renders
+ * the whole card in full rather than filtering it per row. Appearance's rows
+ * have stable, known-in-advance ids; they are merely conditionally rendered.
+ */
+const PAGE_RENDER_STATES: Partial<Record<SettingsPageId, readonly RenderState[]>> = {
+  "general.appearance": [
+    {
+      name: "fixed theme",
+      setup: () => useSettingsStore.getState().setThemeFollowMode("fixed"),
+    },
+    {
+      name: "following the OS",
+      setup: () => useSettingsStore.getState().setThemeFollowMode("system"),
+    },
+  ],
+};
+
+/** Every page not listed in `PAGE_RENDER_STATES` gets checked in one state. */
+const DEFAULT_STATES: readonly RenderState[] = [{ name: "default", setup: () => {} }];
+
+function renderStatesFor(pageId: SettingsPageId): readonly RenderState[] {
+  return PAGE_RENDER_STATES[pageId] ?? DEFAULT_STATES;
+}
+
+/**
+ * Reset to a known baseline, then apply one named state's setup.
+ *
+ * The reset matters as much as the setup: without it, "fixed theme" run right
+ * after "following the OS" would just be whatever the previous state left
+ * behind, and the case would stop proving `setThemeFollowMode("fixed")`
+ * actually produces the fixed-mode render rather than merely not having
+ * called `setThemeFollowMode("system")` yet.
+ */
+function applyState(state: RenderState): void {
+  useSettingsStore.getState().reset();
+  state.setup();
+}
 
 /**
  * Pages actually in the registry.
@@ -61,48 +124,74 @@ describe("settings registry", () => {
   it("declares exactly the rows each page renders", () => {
     for (const pageId of REGISTERED) {
       const { Page } = PAGES[pageId];
-      const { container, unmount } = render(
-        <WithDialogs>
-          <Page />
-        </WithDialogs>,
-      );
-      const rendered = renderedRowIds(container).filter(
-        (id) => !isDynamicRow(pageId, id),
-      );
-      expect(rendered, `${pageId}: rendered rows`).toEqual(declaredRowIds(pageId));
-      unmount();
+      const declared = declaredRowIds(pageId);
+      const union = new Set<string>();
+      for (const state of renderStatesFor(pageId)) {
+        applyState(state);
+        const { container, unmount } = render(
+          <WithDialogs>
+            <Page />
+          </WithDialogs>,
+        );
+        const rendered = renderedRowIds(container).filter(
+          (id) => !isDynamicRow(pageId, id),
+        );
+        for (const id of rendered) union.add(id);
+        // Every row this ONE state renders must be declared — a row that
+        // renders but is not declared is invisible to search regardless of
+        // which state produced it.
+        const undeclared = rendered.filter((id) => !declared.includes(id));
+        expect(
+          undeclared,
+          `${pageId} (${state.name}): rendered but not declared`,
+        ).toEqual([]);
+        unmount();
+      }
+      // The UNION across every named state must equal declared exactly — a
+      // row that never renders in ANY reachable state is a dead search
+      // result. A page with only the implicit "default" state (no toggles)
+      // still has to clear this in a single pass, same as before.
+      expect(
+        [...union].sort(),
+        `${pageId}: declared rows vs the union of every state's render`,
+      ).toEqual(declared);
     }
   });
 
   it("renders each row's label exactly as its meta declares", () => {
     // Search matches on `meta.label` (SettingRowMeta's docstring promises this
     // is enforced) — a drifted label would make a search result show text the
-    // user never actually sees on screen.
+    // user never actually sees on screen. Checked across every render state so
+    // a conditionally-rendered row (Appearance's light/dark/theme trio) is
+    // checked in the state where it actually appears, not skipped entirely.
     for (const pageId of REGISTERED) {
       const { Page, meta } = PAGES[pageId];
-      const { container, unmount } = render(
-        <WithDialogs>
-          <Page />
-        </WithDialogs>,
-      );
-      for (const card of meta.cards) {
-        if (card.dynamic) continue;
-        for (const rowMeta of card.rows) {
-          const row = container.querySelector(
-            `[data-setting-id="${rowMeta.id}"]`,
-          );
-          // Absent under the default render (a gated row, or the other half
-          // of a follow-system/fixed toggle) — nothing to compare here; the
-          // both-directions id check above already pins presence.
-          if (!row) continue;
-          const labelText = row.firstElementChild?.firstElementChild
-            ?.textContent?.trim();
-          expect(labelText, `${pageId}/${rowMeta.id} label`).toBe(
-            rowMeta.label,
-          );
+      for (const state of renderStatesFor(pageId)) {
+        applyState(state);
+        const { container, unmount } = render(
+          <WithDialogs>
+            <Page />
+          </WithDialogs>,
+        );
+        for (const card of meta.cards) {
+          if (card.dynamic) continue;
+          for (const rowMeta of card.rows) {
+            const row = container.querySelector(
+              `[data-setting-id="${rowMeta.id}"]`,
+            );
+            // Not rendered in THIS state (gated, or the other half of a
+            // toggle) — the id check above already pins presence overall.
+            if (!row) continue;
+            const labelText = row.firstElementChild?.firstElementChild
+              ?.textContent?.trim();
+            expect(
+              labelText,
+              `${pageId}/${rowMeta.id} label (${state.name})`,
+            ).toBe(rowMeta.label);
+          }
         }
+        unmount();
       }
-      unmount();
     }
   });
 
