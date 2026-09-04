@@ -190,7 +190,12 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   selection split: code cell `.pg-selectable`, line numbers and `+`/`−` marker
   `user-select: none`. A selection cannot leave the rendered window, so copying a
   long range goes through `lib/diffCopy.ts` (`diff.copy` / the right-click menu),
-  and `Mod+C` must keep declining to the native copy. (`docs/dev/frontend.md`)
+  and `Mod+C` must keep declining to the native copy. The over-ceiling notice's
+  SENTENCE and its ACTION are both shared (`oversizedDiffNotice` +
+  `OversizedDiffAction`/`useDiffAnyway`) — a pane that grows its own is how a
+  file starts behaving differently depending on where you opened it; the blob
+  ceiling is `blob_ceiling`, raised per file and never removed.
+  (`docs/dev/frontend.md`, `docs/dev/backend.md`)
 - **One commit-message composition surface** — `features/commits/message/`
   (`useCommitComposer` + `CommitMessageBar`). A new way to compose message text
   joins it; it never grows a second surface beside it. The box stays plain text

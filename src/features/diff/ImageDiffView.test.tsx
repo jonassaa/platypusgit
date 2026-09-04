@@ -54,6 +54,48 @@ function decode(testId: string, w: number, h: number) {
   fireEvent.load(img);
 }
 
+describe("a `tooLarge` preview is NOTABLE, which suppresses the fallback", () => {
+  // The interaction that made the #385 sentence unreachable, pinned here rather
+  // than at the four surfaces — this is where the rule lives.
+  //
+  // `MAX_PREVIEW_BYTES` is 4 MiB and the diff ceiling is 5 MB, so EVERY blob
+  // over the diff ceiling is also over the preview one and comes back
+  // `tooLarge`. `isNotablePreview` counts that as notable, so this component
+  // renders its panels and NOT the `fallback` — where the surfaces had put
+  // "File too large to diff". The user read "Too large to preview" instead,
+  // which says less and offers nothing to act on.
+  //
+  // It survived review because every other test here mocks previews to `null`,
+  // and a null preview is not notable. So the fix is at the CALLERS (they check
+  // `oversized` before reaching this component at all, see `OversizedDiffEmpty`)
+  // and what this test pins is the fact that made the fix necessary — if it ever
+  // stops being true, those precedence branches can go.
+  it("renders the panels, not the fallback, when a side is too large", async () => {
+    mockPreviews({
+      rev: { kind: "tooLarge", path: "generated.sql", size: 6_700_000, limit: 4 * 1024 * 1024 },
+      worktree: {
+        kind: "tooLarge",
+        path: "generated.sql",
+        size: 6_700_000,
+        limit: 4 * 1024 * 1024,
+      },
+    });
+    render(
+      <ImageDiffView
+        repoId="r1"
+        path="generated.sql"
+        sides={[OLD, NEW]}
+        fallback={<div>File too large to diff</div>}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("image-note-new")).toBeTruthy());
+    expect(screen.getByTestId("image-note-new")).toHaveTextContent(/Too large to preview/);
+    // The point: the caller's sentence never renders.
+    expect(screen.queryByText("File too large to diff")).toBeNull();
+  });
+});
+
 describe("an image diff", () => {
   it("renders both sides as local data: URLs", async () => {
     mockPreviews({

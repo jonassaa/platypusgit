@@ -327,6 +327,19 @@ export interface FileDiff {
    * into the sentence every surface prints.
    */
   oversized?: OversizedBlob | null;
+  /**
+   * Set when this diff has MORE lines than were sent (#396).
+   *
+   * Only the "Diff it anyway" path can produce it: an ordinary diff is under the
+   * ceiling and arrives whole. Once the user has waived the ceiling the line
+   * count is the next wall — a 40 MB CSV is about a million rows to lay out —
+   * so the backend caps the lines and reports the real length instead.
+   * `truncatedDiffNotice` (`lib/derive.ts`) turns it into the sentence.
+   *
+   * `additions`/`deletions` still describe the WHOLE diff, so the file row keeps
+   * telling the truth even when the pane cannot show all of it.
+   */
+  truncated?: TruncatedDiff | null;
 }
 
 /** Why a diff has no text: the blob was bigger than the ceiling (#385). */
@@ -335,6 +348,24 @@ export interface OversizedBlob {
   size: number;
   /** The ceiling that was applied, in bytes — the backend owns the policy. */
   limit: number;
+  /**
+   * Was that the RAISED ceiling — i.e. did the user already ask for this blob
+   * anyway, and it is still too big? (#396)
+   *
+   * Off the wire because the frontend deliberately holds no copy of either
+   * ceiling, and because the waived-path list is not the answer: after a fresh
+   * fetch the waiver is still in that list while the refusal is the default
+   * ceiling's, and the action belongs back on screen.
+   */
+  raised: boolean;
+}
+
+/** How much of an over-ceiling diff was actually sent (#396). */
+export interface TruncatedDiff {
+  /** Diff lines that arrived, across every hunk. */
+  shown: number;
+  /** Diff lines the file really has — the backend counted them all. */
+  total: number;
 }
 
 /** The two sides of an LFS pointer change; either is null for an add/delete. */

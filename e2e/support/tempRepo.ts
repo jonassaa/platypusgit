@@ -509,3 +509,30 @@ export function bisectRepo(): TempRepo {
   }
   return r;
 }
+
+/**
+ * One tracked file over the backend's blob ceiling, modified by a single line.
+ *
+ * The ceiling is `MAX_WORKDIR_BLOB` (5 MB, `libgit2.rs`), so this is ~6.7 MB of
+ * plain ASCII — unambiguously TEXT, which is the whole point: libgit2's answer
+ * to `max_size` is to flag the delta BINARY, and "Binary file" is a lie about a
+ * checked-in generated artifact (#385). Real content, not a sparse file: the
+ * backend has to actually decline to read it.
+ *
+ * The modification is ONE line, so the diff read at the RAISED ceiling comes
+ * back small — a few context lines around one addition — which is what makes
+ * the override observable in a spec without a six-figure row count (#396).
+ */
+export function oversizedBlobRepo(): TempRepo {
+  const line = "the quick brown fox jumps over the lazy dog; padding padding\n";
+  const body = line.repeat(110_000); // ~6.7 MB, comfortably over the 5 MB cap
+  const r = new TempRepo();
+  r.commitFile("generated.sql", body, "feat: add a generated schema");
+  r.write("generated.sql", `${body}INSERT INTO t VALUES (1);\n`);
+  // A second, ordinary dirty file, so a spec can move the selection off the big
+  // one and back — the waiver is per file and per view, and that is the only way
+  // to exercise it without leaving the screen.
+  r.commitFile("notes.txt", "one\n", "feat: add notes");
+  r.write("notes.txt", "one\ntwo\n");
+  return r;
+}

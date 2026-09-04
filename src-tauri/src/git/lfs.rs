@@ -305,6 +305,7 @@ mod tests {
             }],
             lfs: None,
             oversized: None,
+            truncated: None,
         }
     }
 

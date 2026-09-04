@@ -57,12 +57,18 @@ import {
   isTextualDiff,
   isUnstaged,
   isUntracked,
+  diffAnywayExhausted,
   oversizedDiffNotice,
   sideAdditions,
   sideDeletions,
   statusMark,
 } from "@/lib/derive";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
+import {
+  OversizedDiffEmpty,
+  TruncatedDiffNotice,
+} from "@/features/diff/OversizedDiffNotice";
+import { useDiffAnyway } from "@/features/diff/useDiffAnyway";
 import { NoSignaturePrompt } from "@/features/commits/identity/NoSignaturePrompt";
 import {
   identityLine,
@@ -231,6 +237,10 @@ export function CommitPanelScreen() {
   // Non-null only when the backend declined to read the blob because of its
   // size (#385) — the surfaces must not call a 40 MB text file "binary".
   const oversized = oversizedDiffNotice(diff);
+  // ...and the user's own way past that refusal (#396). Keyed on the selected
+  // file AND side, because the two sides of one file are two different diffs:
+  // the waiver survives a refresh of the same one (or the diff the user waited
+  // for would vanish on its own) and is dropped the moment the selection moves.
 
   // Folder rows (tree mode only) get the batch menu over everything beneath
   // them — stage / unstage / discard all — same as a multi-row selection.
@@ -687,6 +697,10 @@ export function CommitPanelScreen() {
   // itself on the outgoing side's row model (issue 188).
   const selKey = `${selected?.path ?? ""}:${selected?.side ?? ""}`;
   const [diffFor, setDiffFor] = React.useState<string | null>(null);
+  // The user's own way past the blob ceiling (#396) — see the note beside
+  // `oversized` above. Keyed on `selKey`, not just the path: the two sides of
+  // one file are two different diffs.
+  const anyway = useDiffAnyway(selKey);
 
   React.useEffect(() => {
     if (!selected || !repo) {
@@ -709,7 +723,14 @@ export function CommitPanelScreen() {
     }
     let cancelled = false;
     setDiffLoading(true);
-    getDiff(repo.id, selected.path, kind, diffContextLines, ignoreWhitespace)
+    getDiff(
+      repo.id,
+      selected.path,
+      kind,
+      diffContextLines,
+      ignoreWhitespace,
+      anyway.raiseFor,
+    )
       .then((d) => {
         if (!cancelled) {
           setDiff(d);
@@ -744,6 +765,9 @@ export function CommitPanelScreen() {
     repo,
     diffContextLines,
     ignoreWhitespace,
+    // And the waiver, so the status refresh above re-reads the blob the user
+    // asked for instead of silently replacing their diff with the refusal (#396).
+    anyway.raiseFor,
   ]);
 
   // A line selection stops meaning the same thing once the file, the side, or
@@ -1588,16 +1612,27 @@ export function CommitPanelScreen() {
           {/* The two sides the diff was computed from — IndexToHead for a
               staged row, WorktreeToIndex otherwise — so an image previews the
               same pair the hunks describe (#224). */}
-          {!diffLoading && !diffError && diff && diff.binary && (
+          {/* We declined to READ this blob, so there is nothing to preview and
+              exactly one thing to do about it — and this must come BEFORE the
+              image branch, because the preview ceiling (4 MiB) is below the
+              diff one and reports `tooLarge`, which suppresses the fallback the
+              sentence used to live in (#385/#396). */}
+          {!diffLoading && !diffError && oversized && (
+            <OversizedDiffEmpty
+              diff={diff}
+              pending={diffLoading}
+              alreadyTried={diffAnywayExhausted(diff)}
+              onDiffAnyway={() => diff && anyway.diffAnyway(diff)}
+            />
+          )}
+          {!diffLoading && !diffError && diff && diff.binary && !oversized && (
             <ImageDiffOrEmpty
               repoId={repo?.id ?? null}
               path={diff.path}
               sides={commitPanelImageSides}
-              title={oversized?.title ?? "Binary file"}
+              title="Binary file"
             >
-              {/* Over the ceiling this is usually a checked-in artifact, i.e.
-                  text — "binary" would be the wrong answer (#385). */}
-              {oversized?.detail ?? "Binary diffs aren't shown."}
+              Binary diffs aren&apos;t shown.
             </ImageDiffOrEmpty>
           )}
           {!diffLoading && !diffError && diff?.lfs && (
@@ -1616,6 +1651,10 @@ export function CommitPanelScreen() {
                 File is tracked but no hunks were produced.
               </PGEmpty>
             )}
+          {/* A waived ceiling gets the blob read; it does not make a million
+              rows layoutable, so the backend caps the lines. Say so above them
+              — an unmentioned cap reads as a diff that just ends (#396). */}
+          {!diffLoading && !diffError && <TruncatedDiffNotice diff={diff} />}
           {!diffLoading && !diffError && isTextualDiff(diff) && diff && diff.hunks.length > 0 &&
             diffMode === "unified" && (
               <PGWindowedDiff

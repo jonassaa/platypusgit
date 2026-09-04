@@ -38,6 +38,7 @@ import {
 import { useWindowedList } from "@/lib/useWindowedList";
 import {
   currentBranch,
+  diffAnywayExhausted,
   isConflicted,
   isStaged,
   isTextualDiff,
@@ -49,6 +50,11 @@ import {
 import { commitDateText, commitDateTitle } from "@/lib/commitDate";
 import { LfsDiffNotice } from "@/features/lfs/LfsDiffNotice";
 import { ImageDiffOrEmpty, ImageDiffView } from "@/features/diff/ImageDiffView";
+import {
+  OversizedDiffEmpty,
+  TruncatedDiffNotice,
+} from "@/features/diff/OversizedDiffNotice";
+import { useDiffAnyway } from "@/features/diff/useDiffAnyway";
 import { diffImageSides } from "@/features/diff/useImagePreviews";
 import {
   clickSelection,
@@ -183,6 +189,10 @@ export function RepoBrowserScreen() {
   // Non-null only when the backend declined to read the blob because of its
   // size (#385) — the surfaces must not call a 40 MB text file "binary".
   const oversized = oversizedDiffNotice(diff);
+  // ...and the user's own way past that refusal (#396). Keyed on the selected
+  // path: the waiver survives a refresh of the SAME file (or the diff the user
+  // waited for would vanish on its own) and is dropped the moment the selection
+  // moves, so coming back costs a click rather than another silent read.
   const [fileContent, setFileContent] = React.useState<FileContent | null>(null);
   const [filterMode, setFilterMode] = React.useState<
     "all" | "changes" | "conflicts"
@@ -663,6 +673,8 @@ export function RepoBrowserScreen() {
 
   // Derive the FileStatus entry that corresponds to the selected path key.
   // PGFileTree keys are path-prefixed by PG_FILETREE in the form "/a/b/c".
+  // Declared here rather than beside `oversized` above because it keys on the
+  // selection, which is derived below. See #396.
   const selectedFile = React.useMemo<FileStatus | null>(() => {
     if (!selected) return null;
     if (browsingRev) return findStatusByTreeKey(selected, revFiles) ?? null;
@@ -674,6 +686,9 @@ export function RepoBrowserScreen() {
     selectedFile.worktree.kind === "Unmodified" &&
     selectedFile.index.kind === "Unmodified";
   const selectedIsEmbedded = !!selectedFile?.embedded;
+  // The user's own way past the blob ceiling (#396) — see the note beside
+  // `oversized` above. Keyed on the selected path.
+  const anyway = useDiffAnyway(selectedFile?.path ?? null);
 
   // This pane's diff pane went unhighlighted and unwindowed through the first
   // three slices of #104 — it is a fourth diff surface that is easy to miss. It
@@ -909,6 +924,7 @@ export function RepoBrowserScreen() {
         "WorktreeToHead",
         diffContextLines,
         ignoreWhitespace,
+        anyway.raiseFor,
       )
         .then((d) => {
           if (!cancelled) setDiff(d);
@@ -928,7 +944,7 @@ export function RepoBrowserScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selectedFile?.path, selectedFile?.embedded, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev, diffContextLines, ignoreWhitespace]);
+  }, [selectedFile?.path, selectedFile?.embedded, selectedIsUnmodified, repo, browsingRev, rev, readFileContentAtRev, diffContextLines, ignoreWhitespace, anyway.raiseFor]);
 
   const breadcrumbItems = React.useMemo(() => {
     const root = repo?.path.split("/").filter(Boolean).pop() ?? "repository";
@@ -1250,6 +1266,11 @@ export function RepoBrowserScreen() {
                 {previewError}
               </PGEmpty>
             )}
+            {/* A waived ceiling gets the blob read; it does not make a million
+                rows layoutable, so the backend caps the lines. Say so above
+                them — an unmentioned cap reads as a diff that just ends
+                (#396). */}
+            {selectedFile && !diffLoading && <TruncatedDiffNotice diff={diff} />}
             {selectedFile && !diffLoading && isTextualDiff(diff) && diff && (
               <PGWindowedDiff
                 rows={diffRows}
@@ -1269,7 +1290,20 @@ export function RepoBrowserScreen() {
             {/* This pane compares WorktreeToHead, the same two sides its syntax
                 hook reads — so an image previews here instead of dead-ending
                 (#224). */}
-            {selectedFile && !diffLoading && diff?.binary && (
+            {/* We declined to READ this blob, so there is nothing to preview
+                and exactly one thing to do about it — and this must come BEFORE
+                the image branch, because the preview ceiling (4 MiB) is below
+                the diff one and reports `tooLarge`, which suppresses the
+                fallback the sentence used to live in (#385/#396). */}
+            {selectedFile && !diffLoading && oversized && (
+              <OversizedDiffEmpty
+                diff={diff}
+                pending={diffLoading}
+                alreadyTried={diffAnywayExhausted(diff)}
+                onDiffAnyway={() => diff && anyway.diffAnyway(diff)}
+              />
+            )}
+            {selectedFile && !diffLoading && diff?.binary && !oversized && (
               <ImageDiffOrEmpty
                 repoId={repo?.id ?? null}
                 path={diff.path}
@@ -1278,11 +1312,9 @@ export function RepoBrowserScreen() {
                   new: { kind: "worktree" },
                   oldPath: diff.oldPath,
                 })}
-                title={oversized?.title ?? "Binary file"}
+                title="Binary file"
               >
-                {/* Over the ceiling this is usually a checked-in artifact, i.e.
-                    text — "binary" would be the wrong answer (#385). */}
-                {oversized?.detail ?? "Binary diffs aren't shown."}
+                Binary diffs aren&apos;t shown.
               </ImageDiffOrEmpty>
             )}
             {selectedFile && !diffLoading && diff?.lfs && (

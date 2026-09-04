@@ -35,7 +35,7 @@ use super::{
         ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, ShallowInfo, StashInfo, StashSaveOptions,
         StatusFlag,
-        SubmoduleInfo, TagInfo, TagTarget, UnsupportedReason, WorkdirDiff, WorktreeBranch, WorktreeInfo,
+        SubmoduleInfo, TagInfo, TagTarget, TruncatedDiff, UnsupportedReason, WorkdirDiff, WorktreeBranch, WorktreeInfo,
         REFSPEC_ALL,
     },
     GitBackend,
@@ -1887,7 +1887,18 @@ fn side_line_stats(
 /// origin, binary flag, add/del counts, hunks). Renames must already be
 /// resolved by the caller (`find_similar`). Shared by every tree-to-tree diff
 /// op so hunk grouping stays identical.
-fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
+///
+/// `ceiling` is the per-blob limit the caller applied, reported back on any
+/// delta that hit it. `line_cap` bounds the lines serialised PER FILE — `None`
+/// for an ordinary diff, `Some(MAX_DIFF_LINES)` once the user waived the
+/// ceiling; see `diff_lines_cap`. Over the cap the counting continues, so
+/// `additions`/`deletions` and `TruncatedDiff::total` still describe the whole
+/// diff — only the `DiffLine`s stop.
+fn diff_to_file_diffs(
+    diff: &git2::Diff,
+    ceiling: i64,
+    line_cap: Option<usize>,
+) -> AppResult<Vec<FileDiff>> {
     let num_deltas = diff.deltas().len();
     let mut out: Vec<FileDiff> = Vec::with_capacity(num_deltas);
     // Each delta's new-file path, kept as a Path for the callback to compare
@@ -1926,8 +1937,14 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
             // Same load-order trap as `binary` above: sizes are filled in
             // during `print`, so this is decided in the callback, not here.
             oversized: None,
+            // Only known once the last line has been counted.
+            truncated: None,
         });
     }
+
+    // Lines counted per file, whether or not they were kept — the numerator of
+    // `TruncatedDiff` comes off `hunks`, the denominator off this.
+    let mut line_totals: Vec<usize> = vec![0; out.len()];
 
     // ONE print pass for the whole diff. `git_diff_print` generates each
     // delta's patch — full blob load + xdiff — as it goes, so printing inside a
@@ -1955,10 +1972,12 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
         }
         if d.flags().contains(git2::DiffFlags::BINARY) {
             out[idx].binary = true;
-            // A blob over `MAX_WORKDIR_BLOB` is flagged binary by libgit2 and
-            // arrives here indistinguishable from a PNG. Record the size so the
-            // UI can say which it is (#385).
-            out[idx].oversized = out[idx].oversized.or_else(|| oversized_delta(&d));
+            // A blob over the ceiling is flagged binary by libgit2 and arrives
+            // here indistinguishable from a PNG. Record the size so the UI can
+            // say which it is (#385).
+            out[idx].oversized = out[idx]
+                .oversized
+                .or_else(|| oversized_delta(&d, ceiling));
             return true;
         }
         if let Some(h) = hunk {
@@ -1992,6 +2011,14 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
             'H' | 'F' => DiffLineKind::HunkHeader,
             _ => DiffLineKind::Context,
         };
+        line_totals[idx] += 1;
+        // Over the cap: keep walking (the counts above and `line_totals` are
+        // the file's real numbers, and the UI reports both) but stop building
+        // `String`s nobody will be shown. Checked BEFORE `from_utf8`, so the
+        // allocation is what the cap actually saves (#396).
+        if line_cap.is_some_and(|cap| line_totals[idx] > cap) {
+            return true;
+        }
         if let Some(h) = current.as_mut() {
             h.lines.push(DiffLine {
                 kind,
@@ -2010,14 +2037,30 @@ fn diff_to_file_diffs(diff: &git2::Diff) -> AppResult<Vec<FileDiff>> {
         }
     }
 
-    for file_diff in &mut out {
+    for (file_diff, total) in out.iter_mut().zip(line_totals) {
         // Derived from the diff just built — no extra I/O (#93). Both commit-diff
         // paths come through here, so they cannot disagree with `diff()` about what
         // an LFS pointer diff is.
         crate::git::lfs::annotate(file_diff);
+        file_diff.truncated = truncation(file_diff, total, line_cap);
     }
 
     Ok(out)
+}
+
+/// `TruncatedDiff` for one file, or `None` when it came back whole (#396).
+///
+/// Shared by the two collectors — `diff_to_file_diffs` and `diff`'s own inline
+/// one — so a truncated file reports itself identically whichever op produced
+/// it. `shown` is counted off the hunks rather than tracked separately: it is
+/// then the number of rows the surfaces will actually lay out, by construction.
+fn truncation(fd: &FileDiff, total: usize, line_cap: Option<usize>) -> Option<TruncatedDiff> {
+    let cap = line_cap?;
+    if total <= cap {
+        return None;
+    }
+    let shown = fd.hunks.iter().map(|h| h.lines.len()).sum();
+    Some(TruncatedDiff { shown, total })
 }
 
 /// Run `git apply [extra_args...] -` with `patch_text` piped to stdin.
@@ -2082,6 +2125,122 @@ const MAX_UNTRACKED_FILES: usize = 200;
 /// the limit that was applied.
 pub const MAX_WORKDIR_BLOB: i64 = 5 * 1024 * 1024;
 
+/// The ceiling the user's own "show it anyway" raises to (#396).
+///
+/// `MAX_WORKDIR_BLOB` is a guess about intent — "a 5 MB text file is a
+/// generated artifact, not something anyone diffs in a GUI" — and when it is
+/// wrong it is completely wrong: a generated `schema.sql`, a `.csv` fixture, a
+/// vendored lockfile, a minified bundle whose one changed line is the thing
+/// being reviewed. So the refusal is overridable, per file and per view.
+///
+/// It is a HIGHER ceiling, not the absence of one. libgit2's default is 512 MB
+/// and xdiff is superlinear in the blob, so an uncapped override would just
+/// move the wall to somewhere with no message on it — which is exactly what
+/// #385 removed. This is the largest blob worth waiting on in a GUI; over it
+/// the delta comes back `oversized` again, with THIS limit in the sentence.
+pub const MAX_BLOB_OVERRIDE: i64 = 64 * 1024 * 1024;
+
+/// Diff lines one file may return once its ceiling has been waived (#396).
+///
+/// The blob size is the first wall and the line count is the second, and the
+/// second is the one the frontend cannot survive: a 40 MB CSV rewritten
+/// wholesale is on the order of a million `DiffLine`s, which is a nine-figure
+/// JSON payload for the webview to parse, a million row objects for
+/// `flattenDiffRows`, and a `heights` array that `windowVariable` reduces over
+/// on every scroll event. An override that hands the user a frozen window is
+/// worse than the refusal it replaced, so the lines stop here and
+/// `FileDiff::truncated` says how many there really were.
+///
+/// Deliberately reached ONLY through `diff_lines_cap`, i.e. only when the user
+/// waived the ceiling: an ordinary diff is under `MAX_WORKDIR_BLOB` and keeps
+/// coming back whole, so no file the app opens by itself starts truncating.
+pub const MAX_DIFF_LINES: usize = 100_000;
+
+/// The per-blob ceiling to apply to one diff (#385, #396).
+///
+/// `raise` is true only for a path the user explicitly asked to see anyway.
+///
+/// Two constants and nothing else, which is the point: there is no spelling of
+/// "no limit" to reach for here, so the override can only ever be a DIFFERENT
+/// ceiling. The multi-file ops pick between the same two through `with_raised`.
+fn blob_ceiling(raise: bool) -> i64 {
+    if raise {
+        MAX_BLOB_OVERRIDE
+    } else {
+        MAX_WORKDIR_BLOB
+    }
+}
+
+/// Narrow a whole-tree diff to the paths whose ceiling the user waived (#396).
+///
+/// A raise is per FILE, and the ops that answer it — `diff_commit`,
+/// `diff_commits`, `diff_ref_to_workdir`, `stash_diff` — each fan out over many.
+/// Without this, "show me that 40 MB CSV" would also read the 60 MB
+/// `bundle.min.js` sitting in the same commit, which is the footgun a per-file
+/// escape hatch exists to avoid. The frontend already holds the deltas and
+/// names them literally (both sides of a rename, so `find_similar` can still
+/// pair them), so `disable_pathspec_match` turns the entries into exact paths
+/// rather than glob patterns.
+///
+/// A no-op for an empty list, which is what every ordinary diff passes.
+fn scope_to_raised(opts: &mut DiffOptions, raise_for: &[PathBuf]) {
+    if raise_for.is_empty() {
+        return;
+    }
+    for path in raise_for {
+        opts.pathspec(path);
+    }
+    opts.disable_pathspec_match(true);
+}
+
+/// Was `ceiling` the raised one? Derived, so the two constants have one test.
+fn is_raised(ceiling: i64) -> bool {
+    ceiling > MAX_WORKDIR_BLOB
+}
+
+/// The line cap that goes with a given ceiling (#396).
+///
+/// `None` for an ordinary diff: it is under `MAX_WORKDIR_BLOB`, so capping it
+/// could only ever truncate something the app was happy to render yesterday.
+fn diff_lines_cap(ceiling: i64) -> Option<usize> {
+    is_raised(ceiling).then_some(MAX_DIFF_LINES)
+}
+
+/// The WHOLE diff, with the paths the user waived read at the raised ceiling
+/// (#396).
+///
+/// **Two builds, deliberately.** libgit2's `max_size` is a diff-WIDE option, so
+/// "raise it for this one path" cannot be said in a single build: either the
+/// whole diff gets the raised ceiling — and reads every huge blob in the commit,
+/// which is the footgun a per-file escape hatch exists to avoid — or the raise
+/// is scoped by a pathspec, which narrows the ANSWER to those paths. So the base
+/// build answers for every file at the default ceiling and a second, pathspec'd
+/// build re-reads only the waived ones.
+///
+/// The second build is where all the megabytes are paid for, and only there: the
+/// base build never reads a blob over the ceiling — that is what being over it
+/// means — so the extra pass costs one more tree walk, not one more blob read.
+///
+/// Returning the whole list rather than the waived subset is what lets a caller
+/// pass its waivers on EVERY fetch. That matters more than it sounds: a status
+/// refresh re-runs a surface's diff fetch, and with subset semantics the waived
+/// read the user waited seconds for was silently replaced by the refusal again.
+fn with_raised(
+    raise_for: &[PathBuf],
+    build: impl Fn(i64, &[PathBuf]) -> AppResult<Vec<FileDiff>>,
+) -> AppResult<Vec<FileDiff>> {
+    let mut files = build(MAX_WORKDIR_BLOB, &[])?;
+    if raise_for.is_empty() {
+        return Ok(files);
+    }
+    for raised in build(MAX_BLOB_OVERRIDE, raise_for)? {
+        if let Some(slot) = files.iter_mut().find(|d| d.path == raised.path) {
+            *slot = raised;
+        }
+    }
+    Ok(files)
+}
+
 /// Did libgit2 skip this delta because a side is over the ceiling? (#385)
 ///
 /// Read from the DELTA rather than from a separate blob lookup: libgit2 fills
@@ -2090,10 +2249,18 @@ pub const MAX_WORKDIR_BLOB: i64 = 5 * 1024 * 1024;
 /// from inside a `print`/`foreach` callback — i.e. after the load. Reading it
 /// before the load would see zeros for a tree delta, which is the trap the
 /// `binary` seeding a few lines below already documents.
-fn oversized_delta(delta: &git2::DiffDelta<'_>) -> Option<OversizedBlob> {
-    let limit = MAX_WORKDIR_BLOB as u64;
+/// `limit` is the ceiling that was actually applied to THIS diff, not the
+/// default: after a "show it anyway" the sentence the user reads has to name the
+/// raised one, or a 120 MB blob would report itself as over 5 MB and the button
+/// would look like it did nothing (#396).
+fn oversized_delta(delta: &git2::DiffDelta<'_>, limit: i64) -> Option<OversizedBlob> {
+    // Derived, not passed: `blob_ceiling` returns one of exactly two constants,
+    // so the limit that was applied already says which one it was — and one
+    // source of truth cannot disagree with itself.
+    let raised = is_raised(limit);
+    let limit = limit as u64;
     let size = delta.old_file().size().max(delta.new_file().size());
-    (size > limit).then_some(OversizedBlob { size, limit })
+    (size > limit).then_some(OversizedBlob { size, limit, raised })
 }
 
 /// Every stash entry as `(oid, reflog message)`, newest first (#133).
@@ -3552,14 +3719,19 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn diff(
+    fn diff_over_ceiling(
         &self,
         repo_id: &RepoId,
         path: &Path,
         kind: DiffKind,
         context_lines: u32,
         ignore_whitespace: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<FileDiff> {
+        // One path in, one path out, so the pathspec below already scopes the
+        // raise — this only has to decide whether the user asked for THIS file.
+        let ceiling = blob_ceiling(raise_for.iter().any(|p| p == path));
+        let line_cap = diff_lines_cap(ceiling);
         self.with_repo(repo_id, |repo| {
             // Without this the diff comes back valid but empty — a blank panel
             // with no explanation. See `is_embedded_repo`.
@@ -3576,8 +3748,9 @@ impl GitBackend for Libgit2Backend {
             // without this libgit2's 512MB default let it xdiff the whole file
             // and serialise a String per line through IPC (#385). Same ceiling
             // as `diff_ref_to_workdir` — one policy, not one capped path and
-            // three uncapped ones.
-            opts.max_size(MAX_WORKDIR_BLOB);
+            // three uncapped ones — raised only for a path the user explicitly
+            // asked to see anyway (#396).
+            opts.max_size(ceiling);
             // Include untracked files as if their full content were a new addition
             // so the diff viewer shows file contents for newly created files.
             if matches!(kind, DiffKind::WorktreeToIndex | DiffKind::WorktreeToHead) {
@@ -3618,6 +3791,9 @@ impl GitBackend for Libgit2Backend {
             let mut additions: u32 = 0;
             let mut deletions: u32 = 0;
             let mut hunks: Vec<DiffHunk> = Vec::new();
+            // Counted whether or not the line is kept, so `truncation` has the
+            // file's real length to report (#396).
+            let mut total_lines: usize = 0;
 
             diff.print(DiffFormat::Patch, |delta, hunk, line| {
                 // Paths are read once, on the first callback — building the
@@ -3638,24 +3814,44 @@ impl GitBackend for Libgit2Backend {
                     // Why it is "binary": a real PNG, or a text blob we
                     // declined to read (#385). Only the size can tell them
                     // apart, and it is populated by now (see `oversized_delta`).
-                    oversized = oversized.or_else(|| oversized_delta(&delta));
+                    oversized = oversized.or_else(|| oversized_delta(&delta, ceiling));
                     return true;
                 }
                 let origin = line.origin();
-                let content = std::str::from_utf8(line.content())
-                    .unwrap_or("")
-                    .trim_end_matches('\n')
-                    .to_string();
 
                 match origin {
                     'H' | 'F' => return true,
                     'B' => {
                         binary = true;
-                        oversized = oversized.or_else(|| oversized_delta(&delta));
+                        oversized = oversized.or_else(|| oversized_delta(&delta, ceiling));
                         return true;
                     }
                     _ => {}
                 }
+
+                // Classified — and COUNTED — before the cap, so `additions` and
+                // `deletions` describe the whole change even when the pane can
+                // only be shown part of it (#396).
+                let kind = match origin {
+                    '+' => {
+                        additions += 1;
+                        DiffLineKind::Addition
+                    }
+                    '-' => {
+                        deletions += 1;
+                        DiffLineKind::Deletion
+                    }
+                    _ => DiffLineKind::Context,
+                };
+                total_lines += 1;
+                if line_cap.is_some_and(|cap| total_lines > cap) {
+                    return true;
+                }
+
+                let content = std::str::from_utf8(line.content())
+                    .unwrap_or("")
+                    .trim_end_matches('\n')
+                    .to_string();
 
                 if let Some(h) = hunk {
                     // Compare the stored header (newline-stripped) against the
@@ -3694,18 +3890,6 @@ impl GitBackend for Libgit2Backend {
                     return true;
                 };
 
-                let kind = match origin {
-                    '+' => {
-                        additions += 1;
-                        DiffLineKind::Addition
-                    }
-                    '-' => {
-                        deletions += 1;
-                        DiffLineKind::Deletion
-                    }
-                    _ => DiffLineKind::Context,
-                };
-
                 current_hunk.lines.push(DiffLine {
                     kind,
                     old_lineno: line.old_lineno(),
@@ -3724,8 +3908,10 @@ impl GitBackend for Libgit2Backend {
                 hunks,
                 lfs: None,
                 oversized,
+                truncated: None,
             };
             crate::git::lfs::annotate(&mut file_diff);
+            file_diff.truncated = truncation(&file_diff, total_lines, line_cap);
             Ok(file_diff)
         })
     }
@@ -4056,13 +4242,14 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
-    fn diff_commits(
+    fn diff_commits_over_ceiling(
         &self,
         repo_id: &RepoId,
         from_oid: &str,
         to_oid: &str,
         context_lines: u32,
         ignore_whitespace: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
             // `resolve_commit`, not a bare `?`: both sides are USER-TYPED
@@ -4076,30 +4263,34 @@ impl GitBackend for Libgit2Backend {
             let from_tree = repo.find_commit(from)?.tree()?;
             let to_tree = repo.find_commit(to)?.tree()?;
 
-            let mut opts = DiffOptions::new();
-            opts.context_lines(context_lines);
-            opts.ignore_whitespace(ignore_whitespace);
-            // One ceiling for every diff path (#385) — this one fans out over a
-            // whole comparison, so a single checked-in artifact would otherwise
-            // dominate the payload.
-            opts.max_size(MAX_WORKDIR_BLOB);
-            let mut diff =
-                repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))?;
+            with_raised(raise_for, |ceiling, raise_for| {
+                let mut opts = DiffOptions::new();
+                opts.context_lines(context_lines);
+                opts.ignore_whitespace(ignore_whitespace);
+                // One ceiling for every diff path (#385) — this one fans out
+                // over a whole comparison, so a single checked-in artifact
+                // would otherwise dominate the payload.
+                opts.max_size(ceiling);
+                scope_to_raised(&mut opts, raise_for);
+                let mut diff =
+                    repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))?;
 
-            let mut find_opts = DiffFindOptions::new();
-            find_opts.renames(true).copies(false);
-            diff.find_similar(Some(&mut find_opts)).ok();
+                let mut find_opts = DiffFindOptions::new();
+                find_opts.renames(true).copies(false);
+                diff.find_similar(Some(&mut find_opts)).ok();
 
-            diff_to_file_diffs(&diff)
+                diff_to_file_diffs(&diff, ceiling, diff_lines_cap(ceiling))
+            })
         })
     }
 
-    fn diff_commit(
+    fn diff_commit_over_ceiling(
         &self,
         repo_id: &RepoId,
         oid: &str,
         context_lines: u32,
         ignore_whitespace: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
             let commit = repo.revparse_single(oid)?.peel_to_commit()?;
@@ -4110,33 +4301,37 @@ impl GitBackend for Libgit2Backend {
                 Err(_) => None,
             };
 
-            let mut opts = DiffOptions::new();
-            opts.context_lines(context_lines);
-            opts.ignore_whitespace(ignore_whitespace);
-            // One ceiling for every diff path (#385): this feeds every commit
-            // the user clicks in the log.
-            opts.max_size(MAX_WORKDIR_BLOB);
-            let mut diff = repo.diff_tree_to_tree(
-                from_tree.as_ref(),
-                Some(&to_tree),
-                Some(&mut opts),
-            )?;
+            with_raised(raise_for, |ceiling, raise_for| {
+                let mut opts = DiffOptions::new();
+                opts.context_lines(context_lines);
+                opts.ignore_whitespace(ignore_whitespace);
+                // One ceiling for every diff path (#385): this feeds every
+                // commit the user clicks in the log.
+                opts.max_size(ceiling);
+                scope_to_raised(&mut opts, raise_for);
+                let mut diff = repo.diff_tree_to_tree(
+                    from_tree.as_ref(),
+                    Some(&to_tree),
+                    Some(&mut opts),
+                )?;
 
-            let mut find_opts = DiffFindOptions::new();
-            find_opts.renames(true).copies(false);
-            diff.find_similar(Some(&mut find_opts)).ok();
+                let mut find_opts = DiffFindOptions::new();
+                find_opts.renames(true).copies(false);
+                diff.find_similar(Some(&mut find_opts)).ok();
 
-            diff_to_file_diffs(&diff)
+                diff_to_file_diffs(&diff, ceiling, diff_lines_cap(ceiling))
+            })
         })
     }
 
-    fn diff_ref_to_workdir(
+    fn diff_ref_to_workdir_over_ceiling(
         &self,
         repo_id: &RepoId,
         revspec: &str,
         context_lines: u32,
         ignore_whitespace: bool,
         include_untracked: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<WorkdirDiff> {
         self.with_repo(repo_id, |repo| {
             // `resolve_tree` so a tag, a branch, a commit or a tree all work —
@@ -4144,16 +4339,20 @@ impl GitBackend for Libgit2Backend {
             // a bad spec is `InvalidRef`, not a stringified libgit2 message.
             let tree = resolve_tree(repo, revspec)?;
 
-            // One builder, three call shapes, so the knobs cannot drift between
-            // the counting pass and the real one.
-            let build = |untracked: UntrackedMode| -> AppResult<git2::Diff<'_>> {
+            // One builder, four call shapes, so the knobs cannot drift between
+            // the counting pass, the real one, and the raised re-read (#396).
+            let build = |untracked: UntrackedMode,
+                         ceiling: i64,
+                         raise_for: &[PathBuf]|
+             -> AppResult<git2::Diff<'_>> {
                 let mut opts = DiffOptions::new();
                 opts.context_lines(context_lines);
                 opts.ignore_whitespace(ignore_whitespace);
                 // This op fans out over the WHOLE tree, unlike `diff`, which
                 // pathspecs one file first. Cap per-blob size so a single huge
                 // artifact reports as binary instead of being serialised.
-                opts.max_size(MAX_WORKDIR_BLOB);
+                opts.max_size(ceiling);
+                scope_to_raised(&mut opts, raise_for);
                 match untracked {
                     UntrackedMode::Off => {}
                     // `include_ignored` stays off in both, so `.gitignore`d
@@ -4177,7 +4376,7 @@ impl GitBackend for Libgit2Backend {
             // pass is the same directory walk without the content, so this costs
             // a second walk and never a second read of the files we then drop.
             let (mode, untracked_omitted) = if include_untracked {
-                let counted = build(UntrackedMode::NamesOnly)?;
+                let counted = build(UntrackedMode::NamesOnly, MAX_WORKDIR_BLOB, &[])?;
                 let untracked = counted
                     .deltas()
                     .filter(|d| d.status() == git2::Delta::Untracked)
@@ -4191,14 +4390,16 @@ impl GitBackend for Libgit2Backend {
                 (UntrackedMode::Off, 0)
             };
 
-            let mut diff = build(mode)?;
-
-            let mut find_opts = DiffFindOptions::new();
-            find_opts.renames(true).copies(false);
-            diff.find_similar(Some(&mut find_opts)).ok();
+            let files = with_raised(raise_for, |ceiling, raise_for| {
+                let mut diff = build(mode, ceiling, raise_for)?;
+                let mut find_opts = DiffFindOptions::new();
+                find_opts.renames(true).copies(false);
+                diff.find_similar(Some(&mut find_opts)).ok();
+                diff_to_file_diffs(&diff, ceiling, diff_lines_cap(ceiling))
+            })?;
 
             Ok(WorkdirDiff {
-                files: diff_to_file_diffs(&diff)?,
+                files,
                 untracked_omitted,
             })
         })
@@ -5651,13 +5852,14 @@ impl GitBackend for Libgit2Backend {
         self.stash_finish_rename(repo_id, index, &before_pairs, &new_oid, message)
     }
 
-    fn stash_diff(
+    fn stash_diff_over_ceiling(
         &self,
         repo_id: &RepoId,
         oid: &str,
         context_lines: u32,
         ignore_whitespace: bool,
         include_untracked: bool,
+        raise_for: &[PathBuf],
     ) -> AppResult<Vec<FileDiff>> {
         self.with_repo(repo_id, |repo| {
             let commit = resolve_commit(repo, oid)?;
@@ -5668,22 +5870,25 @@ impl GitBackend for Libgit2Backend {
                 .parent(0)
                 .map_err(|_| AppError::InvalidRef(oid.to_string()))?;
 
-            let mut opts = DiffOptions::new();
-            opts.context_lines(context_lines);
-            opts.ignore_whitespace(ignore_whitespace);
-            // One ceiling for every diff path (#385) — a stash holds whatever
-            // the worktree held, generated artifacts included.
-            opts.max_size(MAX_WORKDIR_BLOB);
-            // base → stash, so the stashed work reads as ADDITIONS.
-            let mut diff = repo.diff_tree_to_tree(
-                Some(&base.tree()?),
-                Some(&commit.tree()?),
-                Some(&mut opts),
-            )?;
-            let mut find_opts = DiffFindOptions::new();
-            find_opts.renames(true).copies(false);
-            diff.find_similar(Some(&mut find_opts)).ok();
-            let mut files = diff_to_file_diffs(&diff)?;
+            let mut files = with_raised(raise_for, |ceiling, raise_for| {
+                let mut opts = DiffOptions::new();
+                opts.context_lines(context_lines);
+                opts.ignore_whitespace(ignore_whitespace);
+                // One ceiling for every diff path (#385) — a stash holds
+                // whatever the worktree held, generated artifacts included.
+                opts.max_size(ceiling);
+                scope_to_raised(&mut opts, raise_for);
+                // base → stash, so the stashed work reads as ADDITIONS.
+                let mut diff = repo.diff_tree_to_tree(
+                    Some(&base.tree()?),
+                    Some(&commit.tree()?),
+                    Some(&mut opts),
+                )?;
+                let mut find_opts = DiffFindOptions::new();
+                find_opts.renames(true).copies(false);
+                diff.find_similar(Some(&mut find_opts)).ok();
+                diff_to_file_diffs(&diff, ceiling, diff_lines_cap(ceiling))
+            })?;
 
             // The `git stash -u` payload lives in a THIRD parent, which no
             // tree-level diff of the stash commit can reach. That parent's tree
@@ -5692,13 +5897,16 @@ impl GitBackend for Libgit2Backend {
             // overlap with the tracked side above.
             if include_untracked && commit.parent_count() > 2 {
                 let untracked = commit.parent(2)?;
-                let mut u_opts = DiffOptions::new();
-                u_opts.context_lines(context_lines);
-                u_opts.ignore_whitespace(ignore_whitespace);
-                u_opts.max_size(MAX_WORKDIR_BLOB);
-                let u_diff =
-                    repo.diff_tree_to_tree(None, Some(&untracked.tree()?), Some(&mut u_opts))?;
-                files.extend(diff_to_file_diffs(&u_diff)?);
+                files.extend(with_raised(raise_for, |ceiling, raise_for| {
+                    let mut u_opts = DiffOptions::new();
+                    u_opts.context_lines(context_lines);
+                    u_opts.ignore_whitespace(ignore_whitespace);
+                    u_opts.max_size(ceiling);
+                    scope_to_raised(&mut u_opts, raise_for);
+                    let u_diff =
+                        repo.diff_tree_to_tree(None, Some(&untracked.tree()?), Some(&mut u_opts))?;
+                    diff_to_file_diffs(&u_diff, ceiling, diff_lines_cap(ceiling))
+                })?);
             }
             Ok(files)
         })
