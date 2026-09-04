@@ -12,6 +12,7 @@ pub mod notes;
 pub mod ownership;
 pub mod rebase_plan;
 pub mod rebase_state;
+pub mod repo_locks;
 pub mod update_refs;
 pub mod shallow;
 pub mod signature;

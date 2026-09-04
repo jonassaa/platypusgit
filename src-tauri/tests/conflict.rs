@@ -191,3 +191,84 @@ fn continue_operation_creates_two_parent_merge_commit() {
         RepoState::Clean
     ));
 }
+
+/// A conflict created by an EXTERNAL `git merge`, resolved through a handle
+/// that was already live — the ordering the app actually has (#400).
+///
+/// Every other test in this file opens the backend AFTER the conflict exists,
+/// so the handle loads a fresh index and the conflict stages are always
+/// visible. The app does the opposite, and that difference hid a bug that
+/// DELETED the user's file:
+///
+/// 1. The repository is open and the History screen renders a diff, which
+///    loads that handle's in-memory index (clean, no conflicts).
+/// 2. `merge_branch` shells out to real `git merge` (`commands/branches.rs`),
+///    so the conflict stages land on DISK with nothing telling libgit2.
+/// 3. `accept_ours` reads the index to decide which side to take. Against the
+///    stale snapshot it finds no conflict entry for the path, concludes the
+///    file was deleted on the chosen side, and removes it from the worktree.
+///
+/// It stayed hidden for as long as `status` ran on the same cached handle:
+/// libgit2's `git_status_list_new` reloads the index unless
+/// `GIT_STATUS_OPT_NO_REFRESH` is set, so every refresh was quietly re-reading
+/// the index on everyone else's behalf. Moving reads onto private handles took
+/// that away.
+///
+/// So this test exists to pin the ordering, not the arithmetic: it is the only
+/// one here that can tell `fresh_index` from `repo.index()`.
+#[test]
+fn accept_ours_survives_a_conflict_created_under_a_live_handle() {
+    use support::{fs::write_file, git_in, TempRepo};
+
+    let tr = TempRepo::with_initial_commit("hello\n");
+
+    // Two branches that touch the same line, built with real git so nothing
+    // warms the backend's handle.
+    git_in(tr.path(), &["checkout", "-b", "clash"]);
+    write_file(tr.path(), "README.md", "theirs change\n");
+    git_in(tr.path(), &["commit", "-am", "theirs"]);
+    git_in(tr.path(), &["checkout", "main"]);
+    write_file(tr.path(), "README.md", "ours change\n");
+    git_in(tr.path(), &["commit", "-am", "ours"]);
+
+    let (backend, handle) = tr.open_with_backend();
+
+    // Step 1: load this handle's index while the tree is still clean. A diff
+    // against the working tree is what the History screen does on open, and it
+    // reaches for `git_repository_index` without refreshing it.
+    backend
+        .diff(
+            &handle.id,
+            &PathBuf::from("README.md"),
+            platypusgit_lib::git::types::DiffKind::WorktreeToIndex,
+            3,
+            false,
+        )
+        .ok();
+
+    // Step 2: the conflict appears on disk, under the live handle. `git merge`
+    // exits non-zero on conflict, so this cannot go through `git_in`.
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(tr.path())
+        .args(["merge", "clash"])
+        .output()
+        .expect("spawn git merge");
+    assert!(
+        !out.status.success(),
+        "the fixture must actually conflict, got: {}",
+        String::from_utf8_lossy(&out.stdout),
+    );
+
+    // Step 3: resolve. The file must survive, with OUR content.
+    backend
+        .accept_ours(&handle.id, &PathBuf::from("README.md"))
+        .expect("accept_ours");
+
+    assert!(
+        tr.path().join("README.md").exists(),
+        "accept_ours DELETED the file: it read a stale index, found no conflict \
+         entry, and took the deleted-on-this-side branch",
+    );
+    assert_eq!(read_file(tr.path(), "README.md"), "ours change\n");
+}
