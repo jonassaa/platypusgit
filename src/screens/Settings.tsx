@@ -37,6 +37,10 @@ import { IdentityForm } from "@/features/commits/identity/IdentityForm";
 import { SavedIdentities } from "@/features/commits/identity/SavedIdentities";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
+import {
+  SettingsCard,
+  SettingsRow,
+} from "@/features/settings/layout/SettingsCard";
 import { ForgeSettings } from "@/features/forge/ForgeSettings";
 import {
   cliShimStatus,
@@ -121,11 +125,13 @@ export function SettingsScreen() {
 
         <AppearanceSection active={active} />
 
-        <Section
+        <SettingsCard
+          id="pull"
           title="Pull & fetch"
           subtitle="How platypusgit updates your local branches from their upstream."
         >
-          <Row
+          <SettingsRow
+            id="pull.mode"
             label="Default pull mode"
             hint={
               <>
@@ -148,7 +154,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="pull.autostash"
             label="Auto-stash before pull"
             hint="Stash dirty changes, pull, then pop the stash. Prevents the 'uncommitted changes' error."
             control={
@@ -158,7 +165,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="workspace.watch"
             label="Watch the working copy"
             hint="Notice edits made outside the app — in your editor or a terminal — and keep the file list and history up to date without a manual refresh. Ignored files are skipped, so a build directory costs nothing."
             control={
@@ -169,7 +177,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="workspace.shell"
             label="Terminal shell"
             hint="The shell the built-in terminal runs, opened in the active repository's working directory. Leave blank to use the same shell as your own terminal ($SHELL, or PowerShell on Windows)."
             control={
@@ -182,7 +191,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="fetch.auto"
             label="Auto-fetch"
             hint="Periodically run fetch in the background so ahead/behind counts stay fresh."
             control={
@@ -192,7 +202,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="fetch.interval"
             label="Auto-fetch interval"
             hint="Minutes between background fetches."
             control={
@@ -208,7 +219,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="rebase.updateRefs"
             label="Move dependent branches"
             hint="When rebasing, also move branches whose tips sit inside the range being replayed — git's rebase --update-refs, the thing that keeps a stack of small PRs from being orphaned. Follow git config uses this repository's own rebase.updateRefs. You are always asked first, and told which branches will move."
             control={
@@ -224,7 +236,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="fetch.prune"
             label="Prune on fetch"
             hint="Remove local refs whose upstream branches have been deleted on the remote."
             control={
@@ -234,13 +247,15 @@ export function SettingsScreen() {
               />
             }
           />
-        </Section>
+        </SettingsCard>
 
-        <Section
+        <SettingsCard
+          id="push"
           title="Push safety"
           subtitle="Guardrails around destructive remote operations."
         >
-          <Row
+          <SettingsRow
+            id="push.confirmForce"
             label="Confirm force-push"
             hint="Ask for confirmation before a force or force-with-lease push."
             control={
@@ -250,13 +265,15 @@ export function SettingsScreen() {
               />
             }
           />
-        </Section>
+        </SettingsCard>
 
-        <Section
+        <SettingsCard
+          id="commit"
           title="Commit"
           subtitle="Defaults applied when creating a new commit."
         >
-          <Row
+          <SettingsRow
+            id="commit.signoff"
             label="Append Signed-off-by"
             hint="Appends a DCO-style trailer to every commit message."
             control={
@@ -266,7 +283,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="commit.ticket"
             label="Ticket pattern"
             hint={
               <>
@@ -297,7 +315,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="commit.sign"
             label="Sign commits"
             hint="Uses gpg.format, user.signingkey and gpg.program. Following git config respects commit.gpgsign per repository; a signing failure fails the commit rather than producing an unsigned one."
             control={
@@ -314,10 +333,11 @@ export function SettingsScreen() {
               />
             }
           />
-        </Section>
+        </SettingsCard>
 
-        <Section title="Diff" subtitle="How diffs are rendered across the app.">
-          <Row
+        <SettingsCard id="diff" title="Diff" subtitle="How diffs are rendered across the app.">
+          <SettingsRow
+            id="diff.layout"
             label="Layout"
             hint="Inline shows one column with added and removed lines interleaved. Split shows the old and new file side by side."
             control={
@@ -331,7 +351,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="diff.show"
             label="Show"
             hint="Whole file reads the file top to bottom with each change in place. Changed chunks shows only the hunks and their context lines. Either way, staging still applies exactly the hunks git would."
             control={
@@ -347,7 +368,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="diff.context"
             label="Context lines"
             hint="Unchanged lines shown around each hunk in the changed-chunks view. Also the context every hunk stage/discard is computed against, so it applies in both views."
             control={
@@ -362,7 +384,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="diff.whitespace"
             label="Ignore whitespace"
             hint="Hide whitespace-only changes when reviewing reformatted code. Hunk staging is unavailable while this is on — the filtered hunks aren't the ones git would apply."
             control={
@@ -372,7 +395,8 @@ export function SettingsScreen() {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="diff.tool"
             label="External diff tool"
             hint={
               <>
@@ -402,7 +426,7 @@ export function SettingsScreen() {
               />
             }
           />
-        </Section>
+        </SettingsCard>
 
         <ForgeSettings />
         <KeyboardSection />
@@ -442,46 +466,52 @@ export function SettingsScreen() {
  */
 function CustomActionsSection() {
   return (
-    <Section
+    <SettingsCard
+      id="actions"
       title="Custom actions"
       subtitle="Your own commands, available from the command palette."
     >
-      <Row label="Actions" stacked control={<CustomActionsSettings />} />
-    </Section>
+      <SettingsRow id="actions.list" label="Actions" stacked control={<CustomActionsSettings />} />
+    </SettingsCard>
   );
 }
 
 function IdentitySection() {
   const repo = useRepoStore((s) => s.current);
   return (
-    <Section
+    <SettingsCard
+      id="identity"
       title="Identity"
       subtitle="Who your commits are recorded as. Unlike everything else here, this is written to your git config — the same user.name and user.email git itself reads."
     >
-      <Row
+      <SettingsRow
+        id="identity.author"
         label="Commit author"
         hint="git refuses to record a commit without both. The scope control decides whether saving writes this repository's own config or your global one."
         stacked
         control={<IdentityForm repoId={repo?.id ?? null} />}
       />
-      <Row
+      <SettingsRow
+        id="identity.saved"
         label="Saved identities"
         hint="Keep the identities you switch between — a work address and a personal one. Applying one writes it to the OPEN repository's config, so git and every hook agree with what you see here. Editing or removing an entry does not change repositories that already use it."
         stacked
         control={<SavedIdentities repoId={repo?.id ?? null} />}
       />
-    </Section>
+    </SettingsCard>
   );
 }
 
 function KeyboardSection() {
   const activePresetId = useKeymapStore((k) => k.activePresetId);
   return (
-    <Section
+    <SettingsCard
+      id="keyboard"
       title="Keyboard"
       subtitle="Choose a keymap preset. Press ? anywhere to see the active bindings."
     >
-      <Row
+      <SettingsRow
+        id="keyboard.keymap"
         label="Keymap"
         hint="Bindings apply across every screen. More presets coming."
         control={
@@ -496,7 +526,7 @@ function KeyboardSection() {
           />
         }
       />
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -551,11 +581,13 @@ function CliSection() {
   const effectivePathState = pathState ?? status?.pathState ?? null;
 
   return (
-    <Section
+    <SettingsCard
+      id="cli"
       title="Command line"
       subtitle="Launch platypusgit from a terminal: pgit [commit|status|log|history|branches] [path]."
     >
-      <Row
+      <SettingsRow
+        id="cli.pgit"
         label="pgit command"
         hint={
           <>
@@ -602,7 +634,7 @@ function CliSection() {
           )
         }
       />
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -657,11 +689,13 @@ function DiagnosticsSection() {
   };
 
   return (
-    <Section
+    <SettingsCard
+      id="diagnostics"
       title="Diagnostics"
       subtitle="The app's log — what to attach to a bug report."
     >
-      <Row
+      <SettingsRow
+        id="diagnostics.environment"
         label="Environment"
         hint={
           report ? (
@@ -672,7 +706,8 @@ function DiagnosticsSection() {
         }
         control={<span />}
       />
-      <Row
+      <SettingsRow
+        id="diagnostics.log"
         label="Log file"
         hint={
           report ? (
@@ -703,7 +738,7 @@ function DiagnosticsSection() {
           </div>
         }
       />
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -827,24 +862,27 @@ function UpdatesSection() {
   if (storeManaged) {
     return (
       <div data-testid="settings-updates">
-        <Section title="Updates">
-          <Row
+        <SettingsCard id="updates" title="Updates">
+          <SettingsRow
+            id="updates.version"
             label="Current version"
             hint={<div data-testid="update-store-managed">{STORE_MANAGED_NOTE}</div>}
             control={<Mono>{currentVersion || "…"}</Mono>}
           />
-        </Section>
+        </SettingsCard>
       </div>
     );
   }
 
   return (
     <div data-testid="settings-updates">
-      <Section
+      <SettingsCard
+        id="updates"
         title="Updates"
         subtitle="Check whether a newer PlatypusGit release is available."
       >
-        <Row
+        <SettingsRow
+          id="updates.check"
           label="Check for updates"
           hint={
             <>
@@ -869,7 +907,8 @@ function UpdatesSection() {
             />
           }
         />
-        <Row
+        <SettingsRow
+          id="updates.channel"
           label="Release channel"
           hint={
             <>
@@ -900,7 +939,8 @@ function UpdatesSection() {
             />
           }
         />
-        <Row
+        <SettingsRow
+          id="updates.version"
           label="Current version"
           hint={
             <>
@@ -939,7 +979,7 @@ function UpdatesSection() {
             </PGButton>
           }
         />
-      </Section>
+      </SettingsCard>
     </div>
   );
 }
@@ -1039,11 +1079,13 @@ function BackupSection() {
   };
 
   return (
-    <Section
+    <SettingsCard
+      id="backup"
       title="Settings file"
       subtitle="Move every preference to another machine, or share a house style with your team."
     >
-      <Row
+      <SettingsRow
+        id="backup.export"
         label="Export settings"
         hint={
           exportedTo ? (
@@ -1064,7 +1106,8 @@ function BackupSection() {
           </PGButton>
         }
       />
-      <Row
+      <SettingsRow
+        id="backup.import"
         label="Import settings"
         hint={
           failure ? (
@@ -1101,7 +1144,7 @@ function BackupSection() {
         data-testid="settings-import-input"
         style={{ display: "none" }}
       />
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -1219,11 +1262,13 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
   };
 
   return (
-    <Section
+    <SettingsCard
+      id="appearance"
       title="Appearance"
       subtitle="Pick a theme, or customize every color and export it as a sharable file."
     >
-      <Row
+      <SettingsRow
+        id="appearance.follow"
         label="Appearance"
         hint={
           following
@@ -1247,7 +1292,8 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
 
       {following ? (
         <>
-          <Row
+          <SettingsRow
+            id="appearance.light"
             label="Light theme"
             hint="Applied while the OS is in light appearance."
             control={
@@ -1260,7 +1306,8 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
               />
             }
           />
-          <Row
+          <SettingsRow
+            id="appearance.dark"
             label="Dark theme"
             hint="Applied while the OS is in dark appearance."
             control={
@@ -1275,7 +1322,8 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
           />
         </>
       ) : (
-        <Row
+        <SettingsRow
+          id="appearance.theme"
           label="Theme"
           hint={
             isBuiltin
@@ -1362,7 +1410,8 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
         />
       </div>
 
-      <Row
+      <SettingsRow
+        id="appearance.density"
         label="UI density"
         hint={`Compact matches the dense IDE feel; comfortable gives every list row ${DENSITY_STEP_PX.comfortable}px more breathing room.`}
         control={
@@ -1378,7 +1427,8 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
         }
       />
 
-      <Row
+      <SettingsRow
+        id="appearance.dateFormat"
         label="Date format"
         hint={
           <span data-testid="settings-date-format-hint">
@@ -1408,14 +1458,16 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
         }
       />
 
-      <Row
+      <SettingsRow
+        id="appearance.headMarks"
         stacked
         label="Current position (HEAD)"
         hint="How History marks the commit you are on. Pick any combination of marks, then set how hard they hit — the preview is the real History row."
         control={<HeadMarksControl />}
       />
 
-      <Row
+      <SettingsRow
+        id="appearance.zoom"
         label="Zoom"
         hint={`Scales the whole window — ${Math.round(ZOOM_MIN * 100)}% to ${Math.round(
           ZOOM_MAX * 100,
@@ -1469,7 +1521,7 @@ function AppearanceSection({ active }: { active: ThemeDef }) {
           onClose={() => setEditor(null)}
         />
       )}
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -1945,119 +1997,5 @@ function normalizeHex(v: string): string | null {
   }
   if (/^[0-9a-f]{6}$/.test(raw)) return `#${raw}`;
   return null;
-}
-
-// ─── Shared layout helpers ───────────────────────────────────────────────────
-
-function Section({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      style={{
-        marginTop: 20,
-        background: "var(--bg-1)",
-        border: "1px solid var(--border-0)",
-        borderRadius: "var(--r-4)",
-        overflow: "hidden",
-      }}
-    >
-      <header
-        style={{
-          padding: "12px 16px 10px",
-          borderBottom: "1px solid var(--border-0)",
-          background: "var(--bg-2)",
-        }}
-      >
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--fs-11)",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-            color: "var(--fg-1)",
-            fontWeight: 600,
-          }}
-        >
-          {title}
-        </div>
-        {subtitle && (
-          <div
-            style={{
-              marginTop: 4,
-              fontSize: "var(--fs-12)",
-              color: "var(--fg-3)",
-            }}
-          >
-            {subtitle}
-          </div>
-        )}
-      </header>
-      <div>{children}</div>
-    </section>
-  );
-}
-
-/**
- * `stacked` puts the control on its own full-width line under the label. The
- * inline layout gives the control whatever width it asks for (`flexShrink: 0`),
- * which is right for a button group or a select but crushes the label column to
- * a word per line once the control is intrinsically wide — a live preview of a
- * real History row, say.
- */
-function Row({
-  label,
-  hint,
-  control,
-  stacked,
-}: {
-  label: string;
-  hint?: React.ReactNode;
-  control: React.ReactNode;
-  stacked?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: stacked ? "column" : "row",
-        alignItems: stacked ? "stretch" : "flex-start",
-        gap: stacked ? 10 : 16,
-        padding: "12px 16px",
-        borderBottom: "1px solid var(--border-0)",
-      }}
-    >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: "var(--fs-13)",
-            color: "var(--fg-0)",
-            fontWeight: 500,
-          }}
-        >
-          {label}
-        </div>
-        {hint && (
-          <div
-            style={{
-              marginTop: 3,
-              fontSize: "var(--fs-11)",
-              color: "var(--fg-3)",
-              lineHeight: 1.5,
-            }}
-          >
-            {hint}
-          </div>
-        )}
-      </div>
-      <div style={stacked ? { minWidth: 0 } : { flexShrink: 0, paddingTop: 2 }}>{control}</div>
-    </div>
-  );
 }
 
