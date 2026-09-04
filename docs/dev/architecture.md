@@ -44,10 +44,37 @@ terminal.rs      Live pty sessions for the built-in terminal (#243). Shape of
 update.rs        Update discovery: semver compare, dev-build (0.0.0) short-circuit
                  before any network call, GitHub release parsing, ureq w/ timeout +
                  https_only. Logic only — handlers live in commands/update.rs
+windows.rs       Repository windows (#256) — the app can have several, each
+                 running the whole frontend with its own tab strip. Labels ARE
+                 the identity: main (from tauri.conf.json), pg-1/pg-2/… for
+                 siblings (next_label hands out the lowest FREE number, so a
+                 closed window's storage key is reused rather than a
+                 high-water mark left behind), and "merge" — a window, but
+                 deliberately NOT a repository window, so is_repo_window says
+                 no to it. Each window opens its OWN RepoId for a repository,
+                 which is what makes two windows on one repository safe with
+                 no refcounting: closing a tab in one evicts nothing the other
+                 is using, and terminals and rebase state (both keyed by
+                 RepoId) stay per-window for free. WindowRegistry answers the
+                 three questions a webview cannot answer about ANOTHER window:
+                 route() decides where a forwarded `pgit <path>` lands (the
+                 window that already has it → the last-focused one → the
+                 first), on_window_destroyed releases what a closed window
+                 held (process exit used to cover that and no longer does),
+                 and the same function decides CLOSE-VERSUS-QUIT without a
+                 flag or an event ordering: a window destroyed while another
+                 survives is forgotten (WINDOW_CLOSED_EVENT is emitted to that
+                 survivor), and one destroyed with no survivor is remembered,
+                 because there is nobody to tell. path_key mirrors the
+                 frontend's repoPathKey exactly, trailing-separator exceptions
+                 included
 watcher.rs       Filesystem watching so the working copy is live (#239).
                  notify-debouncer-mini around a RecommendedWatcher, ONE live
-                 watch (WatchState) on the ACTIVE repository — a second
-                 watch_repo REPLACES rather than stacks. The value is in what
+                 watch PER WINDOW (WatchState is keyed by window label since
+                 #256) on that window's ACTIVE repository — a second
+                 watch_repo from the same window REPLACES rather than stacks,
+                 and one from another window no longer evicts it, which it did
+                 for as long as the slot was global. The value is in what
                  it DROPS: classify() sorts each path into Noise / Ref / State
                  / Worktree, and only Ref asks for the expensive log refresh,
                  so a file save cannot repaint history. `.lock` files are
@@ -434,6 +461,16 @@ commands/        Thin Tauri handlers, one file per area:
 │                gigabyte-sized IPC message
 ├── update.rs    check_for_update, get_update_capability, open_url — thin
 │                handlers for src-tauri/src/update.rs (same basename, two files)
+├── windows.rs   register_window_repos, next_window_label (#256) — thin over
+│                src-tauri/src/windows.rs (same basename, two files).
+│                register_window_repos is called on every tab-strip persist,
+│                alongside the window's own session write, because both answers
+│                it feeds are only as fresh as their last write. The WINDOW is
+│                injected by Tauri, never passed as an argument: a label from
+│                the frontend would let one window register another's holdings
+│                or stop its watch. There is deliberately no focus-a-window
+│                command — the single-instance handler focuses in Rust, and a
+│                new window reveals itself (src/lib/revealWindow.tsx)
 ├── watch.rs     watch_repo, watch_stop (#239) — thin over src-tauri/src/
 │                watcher.rs. watch_repo resolves the workdir through the
 │                backend rather than taking a path argument: a path from the
@@ -441,7 +478,9 @@ commands/        Thin Tauri handlers, one file per area:
 │                repository lives, and this one registers an OS-level
 │                recursive watch on whatever it is handed. watch_stop is
 │                idempotent, so the frontend can call it on a setting change
-│                without tracking whether anything was running
+│                without tracking whether anything was running. Both take a
+│                Window since #256, so a watch belongs to the window that
+│                asked for it
 ├── terminal.rs  term_open, term_write, term_resize, term_close (#243) — thin
 │                over src-tauri/src/terminal.rs (same basename, two files).
 │                term_open resolves the workdir through the backend rather than
@@ -592,12 +631,31 @@ features/            Components + Zustand store colocated per feature:
 │                    speed-search), useHunkNav (F7/⇧F7 + open-at-first-change),
 │                    useDiffLineFocus (per-line cursor + Space),
 │                    useSpeedSearchStore, PGPane / FocusableScroll / CheatSheet
+├── windows/         Repository windows (#256) — tabs are for switching, windows
+│                    are for comparing. windowKind.ts is the pure half: label
+│                    rules, the per-window storage key (main keeps the bare
+│                    `pg-open-repos` it has written since #90 so an upgrading
+│                    session restores unchanged; a sibling gets
+│                    `pg-open-repos:<label>`), and the `pg-windows` restore
+│                    record. openAppWindow seeds a new window through STORAGE
+│                    rather than the URL — the seed is written under the new
+│                    label's key before the window exists, so it arrives by the
+│                    ordinary restoreSession path with no cross-window IPC —
+│                    and passes the chrome tauri.conf.json cannot give a
+│                    runtime window (macOS overlay titlebar, decorations:false
+│                    elsewhere) AT CREATION, never stripped afterwards.
+│                    useWindowLifecycle restores the siblings (primary only,
+│                    once), remembers a sibling's physical bounds, and forgets
+│                    a window the backend says was closed rather than quit
 ├── merge/           Merge resolver window (label "merge"): mergeModel (diff3),
 │                    resultEditor (CM6, tracked conflict regions), MergeWindow /
 │                    MergeBody / SidePane, openMergeWindow (path optional),
 │                    FileList (no open repo in this window — IPC wrappers, never
 │                    useRepoStore). Applies via save_resolution, emits
-│                    merge://resolved → main refreshes
+│                    merge://resolved → main refreshes, and merge://holding —
+│                    which repository it is on — so a window that did NOT open
+│                    it can still tell whether closing a tab would break it
+│                    (#256)
 ├── update/          useUpdateStore (discovery, semver-aware dismiss,
 │                    self-update; the updateCheckMode gate + lastCheckedAt live
 │                    HERE, not at the AppShell call site — see

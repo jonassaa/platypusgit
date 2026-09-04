@@ -71,7 +71,8 @@ import { CreateTagDialog } from "@/features/tags/CreateTagDialog";
 import { OperationBar } from "@/features/repo/OperationBar";
 import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
 import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
-import { openMergeWindow } from "@/features/merge/openMergeWindow";
+import { openMergeWindow, watchMergeHolding } from "@/features/merge/openMergeWindow";
+import { useWindowLifecycle } from "@/features/windows";
 import { UpdateChip } from "@/features/update/UpdateChip";
 import { UpdatePanel } from "@/features/update/UpdatePanel";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
@@ -170,6 +171,15 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
 export function AppShell() {
   usePreventBrowserContextMenu();
   useCliLaunch();
+  // Multiple windows (#256): restore the siblings at launch, remember where
+  // this one is, forget one the user closed.
+  useWindowLifecycle();
+  React.useEffect(() => {
+    // Which repository the resolver is on — see `openMergeWindow.ts`. Mounted
+    // here so every repository window has been listening since it started, not
+    // since it first asked.
+    watchMergeHolding();
+  }, []);
   const repo = useRepoStore((s) => s.current);
   const error = useRepoStore((s) => s.error);
   const clearError = useRepoStore((s) => s.clearError);

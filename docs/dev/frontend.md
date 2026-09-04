@@ -1074,7 +1074,12 @@ that is only partly here — which is the whole reason the notice exists.
 - **Closing a tab the merge resolver is using:** confirm → close the resolver →
   evict (`mergeWindowHoldsRepo`/`closeMergeWindow`, which waits for the window
   label to disappear — `close()` resolves on delivery, not on gone). An
-  unattributable live resolver counts as a match on purpose.
+  unattributable live resolver counts as a match on purpose. Since #256 the
+  resolver also announces the repository it is on (`merge://holding`), because
+  it may have been opened by a *different* repository window: each window opens
+  its own `RepoId`, so closing a tab in the window that did not open the
+  resolver cannot break it, and without the announcement that window would
+  confirm — and then close a resolver it had no business closing.
 - **Danger-op error paths refresh first, set error last** (see `mergeBranch`):
   `refreshAll` starts with `set({ error: null })` and React batches same-tick
   sets, so the opposite order wipes the banner. A failed git op must still
@@ -1094,6 +1099,77 @@ that is only partly here — which is the whole reason the notice exists.
   against the repository's own remote list, longest match first. The older
   `branchMenuItems` Pull/Push entries still use the split; they predate the
   helper and were left alone rather than changed under this feature's tests.
+
+### Multiple windows (#256)
+
+Tabs are for *switching*; windows are for *comparing*. Both exist, and the tab
+model is unchanged — every window has a full tab strip. The design doc is
+`docs/superpowers/specs/2026-09-04-multiple-windows-spec.md`; these are the rules
+a change in this area has to keep.
+
+- **A window's LABEL is its identity.** `main` (from `tauri.conf.json`),
+  `pg-1`/`pg-2`/… for siblings, `merge` for the resolver — which is a window but
+  never a repository window. `features/windows/windowKind.ts` and
+  `src-tauri/src/windows.rs` hold the same rules on their own side of the IPC
+  boundary; changing one means changing the other. Labels are deterministic
+  rather than opaque ids because they are storage keys, a capability glob
+  (`pg-*` in `capabilities/default.json`) has to match them, and an e2e spec has
+  to name one to `browser.tauri.switchWindow(…)`.
+- **Nothing about the store model changes.** A second webview gets its own copy
+  of every Zustand store, so `useRepoStore` still holds exactly one repository's
+  state — that window's active tab's.
+- **Two windows on one repository get two `RepoId`s**, and that is the decision
+  everything else rests on. Closing a tab in one window evicts nothing the other
+  is using; terminals and rebase state, both keyed by `RepoId`, stay per-window
+  with no refcounting. The price is that same-repository work in two windows does
+  not serialize on one inner mutex — already the app's reality, since
+  `watcher.rs` opens its own second `git2::Repository` on the same repository and
+  a terminal beside the app has always been allowed.
+- **Per-window state must be keyed by the window's label**, on both sides. The
+  bug this rule exists for was invisible: `WatchState` was one global slot, so
+  the second window's `watch_repo` silently evicted the first window's watcher
+  and that window went back to being stale — the exact failure #239 removed,
+  restored by the second window. Anything else that is "one live X on the ACTIVE
+  repository" inherits this.
+- **`main` keeps writing the bare `pg-open-repos` key.** Namespacing every
+  window would have emptied every existing user's tab strip once, on upgrade.
+  Siblings write `pg-open-repos:<label>`; `openReposKey` is the only place that
+  mapping exists.
+- **A new window is seeded through STORAGE, not the URL or an event.**
+  `openAppWindow` writes the seed under the new label's key *before* the window
+  exists, so it arrives through the ordinary `restoreSession()` path — nothing to
+  replay if the window reloads, and no cross-window IPC to get wrong.
+- **Close versus quit** decides whether a window comes back, and the rule needs
+  no flag: a window destroyed while another repository window survives is
+  forgotten; one destroyed with no survivor is remembered. Rust implements it by
+  emitting `window://closed` to a survivor — with no survivor there is nobody to
+  tell, which is exactly the quit case. The visible consequence: on macOS ⌘Q with
+  three windows restores three, and on Windows/Linux, where quitting *is* closing
+  the windows one at a time, the last window standing is what comes back. That is
+  what VS Code does, and it beats both alternatives (resurrect windows the user
+  deliberately closed; or restore nothing).
+- **Only the primary window takes the first-launch CLI intent**, and the
+  forwarded `cli-launch` event is routed to ONE window rather than broadcast — see
+  `windows.rs::route`. A broadcast would have every window open the repository.
+- **Routing an event backend-side is only half of it: the listener has to name
+  its window too** (`listenToThisWindow`, `features/windows/windowEvents.ts`).
+  A plain JS `listen()` registers `EventTarget::Any`, and Tauri's listener filter
+  short-circuits on it — `*target == EventTarget::Any || filter(…)` in
+  `event/listener.rs` — so an `Any` listener matches EVERY emit, `emit_to("main", …)`
+  included. The backend's routing decision is simply undone in the webview, and
+  every window opens the forwarded repository. It costs nothing to get right and
+  is invisible until there are two windows, which is why
+  `useCliLaunch.test.tsx` asserts a sibling window ignores an emit addressed to
+  `main`, and `test/eventMock.ts` reproduces the `Any`-matches-everything rule so
+  that assertion cannot pass vacuously. Scoping does NOT cost you broadcasts —
+  `app.emit` runs with no filter at all, so `fs://changed` and `net://progress`
+  still arrive everywhere.
+- **Window chrome needed nothing.** `PGWindowControls`, the title effect,
+  `RevealOnFirstPaint` and the appearance watch all already ask `getCurrentWindow()`.
+  The one thing a runtime window does not inherit is `tauri.conf.json`'s
+  titlebar config, so `openAppWindow` passes it explicitly — **at creation**,
+  never stripped afterwards, because `lib.rs` records that stripping the frame
+  after the fact was visible on Windows as a title bar that appeared and vanished.
 
 ### Progress and loading state (#296)
 

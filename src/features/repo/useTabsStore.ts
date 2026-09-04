@@ -31,7 +31,13 @@ import {
   closeMergeWindow,
   mergeWindowHoldsRepo,
 } from "@/features/merge/openMergeWindow";
-import { closeRepo as closeRepoIpc, getStatus, termClose } from "@/lib/tauri";
+import {
+  closeRepo as closeRepoIpc,
+  getStatus,
+  registerWindowRepos,
+  termClose,
+} from "@/lib/tauri";
+import { openAppWindow, openReposKey, windowLabel } from "@/features/windows";
 import { useTerminalStore } from "@/features/terminal/useTerminalStore";
 import type { RepoHandle } from "@/lib/types";
 import { isConflicted, isStaged, isUnstaged } from "@/lib/derive";
@@ -97,6 +103,16 @@ interface TabsState {
   /** Recreate the persisted open set as pending tabs and activate the persisted
    *  active one. Lazy: only that one repository is actually opened. */
   restoreSession: () => Promise<void>;
+  /**
+   * Open `path` in a NEW window (#256), leaving this window as it is.
+   *
+   * Tabs are for switching, windows are for comparing — this is the second
+   * half. The new window opens its own `RepoId` for the repository, so the two
+   * windows share nothing that one could break for the other.
+   */
+  openInNewWindow: (path: string) => Promise<void>;
+  /** Same, but the tab leaves this window. */
+  moveTabToNewWindow: (path: string) => Promise<void>;
   /** Display labels, parent-disambiguated for colliding names. */
   labels: () => string[];
 }
@@ -109,7 +125,25 @@ function countsOf(slice: RepoSlice): { dirty: number; conflicts: number } {
 }
 
 export const useTabsStore = create<TabsState>((set, get) => {
-  const persist = () => saveOpenRepos(get().tabs, get().activePath);
+  /**
+   * Which storage key this window's open set lives under (#256). Read once —
+   * a window's label cannot change — and `main` still writes the bare
+   * `pg-open-repos` it has written since #90, so an upgrading user's session
+   * restores exactly as before.
+   */
+  const storageKey = openReposKey(windowLabel());
+
+  const persist = () => {
+    saveOpenRepos(get().tabs, get().activePath, storageKey);
+    // The backend half of the same write. It answers two questions no webview
+    // can answer about another window: where a forwarded `pgit <path>` should
+    // land, and what to evict when this window is closed. Fire-and-forget —
+    // a registry that is one write behind costs a mis-routed launch, which is
+    // not worth failing a tab switch over.
+    void registerWindowRepos(
+      get().tabs.map((t) => ({ id: t.repoId, path: t.path })),
+    ).catch(() => {});
+  };
 
   /** Freeze the live slice into the tab at `path` (it is about to lose it). */
   const snapshotInto = (path: string) => {
@@ -419,13 +453,30 @@ export const useTabsStore = create<TabsState>((set, get) => {
 
     async restoreSession() {
       if (get().tabs.length > 0) return;
-      const { paths, active } = loadOpenRepos();
+      const { paths, active } = loadOpenRepos(storageKey);
       if (paths.length === 0) return;
       set({ tabs: paths.map((p) => newTab(p)) });
       const target = active ?? paths[0];
       // Lazy on purpose: five persisted repositories cost ONE open at launch,
       // not five. The rest open when first activated.
       await get().activate(target);
+    },
+
+    async openInNewWindow(path) {
+      const tab = findTab(get().tabs, path);
+      await openAppWindow({ seedPaths: [tab?.path ?? path] });
+    },
+
+    async moveTabToNewWindow(path) {
+      const tab = findTab(get().tabs, path);
+      if (!tab) return;
+      const label = await openAppWindow({ seedPaths: [tab.path] });
+      // Only close the tab once the window it is moving to actually exists.
+      // A failed creation that had already closed the tab would lose the
+      // repository from both windows — the one place in this store where a
+      // failure could take work away rather than leave it where it was.
+      if (!label) return;
+      await get().close(tab.path);
     },
 
     labels() {

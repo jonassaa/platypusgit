@@ -36,6 +36,7 @@
 //! libgit2 handles on one repository are ordinary — git is built for concurrent
 //! processes — and this one only ever asks read-only questions.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -182,14 +183,28 @@ pub fn summarize(repo_id: &str, kinds: &[PathKind]) -> Option<FsChange> {
     })
 }
 
-/// The one live watcher. `None` when nothing is being watched.
+/// The live watchers — **one slot per window** (#256).
 ///
-/// A single slot rather than a map: only the active tab's repository is
-/// watched, so a second `watch_repo` REPLACES rather than adds. Dropping the
-/// previous `Debouncer` is what unregisters it from the OS.
+/// Only the active tab's repository is watched, so within a window a second
+/// `watch_repo` REPLACES rather than adds, and dropping the previous
+/// `Debouncer` is what unregisters it from the OS. That was a single global
+/// slot until multiple windows existed, at which point it became a bug you
+/// could not see: window B's `watch_repo` evicted window A's watcher, and A
+/// went quietly back to being stale — the exact failure this module was written
+/// to remove, restored by the second window.
+///
+/// Keyed by window LABEL rather than by `RepoId` because the invariant is
+/// per-window ("the active tab's repository"), and because a window that goes
+/// away has to be able to stop its watch without knowing which repository it
+/// ended up on (`windows::on_window_destroyed`).
+///
+/// The `FsChange` payload is unchanged: it still carries the `repoId` it came
+/// from, and events are still app-global, so the frontend's "drop an event that
+/// arrived after a tab switch" filter keeps working per window without knowing
+/// this map exists.
 #[derive(Default)]
 pub struct WatchState {
-    active: Mutex<Option<Active>>,
+    active: Mutex<HashMap<String, Active>>,
 }
 
 struct Active {
@@ -199,27 +214,43 @@ struct Active {
 }
 
 impl WatchState {
-    /// Which repository is being watched, if any. For tests and diagnostics.
-    pub fn watching(&self) -> Option<String> {
+    /// Which repository `label` is watching, if any. For tests and diagnostics.
+    pub fn watching(&self, label: &str) -> Option<String> {
         self.active
             .lock()
             .ok()
-            .and_then(|g| g.as_ref().map(|a| a.repo_id.clone()))
+            .and_then(|g| g.get(label).map(|a| a.repo_id.clone()))
     }
 
-    /// Stop whatever is being watched. Idempotent.
-    pub fn stop(&self) {
+    /// How many windows are watching. Tests and diagnostics.
+    pub fn watch_count(&self) -> usize {
+        self.active.lock().map(|g| g.len()).unwrap_or(0)
+    }
+
+    /// Stop `label`'s watch. Idempotent — the frontend calls this on a setting
+    /// change without knowing whether anything was running, and
+    /// `windows::on_window_destroyed` calls it for a window that may never have
+    /// watched anything.
+    pub fn stop(&self, label: &str) {
         if let Ok(mut guard) = self.active.lock() {
-            *guard = None;
+            guard.remove(label);
         }
     }
 
-    /// Watch `workdir`, replacing any existing watch.
+    /// Watch `workdir` for `label`, replacing that window's existing watch.
     ///
-    /// The previous watcher is dropped BEFORE the new one is registered, so two
-    /// watchers never hold the same directory — on macOS that would double
-    /// every event for as long as both lived.
-    pub fn start(&self, app: AppHandle, repo_id: String, workdir: PathBuf) -> AppResult<()> {
+    /// The previous watcher is dropped BEFORE the new one is registered, so one
+    /// window never holds the same directory twice — on macOS that would double
+    /// every event for as long as both lived. Two DIFFERENT windows watching one
+    /// directory is a separate matter and is allowed: each needs its own events,
+    /// and each filters them by its own `repoId`.
+    pub fn start(
+        &self,
+        app: AppHandle,
+        label: String,
+        repo_id: String,
+        workdir: PathBuf,
+    ) -> AppResult<()> {
         let repo = git2::Repository::open(&workdir)?;
         let gitdir = repo.path().to_path_buf();
         let commondir = repo.commondir().to_path_buf();
@@ -228,8 +259,8 @@ impl WatchState {
             .active
             .lock()
             .map_err(|_| AppError::Internal("watch state poisoned".to_string()))?;
-        // Drop the old one first — see the doc comment.
-        *guard = None;
+        // Drop this window's old one first — see the doc comment.
+        guard.remove(&label);
 
         let handler = Handler {
             app,
@@ -246,10 +277,13 @@ impl WatchState {
             .watch(&workdir, RecursiveMode::Recursive)
             .map_err(|e| AppError::Io(format!("could not watch {}: {e}", workdir.display())))?;
 
-        *guard = Some(Active {
-            repo_id,
-            _debouncer: debouncer,
-        });
+        guard.insert(
+            label,
+            Active {
+                repo_id,
+                _debouncer: debouncer,
+            },
+        );
         Ok(())
     }
 }
@@ -321,5 +355,77 @@ impl notify_debouncer_mini::DebounceEventHandler for Handler {
         if let Some(change) = summarize(&self.repo_id, &kinds) {
             let _ = self.app.emit(FS_CHANGED_EVENT, &change);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real `Debouncer` that watches nothing. Cheap, and it keeps `Active`'s
+    /// shape honest — the point of these tests is the MAP, and a fake slot type
+    /// would stop testing the thing that broke.
+    fn idle_active(repo_id: &str) -> Active {
+        Active {
+            repo_id: repo_id.to_string(),
+            _debouncer: new_debouncer(DEBOUNCE, |_: DebounceEventResult| {})
+                .expect("a debouncer that watches nothing"),
+        }
+    }
+
+    fn watching_of(state: &WatchState, label: &str, repo_id: &str) {
+        state
+            .active
+            .lock()
+            .unwrap()
+            .insert(label.to_string(), idle_active(repo_id));
+    }
+
+    #[test]
+    fn a_second_window_does_not_evict_the_first_windows_watch() {
+        // The bug this map exists for, and one you could not see: with a single
+        // global slot, window B's `watch_repo` dropped window A's watcher and A
+        // went quietly back to being stale — the exact failure #239 removed,
+        // restored by the second window.
+        let state = WatchState::default();
+        watching_of(&state, "main", "r-api");
+        watching_of(&state, "pg-1", "r-web");
+
+        assert_eq!(state.watching("main").as_deref(), Some("r-api"));
+        assert_eq!(state.watching("pg-1").as_deref(), Some("r-web"));
+        assert_eq!(state.watch_count(), 2);
+    }
+
+    #[test]
+    fn one_window_still_replaces_its_own_watch_rather_than_stacking() {
+        // Within a window the invariant is unchanged: only the ACTIVE tab's
+        // repository is watched, so a tab switch needs no matching stop.
+        let state = WatchState::default();
+        watching_of(&state, "main", "r-api");
+        watching_of(&state, "main", "r-web");
+        assert_eq!(state.watching("main").as_deref(), Some("r-web"));
+        assert_eq!(state.watch_count(), 1);
+    }
+
+    #[test]
+    fn stopping_one_window_leaves_the_others_watching() {
+        let state = WatchState::default();
+        watching_of(&state, "main", "r-api");
+        watching_of(&state, "pg-1", "r-web");
+
+        state.stop("pg-1");
+
+        assert_eq!(state.watching("pg-1"), None);
+        assert_eq!(state.watching("main").as_deref(), Some("r-api"));
+    }
+
+    #[test]
+    fn stopping_a_window_that_never_watched_anything_is_a_no_op() {
+        // `windows::on_window_destroyed` calls this for every window it tears
+        // down, and the frontend calls it on a setting change without knowing
+        // whether anything was running.
+        let state = WatchState::default();
+        state.stop("pg-4");
+        assert_eq!(state.watch_count(), 0);
     }
 }

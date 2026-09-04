@@ -10,7 +10,8 @@
 //   - `--bg-0` in src/index.css              — what the CSS eventually paints
 //   - `backgroundColor` in tauri.conf.json   — the WINDOW layer, before any document
 //   - the inline `background` in index.html  — the DOCUMENT, before any stylesheet
-//   - `backgroundColor` in openMergeWindow   — the same, for the second window
+//   - `backgroundColor` in openMergeWindow   — the same, for the resolver window
+//   - `backgroundColor` in openAppWindow     — the same, for a repository window
 //
 // Nothing else notices when one of them changes. Re-theme the default palette,
 // or drop the config key while debugging something else, and the app quietly
@@ -39,6 +40,7 @@ const tauriConf = JSON.parse(read("src-tauri/tauri.conf.json"));
 const indexHtml = read("index.html");
 const indexCss = read("src/index.css");
 const mergeWindow = read("src/features/merge/openMergeWindow.ts");
+const appWindow = read("src/features/windows/openAppWindow.ts");
 const mainTsx = read("src/main.tsx");
 
 const mainWindow = tauriConf.app.windows.find(
@@ -105,6 +107,28 @@ describe("the app's first paint is dark, not white", () => {
     const merge = /backgroundColor:\s*"(#[0-9a-f]{6})"/i.exec(mergeWindow);
     expect(merge, "openMergeWindow needs a backgroundColor").not.toBeNull();
     expect(merge![1].toLowerCase()).toBe(mainWindow.backgroundColor.toLowerCase());
+  });
+
+  it("opens a second REPOSITORY window on the same colour (#256)", () => {
+    // Same trade as the resolver's, and the same reason it has to be asserted
+    // here: a runtime-created window inherits nothing from tauri.conf.json, so
+    // the value is a fourth copy with no compiler relationship to the other
+    // three. This one names its colour, so both halves are checked — the
+    // constant's value, and that it is what actually reaches the window.
+    const decl = /WINDOW_BACKGROUND\s*=\s*"(#[0-9a-f]{6})"/i.exec(appWindow);
+    expect(decl, "openAppWindow needs a WINDOW_BACKGROUND constant").not.toBeNull();
+    expect(decl![1].toLowerCase()).toBe(mainWindow.backgroundColor.toLowerCase());
+    expect(
+      appWindow,
+      "the window creation must actually pass WINDOW_BACKGROUND",
+    ).toMatch(/backgroundColor:\s*WINDOW_BACKGROUND/);
+  });
+
+  it("creates a second repository window HIDDEN, like the main one", () => {
+    // The other half of the same trade — see the reveal suite below. A window
+    // created visible flashes an empty frame; RevealOnFirstPaint runs in every
+    // window, so a sibling gets the same already-drawn open the main one does.
+    expect(appWindow).toMatch(/visible:\s*false/);
   });
 
   it("keeps that colour tracking --bg-0 of the default dark theme", () => {

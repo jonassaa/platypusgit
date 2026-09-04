@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "updater",
-  "description": "Self-update: check/download/install a signed release, then relaunch. Scoped to the main window ONLY — the merge resolver window (label \"merge\") has no business swapping the binary out from under an in-progress conflict resolution, let alone restarting the process.",
+  "description": "Self-update: check/download/install a signed release, then relaunch. Scoped to the REPOSITORY windows (\"main\" and the \"pg-*\" siblings #256 adds) and never to the merge resolver window (label \"merge\"), which has no business swapping the binary out from under an in-progress conflict resolution, let alone restarting the process. A sibling repository window IS the whole app \u2014 it carries the same update chip and panel \u2014 so leaving it out would have shipped an Install button that fails with a permission error, and would have left a user who closed the main window with no update surface at all. The check itself is throttled through the shared `lastCheckedAt` in localStorage, so N windows still cost one check.",
   "windows": [
-    "main"
+    "main",
+    "pg-*"
   ],
   "permissions": [
     "updater:default",

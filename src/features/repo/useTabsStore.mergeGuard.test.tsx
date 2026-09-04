@@ -23,7 +23,9 @@ import {
 import {
   __resetMergeAttribution,
   openMergeWindow,
+  watchMergeHolding,
 } from "@/features/merge/openMergeWindow";
+import { emitMockEvent } from "@/test/eventMock";
 import { emptySlice } from "./repoSlice";
 import { newTab } from "./tabs";
 import { useRepoStore } from "./useRepoStore";
@@ -173,5 +175,44 @@ describe("closing a tab with the merge resolver open", () => {
     expect(dialogIsOpen()).toBe(false);
     expect(closeRepoCalls().map((c) => c.args.repoId)).toEqual(["r-api"]);
     expect(useTabsStore.getState().tabs.map((t) => t.path)).toEqual(["/dev/web"]);
+  });
+});
+
+describe("the resolver's own announcement (#256)", () => {
+  // With several repository windows, "a resolver is up" stopped being a good
+  // enough reason to confirm: the window closing a tab may not be the one that
+  // opened the resolver, and every window opens its OWN RepoId — so its close
+  // cannot break the resolver. `merge://holding` is what lets the guard tell
+  // the two cases apart. Fired via the store's real close path, so the
+  // assertion is on the behaviour the user sees, not on the predicate.
+  it("does not confirm when the resolver names a DIFFERENT repository", async () => {
+    render(<PGDialogHost />);
+    armLiveMergeWindow();
+    // This window never opened the resolver — the attribution comes from the
+    // announcement alone. AppShell starts this listener at mount, long before
+    // any tab is closed, which is the point: a listener registered at close
+    // time would already have missed the announcement.
+    watchMergeHolding();
+    emitMockEvent("merge://holding", { repoId: "r-web" });
+
+    await useTabsStore.getState().close("/dev/api");
+
+    expect(dialogIsOpen()).toBe(false);
+    expect(closeRepoCalls().map((c) => c.args.repoId)).toEqual(["r-api"]);
+    expect(useTabsStore.getState().tabs.map((t) => t.path)).toEqual(["/dev/web"]);
+  });
+
+  it("still confirms when the announcement names THIS repository", async () => {
+    render(<PGDialogHost />);
+    armLiveMergeWindow();
+    watchMergeHolding();
+    emitMockEvent("merge://holding", { repoId: "r-api" });
+
+    const closing = useTabsStore.getState().close("/dev/api");
+    await waitFor(() => expect(dialogIsOpen()).toBe(true));
+    await dismissDialog();
+    await closing;
+
+    expect(closeRepoCalls()).toHaveLength(0);
   });
 });

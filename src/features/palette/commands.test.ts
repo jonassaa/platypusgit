@@ -552,3 +552,58 @@ describe("fileItems", () => {
     expect(order).toEqual(["close", "pick:src/a.txt"]);
   });
 });
+
+describe("repository windows (#256)", () => {
+  // The palette is a CURATED list, not a projection of the action catalog —
+  // adding an action to `ACTIONS` does not put it here. That gap is what an
+  // e2e run found ("palette row 'New window' never appeared") after the
+  // actions, the chords and the tab menu were all already wired.
+  it("always offers a new window, with no repository open", () => {
+    useTabsStore.setState({ tabs: [], activePath: null });
+    expect(ids()).toContain("action:new-window");
+    // The two that name THIS repository need one.
+    expect(ids()).not.toContain("action:repo-new-window");
+    expect(ids()).not.toContain("action:move-tab-window");
+  });
+
+  it("offers 'open in a new window' as soon as a repository is open", () => {
+    useTabsStore.setState({
+      tabs: [newTab("/dev/api", { status: "open", repoId: "r-api" })],
+      activePath: "/dev/api",
+    });
+    expect(ids()).toContain("action:repo-new-window");
+    // Moving the ONLY tab out would close this window's last tab to open an
+    // identical window beside it.
+    expect(ids()).not.toContain("action:move-tab-window");
+  });
+
+  it("offers 'move to a new window' once there is a tab to leave behind", () => {
+    useTabsStore.setState({
+      tabs: [
+        newTab("/dev/api", { status: "open", repoId: "r-api" }),
+        newTab("/dev/web", { status: "open", repoId: "r-web" }),
+      ],
+      activePath: "/dev/api",
+    });
+    expect(ids()).toContain("action:move-tab-window");
+  });
+
+  it("moves the ACTIVE tab, read at click time", () => {
+    const moveTabToNewWindow = vi.fn();
+    useTabsStore.setState({
+      tabs: [
+        newTab("/dev/api", { status: "open", repoId: "r-api" }),
+        newTab("/dev/web", { status: "open", repoId: "r-web" }),
+      ],
+      activePath: "/dev/api",
+      moveTabToNewWindow: moveTabToNewWindow as never,
+    });
+    const item = buildCommands().find((i) => i.id === "action:move-tab-window");
+    // Re-read from the store rather than closed over: the palette list is built
+    // when it opens, and the user can switch tabs before pressing Enter.
+    useTabsStore.setState({ activePath: "/dev/web" });
+    item!.run();
+    expect(moveTabToNewWindow).toHaveBeenCalledWith("/dev/web");
+  });
+});
+

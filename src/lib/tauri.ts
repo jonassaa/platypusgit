@@ -1373,6 +1373,26 @@ export async function commitNotes(
   return invoke<CommitNote[]>("commit_notes", { repoId, oid });
 }
 
+/**
+ * Tell the backend which repositories this window's tab strip holds (#256).
+ *
+ * Called on every tab-strip persist, alongside the window's own session write.
+ * The backend uses it for the two questions a webview cannot answer about
+ * another window: where a forwarded `pgit <path>` should land, and what to
+ * evict when this window is closed. The window is identified by Tauri, not by
+ * an argument.
+ */
+export async function registerWindowRepos(
+  repos: { id: string | null; path: string }[],
+): Promise<void> {
+  return invoke<void>("register_window_repos", { repos });
+}
+
+/** The label the next sibling window should take — the lowest free `pg-<n>`. */
+export async function nextWindowLabel(): Promise<string> {
+  return invoke<string>("next_window_label");
+}
+
 export async function takeLaunchIntent(): Promise<LaunchIntent | null> {
   return invoke<LaunchIntent | null>("take_launch_intent");
 }

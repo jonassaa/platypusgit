@@ -2,22 +2,49 @@
 // own data over IPC; the only cross-window state is events.
 
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 
 /**
  * Which repository a live resolver window is working on, as far as THIS webview
- * knows — the window carries its `repoId` in its own URL, and main has no way to
- * read that back. `attributed` is false when a live window was not opened by this
- * page instance (main reloaded while the resolver stayed up), which callers must
- * treat as "it might be any repository".
+ * knows. `attributed` is false when a live window was not opened by this page
+ * instance and has not announced itself either, which callers must treat as
+ * "it might be any repository".
+ *
+ * Two producers set it. This module, when it opens or retargets the window —
+ * and the resolver itself, over `merge://holding`. The second exists because
+ * since #256 there can be several repository windows: the resolver may have
+ * been opened by a window that is not the one now closing a tab, and each
+ * window opens its own `RepoId`, so "some resolver is up" stopped being a good
+ * enough reason to confirm. The announcement is what lets a window that did not
+ * open it still compare ids.
  */
 let liveMerge: { repoId: string; attributed: boolean } | null = null;
+
+// Never unsubscribed — its lifetime is the window's, like the appearance watch.
+// Guarded so a hot reload does not stack listeners.
+let holdingWatch: Promise<() => void> | null = null;
+
+/**
+ * Start listening for the resolver's "I am on this repository" announcement.
+ *
+ * Idempotent, and mounted from `AppShell` rather than started lazily: the
+ * announcement is emitted when the resolver opens, and the window that needs to
+ * have heard it is whichever one later closes a tab. A listener registered at
+ * that moment would already have missed it.
+ */
+export function watchMergeHolding(): void {
+  if (holdingWatch) return;
+  holdingWatch = listen<{ repoId: string }>("merge://holding", (e) => {
+    if (e.payload?.repoId) liveMerge = { repoId: e.payload.repoId, attributed: true };
+  });
+}
 
 /** Test-only: forget which repository a live resolver is on, the state a fresh
  *  page load starts from. Same shape as `__resetDialogs`. */
 export function __resetMergeAttribution(): void {
   liveMerge = null;
+  holdingWatch = null;
 }
 
 /**
@@ -30,6 +57,7 @@ export function __resetMergeAttribution(): void {
  * far cheaper than breaking a conflict resolution in progress.
  */
 export async function mergeWindowHoldsRepo(repoId: string): Promise<boolean> {
+  watchMergeHolding();
   const existing = await WebviewWindow.getByLabel("merge");
   if (!existing) {
     liveMerge = null;

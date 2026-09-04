@@ -20,4 +20,5 @@ pub mod submodule;
 pub mod terminal;
 pub mod update;
 pub mod watch;
+pub mod windows;
 pub mod worktree;

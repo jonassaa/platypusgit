@@ -128,6 +128,25 @@ export function tabMenuItems(
       onClick: move(1),
     },
     { divider: true },
+    // Windows (#256). Here rather than only in the palette because both actions
+    // are about THIS tab, and the menu is the one surface that already says
+    // which tab that is. "Move to a new window" needs a second tab to move away
+    // from — moving the only one out would close this window's last tab to open
+    // an identical window beside it.
+    {
+      label: "Open in new window",
+      icon: "copy",
+      shortcut: chordFor("window.newWithRepo"),
+      onClick: () => void tabs().openInNewWindow(path),
+    },
+    {
+      label: "Move to new window",
+      icon: "chevronRight",
+      shortcut: chordFor("window.moveTabOut"),
+      disabled: total < 2,
+      onClick: () => void tabs().moveTabToNewWindow(path),
+    },
+    { divider: true },
     {
       label: "Close",
       icon: "x",

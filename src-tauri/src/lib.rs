@@ -16,6 +16,7 @@ pub mod state;
 pub mod terminal;
 pub mod update;
 pub mod watcher;
+pub mod windows;
 
 use std::sync::{Arc, Mutex};
 
@@ -139,15 +140,39 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             use tauri::{Emitter, Manager};
             let args: Vec<String> = argv.into_iter().skip(1).collect();
+            let live = windows::live_repo_windows(app);
+            // Which window gets it (#256). Was `app.emit` — a broadcast, which
+            // with one window meant "the window" and with several would mean
+            // "every window opens this repository". The rule is in
+            // `WindowRegistry::route`: whoever already has it, else the
+            // last-focused window, else the first.
+            let mut target = windows::MAIN_WINDOW.to_string();
             if let cli::Parsed::Launch(Some(intent)) | cli::Parsed::DebugLaunch(Some(intent)) =
                 cli::parse_args(&args, std::path::Path::new(&cwd))
             {
                 let intent = cli::resolve_repo_root(intent);
-                if let Err(e) = app.emit("cli-launch", &intent) {
-                    log::error!("failed to emit cli-launch: {e}");
+                let registry = app.state::<windows::WindowRegistry>();
+                if let Some(label) = intent
+                    .path
+                    .as_deref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .and_then(|p| registry.route(&p, &live))
+                    .or_else(|| registry.preferred(&live))
+                {
+                    target = label;
                 }
+                if let Err(e) = app.emit_to(target.as_str(), "cli-launch", &intent) {
+                    log::error!("failed to emit cli-launch to {target}: {e}");
+                }
+            } else if let Some(label) = app
+                .state::<windows::WindowRegistry>()
+                .preferred(&live)
+            {
+                // A bare `pgit` with no path: nothing to forward, but the user
+                // still asked for the app — surface the window they last used.
+                target = label;
             }
-            if let Some(win) = app.get_webview_window("main") {
+            if let Some(win) = app.get_webview_window(&target) {
                 // `show()` first: the window is created hidden (see the setup
                 // hook) and neither unminimize nor set_focus reveals a hidden
                 // window. Without this, a `pgit …` landing in the sub-second gap
@@ -289,7 +314,32 @@ pub fn run() {
             }
             Ok(())
         })
+        // Multiple windows (#256). Both arms are about the OTHER windows: with
+        // one window there was nobody to route a launch to and nothing to
+        // release that process exit would not have released anyway.
+        .on_window_event(|window, event| {
+            use tauri::Manager;
+            match event {
+                // Which window the user touched last, for `pgit` routing.
+                tauri::WindowEvent::Focused(true) => {
+                    window
+                        .app_handle()
+                        .state::<windows::WindowRegistry>()
+                        .note_focus(window.label());
+                }
+                // One window going away no longer means the process is going
+                // away: release what it held, and decide whether it is
+                // remembered next launch.
+                tauri::WindowEvent::Destroyed => {
+                    windows::on_window_destroyed(window.app_handle(), window.label());
+                }
+                _ => {}
+            }
+        })
         .manage(AppState::new(backend))
+        // Which repositories each window holds, and where a forwarded `pgit …`
+        // should land (#256).
+        .manage(windows::WindowRegistry::default())
         // Per-host forge API tokens, cached for this process only (#92). NOT the
         // git-transport credential path — see forge/token.rs for why the two
         // must never share storage.
@@ -439,6 +489,8 @@ pub fn run() {
             commands::update::check_for_update,
             commands::update::get_update_capability,
             commands::custom_action::run_custom_action,
+            commands::windows::register_window_repos,
+            commands::windows::next_window_label,
             commands::watch::watch_repo,
             commands::watch::watch_stop,
             commands::update::open_url,
