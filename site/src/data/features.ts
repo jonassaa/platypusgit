@@ -145,6 +145,100 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.8.0',
+    date: '2026-09-07',
+    status: 'feature',
+    summary:
+      'Settings is a screen you navigate rather than a scroll you have to read: ten pages behind a grouped side menu, and a search box that finds a setting by name and hands you the working control. Branch folders finish what they started — drag a branch from one folder into another, fold them away in the titlebar picker — and a custom action can now take a keyboard shortcut. Underneath all of it, the read-only half of the backend stopped queueing behind itself, which is worth milliseconds on a fast repository and minutes on a slow one.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Settings you can search, on pages you can navigate',
+            detail:
+              'Thirteen flat cards — thirty-seven fixed rows plus a forge host list — used to render into one 820-pixel scroll, so finding a setting meant scrolling and reading it. There are ten pages now behind a grouped side menu (General, Git, Advanced) with tree keyboard navigation, and typing in the search box returns every matching row from every page under a `Group › Page` breadcrumb. A result is the real working control rather than a copy of it: the page components themselves mount under a filter, so you change the setting where you found it. Pages are deep-linkable too, so the Pull requests screen\'s "add a forge token" button lands on Integrations instead of at the top of a scroll. Two rows that were misfiled under Pull & fetch — "Watch the working copy" and "Terminal shell" — moved to a Workspace page, and the page you were last on is remembered per machine and left out of an exported settings file.',
+          },
+          {
+            title: 'Drag a branch between folders, and fold the folders away',
+            detail:
+              'A branch folder is the `/` in a branch name rather than a git object, so moving a branch between folders is a rename and nothing else — only the leaf travels, the way a file dragged between directories does, and the drop confirms before it renames, because a stray pointer release must not rename a branch. Dragging a branch *out* of a folder gets a drop bar for the duration of the gesture, and only for a drag it can actually serve. The keyboard equivalent is "Move to folder…" on the branch menu, so it reaches every branch surface rather than only the Branches screen, and it answers through the same legality check as the drop — which is what stops the two from disagreeing about a name that is already taken. The titlebar picker trees its branches now as well, off the same per-repository fold set, so a folder you fold in one place is folded in the other; each section trees on its own, so folding `origin` cannot fold the local `feat` beside it. A folder row there is never checkout-able: Enter toggles it, → opens it, ← folds it or climbs out, and the cursor still comes to rest on HEAD — or, when HEAD is folded away, on the folder holding it. Grouping runs last and never sorts, so your branch ordering and your pins are untouched.',
+          },
+          {
+            title: 'A custom action can take a keyboard shortcut',
+            detail:
+              'The chord lives on the action in your settings file, so it is hand-editable like everything else stored there. Three rules decide whether a shortcut is live. It needs ⌘/Ctrl or a function key — a bare letter would fire while you arrow through a file list and swallow that letter from speed-search, and ⌥ with a character key types on macOS; `Mod+Alt+<letter>` is refused because that is AltGr on Windows and Linux. The action has to be on the command palette, because a key press carries no selection, so `$FILE` and `$SHA` would have nothing behind them. And no built-in may already own the chord, checked against every preset rather than the active one, since presets are switchable and the built-in wins silently. Settings refuses a collision up front and names what already holds the key, so nobody records a shortcut that would simply never fire. A custom chord is offered last, after every built-in on that chord has declined: a setting can never take a key away from the app, even from a hand-edited file. What fires is what is listed — the cheat sheet and the palette chip read the same gate the dispatcher does.',
+          },
+        ],
+      },
+      {
+        title: 'Performance',
+        items: [
+          {
+            title: 'Reading a repository stopped queueing behind itself',
+            detail:
+              'Every read-only operation took the same exclusive per-repository lock, so the eleven reads a refresh issues together waited for one another and you paid their sum instead of the slowest one. Each repository now keeps one cached handle for writes and mints a private handle per read, with a gate ordering the two, and fifteen read-only operations moved onto the shared path. On a warm local repository twelve reads go from 16.9ms to 10.6ms — real, but not something you would feel. The case this was built for is the one where you would: a repository on a Windows drive under WSL, where every stat crosses a VM boundary and the reports were of roughly 9 seconds of reads taking about 108, with arrowing through history laddering to 45. Nothing about write ordering changed — every ordering guarantee this backend documents is about a write, and all of them still run under a gate that excludes everything else. A pre-warmed handle pool was measured and rejected: opening a repository costs about a millisecond, which is on the wrong side of noise.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'A pin follows a branch through a rename',
+            detail:
+              'A pinned branch was matched by its exact name, so renaming it silently dropped the pin. This fixes renaming from the branch menu as well, not only the new drag.',
+          },
+          {
+            title: 'Two surfaces showing the branch tree no longer fight over which folders are folded',
+            detail:
+              'Fold state was per-hook React state over a shared key, so with the Branches screen and the titlebar picker both rendering the tree, whichever wrote last dropped the other\'s folds. It is one store now, read through on every change rather than off the render that produced the callback — a fold can be applied after an `await`.',
+          },
+          {
+            title: 'The branch picker\'s cursor stops jumping while you type',
+            detail:
+              'The effect that clamps the cursor to the list length read its index out of its own render closure, so it could overwrite the resting-position effect in the same commit. It was always latent; the extra folder row made it reachable just by typing a query.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'The HTTP client moved to ureq 3',
+            detail:
+              'A major-version rewrite of the one crate that makes outbound calls — the forge integration and the update check. It is here rather than left silent because of what it would otherwise have changed quietly: ureq 3 collapses a 4xx or 5xx into an error and drops the response body with it, and that body is the difference between a banner reading "forge error: 422" and one reading "a pull request already exists for owner:branch" — and it is what turns a 401 into a prompt to fix your token in Settings instead of the git credential dialog. The forge client therefore classifies statuses itself. The redirect budget and the https-only setting are written down explicitly now rather than inherited from a default that changed between the two versions, and an over-size response body is an error instead of a silent truncation that surfaced later as unparseable JSON. Nine new tests cover the half of this no existing test could see, still with no network anywhere in the suite.',
+          },
+          {
+            title: 'The dependency tree caught up',
+            detail:
+              'CodeMirror, lucide, the Tauri CLI, the updater plugin, serde, jsdom and the React Vite plugin, landed as a single commit — the updater\'s npm and crate halves are a pair the build hard-errors on when they disagree, so they cannot move one at a time.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Two windows on one repository do not share a lock',
+            detail:
+              'Unchanged from 0.7.0. Each window opens its own handles for a repository, and that is what keeps windows independent — closing a tab in one evicts nothing the other is using. The new read/write gate above orders one window\'s work against itself, not one window\'s against another\'s, so work you start on the same repository from two windows is still arbitrated by git\'s own `index.lock`, exactly as it is between any two git processes.',
+          },
+          {
+            title: 'A Store update lands hours after the release, not with it',
+            detail:
+              'Unchanged from 0.6.0. Submission is automatic; certification is not instant. Microsoft reviews each update before it reaches the Store, so a Store install trails the `.msi`, Scoop and winget by however long that takes — usually hours. Nothing is wrong when the Store still offers the previous version shortly after a release.',
+          },
+          {
+            title: 'Timestamps are shown in your timezone, not the author\'s',
+            detail:
+              'Unchanged from 0.5.0. Where `git log` prints the offset a commit was authored under, PlatypusGit shows that same instant on your own clock — a commit reaches the interface as unix seconds and nothing else, so matching git here is a change to what the backend sends rather than to how a date is written. The hover names the zone it used, so no stamp is ambiguous about which clock that was.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.7.0',
     date: '2026-09-04',
     status: 'feature',
