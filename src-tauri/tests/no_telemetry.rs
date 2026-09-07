@@ -160,7 +160,8 @@ const ALLOWED_HOSTS: &[(&str, &str)] = &[
     (
         "example.com",
         "RFC 2606 reserved. Fixtures for git's own stderr in the inline tests of \
-         `src/commands/create.rs` and `src/git/auth.rs`. Cannot resolve.",
+         `src/commands/create.rs` and `src/git/auth.rs`, and the forge URLs in \
+         `src/forge/http.rs`'s inline tests. Cannot resolve.",
     ),
     (
         "example.invalid",
