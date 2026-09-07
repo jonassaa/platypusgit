@@ -91,29 +91,6 @@ describe("buildCommands", () => {
     expect(byId.get("action:refresh")?.actionId).toBe("repo.refresh");
   });
 
-  it("offers one row per Settings page, and activating one fires open-settings", () => {
-    useNavStore.setState({ intent: null, deepOrigin: null });
-    const byId = new Map(buildCommands().map((i) => [i.id, i]));
-    // Derived from the registry: every PAGE_ORDER entry has a row, no more.
-    for (const pageId of PAGE_ORDER) {
-      expect(byId.has(`settings-page:${pageId}`)).toBe(true);
-    }
-    expect(
-      buildCommands().filter((i) => i.id.startsWith("settings-page:")),
-    ).toHaveLength(PAGE_ORDER.length);
-
-    byId.get("settings-page:git.diff")!.run();
-    // The intent this row fires is what AppShell routes into `useSettingsStore`
-    // and the Settings screen — proof the row does more than exist in the
-    // catalog (a `run()` that never reaches the store would look identical in
-    // a test that only checked the row's presence).
-    expect(useNavStore.getState().intent).toEqual({
-      kind: "open-settings",
-      page: "git.diff",
-    });
-    expect(usePaletteStore.getState().open).toBe(false);
-  });
-
   it("includes clone/init rows wired to the keymap (chip derives live, not hardcoded)", () => {
     const byId = new Map(buildCommands().map((i) => [i.id, i]));
     expect(byId.get("action:clone")?.actionId).toBe("repo.clone");
@@ -373,6 +350,29 @@ describe("buildCommands", () => {
     const labels = step.items.map((i) => i.label);
     expect(labels).toContain("v1.0.0");
     expect(labels).toContain("origin/feature");
+  });
+
+  it("offers one row per Settings page, and activating one fires open-settings", () => {
+    useNavStore.setState({ intent: null, deepOrigin: null });
+    const byId = new Map(buildCommands().map((i) => [i.id, i]));
+    // Derived from the registry: every PAGE_ORDER entry has a row, no more.
+    for (const pageId of PAGE_ORDER) {
+      expect(byId.has(`settings-page:${pageId}`)).toBe(true);
+    }
+    expect(
+      buildCommands().filter((i) => i.id.startsWith("settings-page:")),
+    ).toHaveLength(PAGE_ORDER.length);
+
+    byId.get("settings-page:git.diff")!.run();
+    // The intent this row fires is what AppShell routes into `useSettingsStore`
+    // and the Settings screen — proof the row does more than exist in the
+    // catalog (a `run()` that never reaches the store would look identical in
+    // a test that only checked the row's presence).
+    expect(useNavStore.getState().intent).toEqual({
+      kind: "open-settings",
+      page: "git.diff",
+    });
+    expect(usePaletteStore.getState().open).toBe(false);
   });
 });
 
