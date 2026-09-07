@@ -9,6 +9,8 @@ import {
   type SettingsImportReport,
 } from "@/features/settings/useSettingsStore";
 import { appErrorMessage } from "@/lib/errors";
+import { buildReport } from "@/features/report/report";
+import { useReportStore } from "@/features/report/useReportStore";
 import { diagnosticsReport, readLogTail, revealLogFile } from "@/lib/tauri";
 import type { DiagnosticsReport } from "@/lib/types";
 
@@ -34,6 +36,7 @@ export const meta: SettingsPageMeta = {
       rows: [
         { id: "diagnostics.environment", label: "Environment", keywords: "version os arch git bug report" },
         { id: "diagnostics.log", label: "Log file", keywords: "tail reveal path debug troubleshoot" },
+        { id: "diagnostics.report", label: "Report an issue", keywords: "bug github issue file feedback broken crash complain" },
       ],
     },
   ],
@@ -151,10 +154,20 @@ export function BackupPage() {
       // not reach back far enough to include the startup `host …` line, and a
       // log whose platform is unknown is what made #274 hard to read in the
       // first place — so the copy carries its own provenance.
-      const header = diagReport
-        ? `platypusgit ${diagReport.version}\n${diagReport.environment}\n${diagReport.logPath}\n\n`
-        : "";
-      await navigator.clipboard?.writeText(`${header}${tail}`);
+      //
+      // Assembled by `features/report/report.ts`, not by hand here: this
+      // button and the Report an issue dialog produce the SAME text, and two
+      // copies of the format are two things to keep in step.
+      await navigator.clipboard?.writeText(
+        buildReport({
+          version: diagReport?.version ?? "",
+          environment: diagReport?.environment ?? "",
+          logPath: diagReport?.logPath ?? "",
+          logTail: tail,
+          includeEnvironment: true,
+          includeLog: true,
+        }),
+      );
       pgFlash("Log tail copied");
     } catch (e) {
       pgFlash(appErrorMessage(e));
@@ -287,6 +300,21 @@ export function BackupPage() {
                 Show file
               </PGButton>
             </div>
+          }
+        />
+        <SettingsRow
+          id="diagnostics.report"
+          label="Report an issue"
+          hint="Assembles the environment and the log tail, shows you all of it, and opens a prefilled GitHub issue. Nothing is sent — the report goes on your clipboard and you paste it."
+          control={
+            <PGButton
+              size="sm"
+              icon="bug"
+              onClick={() => useReportStore.getState().openReport()}
+              data-testid="settings-report-issue"
+            >
+              Report an issue
+            </PGButton>
           }
         />
       </SettingsCard>

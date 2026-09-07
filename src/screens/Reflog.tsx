@@ -8,6 +8,8 @@ import {
   PGToolbar,
   PGSpinner,
 } from "@/design";
+import { errorBannerText } from "@/lib/errors";
+import { useReportStore } from "@/features/report/useReportStore";
 import {
   useReflogStore,
   type ReflogActionChoice,
@@ -179,7 +181,14 @@ export function ReflogScreen() {
       }}
     >
       {error && (
-        <PGErrorBanner error={error} onDismiss={clearError} compact />
+        <PGErrorBanner
+          error={error}
+          onDismiss={clearError}
+          onReport={() =>
+            useReportStore.getState().openReport(errorBannerText(error))
+          }
+          compact
+        />
       )}
       <PGToolbar
         right={

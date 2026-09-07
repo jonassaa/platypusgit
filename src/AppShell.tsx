@@ -45,6 +45,7 @@ import { ActivityStatus } from "@/features/repo/ActivityStatus";
 import { LoadingStatus } from "@/features/repo/LoadingStatus";
 import { primaryActivity } from "@/features/repo/repoActivity";
 import type { NetProgress, RebaseProgress } from "@/lib/types";
+import { errorBannerText } from "@/lib/errors";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { RepoTabs } from "@/features/repo/RepoTabs";
 import { headUpstream, openRepoDialog } from "@/features/repo/ops";
@@ -61,6 +62,8 @@ import {
   CheatSheet,
   type ActionId,
 } from "@/features/keymap";
+import { ReportIssueDialog } from "@/features/report/ReportIssueDialog";
+import { useReportStore } from "@/features/report/useReportStore";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { TerminalPanel } from "@/features/terminal";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
@@ -488,11 +491,27 @@ export function AppShell() {
           its three call sites — a context-menu item builder and a palette step —
           are not React components. Renders nothing until one opens it. */}
       <CreateTagDialog />
+      {/* Report an issue (features/report). Mounted HERE, once: Settings is a
+          screen below this point, so this single mount serves the titlebar
+          button, the error banner and the Settings row alike. The one entry
+          point it cannot serve is PGErrorBoundary, which is ABOVE it — that
+          one calls fileBugReport directly, from main.tsx. */}
+      <ReportIssueDialog />
       {/* One banner, shared with Reflog (#212). It leads with written prose or
           with nothing — never with the enum's own spelling — and preserves the
           newlines in git's multi-line advice. The remediation the two terse
           variants need travels with the text, in `errorBannerText`. */}
-      {error && <PGErrorBanner error={error} onDismiss={clearError} />}
+      {error && (
+        <PGErrorBanner
+          error={error}
+          onDismiss={clearError}
+          // Seeded with the text the user is already reading, so the report
+          // starts from the error rather than from a blank box.
+          onReport={() =>
+            useReportStore.getState().openReport(errorBannerText(error))
+          }
+        />
+      )}
       {/* Below the banner (which is transient) and above the screens (which
           all need to know): the standing "a merge/rebase is open" signal, and
           the only route to the resolver now that the Conflicts tab is gone. */}
@@ -736,6 +755,20 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         dirty={dirty}
         rightSlot={
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {/* Report an issue (features/report). Outside the `repo &&` guard
+                on purpose: "the app is broken" does not require a repository
+                to be open, and the Welcome screen is a place bugs happen too.
+                `getState()` rather than a hook, for the reason `onFetch`
+                below gives — this titlebar is not re-subscribing. */}
+            <PGButton
+              size="sm"
+              variant="ghost"
+              icon="bug"
+              title="Report an issue"
+              aria-label="Report an issue"
+              onClick={() => useReportStore.getState().openReport()}
+              data-testid="titlebar-report"
+            />
             <UpdateChip />
             {repo && (
               <>
