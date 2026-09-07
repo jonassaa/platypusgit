@@ -1245,13 +1245,28 @@ glib 0.18.5 ← atk 0.18.2 ← gtk 0.18.2 ← {muda, tao ← tauri-runtime-wry} 
 
 **No override on our side fixes it, and none ever will while Tauri is on
 gtk3.** `gtk-rs` 0.18 pins `glib` 0.18, so glib moves to >= 0.20 only when
-`tauri`/`tao`/`muda` move to a newer gtk generation. Do not attempt a local
-patch or a `[patch.crates-io]` pin — the gtk generation is the thing that has
-to move.
+`tauri`/`tao`/`muda` move to a newer gtk generation. The gtk generation is the
+thing that has to move.
 
-Re-measured 2026-09-03, because "re-check when the grouped `tauri` Cargo PR
-lands" reads as a routine bump and it is not one. Three facts, each checked
-against the crates.io API rather than inferred:
+Be precise about *why* a `[patch.crates-io]` pin is not the answer, because
+"impossible" and "not worth it" are two different walls and only one of them is
+the interesting one:
+
+- **Patching to a released glib >= 0.20 is impossible.** 0.20 is a breaking
+  generation of the gtk-rs core, and `gtk` 0.18.2 is written against 0.18's
+  types. Cargo accepts the patch and the build then fails to compile.
+- **Forking glib 0.18.5 with the fix backported is possible, and still wrong.**
+  The upstream fix is one token: in `glib/src/variant_iter.rs::impl_get`,
+  `let p: *mut libc::c_char` passed to the variadic `g_variant_get_child` as
+  `&p` becomes `let mut p` passed as `&mut p`. Vendoring that means owning a
+  glib fork indefinitely to patch a path nothing in our tree calls (see the
+  reachability note below), and it would clear Dependabot #60 by turning the
+  lockfile entry into a git source the advisory can no longer match — silencing
+  the alert rather than fixing the binary. Don't.
+
+Re-measured 2026-09-03 and again 2026-09-07, because "re-check when the grouped
+`tauri` Cargo PR lands" reads as a routine bump and it is not one. Three facts,
+each checked against the crates.io API rather than inferred:
 
 - **`gtk` 0.18.2 is the newest version of the gtk3 bindings ever published.**
   gtk-rs froze the gtk3 crates in favour of the separate `gtk4` crate, so there
@@ -1266,9 +1281,17 @@ against the crates.io API rather than inferred:
   would do, and none exists for gtk3.
 
 On the latest published `tauri` (2.11.5) the chain is still `gtk` 0.18.2 via
-`tao` 0.35.3, `muda` 0.19.3 and `webkit2gtk` 2.0.2. So the trigger to watch for
-is Tauri moving off gtk3 entirely — a Linux-backend rewrite, not a version bump
-— and there is nothing to do here until it happens.
+`tao` 0.35.3, `muda` 0.19.3 and `webkit2gtk` 2.0.2 — but the point is not that
+we are a few versions behind, so check the frontier rather than what we
+resolve. Measured 2026-09-07, ahead of anything Tauri pulls in: `tao` 0.37.0
+and `wry` 0.56.1 — the newest published — *still* declare `gtk ^0.18`, plus a
+hard `webkit2gtk =2.0.2`, all of it behind the same
+`cfg(any(target_os = "linux", …BSDs))`. Meanwhile `glib` itself has reached
+0.22.9: the gtk-rs core moved on four generations and the gtk3 bindings never
+followed, and none of those generations is reachable from gtk3. So upgrading
+`tauri`, `tao` or `wry` cannot close this alert either. The trigger to watch
+for is Tauri moving off gtk3 entirely — a Linux-backend rewrite, not a version
+bump — and there is nothing to do here until it happens.
 
 Dependabot #60 is therefore the one alert that stays open **with no pending
 action**, which is easy to misread as untriaged. Dismissing it as
@@ -1285,8 +1308,25 @@ gh api -X PATCH repos/jonassaa/platypusgit/dependabot/alerts/60 \
 Reopen with `-f state=open` if the assessment ever changes.
 
 What keeps it tolerable meanwhile: it is an unsoundness rather than a directly
-exploitable bug, it needs `VariantStrIter` on the call path, and `src-tauri/`
-never references `glib` at all. macOS and Windows builds are unaffected.
+exploitable bug, and in our tree the vulnerable code is not merely unlikely on
+the call path — it is unreachable. The chain is short enough to check by hand,
+and worth checking rather than assuming:
+
+- `impl_get` — the unsound function — is **private**, and its only callers are
+  the `Iterator`/`DoubleEndedIterator` impls for `VariantStrIter`.
+- `VariantStrIter::new` is **`pub(crate)`**, so no external crate can build one
+  directly. Its sole construction site in the whole crate is
+  `glib/src/variant.rs`, inside `Variant::array_iter_str()` — which makes that
+  one method the only public door in.
+- **Nothing in the resolved tree opens it.** Grepping the vendored registry for
+  `array_iter_str` matches glib's own source and nothing else — not `gtk`, not
+  `gio`, not `tao`/`wry`/`webkit2gtk`, not `tauri`. `src-tauri/` never
+  references `glib` or `gtk` at all, in `Cargo.toml` or in any `.rs`.
+
+macOS and Windows builds do not compile glib in the first place. Re-run that
+grep before trusting this, though: it is a claim about the *current* dependency
+set, and a Tauri bump that starts reading a `GVariant` string array would
+quietly turn a dead path into a live one.
 
 Two things that mislead when you go to check this:
 
