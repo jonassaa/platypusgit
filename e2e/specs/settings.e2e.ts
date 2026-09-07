@@ -358,15 +358,43 @@ describe("settings", () => {
     expect(text).toContain("host os=");
     expect(text).toContain("arch=");
 
-    // Both opt-outs are wired to the real preview, and the version survives.
+    // The log tail is present, and it is the real file: the logger's own
+    // startup lines are in it, which no mock produces.
+    expect(text).toContain("── log tail ──");
+    expect(text).toContain("platypusgit.log");
+
+    /*
+     * Now both opt-outs, and the ORDER matters for a reason worth writing
+     * down: the log tail CONTAINS the environment line. `environment_line`
+     * writes `host os=… arch=… git=…` into the log at startup — that is the
+     * whole reason `read_log_tail` and the report header coexist (#274) — so
+     * "the environment is excluded" cannot be checked by the absence of
+     * `host os=` while the log is still included. Measured: unchecking the
+     * environment took the preview from 2762 to 2700 characters and left a
+     * `host os=` line from the log behind.
+     *
+     * So the log comes off first, and only then is `host os=` a signal.
+     */
+    await $('[data-testid="report-include-log"]').click();
+    await browser.waitUntil(
+      async () => !(await preview.getText()).includes("── log tail ──"),
+      {
+        timeout: 10_000,
+        timeoutMsg: "unchecking the log never removed it from the preview",
+      },
+    );
+    // The path goes with it — that is what makes this the privacy control.
+    expect(await preview.getText()).not.toContain("platypusgit.log");
+
     await $('[data-testid="report-include-env"]').click();
     await browser.waitUntil(
       async () => !(await preview.getText()).includes("host os="),
       {
         timeout: 10_000,
-        timeoutMsg: "unchecking the environment never changed the preview",
+        timeoutMsg: "unchecking the environment never removed it",
       },
     );
+    // Down to the one line no opt-out removes.
     expect(await preview.getText()).toContain("platypusgit ");
 
     await $('[data-testid="report-cancel"]').click();
