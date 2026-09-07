@@ -46,6 +46,11 @@ function renderPair(fallback?: React.ReactNode) {
   );
 }
 
+/** The browser giving up on the bytes: the event a truncated blob really fires. */
+function failDecode(testId: string) {
+  fireEvent.error(screen.getByTestId(testId));
+}
+
 /** jsdom never decodes an image, so the dimensions arrive the way a real one's do. */
 function decode(testId: string, w: number, h: number) {
   const img = screen.getByTestId(testId) as HTMLImageElement;
@@ -307,6 +312,55 @@ describe("a single side", () => {
     await screen.findByTestId("image-preview-file");
     expect(screen.queryByTestId("image-diff-onesided")).toBeNull();
     expect(screen.queryByTestId("image-diff-delta")).toBeNull();
+  });
+});
+
+describe("a blob that sniffs as an image but will not decode", () => {
+  // `image.rs` reads a header, not a whole file, so a truncated PNG with an
+  // intact magic number arrives here as `kind: "image"` and the browser is the
+  // first thing to find out otherwise. Before #212's audit item this rendered
+  // the broken-image glyph and nothing else.
+  it("replaces the broken image with a sentence, and keeps the size", async () => {
+    mockPreviews({ worktree: png({ size: 1024 }) });
+    render(<ImageDiffView repoId="r1" path="logo.png" sides={[NEW]} />);
+
+    await screen.findByTestId("image-preview-new");
+    failDecode("image-preview-new");
+
+    await waitFor(() => expect(screen.queryByTestId("image-preview-new")).toBeNull());
+    expect(screen.getByTestId("image-note-new").textContent).toContain("could not be decoded");
+    // The byte count came from the backend, not from the decoder, so it is
+    // still true and still worth showing.
+    expect(screen.getByTestId("image-caption-new").textContent).toBe("1.0 KB");
+  });
+
+  it("fails only the side that failed", async () => {
+    mockPreviews({ rev: png({ size: 2048 }), worktree: png({ size: 1024 }) });
+    renderPair();
+
+    await screen.findByTestId("image-preview-old");
+    failDecode("image-preview-new");
+
+    await waitFor(() => expect(screen.queryByTestId("image-preview-new")).toBeNull());
+    // A corrupt new version must not take the readable old one down with it.
+    // Seeing what the file used to be is most of the value of the comparison.
+    expect(screen.getByTestId("image-preview-old")).toBeTruthy();
+    expect(screen.queryByTestId("image-note-old")).toBeNull();
+  });
+
+  it("gives the next selection a clean slate", async () => {
+    mockPreviews({ worktree: png({ size: 1024 }) });
+    const one: ImageSide[] = [NEW];
+    const { rerender } = render(<ImageDiffView repoId="r1" path="broken.png" sides={one} />);
+    await screen.findByTestId("image-preview-new");
+    failDecode("image-preview-new");
+    await waitFor(() => expect(screen.getByTestId("image-note-new")).toBeTruthy());
+
+    rerender(<ImageDiffView repoId="r1" path="fine.png" sides={one} />);
+    // A sticky failure would print "could not be decoded" over a perfectly
+    // good image, which is the same class of bug as a stale caption.
+    await waitFor(() => expect(screen.getByTestId("image-preview-new")).toBeTruthy());
+    expect(screen.queryByTestId("image-note-new")).toBeNull();
   });
 });
 

@@ -152,6 +152,14 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
     the webview already knows, and until it fires there simply are no
     dimensions (never `0 × 0`). The backdrop is a checkerboard built from
     `--bg-1`/`--bg-2` so transparency reads in both themes (#236).
+  * **A side the webview refuses to decode says so** (#212). `image.rs` sniffs a
+    header, not a whole file, so a truncated or corrupt blob whose magic number
+    survived still arrives as `kind: "image"` and the `<img>` is the first thing
+    to disagree. Its `onError` retires that side to a sentence, keeping the byte
+    caption (which came from the backend and is still true) and leaving the
+    other side alone: a corrupt new version must not hide a readable old one.
+    The failed set is keyed and cleared exactly like `dims`, so the next
+    selection starts clean rather than printing the previous file's failure.
 - **A textual diff with ZERO hunks is ordinary, and every surface says so.**
   Two everyday changes produce a `FileDiff` whose `hunks` is empty: an EMPTY
   ADDED file (a `.gitkeep` — git writes `new file mode` and no `@@` range), and

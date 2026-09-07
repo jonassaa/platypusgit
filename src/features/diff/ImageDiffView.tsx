@@ -89,18 +89,37 @@ function noteFor(p: ImagePreview | null): { icon: string; text: string } | null 
   }
 }
 
+/**
+ * What a side shows once the browser has REFUSED the bytes we handed it.
+ *
+ * `image.rs` sniffs a header, not a whole file, so a truncated or corrupt blob
+ * with an intact magic number still comes back `kind: "image"`. Without this
+ * the panel rendered a broken `<img>` glyph and said nothing, which is the one
+ * outcome this module's own doc rules out (#212).
+ */
+const UNDECODABLE = {
+  icon: "warn",
+  text: "This image could not be decoded. The file may be truncated or corrupt.",
+} as const;
+
 function ImagePanel({
   side,
   preview,
   dims,
   onDims,
+  failed,
+  onFail,
 }: {
   side: ImageSide;
   preview: ImagePreview | null;
   dims: ImageDims | null;
   onDims: (key: string, d: ImageDims) => void;
+  failed: boolean;
+  onFail: (key: string) => void;
 }) {
-  const note = noteFor(preview);
+  // A side that failed to decode keeps its size caption (the byte count is
+  // still true) and trades the picture for a sentence.
+  const note = failed ? UNDECODABLE : noteFor(preview);
   return (
     <div
       data-testid={`image-panel-${side.key}`}
@@ -146,7 +165,7 @@ function ImagePanel({
           justifyContent: "center",
         }}
       >
-        {preview?.kind === "image" ? (
+        {preview?.kind === "image" && !failed ? (
           <img
             data-testid={`image-preview-${side.key}`}
             // A `data:` URL over bytes the backend already read. Local, always:
@@ -159,6 +178,7 @@ function ImagePanel({
                 h: e.currentTarget.naturalHeight,
               })
             }
+            onError={() => onFail(side.key)}
             // The box only ever SHRINKS an image (`max-*`, never a width), so
             // a 16×16 favicon renders at 16×16 and a screenshot is scaled down.
             // Deliberately no `image-rendering: pixelated`: it would only ever
@@ -221,6 +241,10 @@ export function ImageDiffView({ repoId, path, sides, fallback = null }: ImageDif
   const enabled = !!repoId && !!path;
   const { previews, loading } = useImagePreviews({ repoId, path, sides, enabled });
   const [dims, setDims] = React.useState<Record<string, ImageDims>>({});
+  // Sides whose bytes the browser refused to decode. Keyed the same way as
+  // `dims`, and cleared by the same effect, because both describe the blobs
+  // currently loaded rather than the file.
+  const [failed, setFailed] = React.useState<Record<string, boolean>>({});
   const onDims = React.useCallback(
     (key: string, d: ImageDims) =>
       setDims((prev) =>
@@ -228,10 +252,17 @@ export function ImageDiffView({ repoId, path, sides, fallback = null }: ImageDif
       ),
     [],
   );
+  const onFail = React.useCallback(
+    (key: string) => setFailed((prev) => (prev[key] ? prev : { ...prev, [key]: true })),
+    [],
+  );
   // Measured dimensions belong to the blobs currently loaded; a new selection
   // must not caption its image with the previous one's size.
   const previewKey = previews.map((p) => (p?.kind === "image" ? p.data.length : 0)).join(",");
-  React.useEffect(() => setDims({}), [path, previewKey]);
+  React.useEffect(() => {
+    setDims({});
+    setFailed({});
+  }, [path, previewKey]);
 
   if (loading) {
     return (
@@ -278,6 +309,8 @@ export function ImageDiffView({ repoId, path, sides, fallback = null }: ImageDif
             preview={previews[i] ?? null}
             dims={dims[side.key] ?? null}
             onDims={onDims}
+            failed={!!failed[side.key]}
+            onFail={onFail}
           />
         ))}
       </div>
