@@ -1,32 +1,25 @@
 // The status bar's "something is running" line (#296).
 //
 // One component rather than markup inlined in `AppStatusBar`, because it is the
-// only place in the app that answers all four of the questions a waiting user
-// has — what is running, how far along, how long it has been, and can I stop it
-// — and those answers should not drift apart across surfaces.
+// only place in the STATUS BAR that answers all four of the questions a waiting
+// user has — what is running, how far along, how long it has been, and can I
+// stop it. Those answers must not drift apart across surfaces, and since #431
+// there are two surfaces: the history view carries a strip of its own. So the
+// answers themselves are decided once, in `activityView.ts`, and this file is
+// only the status bar's layout of them.
 //
 // Its own file also keeps the 1 Hz elapsed-time re-render inside a leaf: the
 // whole status bar would otherwise re-render every second while any op is live.
 
 import { PGStatusItem } from "@/design";
+import { ELAPSED_AFTER_MS, useActivityView } from "./activityView";
 import { formatElapsed, useElapsed } from "./elapsed";
-import {
-  activityCount,
-  isCancellable,
-  primaryActivity,
-  type ActivityState,
-} from "./repoActivity";
-import { useRepoStore } from "./useRepoStore";
+import type { ActivityState } from "./repoActivity";
 
-/**
- * How long an operation must run before its elapsed time appears.
- *
- * Every fetch shows a number for a moment otherwise, which is noise: the reason
- * to show elapsed time at all is "this is taking longer than I expected", and
- * nothing under a few seconds is. It also keeps the 1 Hz re-render off the
- * common case, where the op is over before the first tick.
- */
-export const ELAPSED_AFTER_MS = 3000;
+// Where the threshold lives moved to `activityView.ts` when the strip started
+// sharing it; it is still importable from here, which is where every caller
+// looked for it first.
+export { ELAPSED_AFTER_MS };
 
 /** The determinate bar, shown only once git has reported a real percentage. */
 function ProgressBar({ percent }: { percent: number }) {
@@ -81,42 +74,30 @@ function ActivityLine({ state }: { state: ActivityState }) {
 }
 
 export function ActivityStatus() {
-  const activity = useRepoStore((s) => s.activity);
-  const cancelRequested = useRepoStore((s) => s.cancelRequested);
-  const primary = primaryActivity(activity);
-  if (!primary) return null;
+  const view = useActivityView();
+  if (!view) return null;
 
   // More than one op at a time stopped being hypothetical once LFS, submodule
   // and forge checkouts joined `activity` (#296). Naming the count beats
   // silently hiding the others behind whichever one sorts first.
-  const others = activityCount(activity) - 1;
+  const { state, others, cancellable, cancelRequested, cancel } = view;
 
   return (
     <>
       <PGStatusItem
         icon="sync"
         tone="accent"
-        label={
-          <ActivityLine
-            state={
-              // Once Cancel has been clicked the transfer is being torn down,
-              // so the label says that and the bar goes (#263). A percentage
-              // still climbing after the click is the clearest possible way to
-              // tell the user their click did nothing — which is what makes
-              // them click again, and the second click is SIGKILL.
-              cancelRequested
-                ? { ...primary.state, label: "Cancelling…", percent: undefined }
-                : primary.state
-            }
-          />
-        }
+        // `state` is already the state to render, not the state the store
+        // holds: the "Cancelling…" override lives in `useActivityView` so the
+        // history strip cannot disagree with this line about it.
+        label={<ActivityLine state={state} />}
       />
       {others > 0 && (
         <PGStatusItem
           label={`+${others} more`}
         />
       )}
-      {isCancellable(primary.key) && (
+      {cancellable && (
         /*
           The way out of a stalled fetch, pull or push (#234), and the only one
           the toolbar's spinning buttons do not offer. It sits beside the label
@@ -147,7 +128,7 @@ export function ActivityStatus() {
           icon="x"
           label={cancelRequested ? "Force stop" : "Cancel"}
           tone="danger"
-          onClick={() => void useRepoStore.getState().cancelNetworkOps()}
+          onClick={cancel}
         />
       )}
     </>
