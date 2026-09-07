@@ -706,8 +706,12 @@ export const jsContextMenu = (selector: string, opts?: { text?: string }) =>
  *  present synchronously. Locally the next driver round-trip is slower than
  *  those commits; under xvfb CI load it occasionally isn't, and a single-shot
  *  lookup throws "menu item not found" (seen with the History reset submenu).
- *  Bare execute is fine — the poll has no side effects. */
-async function waitForMenuItem(label: string): Promise<void> {
+ *  Bare execute is fine — the poll has no side effects.
+ *
+ *  Exported because "the menu opened" is a signal a spec sometimes needs on its
+ *  own: the branch picker answers a row press by opening this menu instead of
+ *  checking out, so the menu's arrival is what proves the press was handled. */
+export async function waitForMenuItem(label: string): Promise<void> {
   await browser.waitUntil(
     () =>
       browser.execute(

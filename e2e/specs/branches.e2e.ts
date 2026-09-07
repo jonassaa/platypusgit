@@ -6,6 +6,7 @@ import {
   openRepo,
   resetApp,
   switchScreen,
+  waitForMenuItem,
 } from "../support/app";
 
 describe("branches", () => {
@@ -44,7 +45,7 @@ describe("branches", () => {
     );
     expect(repo.git("branch", "--show-current").trim()).toBe("e2e-branch");
 
-    // checkout main again via picker row
+    // checkout main again via picker row — TWO presses, deliberately.
     // `data-branch-row` is a bare boolean attribute (no `${kind}:${name}`
     // value), so select the row by scoped text match instead of an exact
     // attribute-value selector.
@@ -54,7 +55,18 @@ describe("branches", () => {
       timeout: 10_000,
       timeoutMsg: "main branch row never appeared in picker",
     });
+
+    // A press on the row OPENS ITS ACTIONS MENU; it does not check out. The
+    // menu arriving is what proves the press was handled, and it is the whole
+    // guard: under the old one-click behaviour this press started a checkout
+    // and closed the picker, taking the menu with it, so this wait would time
+    // out rather than the branch quietly switching underneath.
     await mainRow.click();
+    await waitForMenuItem("Check out");
+    expect(repo.git("branch", "--show-current").trim()).toBe("e2e-branch");
+
+    // ...and the menu's first entry is what actually switches.
+    await jsClickMenuItem("Check out");
     await browser.waitUntil(
       async () => (await chip.getText()).includes("main"),
       { timeout: 20_000, timeoutMsg: "chip did not update back to main" },

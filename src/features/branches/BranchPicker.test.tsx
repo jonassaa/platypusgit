@@ -2,8 +2,8 @@
 //
 // The comparator itself is tested in orderBranches.test.ts; this pins that the
 // picker actually calls it, that it calls it AFTER filtering, and where the
-// keyboard cursor starts — Enter checks out the active row, so that position is
-// a correctness question, not a cosmetic one.
+// keyboard cursor starts — Enter opens the active row's actions menu, so that
+// position is a correctness question, not a cosmetic one.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -97,8 +97,9 @@ describe("BranchPicker ordering", () => {
 
 describe("BranchPicker resting cursor", () => {
   it("rests on the current branch with an empty query", () => {
-    // Enter on the HEAD row is a no-op (`checkout` early-returns), so this is
-    // the only starting position where the stray keystroke checks nothing out.
+    // The HEAD row's menu is the harmless one: Check out is already disabled
+    // there, so this is the only starting position where a stray Enter offers
+    // nothing that moves the working tree.
     setup([
       branch({ name: "main", tipTime: 100, isDefault: true }),
       branch({ name: "feature/fresh", tipTime: 900, isHead: true }),

@@ -1049,6 +1049,23 @@ that is only partly here — which is the whole reason the notice exists.
   the actions menu) and branch rows keep `data-branch-row` plus a
   `data-branch-name` with the FULL name, since a row's label is only the
   segments it owns.
+- **A press on a branch row OPENS ITS MENU — the picker checks nothing out
+  itself.** Click, Enter and → all land on the same actions menu, so no single
+  press in the popover can move the working tree; "Check out" is that menu's
+  first entry, disabled on the current branch. Until this, `onClick` called
+  `checkoutBranch` directly, and one misfire in a list of near-identical names
+  switched branches — while the current branch's row answered a click with
+  nothing at all. This is the split the Branches screen already had (a row
+  click selects, the menu acts); the picker was the last surface without it,
+  and `checkout()` is gone from it entirely.
+- **Choosing a menu entry dismisses the picker; dismissing the MENU does not.**
+  `PGContextMenu` fires one `onClose` for both, so the picker cannot hang its
+  own dismissal off it — `withPickerDismiss` wraps each built item's `onClick`
+  instead (recursing into submenus, passing dividers and `__menuTitle`
+  through). Without it every switch would leave a stale branch list over the
+  app; with the menu's own callback instead, backing out of a menu would close
+  the popover under the user. `BranchPicker.menuClick.test.tsx` pins both
+  halves.
 - **Acting on a row claims the picker's cursor.** Enter, → and ← all change the
   row set — a fold adds or removes rows — and the resting rule would otherwise
   re-park the cursor on HEAD the instant a folder opens, yanking it out from
