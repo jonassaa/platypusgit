@@ -14,20 +14,9 @@
 import React from "react";
 
 import { PGIcon, PGStatusItem } from "@/design";
-import { formatElapsed, useDelayedFlag, useElapsed } from "./elapsed";
+import { formatElapsed, SHOW_AFTER_MS, useDelayedFlag, useElapsed } from "./elapsed";
 import { byAge, loadingSummary, type LoadingTask } from "./loadingTasks";
 import { useRepoStore } from "./useRepoStore";
-
-/**
- * How long a refresh must run before it is worth mentioning.
- *
- * The flicker floor, and the reason this is tolerable in a status bar at all: a
- * refresh runs on every tab switch, every commit and after every network op,
- * and almost always finishes inside 100 ms. Without the delay the corner of the
- * screen would strobe all day. What survives the delay is the refresh that did
- * not finish quickly — the only one anybody wants to read about.
- */
-export const SHOW_AFTER_MS = 400;
 
 /** One row of the expanded panel: what it is, and how long it has been. */
 function TaskRow({ task }: { task: LoadingTask }) {

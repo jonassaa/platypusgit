@@ -36,6 +36,19 @@ export function useElapsed(startedAt: number | null): number | null {
 }
 
 /**
+ * How long a refresh must run before an indicator nobody asked for is worth
+ * showing.
+ *
+ * The flicker floor. A refresh runs on every tab switch, every commit and after
+ * every network op, and almost always finishes inside 100 ms. What survives the
+ * delay is the refresh that did NOT finish quickly — the only one anybody wants
+ * to read about. Shared by the status-bar popover (`LoadingStatus`) and the
+ * titlebar Refresh button (`refreshSpinner`) so the two agree on what "slow"
+ * means.
+ */
+export const SHOW_AFTER_MS = 400;
+
+/**
  * `active`, but only after it has been continuously true for `delayMs`.
  *
  * The flicker floor. A refresh is ten backend reads that usually finish inside

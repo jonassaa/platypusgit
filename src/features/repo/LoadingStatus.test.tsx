@@ -10,7 +10,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
-import { LoadingStatus, SHOW_AFTER_MS } from "./LoadingStatus";
+import { LoadingStatus } from "./LoadingStatus";
+import { SHOW_AFTER_MS } from "./elapsed";
 import { useRepoStore } from "./useRepoStore";
 import { emptySlice } from "./repoSlice";
 import type { LoadingTask } from "./loadingTasks";
