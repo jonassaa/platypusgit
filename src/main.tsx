@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { attachConsole } from "@tauri-apps/plugin-log";
 import App from "./App";
 import { PGErrorBoundary } from "./design/error-boundary";
+import { fileBugReport } from "./features/report/fileReport";
 import { MergeWindow } from "./features/merge/MergeWindow";
 import { RevealOnFirstPaint } from "./lib/revealWindow";
 import { startSystemAppearanceWatch } from "./features/settings/useSettingsStore";
@@ -36,7 +37,20 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <RevealOnFirstPaint />
     {/* Outermost, so a throw anywhere still leaves a window that says what
         happened instead of an empty one. */}
-    <PGErrorBoundary>
+    <PGErrorBoundary
+      // The one report entry point that cannot go through the dialog: the
+      // dialog and PGDialogHost are both mounted by AppShell, BELOW this, and
+      // a render throw has already unmounted them. fileBugReport needs no
+      // React tree — it gathers, copies and opens on its own.
+      onReport={(err) => {
+        // Fire and forget: the boundary has nowhere to render a failure, and
+        // fileBugReport already degrades an unreadable log to an
+        // environment-only report rather than throwing.
+        void fileBugReport(`Render error: ${err.message}`).catch((e) =>
+          console.error("could not file a bug report", e),
+        );
+      }}
+    >
       {isMergeWindow ? <MergeWindow /> : <App />}
     </PGErrorBoundary>
   </React.StrictMode>,

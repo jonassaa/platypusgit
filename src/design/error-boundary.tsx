@@ -19,6 +19,23 @@ interface Props {
   children: React.ReactNode;
   /** Overrides the reload action — the merge window closes instead. */
   onReload?: () => void;
+  /**
+   * Files a bug report for the throw (`features/report`). Optional, and a
+   * CALLBACK rather than work done here, for two independent reasons:
+   *
+   *   - Nothing in `src/design/` performs IPC, and this is not the place to
+   *     start: a design-system component that reaches for `@/lib/tauri` cannot
+   *     be rendered in a test without a bridge.
+   *   - This boundary cannot use the report DIALOG under any circumstances.
+   *     `PGDialogHost` and `ReportIssueDialog` are both mounted by `AppShell`,
+   *     which is mounted inside this boundary (`main.tsx`), so by the time
+   *     this fallback renders React has unmounted them. Calling `openReport()`
+   *     from here would set a flag nobody reads.
+   *
+   * `main.tsx` wires it to `features/report/fileReport.ts::fileBugReport`,
+   * which gathers, copies and opens in one call with no React tree involved.
+   */
+  onReport?: (error: Error) => void;
 }
 
 interface State {
@@ -88,23 +105,42 @@ export class PGErrorBoundary extends React.Component<Props, State> {
         >
           {error.message}
         </pre>
-        <button
-          onClick={() => {
-            if (this.props.onReload) this.props.onReload();
-            else window.location.reload();
-          }}
-          style={{
-            background: "var(--accent)",
-            color: "var(--bg-0)",
-            border: "none",
-            borderRadius: 4,
-            padding: "6px 14px",
-            cursor: "pointer",
-            fontSize: "var(--fs-12)",
-          }}
-        >
-          Reload
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {this.props.onReport && (
+            <button
+              data-testid="boundary-report"
+              onClick={() => this.props.onReport?.(error)}
+              style={{
+                background: "var(--bg-2)",
+                color: "var(--fg-0)",
+                border: "1px solid var(--border-1)",
+                borderRadius: 4,
+                padding: "6px 14px",
+                cursor: "pointer",
+                fontSize: "var(--fs-12)",
+              }}
+            >
+              Report this bug
+            </button>
+          )}
+          <button
+            onClick={() => {
+              if (this.props.onReload) this.props.onReload();
+              else window.location.reload();
+            }}
+            style={{
+              background: "var(--accent)",
+              color: "var(--bg-0)",
+              border: "none",
+              borderRadius: 4,
+              padding: "6px 14px",
+              cursor: "pointer",
+              fontSize: "var(--fs-12)",
+            }}
+          >
+            Reload
+          </button>
+        </div>
       </div>
     );
   }
