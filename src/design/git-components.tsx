@@ -1941,12 +1941,17 @@ export function PGCommitDetail({
           {author}
           {email && <span style={{ color: "var(--fg-3)" }}>&lt;{email}&gt;</span>}
         </span>
-        <span data-testid="commit-detail-date" title={dateTitle}>
-          <PGIcon
-            name="clock"
-            size={10}
-            style={{ verticalAlign: "middle", marginRight: 3 }}
-          />
+        {/* A flex row, not inline flow with `vertical-align` on the glyph:
+            Tailwind's Preflight blockifies replaced elements (`svg { display:
+            block }`), so an icon beside text in inline flow takes a line of its
+            own and the clock rendered ABOVE the stamp. Same shape as the author
+            cell above — one pattern for the whole row. */}
+        <span
+          data-testid="commit-detail-date"
+          title={dateTitle}
+          style={{ display: "flex", alignItems: "center", gap: 4 }}
+        >
+          <PGIcon name="clock" size={10} />
           {date}
         </span>
         {parents.length > 0 && (
