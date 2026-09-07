@@ -17,7 +17,6 @@ import React from "react";
 
 import { PGButton, PGCheckbox, PGModal, pgFlash } from "@/design";
 import { appErrorMessage } from "@/lib/errors";
-import { useAction } from "@/features/keymap/useAction";
 
 import { buildReport } from "./report";
 import {
@@ -39,17 +38,12 @@ export function ReportIssueDialog() {
   const [sources, setSources] = React.useState<ReportSources | null>(null);
   const [busy, setBusy] = React.useState(false);
 
-  // Escape goes through the keymap so it stays in the cheat sheet and honours
-  // rebinding — never a local capture-phase listener (issue #47's rule).
-  useAction(
-    "app.closeOverlay",
-    () => {
-      if (!open) return false;
-      close();
-      return true;
-    },
-    [open, close],
-  );
+  // Escape is NOT handled here. It arrives through the keymap's
+  // `app.closeOverlay` DEFAULT RUNNER (`features/keymap/actions.ts`), which is
+  // an ordered chain over the overlay stores — a `useAction` registration from
+  // this component would run BEFORE that runner and so take Escape ahead of
+  // the credential prompt stacked above it. Never a local capture-phase
+  // listener either (issue #47's rule).
 
   // A fresh open is a fresh report: whatever the entry point knows goes in the
   // box, last time's text does not linger, and the diagnostics are re-read

@@ -12,6 +12,7 @@
 import { useAuthStore } from "@/features/auth/useAuthStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useCreateTagStore } from "@/features/tags/useCreateTagStore";
+import { useReportStore } from "@/features/report/useReportStore";
 import { useForgeStore } from "@/features/forge/useForgeStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
@@ -333,6 +334,17 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
       // Same stacking layer (PGModal), same rule (#132).
       if (useCreateTagStore.getState().target) {
         useCreateTagStore.getState().close();
+        return true;
+      }
+      // Same again, for the report dialog (features/report). It belongs in
+      // THIS chain rather than registering its own `app.closeOverlay` handler
+      // from the component: a registered handler runs BEFORE this default
+      // runner (see useKeymapStore's dispatch), so it would take Escape ahead
+      // of the credential prompt above — closing the report dialog out from
+      // under a prompt some other op is still waiting on, which is the exact
+      // failure the auth branch above is ordered to prevent.
+      if (useReportStore.getState().open) {
+        useReportStore.getState().closeReport();
         return true;
       }
       if (useUpdateStore.getState().panelOpen) {
