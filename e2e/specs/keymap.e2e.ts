@@ -77,7 +77,11 @@ describe("keymap — rider preset (default)", () => {
       // this step to follow ⌘9.
       { chord: "Mod+D", marker: '[data-pg-pane="diff.files"]', label: "Diff (⌘D)" },
       { chord: "Mod+Shift+9", marker: '[data-pg-pane="reflog.list"]', label: "Reflog (⌘⇧9)" },
-      { chord: "Mod+,", marker: "div*=Choose a keymap preset", label: "Settings (⌘,)" },
+      // The side menu, not a card's text: Settings renders ONE page at a time,
+      // so no individual setting is guaranteed on screen when it opens. `[role=
+      // "tree"]` is unique to SettingsNav in shipped src/, and it is what
+      // `openSettings()` waits on too.
+      { chord: "Mod+,", marker: '[role="tree"]', label: "Settings (⌘,)" },
       { chord: "Mod+1", marker: '[data-pg-pane="repo.tree"]', label: "Files (⌘1)" },
     ];
     for (const step of walk) {
@@ -523,7 +527,15 @@ describe("keymap — rider preset (default)", () => {
     repo = dirtyRepo();
     await openRepo(repo.path);
     await jsChord("Mod+,");
-    await waitScreen("div*=Choose a keymap preset", "Settings");
+    await waitScreen('[role="tree"]', "Settings");
+    // The keymap select lives on the Keyboard & actions page, and Settings no
+    // longer renders every card at once — so navigate there rather than
+    // assuming the control is on whichever page was remembered.
+    await $('[data-testid="settings-nav-general.keyboard"]').click();
+    await waitScreen(
+      '[data-settings-page="general.keyboard"]',
+      "Keyboard & actions",
+    );
     await jsPickOption('[data-testid="keymap-preset-select"]', "platypusgit");
     const persisted = await browser.execute(() =>
       localStorage.getItem("pg-keymap-preset"),
