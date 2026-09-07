@@ -588,7 +588,11 @@ features/            Components + Zustand store colocated per feature:
 │                    pg-open-repos persistence), useTabsStore (open set +
 │                    activate/close/cycle + session restore), RepoTabs,
 │                    useRecentsStore, ops (shared runners), OperationBar
-│                    (repoState-driven bar), ownership (safe.directory confirm)
+│                    (repoState-driven bar), ownership (safe.directory confirm),
+│                    refreshSpinner (whether the titlebar's Refresh button
+│                    spins — s.loading strobes, so a refresh the USER asked
+│                    for is held visible and one nobody asked for waits out
+│                    the flicker floor; refreshOp is what marks the request)
 ├── actions/         User-defined commands (#225): customActions (the list, its
 │                    validation, and how a result is reported — a FAILURE is
 │                    always shown whatever the setting says, because an action
