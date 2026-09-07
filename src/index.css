@@ -286,9 +286,31 @@ kbd {
   100% { transform: scale(2); opacity: 0; }
 }
 
+/* The sweep never leaves the track entirely. The fill is 35% wide, so
+   translateX(-100%) parks it completely off the left edge and translateX(400%)
+   completely off the right — which left a visibly EMPTY bar for a chunk of
+   every cycle. On an indeterminate bar that dead frame reads as "finished" or
+   "stalled", and it is the shape a checkout and a rebase replay get, because
+   they have no percentage to report. -90%/280% keeps a sliver on the track at
+   both extremes, so the bar always says "working". */
 @keyframes pg-indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
+  0% { transform: translateX(-90%); }
+  100% { transform: translateX(280%); }
+}
+/* `PGProgressBar`'s indeterminate fill. Width lives here with the motion so
+   that reduced motion can replace both at once: stopping the slide on a
+   35%-wide sliver leaves something that reads as "35% done", and an
+   indeterminate bar's whole job is to report progress WITHOUT a position. */
+.pg-progress-indeterminate {
+  width: 35%;
+  animation: pg-indeterminate 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pg-progress-indeterminate {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
 }
 
 @keyframes pg-fade-in {

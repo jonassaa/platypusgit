@@ -1608,15 +1608,21 @@ export function PGProgressBar({
       }}
     >
       <div
+        // The indeterminate fill's width and motion are BOTH the class's, so
+        // that `prefers-reduced-motion` can replace them together: a 35 %-wide
+        // sliver that has simply stopped moving reads as "35 % done", which is
+        // a position this bar exists to avoid implying.
+        className={indeterminate ? "pg-progress-indeterminate" : undefined}
         style={{
           height: "100%",
           background: tones[tone],
-          width: indeterminate ? "35%" : `${(value / max) * 100}%`,
           borderRadius: height / 2,
-          animation: indeterminate
-            ? "pg-indeterminate 1.4s ease-in-out infinite"
-            : undefined,
-          transition: "width var(--t-med)",
+          ...(indeterminate
+            ? null
+            : {
+                width: `${(value / max) * 100}%`,
+                transition: "width var(--t-med)",
+              }),
         }}
       />
     </div>
