@@ -22,7 +22,7 @@
 // `ResizeObserver` (WebKitGTK has none) and nothing to scroll by offset.
 
 import React from "react";
-import { PGEmpty, PGIcon, PGSkeleton } from "@/design";
+import { PGEmpty, PGIcon, PGSkeleton, type IconName } from "@/design";
 import { formatBytes } from "@/lib/bytes";
 import {
   describeDelta,
@@ -59,8 +59,19 @@ const toneColor = (tone: ImageSide["tone"]) =>
       ? "var(--git-added)"
       : "var(--fg-2)";
 
+/**
+ * One panel's sentence and the glyph beside it.
+ *
+ * `icon` is `IconName`, NOT `string`: `PGIconProps.name` widens to
+ * `IconName | string` so a typo type-checks into a dashed square, and
+ * `test/iconSet.test.ts` only scans `name="…"`/`icon="…"` ATTRIBUTES — an icon
+ * named in an object literal like these escapes both gates unless it is typed
+ * here.
+ */
+type PanelNote = { icon: IconName; text: string };
+
 /** The sentence a non-image side gets inside a panel. */
-function noteFor(p: ImagePreview | null): { icon: string; text: string } | null {
+function noteFor(p: ImagePreview | null): PanelNote | null {
   if (!p) return null;
   switch (p.kind) {
     case "image":
@@ -77,30 +88,56 @@ function noteFor(p: ImagePreview | null): { icon: string; text: string } | null 
         // rendering THAT would put text where an image belongs.
         text: `LFS object not fetched — ${formatBytes(p.size)}. Run “LFS fetch” to preview it.`,
       };
-    case "unsupported":
-      return p.reason === "svg"
-        ? {
+    case "unsupported": {
+      switch (p.reason) {
+        case "svg":
+          return {
             icon: "warn",
             // Refusing SVG is a decision, not a gap — see git/image.rs. Saying
             // nothing here would read as a bug.
             text: "SVG previews are disabled — an SVG can carry script and remote references.",
-          }
-        : { icon: "file", text: "Not an image we can preview." };
+          };
+        case "truncated":
+          return {
+            icon: "warn",
+            // The backend proved this from the file's own structure, so the
+            // sentence can name the cause. A webview could not: it decodes the
+            // prefix, fires `load` and paints part of a picture (see
+            // `git/image.rs::integrity`).
+            text: `Truncated image — ${formatBytes(p.size)} present, and the file ends mid-way through its image data.`,
+          };
+        case "notAnImage":
+          return { icon: "file", text: "Not an image we can preview." };
+      }
+      // A new reason must get its own sentence here: showing nothing and
+      // saying nothing is the one outcome this surface is written against.
+      const unreachedReason: never = p.reason;
+      return unreachedReason;
+    }
   }
 }
 
 /**
- * What a side shows once the browser has REFUSED the bytes we handed it.
+ * What a side shows once THIS ENGINE has refused bytes the backend vouched for.
  *
- * `image.rs` sniffs a header, not a whole file, so a truncated or corrupt blob
- * with an intact magic number still comes back `kind: "image"`. Without this
- * the panel rendered a broken `<img>` glyph and said nothing, which is the one
- * outcome this module's own doc rules out (#212).
+ * Narrow on purpose, and narrower than it looks. `onError` does NOT fire for a
+ * truncated or damaged file: measured in Blink 152, a PNG cut to 60% and one
+ * with an overwritten IDAT both fire `load`, report the intact header's
+ * dimensions and paint a partial or blank picture. Those are refused in the
+ * backend instead (`UnsupportedReason::Truncated`) and never get here. What is
+ * left for `onError` is the one thing only the engine knows: a structurally
+ * complete file this webview will not display — an exotic BMP or ICO variant,
+ * an animated WebP feature.
+ *
+ * So the sentence names no cause. The app runs on WKWebView, WebView2 and
+ * WebKitGTK, whose format coverage differs, and telling someone their asset is
+ * corrupt when it opens fine on a colleague's machine is the same dishonesty
+ * `git/image.rs`'s doc is written against (#212).
  */
 const UNDECODABLE = {
   icon: "warn",
-  text: "This image could not be decoded. The file may be truncated or corrupt.",
-} as const;
+  text: "This image could not be displayed — its format is not supported here.",
+} as const satisfies PanelNote;
 
 function ImagePanel({
   side,
@@ -113,12 +150,15 @@ function ImagePanel({
   side: ImageSide;
   preview: ImagePreview | null;
   dims: ImageDims | null;
-  onDims: (key: string, d: ImageDims) => void;
+  onDims: (key: string, data: string, d: ImageDims) => void;
   failed: boolean;
-  onFail: (key: string) => void;
+  onFail: (key: string, data: string) => void;
 }) {
-  // A side that failed to decode keeps its size caption (the byte count is
-  // still true) and trades the picture for a sentence.
+  // A side that failed to decode keeps its size caption (the byte count came
+  // from the backend, not from the decoder) and trades the picture for a
+  // sentence. `failed` is only ever true for an image preview — the parent
+  // derives it from the bytes this panel is rendering — so it cannot shadow
+  // the more specific sentence a `tooLarge` or `lfsMissing` side has earned.
   const note = failed ? UNDECODABLE : noteFor(preview);
   return (
     <div
@@ -173,12 +213,12 @@ function ImagePanel({
             src={previewDataUrl(preview)}
             alt={`${side.label} version of ${preview.path}`}
             onLoad={(e) =>
-              onDims(side.key, {
+              onDims(side.key, preview.data, {
                 w: e.currentTarget.naturalWidth,
                 h: e.currentTarget.naturalHeight,
               })
             }
-            onError={() => onFail(side.key)}
+            onError={() => onFail(side.key, preview.data)}
             // The box only ever SHRINKS an image (`max-*`, never a width), so
             // a 16×16 favicon renders at 16×16 and a screenshot is scaled down.
             // Deliberately no `image-rendering: pixelated`: it would only ever
@@ -240,30 +280,41 @@ export function ImageDiffView({ repoId, path, sides, fallback = null }: ImageDif
   // not selected": no path, no read.
   const enabled = !!repoId && !!path;
   const { previews, loading } = useImagePreviews({ repoId, path, sides, enabled });
-  const [dims, setDims] = React.useState<Record<string, ImageDims>>({});
-  // Sides whose bytes the browser refused to decode. Keyed the same way as
-  // `dims`, and cleared by the same effect, because both describe the blobs
-  // currently loaded rather than the file.
-  const [failed, setFailed] = React.useState<Record<string, boolean>>({});
+  // Both of these describe BYTES, not a file, so both record which bytes they
+  // came from and are read back by comparison rather than cleared by an effect.
+  //
+  // A reset effect is what this used to be, keyed on `[path, previewKey]`. That
+  // key was narrower than the one `useImagePreviews` reads on: it ignores
+  // `repoId` and each side's `source`, and stands in `data.length` for the
+  // data. So the same path at a different revision, at an equal byte length,
+  // kept the previous blob's state — a caption for the wrong image, or a
+  // failure notice printed over a good one. Deriving instead also settles two
+  // things a reset could not: it never races the browser's `error` task
+  // against a passive effect, and one side's new bytes cannot clear the other
+  // side's live failure.
+  const [dims, setDims] = React.useState<Record<string, { data: string; d: ImageDims }>>({});
+  const [failedData, setFailedData] = React.useState<Record<string, string>>({});
   const onDims = React.useCallback(
-    (key: string, d: ImageDims) =>
-      setDims((prev) =>
-        prev[key]?.w === d.w && prev[key]?.h === d.h ? prev : { ...prev, [key]: d },
-      ),
+    (key: string, data: string, d: ImageDims) =>
+      setDims((prev) => {
+        const at = prev[key];
+        return at?.data === data && at.d.w === d.w && at.d.h === d.h
+          ? prev
+          : { ...prev, [key]: { data, d } };
+      }),
     [],
   );
   const onFail = React.useCallback(
-    (key: string) => setFailed((prev) => (prev[key] ? prev : { ...prev, [key]: true })),
+    (key: string, data: string) =>
+      setFailedData((prev) => (prev[key] === data ? prev : { ...prev, [key]: data })),
     [],
   );
-  // Measured dimensions belong to the blobs currently loaded; a new selection
-  // must not caption its image with the previous one's size.
-  const previewKey = previews.map((p) => (p?.kind === "image" ? p.data.length : 0)).join(",");
-  React.useEffect(() => {
-    setDims({});
-    setFailed({});
-  }, [path, previewKey]);
-
+  /** The measurement for a side, only if it was taken from these exact bytes. */
+  const dimsFor = (key: string, p: ImagePreview | null): ImageDims | null =>
+    p?.kind === "image" && dims[key]?.data === p.data ? dims[key].d : null;
+  /** Did THESE bytes fail? A non-image side can never be in this state. */
+  const failedFor = (key: string, p: ImagePreview | null): boolean =>
+    p?.kind === "image" && failedData[key] === p.data;
   if (loading) {
     return (
       <div data-testid="image-diff-loading" style={{ padding: 12 }} aria-busy="true">
@@ -275,10 +326,10 @@ export function ImageDiffView({ repoId, path, sides, fallback = null }: ImageDif
 
   const delta = describeDelta(
     previews[0]?.kind === "image"
-      ? { size: previews[0].size, dims: dims[sides[0].key] }
+      ? { size: previews[0].size, dims: dimsFor(sides[0].key, previews[0]) }
       : null,
     previews[1]?.kind === "image"
-      ? { size: previews[1].size, dims: dims[sides[1].key] }
+      ? { size: previews[1].size, dims: dimsFor(sides[1].key, previews[1]) }
       : null,
   );
   // "Added" / "Removed" only when there genuinely are two sides and one of them
@@ -307,9 +358,9 @@ export function ImageDiffView({ repoId, path, sides, fallback = null }: ImageDif
             key={side.key}
             side={side}
             preview={previews[i] ?? null}
-            dims={dims[side.key] ?? null}
+            dims={dimsFor(side.key, previews[i] ?? null)}
             onDims={onDims}
-            failed={!!failed[side.key]}
+            failed={failedFor(side.key, previews[i] ?? null)}
             onFail={onFail}
           />
         ))}

@@ -480,6 +480,27 @@ escape hatch from becoming the uncapped path #385 removed.
   `\x89PNG` is `NotAnImage`, `BM` needs its reserved field zero, an ICONDIR
   needs a non-zero image count. A repository is untrusted input, and a broken
   `<img>` is worse than a sentence.
+- **A sniff is not a validation — `integrity` is, and it has to live here.** The
+  header of a file whose data was cut off is intact, so `sniff` answers `Image`
+  for an aborted download, a bad merge or a half-written `git lfs smudge`. **A
+  webview does not report that as an error.** Measured in Blink 152: a PNG cut
+  to 60% of its length, and one whose IDAT was overwritten at the same total
+  length, both fire `load`, both report `naturalWidth/Height` from the intact
+  header, and one paints 60% of the picture while the other paints nothing —
+  `error` fires only when there is no decodable header at all. So no frontend
+  signal can catch this class, and `git/image.rs::integrity` — which holds the
+  WHOLE blob, the only place that does — refuses it as
+  `UnsupportedReason::Truncated` before it can reach an `<img>`.
+  **It reports only what the bytes PROVE**, because a false "truncated" hides an
+  image that would have displayed: PNG's chunk chain must reach a whole `IEND`;
+  a JPEG with no `FF D9` anywhere is proven short (that marker cannot occur in
+  stuffed scan data — though its presence proves nothing, since an EXIF
+  thumbnail carries one, so a photo cut after its thumbnail reads as complete);
+  WebP, BMP and ICO each declare their own length. CRCs are NOT verified
+  (decoders in the wild ignore them) and **GIF is deliberately not checked at
+  all** — one unframed `0x3B` trailer byte cannot prove anything. All of it is
+  pinned in `image.rs`'s tests, including a sweep that cuts a real encoder's PNG
+  at every offset and asserts each one still sniffs as an image.
 - **SVG is recognised and REFUSED**, as its own `UnsupportedReason::Svg` so the
   UI can say so rather than looking broken. It is the one format on the list
   that is not inert (script, `<foreignObject>`, external `href`/`url()`,

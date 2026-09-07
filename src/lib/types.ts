@@ -452,8 +452,12 @@ export type ImagePreview =
       kind: "unsupported";
       path: string;
       size: number;
-      /** `svg` is a deliberate refusal, not a gap — see `git/image.rs`. */
-      reason: "notAnImage" | "svg";
+      /**
+       * `svg` is a deliberate refusal, not a gap, and `truncated` is a blob
+       * whose header sniffed as an image but whose data ends early — a webview
+       * would paint part of it and report no error. See `git/image.rs`.
+       */
+      reason: "notAnImage" | "svg" | "truncated";
     }
   /** An LFS pointer whose object has not been fetched into `.git/lfs`. */
   | { kind: "lfsMissing"; path: string; oid: string; size: number };

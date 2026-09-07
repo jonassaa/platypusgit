@@ -204,6 +204,124 @@ fn svg_root(text: &str) -> bool {
     after.is_empty() || after.starts_with(|c: char| c.is_whitespace() || c == '>' || c == '/')
 }
 
+/// Whether a blob that already SNIFFED as an image carries all of its data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Integrity {
+    /// Every structure the file declares for itself is present.
+    Complete,
+    /// The file ends before its own declared structure does. Proven, not
+    /// guessed — see [`integrity`].
+    Truncated,
+}
+
+/// Decide whether `bytes` hold the WHOLE image their header promises.
+///
+/// [`sniff`] reads a header, so a file whose header survived and whose data was
+/// cut off — an aborted download, a bad merge, a half-written `git lfs smudge`
+/// — still answers [`Sniffed::Image`]. A webview does not report that as an
+/// error: it decodes the prefix, fires `load`, reports the dimensions from the
+/// intact header and paints the rows it got. So the panel would caption a
+/// half-blank picture `64 × 64` and say nothing, which is the outcome this
+/// module's doc rules out. Only the whole byte string can tell, and only here.
+///
+/// # Only what the bytes PROVE
+///
+/// A false "truncated" hides an image that would have displayed fine, which is
+/// worse than the broken preview it replaces. So every rule is a proof carried
+/// by the file's own declared structure, and anything ambiguous answers
+/// [`Integrity::Complete`]:
+///
+/// * **PNG** is self-delimiting: walk the chunk chain and require a whole
+///   `IEND`. A chunk that runs past the end is proof.
+/// * **JPEG** stuffs a literal `FF` inside a scan as `FF 00`, so a raw `FF D9`
+///   cannot occur in entropy-coded data — its ABSENCE proves the scan never
+///   ended. Its presence proves nothing (an EXIF thumbnail carries its own
+///   `FF D9`), so a photo cut after its thumbnail reads as complete.
+///   Under-reporting is the safe direction.
+/// * **WebP, BMP and ICO** each declare their own length; a file shorter than
+///   its own declaration is short by arithmetic.
+/// * **GIF** is deliberately NOT checked. Its trailer is a single unframed
+///   `0x3B` byte, and bytes after it are legal enough that absence would not be
+///   proof — only a guess, and a guess belongs nowhere near this answer.
+pub fn integrity(bytes: &[u8], media_type: &str) -> Integrity {
+    let complete = match media_type {
+        "image/png" => png_reaches_iend(bytes),
+        "image/jpeg" => has_jpeg_eoi(bytes),
+        // RIFF's size field counts the bytes AFTER it, i.e. from byte 8 on.
+        "image/webp" => holds_declared_len(bytes, 4, 8),
+        "image/bmp" => holds_declared_len(bytes, 2, 0),
+        "image/x-icon" => ico_declared_end(bytes).is_some_and(|end| bytes.len() >= end),
+        _ => true,
+    };
+    if complete {
+        Integrity::Complete
+    } else {
+        Integrity::Truncated
+    }
+}
+
+/// Walk `len|type|data|crc` from the signature and require a complete `IEND`.
+///
+/// CRCs are deliberately not verified: decoders in the wild ignore them, so a
+/// mismatch would flag files that display, and this answer only reports proof.
+fn png_reaches_iend(b: &[u8]) -> bool {
+    let mut at = 8usize; // past the 8-byte signature
+    loop {
+        let Some(header) = b.get(at..).filter(|r| r.len() >= 8) else {
+            return false;
+        };
+        let len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        let is_iend = &header[4..8] == b"IEND";
+        // 4 length + 4 type + data + 4 CRC.
+        let Some(end) = at.checked_add(12).and_then(|n| n.checked_add(len)) else {
+            return false;
+        };
+        if end > b.len() {
+            return false;
+        }
+        if is_iend {
+            return true;
+        }
+        at = end;
+    }
+}
+
+/// `FF D9` anywhere past the SOI. See [`integrity`] for why absence is proof.
+fn has_jpeg_eoi(b: &[u8]) -> bool {
+    b.get(2..)
+        .is_some_and(|rest| rest.windows(2).any(|w| w == [0xFF, 0xD9]))
+}
+
+/// True when the file is at least as long as the little-endian `u32` it carries
+/// at `at`, plus `extra`. A declared zero means "unknown" and answers true —
+/// some encoders leave BMP's size field empty and the file is fine.
+fn holds_declared_len(b: &[u8], at: usize, extra: usize) -> bool {
+    let Some(field) = b.get(at..at + 4) else {
+        return false;
+    };
+    let declared = u32::from_le_bytes([field[0], field[1], field[2], field[3]]) as usize;
+    if declared == 0 {
+        return true;
+    }
+    declared.checked_add(extra).is_some_and(|n| b.len() >= n)
+}
+
+/// The end of the last image an ICONDIR points at — every entry declares its
+/// own offset and size, so the directory names the file's true length.
+fn ico_declared_end(b: &[u8]) -> Option<usize> {
+    let count = u16::from_le_bytes([b[4], b[5]]) as usize;
+    // The directory itself has to be there before its entries mean anything.
+    let mut end = 6usize.checked_add(count.checked_mul(16)?)?;
+    for i in 0..count {
+        let at = 6usize.checked_add(i.checked_mul(16)?)?;
+        let entry = b.get(at..at + 16)?;
+        let size = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]) as usize;
+        let offset = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]) as usize;
+        end = end.max(offset.checked_add(size)?);
+    }
+    Some(end)
+}
+
 /// Where git-lfs stores object `oid` under a storage directory.
 ///
 /// `<storage>/objects/aa/bb/<oid>` — git-lfs's own fan-out, two levels of two
@@ -268,6 +386,165 @@ mod tests {
         let mut v = vec![0, 0, 1, 0, 1, 0];
         v.extend_from_slice(&[0u8; 16]);
         v
+    }
+
+    /// A whole 8×1 PNG: signature, IHDR, one IDAT, IEND. Built rather than
+    /// embedded so a truncation can be expressed as "cut N bytes off THIS".
+    fn whole_png() -> Vec<u8> {
+        fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+            let mut v = (data.len() as u32).to_be_bytes().to_vec();
+            v.extend_from_slice(kind);
+            v.extend_from_slice(data);
+            // The CRC is never verified (see `integrity`), so a placeholder
+            // keeps this fixture honest about what the walk actually reads.
+            v.extend_from_slice(&[0, 0, 0, 0]);
+            v
+        }
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&8u32.to_be_bytes());
+        ihdr.extend_from_slice(&1u32.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let mut v = b"\x89PNG\r\n\x1a\n".to_vec();
+        v.extend_from_slice(&chunk(b"IHDR", &ihdr));
+        v.extend_from_slice(&chunk(b"IDAT", &[0x78, 0x9c, 0x01, 0x02, 0x03]));
+        v.extend_from_slice(&chunk(b"IEND", &[]));
+        v
+    }
+
+    #[test]
+    fn a_whole_png_is_complete() {
+        assert_eq!(integrity(&whole_png(), "image/png"), Integrity::Complete);
+    }
+
+    /// The case the frontend cannot see: every one of these still SNIFFS as a
+    /// PNG, because the signature and IHDR are intact.
+    #[test]
+    fn a_png_cut_anywhere_after_its_header_is_truncated() {
+        let whole = whole_png();
+        for cut in 16..whole.len() {
+            let part = &whole[..cut];
+            assert_eq!(sniff(part), Sniffed::Image("image/png"), "cut at {cut}");
+            assert_eq!(integrity(part, "image/png"), Integrity::Truncated, "cut at {cut}");
+        }
+    }
+
+    /// Trailing bytes after `IEND` are not our business — the image is whole.
+    #[test]
+    fn a_png_with_bytes_after_iend_is_still_complete() {
+        let mut v = whole_png();
+        v.extend_from_slice(b"whatever a tool appended");
+        assert_eq!(integrity(&v, "image/png"), Integrity::Complete);
+    }
+
+    /// A chunk that CLAIMS more data than the file holds is the shape a cut
+    /// inside the length field itself produces.
+    #[test]
+    fn a_png_chunk_longer_than_the_file_is_truncated() {
+        let mut v = b"\x89PNG\r\n\x1a\n".to_vec();
+        v.extend_from_slice(&u32::MAX.to_be_bytes());
+        v.extend_from_slice(b"IHDR");
+        v.extend_from_slice(&[0u8; 13]);
+        assert_eq!(integrity(&v, "image/png"), Integrity::Truncated);
+    }
+
+    /// A 1×1 RGBA PNG straight out of a real encoder (zlib-compressed IDAT,
+    /// real CRCs). The synthetic fixture above pins the chunk WALK; this pins
+    /// that the walk agrees with what an encoder actually writes.
+    const REAL_PNG: [u8; 70] = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
+        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192,
+        240, 31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+
+    #[test]
+    fn a_real_encoders_png_is_complete() {
+        assert_eq!(sniff(&REAL_PNG), Sniffed::Image("image/png"));
+        assert_eq!(integrity(&REAL_PNG, "image/png"), Integrity::Complete);
+    }
+
+    /// The measured worst case: a webview fires `load` for this, reports the
+    /// header's dimensions and paints a BLANK picture, so nothing downstream
+    /// can tell. Overwriting the tail leaves the signature and IHDR intact and
+    /// destroys the chunk chain, which is what the walk catches.
+    #[test]
+    fn a_png_whose_tail_was_overwritten_is_truncated() {
+        let mut v = REAL_PNG.to_vec();
+        for b in v.iter_mut().skip(45) {
+            *b = 0x41;
+        }
+        assert_eq!(v.len(), REAL_PNG.len(), "same length, so only structure tells");
+        assert_eq!(sniff(&v), Sniffed::Image("image/png"));
+        assert_eq!(integrity(&v, "image/png"), Integrity::Truncated);
+    }
+
+    #[test]
+    fn a_jpeg_needs_its_end_of_image_marker() {
+        let mut whole = jpeg();
+        whole.extend_from_slice(&[0x11, 0x22, 0xFF, 0xD9]);
+        assert_eq!(integrity(&whole, "image/jpeg"), Integrity::Complete);
+        assert_eq!(integrity(&jpeg(), "image/jpeg"), Integrity::Truncated);
+    }
+
+    /// `FF D9` cannot occur in stuffed scan data, so a scan carrying `FF 00`
+    /// and no EOI is proven short rather than accidentally matching.
+    #[test]
+    fn stuffed_scan_bytes_do_not_fake_an_end_of_image() {
+        let mut v = jpeg();
+        v.extend_from_slice(&[0xFF, 0x00, 0xD9, 0xFF, 0x00]);
+        assert_eq!(integrity(&v, "image/jpeg"), Integrity::Truncated);
+    }
+
+    #[test]
+    fn a_webp_shorter_than_its_riff_size_is_truncated() {
+        let mut v = b"RIFF".to_vec();
+        v.extend_from_slice(&64u32.to_le_bytes()); // 64 bytes must follow byte 8
+        v.extend_from_slice(b"WEBPVP8 ");
+        v.extend_from_slice(&[0u8; 8]);
+        assert_eq!(sniff(&v), Sniffed::Image("image/webp"));
+        assert_eq!(integrity(&v, "image/webp"), Integrity::Truncated);
+        v.extend_from_slice(&[0u8; 56]);
+        assert_eq!(integrity(&v, "image/webp"), Integrity::Complete);
+    }
+
+    #[test]
+    fn a_bmp_shorter_than_its_declared_size_is_truncated() {
+        let mut v = bmp();
+        v.extend_from_slice(&[0u8; 40]); // 66 bytes; the header declares 70
+        assert_eq!(integrity(&v, "image/bmp"), Integrity::Truncated);
+        v.extend_from_slice(&[0u8; 4]);
+        assert_eq!(integrity(&v, "image/bmp"), Integrity::Complete);
+    }
+
+    /// Some encoders leave BMP's size field zero. Unknown is not proof.
+    #[test]
+    fn a_bmp_declaring_no_size_is_left_alone() {
+        let mut v = b"BM".to_vec();
+        v.extend_from_slice(&0u32.to_le_bytes()); // no declared size
+        v.extend_from_slice(&0u32.to_le_bytes());
+        v.extend_from_slice(&54u32.to_le_bytes());
+        v.extend_from_slice(&[0u8; 12]);
+        assert_eq!(sniff(&v), Sniffed::Image("image/bmp"));
+        assert_eq!(integrity(&v, "image/bmp"), Integrity::Complete);
+    }
+
+    #[test]
+    fn an_ico_shorter_than_its_directory_promises_is_truncated() {
+        let mut v = vec![0, 0, 1, 0, 1, 0];
+        let mut entry = vec![16, 16, 0, 0, 1, 0, 32, 0];
+        entry.extend_from_slice(&128u32.to_le_bytes()); // size
+        entry.extend_from_slice(&22u32.to_le_bytes()); // offset
+        v.extend_from_slice(&entry);
+        assert_eq!(sniff(&v), Sniffed::Image("image/x-icon"));
+        assert_eq!(integrity(&v, "image/x-icon"), Integrity::Truncated);
+        v.extend_from_slice(&[0u8; 128]);
+        assert_eq!(integrity(&v, "image/x-icon"), Integrity::Complete);
+    }
+
+    /// GIF is deliberately unchecked — see `integrity`. Pinned so that
+    /// "we could also check GIF" is a decision someone makes on purpose.
+    #[test]
+    fn a_gif_is_never_called_truncated() {
+        assert_eq!(integrity(&gif(), "image/gif"), Integrity::Complete);
     }
 
     #[test]
