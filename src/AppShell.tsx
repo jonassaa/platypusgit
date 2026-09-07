@@ -47,7 +47,8 @@ import { primaryActivity } from "@/features/repo/repoActivity";
 import type { NetProgress, RebaseProgress } from "@/lib/types";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { RepoTabs } from "@/features/repo/RepoTabs";
-import { headUpstream, openRepoDialog } from "@/features/repo/ops";
+import { headUpstream, openRepoDialog, refreshOp } from "@/features/repo/ops";
+import { useRefreshSpinner } from "@/features/repo/refreshSpinner";
 import { windowTitleFor } from "@/features/repo/windowTitle";
 import { indexOfTab, labelTabs } from "@/features/repo/tabs";
 import { useNavStore } from "@/features/nav/useNavStore";
@@ -682,7 +683,9 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const fetching = useRepoStore((s) => !!s.activity.fetch);
   const pulling = useRepoStore((s) => !!s.activity.pull);
   const pushing = useRepoStore((s) => !!s.activity.push);
-  const refresh = useRepoStore((s) => s.refreshAll);
+  // Not `s.loading`: that flag flips on every commit and tab switch, and the
+  // reasoning behind the gate lives in `refreshSpinner.ts`.
+  const refreshing = useRefreshSpinner();
   const activePath = useTabsStore((s) => s.activePath);
   const defaultPullMode = useSettingsStore((s) => s.defaultPullMode);
 
@@ -743,7 +746,8 @@ function AppTitlebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   size="sm"
                   variant="default"
                   icon="sync"
-                  onClick={() => refresh()}
+                  onClick={() => refreshOp()}
+                  loading={refreshing}
                   title="Refresh"
                 >
                   Refresh

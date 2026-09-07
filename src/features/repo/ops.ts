@@ -12,6 +12,7 @@ import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { openMergeWindow } from "@/features/merge/openMergeWindow";
 import { currentBranch, isConflicted, isStaged, isUnstaged } from "@/lib/derive";
 import type { FileStatus } from "@/lib/types";
+import { markRefreshRequested } from "./refreshSpinner";
 import { useRepoStore } from "./useRepoStore";
 import {
   describeUndo,
@@ -147,6 +148,8 @@ export function unstageAllOp(): boolean {
 export function refreshOp(): boolean {
   const repo = useRepoStore.getState();
   if (!repo.current) return false;
+  // After the guard, so declining to refresh never spins the button.
+  markRefreshRequested();
   void repo.refreshAll();
   return true;
 }

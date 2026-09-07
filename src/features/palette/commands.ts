@@ -25,7 +25,7 @@ import { runAction } from "@/features/actions/runAction";
 import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
-import { headUpstream, resolveConflictsOp } from "@/features/repo/ops";
+import { headUpstream, refreshOp, resolveConflictsOp } from "@/features/repo/ops";
 import { isCancellable, primaryActivity } from "@/features/repo/repoActivity";
 import type { ActionId } from "@/features/keymap";
 import type { BranchInfo, CommitInfo, FileStatus } from "@/lib/types";
@@ -369,7 +369,9 @@ export function buildCommands(): PaletteItem[] {
     {
       type: "command", id: "action:refresh", search: "Refresh repository",
       label: "Refresh repository", icon: "sync", actionId: "repo.refresh",
-      run: direct(() => void repo.refreshAll()),
+      run: direct(() => {
+        refreshOp();
+      }),
     },
     {
       type: "command", id: "action:clone", search: "Clone repository git url",
