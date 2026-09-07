@@ -26,10 +26,22 @@ import {
 export function PGErrorBanner({
   error,
   onDismiss,
+  onReport,
   compact = false,
 }: {
   error: AppError;
   onDismiss: () => void;
+  /**
+   * Offers "report" beside "dismiss" — the entry point that catches someone at
+   * the moment they hit the bug (`features/report`).
+   *
+   * A CALLBACK rather than this component reaching for `useReportStore`:
+   * `src/design/` is the design system and performs no IPC — nothing here
+   * imports `@/lib/tauri`, and the report flow does. Optional on the same
+   * terms as `compact`, so a surface with no report flow does not grow a
+   * button that does nothing.
+   */
+  onReport?: () => void;
   /** Tighter padding for a banner inside a screen rather than under the tab
    *  bar. The only thing the two call sites ever disagreed about. */
   compact?: boolean;
@@ -76,6 +88,23 @@ export function PGErrorBanner({
       >
         {errorBannerText(error)}
       </span>
+      {onReport && (
+        <button
+          onClick={onReport}
+          data-testid="banner-report"
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "inherit",
+            cursor: "pointer",
+            fontSize: "var(--fs-11)",
+            textDecoration: "underline",
+            whiteSpace: "nowrap",
+          }}
+        >
+          report
+        </button>
+      )}
       <button
         onClick={onDismiss}
         style={{

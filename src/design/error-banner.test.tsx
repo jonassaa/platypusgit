@@ -135,4 +135,29 @@ describe("PGErrorBanner", () => {
     await userEvent.click(screen.getByRole("button", { name: /dismiss/i }));
     expect(onDismiss).toHaveBeenCalledOnce();
   });
+
+  it("offers no report action without a handler", () => {
+    // Optional on the same terms as `compact`: a surface with no report flow
+    // must not grow a button that does nothing.
+    render(
+      <PGErrorBanner
+        error={{ kind: "Network", message: "could not resolve host" }}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("banner-report")).toBeNull();
+  });
+
+  it("reports, when given somewhere to report to", async () => {
+    const onReport = vi.fn();
+    render(
+      <PGErrorBanner
+        error={{ kind: "Network", message: "could not resolve host" }}
+        onDismiss={vi.fn()}
+        onReport={onReport}
+      />,
+    );
+    await userEvent.click(screen.getByTestId("banner-report"));
+    expect(onReport).toHaveBeenCalledOnce();
+  });
 });
