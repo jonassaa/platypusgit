@@ -1670,8 +1670,22 @@ imports `lucide-react` — that one seam is why the set could be swapped at all
 (it was hand-drawn SVG paths until then, and no feature had reached past
 `PGIcon` to the paths).
 
-Three things are load-bearing:
+Four things are load-bearing:
 
+- **An icon beside text goes in a flex row — never inline flow with
+  `vertical-align` on the glyph.** `src/index.css` opens with
+  `@import "tailwindcss"`, and Tailwind's Preflight blockifies every replaced
+  element (`img, svg, video, … { display: block; vertical-align: middle }`). A
+  `PGIcon` in an inline formatting context is therefore a *block* box: it takes
+  a line of its own, and `verticalAlign` on it is inert, because that property
+  only aligns inline-level boxes. This is not theoretical — the commit-detail
+  meta row shipped `<span><PGIcon name="clock" style={{ verticalAlign:
+  "middle" }} />{date}</span>` and drew the clock *above* the timestamp at every
+  panel width, while the author cell 8 lines above it looked right for the only
+  reason that matters: it was `display: flex; alignItems: center; gap: 4`. That
+  flex row is the app's idiom (it is why the other ~125 call sites are fine), so
+  match it; `git-components.date.test.tsx` pins the date cell's shape against
+  the author cell's, since jsdom has no layout and cannot see the wrap itself.
 - **`strokeWidth` is expressed on a 16-unit grid, not lucide's 24.** A stroke's
   rendered thickness is `strokeWidth * size / grid`, so `PGIcon` scales the
   width it hands lucide by `24/16`. That is what keeps `strokeWidth={1.5}`

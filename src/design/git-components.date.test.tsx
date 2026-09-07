@@ -103,4 +103,38 @@ describe("PGCommitDetail date", () => {
     expect(cell.title).toContain("+02:00");
     expect(cell.textContent).not.toContain("+02:00");
   });
+
+  it("puts the clock glyph on the stamp's own line, the way the author cell does", () => {
+    // Tailwind's Preflight (`@import "tailwindcss"`, src/index.css:1) blockifies
+    // every replaced element — `svg { display: block }` — so a PGIcon sitting in
+    // INLINE flow beside text takes a line of its own, and `vertical-align`
+    // cannot pull it back: it only aligns inline-level boxes. The cell therefore
+    // has to be a flex row, exactly like the author cell beside it, which is why
+    // that one always looked right and this one rendered the clock ABOVE the
+    // time. jsdom has no layout, so what this pins is the mechanism.
+    const { container } = render(
+      <PGCommitDetail
+        sha="abc1234"
+        subject="feat: something"
+        author="Tester"
+        email="tester@example.com"
+        date="2026-08-14 13:42:07 · 3w ago"
+        dateTitle={TITLE}
+        parents={["def5678"]}
+      />,
+    );
+    const cell = container.querySelector<HTMLElement>('[data-testid="commit-detail-date"]')!;
+    expect(cell.style.display).toBe("flex");
+    expect(cell.style.alignItems).toBe("center");
+
+    // One pattern for the whole meta row, not two: the author cell is the
+    // working example, so a future edit that changes one has to change both.
+    const [authorCell] = Array.from(cell.parentElement!.children) as HTMLElement[];
+    expect(authorCell.style.display).toBe("flex");
+    expect(cell.style.display).toBe(authorCell.style.display);
+    expect(cell.style.alignItems).toBe(authorCell.style.alignItems);
+
+    // And the glyph no longer asks to be aligned in a flow it is not part of.
+    expect(cell.querySelector("svg")!.style.verticalAlign).toBe("");
+  });
 });
