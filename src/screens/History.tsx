@@ -39,6 +39,7 @@ import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { CommitBody } from "@/features/commits/body";
 import { CommitNotes } from "@/features/commits/CommitNotes";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { ActivityStrip } from "@/features/repo/ActivityStrip";
 import { ShallowNotice } from "@/features/repo/ShallowNotice";
 import { openCreateTag } from "@/features/tags/useCreateTagStore";
 import { useNavStore } from "@/features/nav/useNavStore";
@@ -767,6 +768,11 @@ export function HistoryScreen() {
       <>
         <PGToolbar left={toolbarLeft} right={toolbarRight} />
         {advancedPanel}
+        {/* Also on this path, not just the populated one below: a checkout to
+            an unborn branch lands here, and so does a cold repository open for
+            as long as the first log read takes — the slowest waits the app
+            has, and the ones a skeleton alone does not explain. */}
+        <ActivityStrip />
         {loading ? (
           // Initial load only — this branch is reached solely when no commits
           // are on screen yet. A page-append must never blank the list the
@@ -1056,6 +1062,13 @@ export function HistoryScreen() {
     <>
       <PGToolbar left={toolbarLeft} right={toolbarRight} />
       {advancedPanel}
+      {/* What the app is waiting on, directly above the rows that are about to
+          change because of it (#431). The status bar says the same thing, but
+          it says it at the bottom edge of the window, and a four-second
+          checkout with a list still showing the branch you just left reads as
+          a click that did nothing. Same slot as on the empty-log path above,
+          so the strip does not move between them. */}
+      <ActivityStrip />
       {/* The log is a prefix of history at the best of times; in a shallow clone
           it is a prefix of a history that stops. Above the list rather than at
           the end of it (#255): a reader with five hundred commits loaded never
