@@ -188,6 +188,9 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   never a `finally` at the call site — that clears while the password dialog is
   still open). `RepoActivity` is what produces the status line, the progress bar
   and the Cancel button; a private `busy` field only says which row is busy.
+  It has TWO surfaces — the status bar and the history strip — and both render
+  from `useActivityView`, which owns every decision about what is said; a third
+  one lays out that hook rather than reading `activity` itself.
   (`docs/dev/frontend.md`)
 - **Diff surfaces:** one row model (`flattenDiffRows`); gate text rendering on
   `isTextualDiff`, scroll by offset (never `scrollIntoView` under windowing),
