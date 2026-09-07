@@ -1064,6 +1064,17 @@ that is only partly here — which is the whole reason the notice exists.
 - Activity bar = primary switcher, History first. **Launch always lands on
   History** — no screen restore (`pg-screen` is gone); restored tabs start on
   History too.
+- **The rail sizes itself (`height: 100%`), not its content.** Settings is
+  pinned to the bottom edge by a `flex: 1` spacer, and a spacer only claims
+  space in a box that has some: AppShell renders `PGActivityBar` inside a
+  `PGPane` div, so the bar is a BLOCK child of a full-height box, not the flex
+  item of the shell's row it was before #11. Losing the explicit height is why
+  the rail's `--bg-titlebar` background and right border once stopped
+  mid-window, just under the gear (`box-sizing: border-box` keeps the border
+  and padding inside that 100% instead of overflowing onto the status bar).
+  Same trap for any pane whose child pins something with a spacer — wrapping it
+  in a `PGPane` changes what its height resolves against. `chrome.test.tsx`
+  pins the mechanism; jsdom does no layout, so nothing here is a pixel gate.
 - **Repositories are tabs (#90).** Opening a repository ANYWHERE goes through
   `useTabsStore.openRepo` (focus-existing-or-add). `useRepoStore.openRepo` no
   longer exists; the low-level half is `openRepoAt`.

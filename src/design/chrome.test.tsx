@@ -8,6 +8,7 @@ vi.mock("@/lib/platform", () => ({
 }));
 
 import {
+  PGActivityBar,
   PGSidebarGroup,
   PGSidebarRow,
   PGTabStrip,
@@ -127,6 +128,57 @@ describe("PGTabStrip", () => {
     const { container } = render(<PGTabStrip tabs={stripTabs(1)} />);
     const rows = Array.from(container.querySelectorAll('[data-testid="repo-tab"]'));
     expect(tracked.calls).toEqual([rows[1]]);
+  });
+});
+
+describe("PGActivityBar", () => {
+  const items = [
+    { id: "history", icon: "history", label: "History" },
+    { id: "commit", icon: "commit", label: "Commit" },
+  ];
+
+  // The rail is rendered inside a `PGPane` div (AppShell), i.e. as a BLOCK
+  // child of a full-height box — so its own height must be 100%, not auto.
+  // With auto height the `flex: 1` spacer has nothing to claim: the rail's
+  // background and right border stop just under the gear, mid-window, and
+  // Settings sits directly below the last screen icon instead of at the
+  // bottom edge. jsdom does no layout, so what is pinned here is the
+  // mechanism, not the pixels.
+  it("fills its container height so the spacer can pin Settings", () => {
+    const { container } = render(
+      <PGActivityBar value="history" items={items} />,
+    );
+    const bar = container.querySelector<HTMLElement>("[data-pg-activity-bar]");
+    expect(bar).not.toBeNull();
+    expect(bar!.style.height).toBe("100%");
+    // The border and padding must fit INSIDE that 100%, or the rail overflows
+    // its pane by 13px and paints over the status bar.
+    expect(bar!.style.boxSizing).toBe("border-box");
+  });
+
+  it("puts a flex spacer between the last screen icon and Settings", () => {
+    const { container } = render(
+      <PGActivityBar value="history" items={items} />,
+    );
+    const bar = container.querySelector<HTMLElement>("[data-pg-activity-bar]")!;
+    const spacer = bar.querySelector<HTMLElement>("[data-pg-activity-spacer]");
+    expect(spacer).not.toBeNull();
+    // jsdom expands the `flex: 1` shorthand it serializes back.
+    expect(spacer!.style.flex).toBe("1 1 0%");
+
+    const kids = Array.from(bar.children);
+    const settings = bar.querySelector<HTMLElement>(
+      '[data-activity="settings"]',
+    )!;
+    // Settings is last, and the spacer is what precedes it.
+    const settingsSlot = kids.findIndex((k) => k.contains(settings));
+    expect(settingsSlot).toBe(kids.length - 1);
+    expect(kids[settingsSlot - 1]).toBe(spacer);
+    // ...and every screen icon comes before the spacer.
+    const last = bar.querySelector<HTMLElement>('[data-activity="commit"]')!;
+    expect(kids.findIndex((k) => k.contains(last))).toBeLessThan(
+      settingsSlot - 1,
+    );
   });
 });
 
