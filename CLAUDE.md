@@ -138,6 +138,17 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   `Partial` on purpose), and the text is `pre-wrap` so git's multi-line advice
   survives. `test/appErrors.test.ts` + `error-banner.test.tsx` fail the build
   for a new surface that spells the enum. (`docs/dev/frontend.md`)
+- **One issue reporter — `features/report/`.** `report.ts` stays PURE and
+  `fileReport.ts` owns the side effects, because `PGErrorBoundary` mounts ABOVE
+  `PGDialogHost` and therefore CANNOT open the dialog — it takes an `onReport`
+  callback wired in `main.tsx`, and `PGErrorBanner` takes one for the same
+  reason (`src/design/` imports no `@/lib/tauri`). The log travels by
+  CLIPBOARD, never in the URL (`issues/new?body=` 414s far below
+  `TAIL_CAP_BYTES`, so `issueUrl` caps at `MAX_URL_LEN` by trimming the
+  summary), copy happens strictly BEFORE open, and the preview shows the exact
+  string that will be copied — the opt-out checkboxes filter the clipboard, not
+  just the display. Nothing is ever sent: the app writes the clipboard and
+  hands a URL to the user's browser. (`docs/dev/frontend.md`)
 - **Never `Command::new` outside `src-tauri/src/proc.rs`** — a guard test
   fails the build. Use the `proc::git*`/`proc::program*` constructors.
   (`docs/dev/backend.md`)

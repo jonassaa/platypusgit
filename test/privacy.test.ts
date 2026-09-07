@@ -143,9 +143,15 @@ const FORBIDDEN_NETWORK_APIS: Array<[RegExp, string]> = [
 const ALLOWED_HOSTS: Array<[string, string]> = [
   [
     "github.com",
-    "Placeholder text in the clone dialog's URL field " +
-      "(`https://github.com/org/repo.git`), so the input shows the shape it " +
-      "wants. It is rendered, never requested.",
+    "Two RENDERED strings, neither of them a request. (1) Placeholder text in " +
+      "the clone dialog's URL field (`https://github.com/org/repo.git`), so " +
+      "the input shows the shape it wants. (2) The base of the prefilled " +
+      "bug-report URL (`features/report/report.ts`): the app assembles an " +
+      "`issues/new?title=…&labels=bug&body=…` link and hands it to `openUrl`, " +
+      "which opens the USER'S OWN BROWSER. Nothing in the app fetches it, and " +
+      "the report itself never travels in that URL — it goes on the " +
+      "clipboard, the dialog shows the user every byte of it first, and only " +
+      "their own paste puts it on GitHub.",
   ],
   [
     "platypusgit.dev",

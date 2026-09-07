@@ -319,4 +319,61 @@ describe("settings", () => {
     // …and a non-matching row on the page we WERE on is filtered out.
     await expect($('[data-setting-id="diff.context"]')).not.toBeExisting();
   });
+
+  /**
+   * The report dialog against the real webview.
+   *
+   * What only a real run proves: the diagnostics commands actually answer on
+   * a real build (`diagnostics_report` resolves the per-platform log dir, and
+   * `read_log_tail` reads a file that the LOGGER, not the test, created), and
+   * the preview therefore renders something rather than sitting on "Reading
+   * diagnostics…" forever. The unit tests mock both.
+   *
+   * It deliberately stops before `report-open`: that hands a URL to the OS
+   * browser, which under xvfb means either a hung `xdg-open` or a browser
+   * nobody closes. Copy-and-open is covered by the component test.
+   */
+  it("assembles a bug report from the real diagnostics", async () => {
+    await openSettings("advanced.backup");
+    await $('[data-testid="settings-report-issue"]').click();
+
+    const preview = $('[data-testid="report-preview"]');
+    await preview.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "report dialog never rendered a preview",
+    });
+    // The version line is the one part no opt-out removes, so it is the
+    // signal that the report was ASSEMBLED rather than merely mounted —
+    // "Reading diagnostics…" is what an unresolved `diagnostics_report`
+    // leaves on screen, and it satisfies "displayed" just as well.
+    await browser.waitUntil(
+      async () => (await preview.getText()).includes("platypusgit "),
+      {
+        timeout: 10_000,
+        timeoutMsg: "preview never carried the version line",
+      },
+    );
+    const text = await preview.getText();
+    // The startup environment line, written by the real backend.
+    expect(text).toContain("host os=");
+    expect(text).toContain("arch=");
+
+    // Both opt-outs are wired to the real preview, and the version survives.
+    await $('[data-testid="report-include-env"]').click();
+    await browser.waitUntil(
+      async () => !(await preview.getText()).includes("host os="),
+      {
+        timeout: 10_000,
+        timeoutMsg: "unchecking the environment never changed the preview",
+      },
+    );
+    expect(await preview.getText()).toContain("platypusgit ");
+
+    await $('[data-testid="report-cancel"]').click();
+    await $('[data-testid="report-dialog"]').waitForExist({
+      reverse: true,
+      timeout: 10_000,
+      timeoutMsg: "report dialog never closed",
+    });
+  });
 });
