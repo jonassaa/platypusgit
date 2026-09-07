@@ -10,6 +10,7 @@ import {
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useRecentsStore } from "@/features/repo/useRecentsStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
+import { useTerminalStore } from "@/features/terminal/useTerminalStore";
 import { newTab } from "@/features/repo/tabs";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { paletteInitial, usePaletteStore } from "./usePaletteStore";
@@ -655,6 +656,67 @@ describe("repository windows (#256)", () => {
     useTabsStore.setState({ activePath: "/dev/web" });
     item!.run();
     expect(moveTabToNewWindow).toHaveBeenCalledWith("/dev/web");
+  });
+});
+
+describe("the built-in terminal (#243)", () => {
+  const row = () =>
+    buildCommands().find((i) => i.id === "action:toggle-terminal");
+
+  // One test below swaps `toggle` for a collector, which replaces the store's
+  // real action for good — the same trap `realPushStep` exists for above.
+  const realToggle = useTerminalStore.getState().toggle;
+
+  beforeEach(() => {
+    resetStores();
+    useTerminalStore.setState({ open: false, toggle: realToggle });
+  });
+
+  it("offers the terminal with a repository open", () => {
+    expect(row()?.label).toBe("Show terminal");
+  });
+
+  it("is absent with no repository — the panel cannot appear without one", () => {
+    useRepoStore.setState({ current: null } as never);
+    expect(ids()).not.toContain("action:toggle-terminal");
+  });
+
+  it("names what will happen, on a row id that does not move", () => {
+    // The id is the frecency key: flipping it with the panel would teach the
+    // ranker two half-learned rows for one command.
+    useTerminalStore.setState({ open: true });
+    expect(row()?.label).toBe("Hide terminal");
+    expect(row()?.id).toBe("action:toggle-terminal");
+  });
+
+  it("takes its shortcut chip from the live keymap, not a hardcoded chord", () => {
+    expect(row()?.actionId).toBe("terminal.toggle");
+    expect(row()?.chord).toBeUndefined();
+  });
+
+  it("toggles the panel and closes the palette", () => {
+    const order: string[] = [];
+    usePaletteStore.setState({
+      closePalette: () => {
+        order.push("close");
+      },
+    } as never);
+    useTerminalStore.setState({
+      toggle: () => {
+        order.push("toggle");
+      },
+    } as never);
+    row()!.run();
+    expect(order).toEqual(["close", "toggle"]);
+  });
+
+  it("reads the store at click time, not when the palette was built", () => {
+    // The list is built when the palette opens; the chord can toggle the panel
+    // before the user presses Enter, and the row must still flip it from there.
+    const item = row()!;
+    useTerminalStore.setState({ open: true });
+    item.run();
+    expect(useTerminalStore.getState().open).toBe(false);
   });
 });
 
