@@ -524,6 +524,11 @@ pub enum UnsupportedReason {
     NotAnImage,
     /// Recognised as SVG and refused on purpose. See `git/image.rs`.
     Svg,
+    /// The header sniffed as an image but the file ends before its own declared
+    /// structure does. Handing these bytes to an `<img>` renders a partial or
+    /// blank picture under a confident caption and reports no error, so the
+    /// blob is refused here instead — `image::integrity`.
+    Truncated,
 }
 
 /// One side of an image preview (#224).

@@ -2413,14 +2413,26 @@ fn read_blob_side(repo: &Repository, oid: git2::Oid) -> AppResult<BlobSide> {
 fn describe_bytes(path: String, bytes: &[u8]) -> ImagePreview {
     let size = bytes.len() as u64;
     match image::sniff(bytes) {
-        image::Sniffed::Image(media_type) => ImagePreview::Image {
-            path,
-            media_type: media_type.to_string(),
-            size,
-            // Base64 HERE rather than in the frontend: it is what a `data:` URL
-            // takes, so the string crosses IPC once and is concatenated into an
-            // `src` with no decode and no second copy on the other side.
-            data: BASE64.encode(bytes),
+        // A header is not a file. This is the only place holding the WHOLE
+        // blob, and a webview reports a cut-off image as a successful load
+        // rather than an error, so a truncated one has to be caught here or
+        // not at all.
+        image::Sniffed::Image(media_type) => match image::integrity(bytes, media_type) {
+            image::Integrity::Truncated => ImagePreview::Unsupported {
+                path,
+                size,
+                reason: UnsupportedReason::Truncated,
+            },
+            image::Integrity::Complete => ImagePreview::Image {
+                path,
+                media_type: media_type.to_string(),
+                size,
+                // Base64 HERE rather than in the frontend: it is what a `data:`
+                // URL takes, so the string crosses IPC once and is concatenated
+                // into an `src` with no decode and no second copy on the other
+                // side.
+                data: BASE64.encode(bytes),
+            },
         },
         image::Sniffed::Svg => ImagePreview::Unsupported {
             path,

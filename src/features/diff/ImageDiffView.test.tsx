@@ -40,10 +40,49 @@ function mockPreviews(by: Partial<Record<string, ImagePreview | null>>) {
   });
 }
 
+/** Answer from the WHOLE request — the path and the revspec, not just the kind. */
+function mockPreviewsBy(
+  answer: (req: { path: string; revspec?: string }) => ImagePreview | null,
+) {
+  mockInvoke("read_image_preview", (args) =>
+    answer({
+      path: String(args.path),
+      revspec: (args.source as { revspec?: string }).revspec,
+    }),
+  );
+}
+
+/** The `old` side stepped back one commit — a different blob at the same path. */
+const OLD_PREV: ImageSide = {
+  key: "old",
+  label: "Old",
+  tone: "removed",
+  source: { kind: "rev", revspec: "HEAD~1" },
+};
+
+/** A `new`-keyed side reading one specific revision. */
+const revSide = (revspec: string): ImageSide => ({
+  key: "new",
+  label: "New",
+  tone: "added",
+  source: { kind: "rev", revspec },
+});
+
 function renderPair(fallback?: React.ReactNode) {
   return render(
     <ImageDiffView repoId="r1" path="logo.png" sides={[OLD, NEW]} fallback={fallback} />,
   );
+}
+
+/**
+ * The engine giving up on bytes whose STRUCTURE is sound.
+ *
+ * Not what a truncated blob fires — measured in Blink 152, a cut PNG fires
+ * `load` and paints part of itself, which is why truncation is caught in the
+ * backend instead (git/image.rs::integrity).
+ */
+function failDecode(testId: string) {
+  fireEvent.error(screen.getByTestId(testId));
 }
 
 /** jsdom never decodes an image, so the dimensions arrive the way a real one's do. */
@@ -277,6 +316,34 @@ describe("everything that is not a previewable image", () => {
     expect(screen.queryByText("Binary diffs aren't shown.")).toBeNull();
   });
 
+  it("names a truncated file, and never hands its bytes to an <img>", async () => {
+    // The backend proved this from the file's own structure. It has to: a
+    // webview decodes the prefix, fires `load`, reports the header's
+    // dimensions and paints part of the picture, so no frontend signal
+    // exists to catch it (measured — see git/image.rs::integrity).
+    const cut: ImagePreview = {
+      kind: "unsupported",
+      path: "logo.png",
+      size: 5448,
+      reason: "truncated",
+    };
+    mockPreviews({ rev: cut, worktree: cut });
+    render(
+      <ImageDiffOrEmpty repoId="r1" path="logo.png" sides={[OLD, NEW]} title="Binary file">
+        Binary diffs aren&apos;t shown.
+      </ImageDiffOrEmpty>,
+    );
+
+    const note = await screen.findByTestId("image-note-new");
+    expect(note.textContent).toContain("Truncated image");
+    // The byte count is worth showing: it is what DID arrive.
+    expect(note.textContent).toContain("5.3 KB");
+    // The whole point — a partial picture under a confident caption is the
+    // outcome this state exists to prevent.
+    expect(screen.queryByTestId("image-preview-new")).toBeNull();
+    expect(screen.queryByText("Binary diffs aren't shown.")).toBeNull();
+  });
+
   it("falls back to the empty state when the read fails outright", async () => {
     mockInvoke("read_image_preview", () => {
       throw { kind: "Git", message: "object not found" };
@@ -310,9 +377,123 @@ describe("a single side", () => {
   });
 });
 
+describe("a complete image this engine will not display", () => {
+  // NOT the truncated case — that is refused in the backend, because a webview
+  // reports a cut-off image as a successful `load` (see the `truncated` test
+  // above and git/image.rs::integrity). What reaches `onError` is a file whose
+  // structure is sound and whose format this particular engine lacks: an
+  // exotic BMP or ICO variant, an animated WebP feature. Before #212's audit
+  // item that rendered the broken-image glyph and said nothing.
+  it("replaces the undisplayable image with a sentence, and keeps the size", async () => {
+    mockPreviews({ worktree: png({ size: 1024 }) });
+    render(<ImageDiffView repoId="r1" path="logo.png" sides={[NEW]} />);
+
+    await screen.findByTestId("image-preview-new");
+    failDecode("image-preview-new");
+
+    await waitFor(() => expect(screen.queryByTestId("image-preview-new")).toBeNull());
+    const note = screen.getByTestId("image-note-new").textContent;
+    expect(note).toContain("could not be displayed");
+    // It must NOT guess at a cause. Three engines ship this app and their
+    // format coverage differs, so "truncated or corrupt" would be a lie on the
+    // machines where the same file opens fine.
+    expect(note).not.toMatch(/corrupt|truncated/i);
+    // The byte count came from the backend, not from the decoder, so it is
+    // still true and still worth showing.
+    expect(screen.getByTestId("image-caption-new").textContent).toBe("1.0 KB");
+  });
+
+  it("fails only the side that failed", async () => {
+    mockPreviews({ rev: png({ size: 2048 }), worktree: png({ size: 1024 }) });
+    renderPair();
+
+    await screen.findByTestId("image-preview-old");
+    failDecode("image-preview-new");
+
+    await waitFor(() => expect(screen.queryByTestId("image-preview-new")).toBeNull());
+    // A corrupt new version must not take the readable old one down with it.
+    // Seeing what the file used to be is most of the value of the comparison.
+    expect(screen.getByTestId("image-preview-old")).toBeTruthy();
+    expect(screen.queryByTestId("image-note-old")).toBeNull();
+  });
+
+  it("gives the next selection a clean slate", async () => {
+    // The recovering file must be DIFFERENT bytes. Reusing the same base64
+    // would assert the opposite of the truth: identical bytes really do fail
+    // identically, and only jsdom's refusal to decode anything would hide it.
+    mockPreviewsBy(({ path }) =>
+      png({ path, data: path === "broken.png" ? "QkFE" : "R09PRA" }),
+    );
+    const one: ImageSide[] = [NEW];
+    const { rerender } = render(<ImageDiffView repoId="r1" path="broken.png" sides={one} />);
+    await screen.findByTestId("image-preview-new");
+    failDecode("image-preview-new");
+    await waitFor(() => expect(screen.getByTestId("image-note-new")).toBeTruthy());
+
+    rerender(<ImageDiffView repoId="r1" path="fine.png" sides={one} />);
+    // A sticky failure would print "could not be displayed" over a perfectly
+    // good image, which is the same class of bug as a stale caption.
+    await waitFor(() => expect(screen.getByTestId("image-preview-new")).toBeTruthy());
+    expect(screen.queryByTestId("image-note-new")).toBeNull();
+  });
+
+  // The half the reset effect never had a test for. Its key was
+  // `[path, previewKey]`, and `previewKey` could be DELETED outright without
+  // failing anything in the suite; worse, it read `repoId` and each side's
+  // `source` not at all, while `useImagePreviews` keys its read on both. So
+  // this is the reachable stale case: one path, a different REVISION, and two
+  // blobs of equal byte length — what a metadata-only edit produces, and what
+  // `data.length` cannot tell apart.
+  it("drops a failure when the revision changes under one path", async () => {
+    mockPreviewsBy(({ revspec }) =>
+      png({ data: revspec === "HEAD~1" ? "QkFE" : "R09P" }),
+    );
+    const { rerender } = render(
+      <ImageDiffView repoId="r1" path="logo.png" sides={[revSide("HEAD~1")]} />,
+    );
+    await screen.findByTestId("image-preview-new");
+    failDecode("image-preview-new");
+    await waitFor(() => expect(screen.getByTestId("image-note-new")).toBeTruthy());
+
+    rerender(<ImageDiffView repoId="r1" path="logo.png" sides={[revSide("HEAD")]} />);
+    // Same path, same byte length, a different image. A stale failure would
+    // print "could not be displayed" over a file that displays fine.
+    await waitFor(() => expect(screen.getByTestId("image-preview-new")).toBeTruthy());
+    expect(screen.queryByTestId("image-note-new")).toBeNull();
+  });
+
+  it("does not let one side's new bytes clear the other side's failure", async () => {
+    mockPreviewsBy(({ revspec }) =>
+      png({ data: revspec === "HEAD" ? "T0xE" : revspec ? "T0xEMg" : "TkVX" }),
+    );
+    const { rerender } = render(
+      <ImageDiffView repoId="r1" path="logo.png" sides={[OLD, NEW]} />,
+    );
+    await screen.findByTestId("image-preview-new");
+    failDecode("image-preview-new");
+    await waitFor(() => expect(screen.getByTestId("image-note-new")).toBeTruthy());
+
+    // The OLD side's blob changes — the user steps to the previous commit, or
+    // an "LFS fetch" lands. One reset key covering BOTH sides cleared the new
+    // side's live failure here, remounting an `<img>` whose decode cannot
+    // succeed: the sentence blinked out and back, twice per change.
+    rerender(<ImageDiffView repoId="r1" path="logo.png" sides={[OLD_PREV, NEW]} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("image-preview-old").getAttribute("src")).toContain("T0xEMg"),
+    );
+    expect(screen.getByTestId("image-note-new")).toBeTruthy();
+    expect(screen.queryByTestId("image-preview-new")).toBeNull();
+  });
+});
+
 describe("re-selection", () => {
   it("re-reads when the path changes and drops the previous dimensions", async () => {
-    mockPreviews({ worktree: png({ size: 1024 }) });
+    // Two genuinely different files. Answering both paths with the SAME base64
+    // would assert nothing: identical bytes are the same image, and 64 × 64
+    // stays true for them — which is why this now has to differ to be a test.
+    mockPreviewsBy(({ path }) =>
+      png({ path, size: 1024, data: path === "a.png" ? "QUFB" : "QkJC" }),
+    );
     const one: ImageSide[] = [NEW];
     const { rerender } = render(
       <ImageDiffView repoId="r1" path="a.png" sides={one} />,

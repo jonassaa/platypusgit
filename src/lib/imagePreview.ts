@@ -34,11 +34,16 @@ export function previewDataUrl(p: Extract<ImagePreview, { kind: "image" }>): str
  * is the honest answer: a broken `<img>` is worse than a sentence.
  *
  * An SVG refusal IS notable, because it is a decision rather than a gap and has
- * to be able to say so; rendering nothing would read as a bug.
+ * to be able to say so; rendering nothing would read as a bug. So is a
+ * `truncated` blob: it is an image the repository was SUPPOSED to hold, and
+ * "nothing here" would be the wrong answer about a file that is damaged.
+ *
+ * `notAnImage` is therefore the only reason that stays quiet, and a new one
+ * defaults to notable on purpose — `noteFor` makes a sentence compulsory.
  */
 export function isNotablePreview(p: ImagePreview | null | undefined): boolean {
   if (!p) return false;
-  if (p.kind === "unsupported") return p.reason === "svg";
+  if (p.kind === "unsupported") return p.reason !== "notAnImage";
   return true;
 }
 

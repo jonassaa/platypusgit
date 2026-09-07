@@ -152,6 +152,33 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
     the webview already knows, and until it fires there simply are no
     dimensions (never `0 × 0`). The backdrop is a checkerboard built from
     `--bg-1`/`--bg-2` so transparency reads in both themes (#236).
+  * **A side the webview refuses to decode says so** (#212), and the split
+    between this and the backend is the whole point. **`onError` fires for far
+    less than it looks like it does.** Measured in Blink 152: a truncated PNG
+    and one with an overwritten IDAT both fire `load`, report the intact
+    header's dimensions and paint a partial or blank picture; `error` arrives
+    only when nothing decodable is there at all. So a *truncated* file is caught
+    in the backend (`git/image.rs::integrity` → `reason: "truncated"`, see
+    `docs/dev/backend.md`) and never reaches an `<img>`, and this `onError` is
+    the backstop for the case only the engine can know: a STRUCTURALLY COMPLETE
+    file this webview will not display. Its sentence says exactly that and
+    guesses at no cause — the app runs on three engines whose format coverage
+    differs, so "your file is corrupt" would be a lie on two of them.
+    The failing side keeps its byte caption (which came from the backend and is
+    still true) and leaves the other side alone: one bad version must not hide a
+    readable one.
+  * **`dims` and the decode failure are keyed to the BYTES they describe**, not
+    reset by an effect. Both are `Record<sideKey, …>` carrying the `data` string
+    they were measured from, and each panel compares that against the preview it
+    is currently rendering. That is why there is no reset effect: a reset keyed
+    on `[path, previewKey]` was narrower than what `useImagePreviews` treats as
+    identity (it ignores `repoId` and each side's `source`, and stands in
+    `data.length` for the data), so the same path at a different revision with
+    an equal byte length kept the previous file's state — a wrong caption, or a
+    failure notice printed over a good image. Deriving it instead is also
+    immune to the order in which a passive effect and the browser's `error`
+    task happen to run, and cannot let one side's new bytes clear the other
+    side's live failure.
 - **A textual diff with ZERO hunks is ordinary, and every surface says so.**
   Two everyday changes produce a `FileDiff` whose `hunks` is empty: an EMPTY
   ADDED file (a `.gitkeep` — git writes `new file mode` and no `@@` range), and
