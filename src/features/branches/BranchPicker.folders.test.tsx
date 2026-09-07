@@ -67,6 +67,18 @@ const activeRow = () => {
   return folder === null ? el.getAttribute("data-branch-name") : `${folder}/`;
 };
 
+/**
+ * The `__menuTitle` of every menu currently rendered — the branch the actions
+ * menu belongs to. `[data-pg-menu]` is portalled to `document.body`, so this
+ * reads outside the picker on purpose.
+ */
+const menuTitles = () =>
+  Array.from(document.querySelectorAll("[data-pg-menu]")).map(
+    // `__menuTitle` renders as the menu's first child (a div, not an item row),
+    // and the uppercasing is CSS — so `textContent` is the raw branch name.
+    (m) => m.firstElementChild?.textContent,
+  );
+
 const folderRow = (path: string) =>
   document.querySelector(`[data-picker-folder="${path}"]`) as HTMLElement;
 
@@ -149,13 +161,19 @@ describe("BranchPicker folders", () => {
     expect(storedFolds()).toEqual([]);
   });
 
-  it("checks out a branch row on click, as it always did", () => {
+  // A branch row inside a folder answers a click the same way one at the top
+  // level does — by opening its actions menu, never by checking out. Pinned
+  // here as well as in `BranchPicker.menuClick.test.tsx` because the folder
+  // tree is what re-indexes the rows, and the keyboard path anchors its menu
+  // BY INDEX.
+  it("opens a branch row's actions menu on click, checking nothing out", () => {
     setup();
 
     fireEvent.click(
       document.querySelector('[data-branch-name="feat/beta"]') as HTMLElement,
     );
-    expect(checkoutBranch).toHaveBeenCalledWith("feat/beta");
+    expect(menuTitles()).toContain("feat/beta");
+    expect(checkoutBranch).not.toHaveBeenCalled();
   });
 
   it("rests on the current branch when its folder is open", () => {
@@ -164,7 +182,8 @@ describe("BranchPicker folders", () => {
   });
 
   // Enter acts on the resting row. With HEAD folded away the only harmless
-  // place to rest is the folder holding it — Enter there opens the folder.
+  // place to rest is the folder holding it — Enter there opens the folder
+  // rather than a branch's actions menu.
   it("rests on the folder holding the current branch when it is folded away", () => {
     storeFolds("feat");
     setup();

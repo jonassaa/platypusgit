@@ -8,6 +8,7 @@ import {
   pressIsInsideMenu,
   branchMenuItems,
   remoteBranchMenuItems,
+  type ContextMenuItem,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import type { BranchInfo } from "@/lib/types";
@@ -30,6 +31,45 @@ interface BranchPickerProps {
 type Row = BranchInfo & { kind: "local" | "remote" };
 type TreeRow = BranchTreeRow<Row>;
 
+/**
+ * Re-wire a menu so choosing an entry also dismisses the picker.
+ *
+ * A press on a branch row opens that row's actions menu instead of checking
+ * out, which makes "Check out" the two-press replacement for a path that used
+ * to close the popover on the first press — so the popover has to close when
+ * the entry runs, or every switch leaves a stale branch list over the app.
+ *
+ * `PGContextMenu`'s own `onClose` cannot carry this: it fires for a DISMISSAL
+ * too (Escape, a press outside), and dismissing a menu must leave the picker
+ * exactly as it was before the menu opened. Dividers and the `__menuTitle`
+ * carry no handler and pass through untouched; submenus recurse, so a nested
+ * entry closes the picker the same way a top-level one does.
+ */
+function withPickerDismiss(
+  items: ContextMenuItem[],
+  onClose: () => void,
+): ContextMenuItem[] {
+  return items.map((item) => {
+    if (item.submenu) {
+      return { ...item, submenu: withPickerDismiss(item.submenu, onClose) };
+    }
+    if (!item.onClick) return item;
+    const run = item.onClick;
+    return {
+      ...item,
+      onClick: () => {
+        // Fire first, dismiss second — the order the old one-click checkout
+        // used. A handler that awaits a dialog (`Rename…`) has already opened
+        // it by the time this returns, and those dialogs render above the app,
+        // not inside the picker, so the dismissal cannot unmount them.
+        const pending = run();
+        onClose();
+        return pending;
+      },
+    };
+  });
+}
+
 const WIDTH = 400;
 const MAX_HEIGHT = 480;
 /** Pixels a nesting level indents a row by — the Branches screen's step. */
@@ -43,7 +83,6 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
   // one repository has one notion of which folders are folded, and a picker
   // that disagreed with the screen would be a second answer to one question.
   const folders = useBranchFolders(repoPath);
-  const checkoutBranch = useRepoStore((s) => s.checkoutBranch);
   const createAndSwitchBranch = useRepoStore((s) => s.createAndSwitchBranch);
   const [query, setQuery] = React.useState("");
   const [activeIndex, setActiveIndex] = React.useState(0);
@@ -52,15 +91,18 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
 
   const { onContextMenu: onLocalCtx, openAt: openLocal, menu: localMenu } =
     useContextMenu<BranchInfo>((b) =>
-      branchMenuItems({
-        name: b?.name,
-        current: b?.isHead,
-        upstream: b?.upstream,
-      }),
+      withPickerDismiss(
+        branchMenuItems({
+          name: b?.name,
+          current: b?.isHead,
+          upstream: b?.upstream,
+        }),
+        onClose,
+      ),
     );
   const { onContextMenu: onRemoteCtx, openAt: openRemote, menu: remoteMenu } =
     useContextMenu<BranchInfo>((b) =>
-      remoteBranchMenuItems({ name: b?.name }),
+      withPickerDismiss(remoteBranchMenuItems({ name: b?.name }), onClose),
     );
 
   // Filter FIRST, order SECOND (#135). `orderBranches` only permutes, so
@@ -147,11 +189,12 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
     aimed.current = false;
   }, [open, query]);
 
-  // Where the cursor rests before the user moves it. Enter checks out the
-  // active row, so with an empty query it sits on the CURRENT branch — the one
-  // row `checkout()` refuses to act on — rather than on whatever sorts first,
-  // which since #135 is the pinned default branch. Once a query is typed the
-  // top match IS the target, so it moves to row 0.
+  // Where the cursor rests before the user moves it. Enter opens the active
+  // row's actions menu, so this position decides which branch a stray
+  // keystroke offers to act on: with an empty query it sits on the CURRENT
+  // branch, whose menu answers with Check out already disabled, rather than on
+  // whatever sorts first, which since #135 is the pinned default branch. Once a
+  // query is typed the top match IS the target, so it moves to row 0.
   //
   // `flat` is in the deps on purpose: the popover can be opened before
   // `list_branches` resolves, and an effect keyed only on [open, query] would
@@ -178,8 +221,8 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
     // HEAD can be folded away (#244). Then the cursor rests on the FOLDER
     // holding it — the first match is the outermost rendered one, since a
     // collapsed folder renders none of its children. Enter there opens the
-    // folder instead of checking anything out, which keeps the rule the
-    // resting position exists for: a stray Enter must be a no-op.
+    // folder rather than a branch's menu, which keeps the rule the resting
+    // position exists for: a stray Enter must be a no-op.
     const headName = branches.find((b) => !b.isRemote && b.isHead)?.name;
     const holding = headName
       ? flat.findIndex(
@@ -247,12 +290,6 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
   );
   const top = rect.bottom + 4;
 
-  const checkout = (r: Row) => {
-    if (r.kind === "local" && r.isHead) return;
-    void checkoutBranch(r.name);
-    onClose();
-  };
-
   // The popover stays open across a fold: folding is navigation, not an answer.
   const toggleFolder = (path: string) => {
     if (folders.collapsed.has(path)) folders.expand([path]);
@@ -265,14 +302,35 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
     if (i >= 0) aim(i);
   };
 
-  const activate = (row: TreeRow) => {
+  /**
+   * Open a branch row's actions menu from the KEYBOARD, anchored to the row.
+   *
+   * A mouse press anchors the menu at the pointer, the way every other menu in
+   * the app does; Enter and → have no pointer, so they anchor under the row's
+   * `⋯` button instead. The row is found by INDEX, which is why folder rows
+   * carry `data-picker-row` too — the cursor counts them.
+   */
+  const openRowMenu = (
+    row: Extract<TreeRow, { kind: "branch" }>,
+    idx: number,
+  ) => {
+    const rowEls =
+      popoverRef.current?.querySelectorAll<HTMLElement>("[data-picker-row]");
+    const r = rowEls?.[idx]?.getBoundingClientRect() ?? anchor.getBoundingClientRect();
+    if (row.branch.kind === "local") openLocal(r.right - 24, r.bottom, row.branch);
+    else openRemote(r.right - 24, r.bottom, row.branch);
+  };
+
+  const activate = (row: TreeRow, idx: number) => {
     if (row.kind === "folder") {
       // Folding the folder the cursor sits in would otherwise leave it on a
       // row that is still rendered — it is the folder — so nothing to fix up.
       toggleFolder(row.path);
       return;
     }
-    checkout(row.branch);
+    // NOT a checkout. Every branch op in this picker is chosen off the row's
+    // menu, so no single press here can move the working tree.
+    openRowMenu(row, idx);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -300,12 +358,13 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
       const row = flat[activeIndex];
       if (!row) return;
       claim();
-      activate(row);
+      activate(row, activeIndex);
       return;
     }
-    // → opens a folded folder, and on a branch keeps opening its actions menu.
-    // ← folds an open folder, and on anything else climbs to the folder the
-    // row sits in — the same pair the Branches screen's tree answers.
+    // → opens a folded folder, and on a branch opens its actions menu — the
+    // same thing Enter does there now, kept because → is what the Branches
+    // screen's tree answers with. ← folds an open folder, and on anything else
+    // climbs to the folder the row sits in.
     if (e.key === "ArrowLeft") {
       const row = flat[activeIndex];
       if (!row) return;
@@ -328,14 +387,7 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
         if (folders.collapsed.has(row.path)) folders.expand([row.path]);
         return;
       }
-      const rowEls =
-        popoverRef.current?.querySelectorAll<HTMLElement>("[data-picker-row]");
-      const rowEl = rowEls?.[activeIndex];
-      const r = rowEl?.getBoundingClientRect() ?? anchor.getBoundingClientRect();
-      const x = r.right - 24;
-      const y = r.bottom;
-      if (row.branch.kind === "local") openLocal(x, y, row.branch);
-      else openRemote(x, y, row.branch);
+      openRowMenu(row, activeIndex);
       return;
     }
   };
@@ -417,7 +469,15 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
         // the segments a row owns, and the tests and the drag both need the ref.
         data-branch-name={r.name}
         data-active={active ? "true" : "false"}
-        onClick={() => checkout(r)}
+        // A press OPENS the row's menu; it never checks out. One click in a
+        // list of near-identical names used to move the working tree, so a
+        // misfire switched branches — and "Check out" is the menu's first
+        // entry, so the op costs one deliberate second press. Same handler the
+        // right-click and the `⋯` button use, anchored at the pointer.
+        onClick={(e) => {
+          aim(idx);
+          handler(e, r);
+        }}
         onContextMenu={(e) => handler(e, r)}
         onMouseEnter={() => aim(idx)}
         style={{
@@ -430,7 +490,10 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
           // folder row spends there, so nested names line up under the label.
           paddingLeft: 10 + row.depth * INDENT + (row.depth > 0 ? 16 : 0),
           background: active ? "var(--bg-selection)" : "transparent",
-          cursor: r.kind === "local" && r.isHead ? "default" : "pointer",
+          // Every row is actionable now, the current branch included: its menu
+          // is where "you are already here" reads off a disabled Check out
+          // beside everything the branch can still do.
+          cursor: "pointer",
           fontFamily: "var(--font-mono)",
           fontSize: "var(--fs-12)",
         }}
