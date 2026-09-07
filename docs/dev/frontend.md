@@ -2043,6 +2043,16 @@ every side effect, which is what makes the boundary's path possible at all. One
 report format: Settings' *Copy last 500 lines* button assembles its text with
 the same `buildReport`, so the two surfaces cannot drift.
 
+**Escape lives in the default runner, not in the component.** The dialog joins
+`app.closeOverlay`'s ordered chain in `features/keymap/actions.ts`, beside the
+other `PGModal` base-layer dialogs — *not* via a `useAction` registration.
+`useKeymapStore`'s dispatch tries registered handlers **before** the default
+runner, so a component registration would take Escape ahead of the credential
+prompt stacked above it and close the report dialog out from under a prompt
+some other op is still waiting on. That is the precise failure the runner's
+auth branch is ordered to prevent, so a new overlay belongs in the chain at its
+stacking position. `actions.test.ts` pins the ordering with both dialogs open.
+
 **A test note.** These specs use `fireEvent`, not `userEvent`.
 `userEvent.setup()` **replaces `navigator.clipboard`** with its own stub in
 order to implement copy/paste, which detaches any `writeText` spy installed
