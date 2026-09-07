@@ -1719,6 +1719,51 @@ one word (`locked`) with the variable text as a sibling span, `flexShrink: 0`
 on the badge. Screens that are all-path (`Worktrees`) skip the centred
 `maxWidth: 1100` column — the cap ate exactly the width the paths needed.
 
+### A submenu is its own portal, and dismissal is a PRESS (#422)
+
+`PGContextMenu` renders each submenu by recursing into itself, and every
+instance `createPortal`s to `document.body` — so a submenu is a SIBLING of the
+menu it belongs to, not a descendant. The dismiss-on-outside-press handler
+asked `ref.current.contains(e.target)`, which reads a press on a menu's own
+submenu as a press outside it: `mousedown` unmounted the whole tree, and the
+`click` that would have run the item's handler landed on a detached node. Every
+submenu entry — "Reset current branch to here" ▸ Soft/Mixed/Hard, "Check out
+branch" when a commit carries several, "Bisect" — did nothing under a real
+mouse, from the initial release until #422. The menu vanishing on the press is
+what made it read as "I clicked it and nothing happened".
+
+The check is therefore `pressIsInsideMenu(e.target)` — exported from
+`design/context-menu.tsx`, `e.target.closest("[data-pg-menu]")` — not
+`contains`: any menu in the tree counts as inside. Only one context-menu tree is
+ever open, so the attribute cannot match a foreign menu.
+
+**The same press breaks any popover that HOSTS a menu, and `BranchPicker` was
+the second one.** Its dismiss handler asked `popover.contains(target)`, and a
+row's context menu is portalled to `document.body` — so pressing "Merge into
+current" (or the rebase, rename or delete entries) closed the picker, which took
+its own menu with it. Same release span, same symptom, found only because the
+e2e helper below started pressing. So:
+
+- **A surface that dismisses on an outside press and can host a menu must call
+  `pressIsInsideMenu` first.** Of the seven outside-press handlers in `src/`,
+  the two that host a menu are `PGContextMenu` and `BranchPicker`; the other five
+  (`PGSelect`, `UpdatePanel`, `CompareSidePicker`, `RebaseBasePicker`,
+  `LoadingStatus`) host none, and gain the rule the day one grows a row menu.
+- **A new dismissal trigger has to be portal-aware the same way.** `contains`
+  on one menu's ref is only ever right for a menu with no submenus.
+- **The e2e layer cannot see this class of bug.** `jsClickMenuItem` used
+  `HTMLElement.click()`, which dispatches a bare `click` with no preceding
+  press — a sequence no mouse can produce, and dismissal is on the press. The
+  suite stayed green against a menu no user could operate, the same way green
+  dnd specs prove nothing when they synthesize `pointerdown` themselves. The
+  helper now presses first (in its own driver round trip, because a document
+  listener's `onClose` lands in React's scheduler rather than flushing inside
+  `dispatchEvent`) and fails loudly if the item vanished under the press.
+  `context-menu.submenuClick.test.tsx` and
+  `BranchPicker.menuClick.test.tsx` are the fast guards: they spell out
+  press → still mounted → click → handler ran. Both were watched to fail
+  against the old handler, and so was the e2e pair.
+
 ## No native `<select>` (issue 146)
 
 - **`PGSelect`** renders a `role="combobox"` trigger + a portalled
