@@ -1461,6 +1461,57 @@ cancellable in the backend but unstoppable from the UI for two releases.
   also keeps the 1 Hz re-render off the common case — and that re-render is why
   `ActivityStatus` is a leaf component rather than markup in `AppStatusBar`.
 
+#### The two activity surfaces (#431)
+
+`RepoActivity` has two readers on screen at once: `ActivityStatus` in the status
+bar, and `ActivityStrip` in the history view, directly above the commit list.
+The status bar answered the four questions well and answered them at the bottom
+edge of the window — but what a user watches during a checkout or a rebase is
+the list, which sits there showing the branch they just left. A four-second
+checkout read as a click that did nothing.
+
+- **`useActivityView` owns every DECISION; the surfaces own only layout**
+  (`features/repo/activityView.ts`). Which of several live ops is named, what
+  the label reads once a cancellation is asked for, whether Cancel can be
+  honoured, how many others go uncounted — all decided once. The status-bar item
+  renders an inline 52 px bar and the strip a full-width 2 px one, and they are
+  free to differ about *that*, because nobody is misinformed by it.
+  `activityView.test.tsx` mounts BOTH over one store and asserts they name the
+  same op, agree on cancellability for every `ActivityKey`, and both switch to
+  "Cancelling…" on one click of either one. Its case table is keyed by
+  `ActivityKey`, so a kind added later cannot skip it — and a third surface
+  lays out this hook rather than reading `activity` itself.
+- **The strip carries its own test hooks (`activity-strip-*`).** `cancel.e2e.ts`
+  waits on `activity-label` and CLICKS `activity-cancel`; WebdriverIO's `$`
+  takes the first match in document order, and the strip renders above the
+  status bar. Sharing the hooks would have silently re-pointed a passing spec at
+  a surface with a 400 ms delay in front of it — still green, testing something
+  else. A unit test asserts the strip renders neither of the status bar's ids.
+- **The strip has a flicker floor; the status bar does not need one.** The strip
+  is IN the layout, so every op it reports shoves the list down and back up, and
+  most ops — a checkout of a branch differing by three files, the refresh after
+  every commit — are over inside a tenth of a second. `SHOW_AFTER_MS` is 400,
+  matching `LoadingStatus`'s on purpose: two thresholds would mean the two
+  indicators appeared at different moments during one slow refresh.
+- **It mounts on BOTH of `History.tsx`'s render paths.** The `!commits.length`
+  early return renders its own toolbar, and that is the path a checkout to an
+  unborn branch lands on — and where a cold repository open sits for as long as
+  the first log read takes. The slowest waits the app has are exactly the ones a
+  strip mounted only in the populated branch would miss.
+- **The windowed list reflows around it on its own** (`useWindowedList` observes
+  `clientHeight`). On WebKitGTK, which has no `ResizeObserver`, the cached
+  viewport goes briefly stale — the strip appearing SHRINKS the viewport, so a
+  few extra rows render, which is harmless; it going grows the viewport and can
+  leave a short gap at the bottom until the next scroll. The same trade
+  `ShallowNotice` and the advanced-search panel already make in this screen.
+- **Indeterminate is the common case, not the fallback.** Only fetch, pull and
+  push run with `--progress`; a checkout, a rebase replay and a stash have no
+  number to report and must not imply one. `PGProgressBar`'s indeterminate fill
+  takes its width from `.pg-progress-indeterminate` rather than an inline style,
+  so `prefers-reduced-motion` can replace the width and the motion together — a
+  35 %-wide sliver that has merely stopped sliding reads as "35 % done", which
+  is the one thing an indeterminate bar must never say.
+
 #### `loadingTasks` — the detail behind `loading` (gap 8)
 
 `refreshAll` is TEN backend reads behind one `Promise.all` with one boolean to
