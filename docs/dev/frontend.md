@@ -1510,6 +1510,50 @@ in one or two of the ten and nothing said which.
   which must cover it. The shell root's `overflow: hidden` does not clip it,
   because it grows into the content area rather than out of the window.
 
+#### The Refresh button's spinner — `refreshSpinner.ts`
+
+The titlebar's Fetch, Pull and Push buttons pass `loading` to `PGButton` and get
+a spinning `sync` glyph for free. Refresh went years without one, and the reason
+the obvious fix is wrong is the same `SHOW_AFTER_MS` argument one bullet up —
+with the sign flipped on half the cases.
+
+- **`loading={s.loading}` is the wrong answer.** That flag is true during every
+  commit, every tab switch and the tail of every network op, and it usually
+  clears inside 100 ms. Bound straight to the button, the titlebar twitches all
+  day and the twitch means nothing.
+- **`useDelayedFlag(s.loading, SHOW_AFTER_MS)` is also the wrong answer.** It
+  never strobes, but in a warm repository a refresh finishes well inside 400 ms,
+  so clicking Refresh would produce no feedback at all — which is the entire
+  thing the animation is for. A status line may stay silent about work nobody
+  asked about; a button the user just pressed may not.
+- **So the two cases are told apart by WHO asked**, which is the only thing that
+  distinguishes them. A refresh the user asked for spins immediately and holds
+  for `MIN_SPIN_MS` (450) whatever the backend did — a 40 ms quarter-turn reads
+  as a rendering glitch, not as an acknowledgement. A refresh nobody asked for
+  spins only once it outlives `SHOW_AFTER_MS`, which still catches the
+  nine-second `/mnt/c` refresh.
+- **The two windows overlap on purpose.** `MIN_SPIN_MS` outlasts
+  `SHOW_AFTER_MS`, so a slow user-invoked refresh hands off from the hold to the
+  delayed flag rather than blinking off in the middle of itself.
+- **`refreshOp()` is where the request is marked**, after its `if
+  (!repo.current) return false` guard so a declined refresh spins nothing. That
+  op is already the shared entry point for the button, `Mod+Alt+Y` and the
+  palette command, which is what lets one marker cover all three — the palette
+  used to carry its own copy of the op's body and now routes through it. **A
+  fourth way to ask for a refresh gets the spinner by calling `refreshOp`**, not
+  by calling `markRefreshRequested` beside a bare `refreshAll`.
+- **The request counter is a module-level `useSyncExternalStore`, not a
+  `RepoSlice` field.** It is not repository state: it is per-window, transient,
+  and it has to survive the `emptySlice()` that a tab switch performs — a slice
+  field would be reset out from under a spin already in progress.
+- `SHOW_AFTER_MS` lives in `elapsed.ts` beside `useDelayedFlag` for this reason:
+  two surfaces now decide what "slow" means and a logic module should not have
+  to import a component to ask.
+- Planting both wrong answers is what `refreshSpinner.test.tsx` is for — the
+  naive binding trips the flicker-floor case, the delay-only binding trips the
+  immediate-feedback case, and removing `loading={refreshing}` from `AppShell`
+  is caught by `noUnusedLocals` rather than by a test.
+
 #### `statusLoaded` — "have we ever read this repo?" (#368)
 
 A third question the same boolean was being asked. `loading` means "a refresh is
