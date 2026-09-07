@@ -171,6 +171,12 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   add `src/components/ui/`. Never hardcode the accent hue — CSS vars/theme
   tokens only. New list-row surfaces opt into UI density (`var(--row-step)`).
   (`docs/dev/frontend.md`)
+- **Icons are `lucide-react` behind `PGIcon`** — `src/design/icons.tsx` is the
+  ONLY file that may import it, and `PGIcon`'s `strokeWidth` is on a 16-unit
+  grid (scaled to lucide's 24), so changing that scale re-weights every icon at
+  once. `name` is `IconName | string` so a typo type-checks and renders a dashed
+  square; `test/iconSet.test.ts` fails the build for a stray import AND for a
+  call-site literal the union does not declare. (`docs/dev/frontend.md`)
 - **Zustand per feature.** `useRepoStore` holds exactly ONE repository's state
   (the active tab's); a new per-repo field must join `RepoSlice`/`emptySlice`
   or tab switches leak state. Danger-op catch arms: `refreshAll()` first,
