@@ -50,7 +50,10 @@ const CLIPPED = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
-  minWidth: "0",
+  // React writes `minWidth: 0` out as the bare string "0"; reading it back
+  // gives "0px", because CSSOM serializes a <length> with its unit. That is
+  // what a real browser returns too — jsdom only started agreeing in 30.x.
+  minWidth: "0px",
 };
 
 describe("PGWorktreeRow layout", () => {
