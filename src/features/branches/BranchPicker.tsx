@@ -5,6 +5,7 @@ import {
   PGSearchInput,
   PGIconButton,
   useContextMenu,
+  pressIsInsideMenu,
   branchMenuItems,
   remoteBranchMenuItems,
 } from "@/design";
@@ -218,6 +219,12 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
       const popover = popoverRef.current;
       if (popover && t && popover.contains(t)) return;
       if (anchor && t && anchor.contains(t)) return;
+      // A row's context menu is portalled to `document.body`, so `contains`
+      // reads a press on it as a press outside the picker: the picker closed on
+      // `mousedown` and took its own menu with it, so every entry on it —
+      // "Merge into current", the rebase and delete entries — did nothing under
+      // a real mouse (#422). See `pressIsInsideMenu`.
+      if (pressIsInsideMenu(e.target)) return;
       onClose();
     };
     window.addEventListener("mousedown", onDown);

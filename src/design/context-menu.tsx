@@ -69,6 +69,23 @@ export interface ContextMenuItem {
   onClick?: () => void | Promise<void>;
 }
 
+/**
+ * True when a press landed inside an OPEN context menu — including a submenu,
+ * which is its own portal on `document.body`.
+ *
+ * **Any surface that dismisses itself on an outside press must consult this**
+ * (`BranchPicker` is the worked example). A menu opened from one of that
+ * surface's own rows is portalled out of its subtree, so a plain
+ * `popover.contains(target)` reads the press on that menu as a press outside
+ * the surface: the surface closes on `mousedown`, taking the menu with it, and
+ * the entry's `click` lands on a detached node — the entry silently does
+ * nothing (#422). Only one menu tree is ever open, so this cannot match a
+ * foreign menu.
+ */
+export function pressIsInsideMenu(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest("[data-pg-menu]");
+}
+
 function ContextMenuItemView({
   item,
   onClose,
@@ -199,7 +216,13 @@ export function PGContextMenu({
 
   React.useEffect(() => {
     const onDown = (e: Event) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      if (!ref.current) return;
+      // A submenu is its OWN portal, so `ref.contains` reads a press on this
+      // menu's own submenu as a press outside it — and dismissing on
+      // `mousedown` unmounted the item before its `click` could run its
+      // handler. Every submenu entry did nothing under a real mouse (#422).
+      if (pressIsInsideMenu(e.target)) return;
+      if (!ref.current.contains(e.target as Node)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();

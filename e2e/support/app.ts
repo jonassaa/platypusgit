@@ -723,21 +723,60 @@ async function waitForMenuItem(label: string): Promise<void> {
 
 /** Click an open context-menu item by its label-span text (menus are
  *  portals rendered to document.body, so a plain CSS selector on the label
- *  text is the reliable way to find them). */
+ *  text is the reliable way to find them).
+ *
+ *  Inside a menu the click is PRESSED first. `HTMLElement.click()` dispatches a
+ *  bare `click` with no preceding `mousedown` — a sequence no mouse can
+ *  produce, and menus dismiss on the press: #422 broke every submenu entry
+ *  (Reset ▸ Soft/Mixed/Hard among them) while this suite stayed green, because
+ *  the press that unmounted the item never happened here. The press is scoped
+ *  to `[data-pg-menu]` so the helper's non-menu callers keep their old
+ *  behaviour and cannot wake some other surface's outside-press handler. */
 export async function jsClickMenuItem(label: string): Promise<void> {
   await waitForMenuItem(label);
-  // executeOnce: the click closes the menu, so a driver-retry re-run finds
-  // no item and reports false — failing the test even though the click
-  // already landed (the CI double-run flake, issue #35).
-  const ok = await executeOnce((text: string) => {
-    const spans = Array.from(document.querySelectorAll("span"));
-    const el = spans.find((s) => s.textContent === text);
+  // The press goes in its OWN round trip. A dismiss handler is a plain document
+  // listener, so its `onClose` lands in React's scheduler rather than flushing
+  // inside `dispatchEvent` — the item is still mounted the instant the press
+  // returns, and checking here would prove nothing. The driver round trip
+  // between the two calls is what lets the unmount actually happen.
+  //
+  // executeOnce on both halves: a driver script-timeout (routine under xvfb)
+  // makes WebdriverIO retry the command, and a replayed press or click is a
+  // second real interaction (the CI double-run flake, issue #35).
+  const pressed = await executeOnce((text: string) => {
+    const el = Array.from(document.querySelectorAll("span")).find(
+      (s) => s.textContent === text,
+    );
     if (!el) return false;
     const target = (el.closest("div") as HTMLElement | null) ?? (el as HTMLElement);
-    target.click();
+    // Scoped to menus: the helper's non-menu callers keep exactly their old
+    // click-only behaviour and cannot wake some other surface's handler.
+    if (!target.closest("[data-pg-menu]")) return false;
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     return true;
   }, label);
-  if (!ok) throw new Error(`menu item not found: ${label}`);
+
+  const outcome = await executeOnce(
+    (text: string, wasPressed: boolean) => {
+      const el = Array.from(document.querySelectorAll("span")).find(
+        (s) => s.textContent === text,
+      );
+      if (!el) return wasPressed ? "vanished" : "missing";
+      const target = (el.closest("div") as HTMLElement | null) ?? (el as HTMLElement);
+      if (wasPressed) target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      target.click();
+      return "clicked";
+    },
+    label,
+    pressed,
+  );
+
+  if (outcome === "vanished")
+    throw new Error(
+      `menu item vanished under the press: ${label} — a dismiss handler tore ` +
+        `the menu down before the click could land (#422)`,
+    );
+  if (outcome !== "clicked") throw new Error(`menu item not found: ${label}`);
 }
 
 /** Hover a context-menu item to open its submenu (menus are portals; the
