@@ -5,6 +5,7 @@ import { useCreateStore } from "@/features/create/useCreateStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { useOverlayStore } from "./useOverlayStore";
+import { useReportStore } from "@/features/report/useReportStore";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { newTab } from "@/features/repo/tabs";
@@ -93,6 +94,35 @@ describe("default runners", () => {
     expect(useOverlayStore.getState().cheatSheetOpen).toBe(false);
     // Nothing left to close — the runner must decline so Escape falls through.
     expect(ACTIONS["app.closeOverlay"].run?.()).toBe(false);
+  });
+
+  it("app.closeOverlay closes the report dialog, but not before the credential prompt", () => {
+    useOverlayStore.setState({ cheatSheetOpen: false });
+    useReportStore.setState({ open: true, seed: "" });
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+    expect(useReportStore.getState().open).toBe(false);
+    // ...and declines once there is nothing left to close.
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(false);
+
+    // The precedence is the point of putting this in the runner's chain rather
+    // than registering a handler from the component: a registered handler runs
+    // BEFORE the default runner, so it would close the report dialog out from
+    // under a credential prompt stacked above it — the failure the auth branch
+    // is ordered to prevent. With both open, the prompt goes first and the
+    // report dialog is still there.
+    useReportStore.setState({ open: true, seed: "" });
+    // A real `AuthChallengeRequest` through `raise`, not a cast: the runner
+    // calls `dismiss()`, which fires `onDismiss`, so a half-built object would
+    // pass this test by throwing somewhere else.
+    useAuthStore.getState().raise({
+      host: "github.com",
+      kind: "Https",
+      retry: async () => {},
+      onDismiss: () => {},
+    });
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+    expect(useReportStore.getState().open).toBe(true);
+    useReportStore.setState({ open: false, seed: "" });
   });
 
   it("app.closeOverlay also closes an open create dialog (clone or init)", () => {
