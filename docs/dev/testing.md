@@ -410,6 +410,18 @@ proven by `pnpm test`. It needs a real Docker e2e run.
   `major.minor.patch` or it reads a selector as a version; and `it.each`'s
   `$major` renders as `undefined`, which is why the floor cases are a plain
   loop.
+- **`forge::http`'s in-file tests** pin the one thing about the outbound forge
+  agent that is invisible from outside and silent when wrong. `ureq` 3's
+  default is to collapse a 4xx/5xx into `Error::StatusCode(code)` and drop the
+  response with it; let that default back in and `error_for` never runs, so a
+  401 arrives as a transport failure, becomes `Network`, and the UI pops the
+  git-transport credential dialog for a token that lives in Settings. The
+  tests read the agent's own `Config` (`http_status_as_error`, `https_only`,
+  `max_redirects`, the global timeout) and drive `error_for` against a real
+  `Response<Body>` built with `ureq::Body::builder()` — no network, and no
+  source-text matching either. They live in `forge/http.rs` rather than in
+  `tests/forge_api.rs` because the functions they cover are private, which is
+  itself the point: nothing outside the module may build a forge request.
 - **`test/privacy.test.ts`** pins the promise the README advertises (#226): no
   analytics package in `package.json` or anywhere in `pnpm-lock.yaml`
   (transitive is the arrival nobody reviews), no network call or analytics

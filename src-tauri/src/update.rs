@@ -17,7 +17,7 @@ pub const REPO_SLUG: &str = "jonassaa/platypusgit";
 /// rewrites it from the tag, so a binary reporting this is never a real install.
 pub const DEV_VERSION: &str = "0.0.0";
 
-/// Total budget for the discovery GET. `ureq` 2.x defaults every timeout to
+/// Total budget for the discovery GET. `ureq` defaults every timeout to
 /// `None`, so a host that completes the TLS handshake and then stalls pins the
 /// `spawn_blocking` thread forever and Settings' "Check for updates" button
 /// becomes a permanently disabled spinner with no cancel.
@@ -457,19 +457,28 @@ pub fn pick_newest(releases: &[ReleaseMeta]) -> Option<&ReleaseMeta> {
 /// Unauthenticated (60 req/hr/IP is ample for our cadence — and dev/e2e builds
 /// never get here, see `discover`).
 fn get_body(url: &str) -> AppResult<String> {
-    // `https_only` matters because the agent follows up to 5 redirects by
-    // default — without it a redirect could downgrade us to plaintext http.
-    let agent = ureq::AgentBuilder::new()
-        .timeout(HTTP_TIMEOUT)
+    // `https_only` matters because the agent follows redirects — without it a
+    // redirect could downgrade us to plaintext http. The redirect budget is
+    // spelled out rather than left to the crate: `ureq` 2 defaulted to 5 and 3
+    // defaults to 10, and neither number is a thing this call wants to inherit.
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(HTTP_TIMEOUT))
         .https_only(true)
-        .build();
-    let resp = agent
+        .max_redirects(5)
+        .build()
+        .new_agent();
+    // A non-2xx stays an error here, unlike `forge/http.rs`: GitHub's release
+    // endpoints have no error body worth showing a user, so the status is the
+    // whole message.
+    let mut resp = agent
         .get(url)
-        .set("User-Agent", "platypusgit-updater")
-        .set("Accept", "application/vnd.github+json")
+        .header("User-Agent", "platypusgit-updater")
+        .header("Accept", "application/vnd.github+json")
         .call()
         .map_err(|e| AppError::Network(e.to_string()))?;
-    resp.into_string()
+    // Capped at 10 MB by default, same as `ureq` 2's `into_string`.
+    resp.body_mut()
+        .read_to_string()
         .map_err(|e| AppError::Network(e.to_string()))
 }
 

@@ -70,6 +70,25 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
 - `LfsUnavailable` and `NoBisect` are STATES, not failures (disable + explain /
   refresh). `DirtyWorktree` is reused for `git worktree remove`'s refusal → the
   second, type-the-name confirm.
+- **The forge agent turns `http_status_as_error` OFF, and that is not a
+  stylistic choice.** `ureq` 3's default is to collapse a 4xx/5xx into
+  `Error::StatusCode(code)` and DROP the response with it — which throws away
+  the forge's own `message` field, the difference between a banner reading
+  "forge error: 422" and one reading "a pull request already exists for
+  owner:branch". So `forge/http.rs` takes the status as an ordinary response
+  and `error_for` classifies it: 401/403 to `ForgeAuth(host)` (routes to
+  Settings, never to the git-transport credential dialog), 404 to the
+  scopes hint, everything else to `HTTP <code>: <message>`. `update.rs` leaves
+  the default alone on purpose — GitHub's release endpoints have no error body
+  worth showing, so there the status IS the message.
+- Both agents spell `max_redirects(5)` out rather than inherit it: `ureq` 2
+  defaulted to 5 and 3 defaults to 10. `https_only(true)` is the one that
+  matters on a redirect — without it a redirect could downgrade an
+  authenticated API call to plaintext http with the token still in the header.
+  (`ureq` 3 also stops forwarding auth headers across hosts by default; that is
+  a second belt, not a replacement.) And the forge body cap is now an ERROR
+  over the limit rather than `ureq` 2's silent truncation, which only ever
+  surfaced as unparseable JSON somewhere further along.
 
 ## Interactive rebase engine
 

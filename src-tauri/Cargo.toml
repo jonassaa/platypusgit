@@ -40,7 +40,7 @@ tauri-plugin-wdio-webdriver = { version = "1.2.0", optional = true }
 tauri-plugin-single-instance = "2.4.2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-ureq = "2"
+ureq = "3"
 # Already in the tree transitively; declared directly so `open_url` can really
 # parse a URL instead of prefix-matching one.
 url = "2"
