@@ -28,6 +28,7 @@ import {
   ArrowUpFromLine,
   Bell,
   BookMarked,
+  Bug,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -115,7 +116,7 @@ export type IconName =
   | "chevronRight" | "chevronDown" | "chevronUp" | "chevronLeft"
   | "search" | "settings" | "filter" | "sort" | "more"
   | "pull" | "push" | "fetch" | "sync" | "refresh" | "stash" | "rebase"
-  | "dot" | "circle" | "warn" | "error" | "info" | "clock"
+  | "dot" | "circle" | "warn" | "error" | "info" | "clock" | "bug"
   | "user" | "eye" | "terminal" | "history" | "kbd"
   | "download" | "upload" | "link" | "lock"
   | "play" | "pause" | "star" | "copy" | "external" | "pin"
@@ -192,6 +193,7 @@ const ICONS: Record<IconName, LucideIcon> = {
   error: CircleX,
   info: Info,
   clock: Clock,
+  bug: Bug,
 
   // ── Chrome ──────────────────────────────────────────────────────────────
   user: User,
