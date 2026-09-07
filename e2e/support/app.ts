@@ -630,16 +630,28 @@ export async function switchScreen(id: string): Promise<void> {
   await $(`[data-activity="${id}"]`).click();
 }
 
-/** Open the Settings screen via the titlebar gear.
+/**
+ * Open Settings, optionally on a named page.
  *
- * The gear is rendered unconditionally, and AppShell's body gate is
- * `repo || screen === "settings"` — so this works with no repository open. */
-export async function openSettings(): Promise<void> {
+ * The wait target is the side menu, not a row: Settings renders ONE page now,
+ * so waiting on any particular setting's label would only work for the page
+ * that happens to be remembered. The gear is rendered unconditionally, and
+ * AppShell's body gate is `repo || screen === "settings"` — so this works
+ * with no repository open.
+ */
+export async function openSettings(page?: string): Promise<void> {
   await $('button[title="Settings"]').click();
-  await $("div*=Default pull mode").waitForDisplayed({
+  await $('[role="tree"]').waitForDisplayed({
     timeout: 10_000,
     timeoutMsg: "Settings screen never appeared",
   });
+  if (page) {
+    await $(`[data-testid="settings-nav-${page}"]`).click();
+    await $(`[data-settings-page="${page}"]`).waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: `Settings page ${page} never appeared`,
+    });
+  }
 }
 
 export const stagedRow = (p: string) =>

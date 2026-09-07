@@ -10,32 +10,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { mockInvoke } from "@/test/invokeMock";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { SettingsScreen } from "./Settings";
-
-/** The rest of the Settings screen loads too; give it what it asks for. */
-function mockRestOfSettings() {
-  mockInvoke("cli_shim_status", () => ({
-    installed: true,
-    shimPath: "/usr/local/bin/pgit",
-    target: "/usr/bin/platypusgit",
-    source: "package",
-    pathState: "onPath",
-  }));
-  mockInvoke("get_update_capability", () => "self-update");
-  mockInvoke("diagnostics_report", () => ({
-    logPath: "/tmp/platypusgit.log",
-    logExists: false,
-    logSizeBytes: 0,
-    environment: "host os=macos arch=aarch64 git=2.43.0",
-    version: "0.1.0",
-  }));
-}
+import { AppearancePage } from "@/features/settings/pages/appearance";
 
 beforeEach(() => {
   localStorage.clear();
-  mockRestOfSettings();
   useSettingsStore.getState().set("dateFormat", "relative");
 });
 
@@ -43,14 +22,14 @@ const button = (name: string) => screen.getByRole("button", { name });
 
 describe("Settings → Appearance: the date format", () => {
   it("offers the three formats and shows which one is stored", () => {
-    render(<SettingsScreen />);
+    render(<AppearancePage />);
     expect(button("Relative").getAttribute("aria-pressed")).toBe("true");
     expect(button("Absolute").getAttribute("aria-pressed")).toBe("false");
     expect(button("Both").getAttribute("aria-pressed")).toBe("false");
   });
 
   it("persists a pick and moves the pressed state with it", async () => {
-    render(<SettingsScreen />);
+    render(<AppearancePage />);
     await userEvent.click(button("Both"));
     expect(useSettingsStore.getState().dateFormat).toBe("both");
     expect(button("Both").getAttribute("aria-pressed")).toBe("true");
@@ -60,7 +39,7 @@ describe("Settings → Appearance: the date format", () => {
   // The row carries a live sample, so the difference between the three is read
   // off the screen rather than guessed from the word.
   it("previews the chosen format on a real timestamp", async () => {
-    render(<SettingsScreen />);
+    render(<AppearancePage />);
     const sample = () => screen.getByTestId("settings-date-format-sample").textContent ?? "";
     expect(sample()).toBe("3w ago");
 
@@ -73,7 +52,7 @@ describe("Settings → Appearance: the date format", () => {
 
   // "Relative" must not read as "the exact time is gone".
   it("says the full timestamp is always available", () => {
-    render(<SettingsScreen />);
+    render(<AppearancePage />);
     const hint = screen.getByTestId("settings-date-format-hint").textContent ?? "";
     expect(hint).toMatch(/hover/i);
     expect(hint).toMatch(/commit details/i);

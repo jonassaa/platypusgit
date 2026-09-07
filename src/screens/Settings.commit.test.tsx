@@ -8,39 +8,20 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { mockInvoke } from "@/test/invokeMock";
 import { WithDialogs, resetDialogs } from "@/test/dialog";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { SettingsScreen } from "./Settings";
-
-function mockRestOfSettings() {
-  mockInvoke("cli_shim_status", () => ({
-    installed: true,
-    shimPath: "/usr/local/bin/pgit",
-    target: "/usr/bin/platypusgit",
-    source: "package",
-    pathState: "onPath",
-  }));
-  mockInvoke("diagnostics_report", () => ({
-    logPath: "/tmp/platypusgit.log",
-    logExists: false,
-    logSizeBytes: 0,
-    environment: "host os=macos arch=aarch64 git=2.43.0",
-    version: "0.1.0",
-  }));
-}
+import { CommitPage } from "@/features/settings/pages/commit";
 
 beforeEach(() => {
   localStorage.clear();
   resetDialogs();
-  mockRestOfSettings();
   useSettingsStore.getState().reset();
 });
 
 function renderSettings() {
   render(
     <WithDialogs>
-      <SettingsScreen />
+      <CommitPage />
     </WithDialogs>,
   );
 }

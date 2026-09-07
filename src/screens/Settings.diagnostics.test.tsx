@@ -8,22 +8,11 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mockInvoke } from "@/test/invokeMock";
-import { SettingsScreen } from "./Settings";
+import { BackupPage } from "@/features/settings/pages/backup";
 
 const LOG_PATH = "/home/jonas/.local/share/io.github.jonassaa.platypusgit/logs/platypusgit.log";
 const ENV_LINE =
   "host os=linux arch=x86_64 kernel=5.15.153.1-microsoft-standard-WSL2 wsl=Ubuntu-24.04 git=2.43.0";
-
-/** The rest of the Settings screen loads too; give it what it asks for. */
-function mockRestOfSettings() {
-  mockInvoke("cli_shim_status", () => ({
-    installed: true,
-    shimPath: "/usr/local/bin/pgit",
-    target: "/usr/bin/platypusgit",
-    source: "package",
-    pathState: "onPath",
-  }));
-}
 
 function mockReport(over: Record<string, unknown> = {}) {
   mockInvoke("diagnostics_report", () => ({
@@ -44,13 +33,12 @@ beforeEach(() => {
     configurable: true,
     value: { writeText: vi.fn((t: string) => void clipboard.push(t)) },
   });
-  mockRestOfSettings();
 });
 
 describe("the Settings diagnostics panel", () => {
   it("shows the log path and the environment line verbatim", async () => {
     mockReport();
-    render(<SettingsScreen />);
+    render(<BackupPage />);
 
     // Verbatim and selectable: the user's next move is to copy it or go find
     // the file, and a path shortened for layout serves neither.
@@ -61,7 +49,7 @@ describe("the Settings diagnostics panel", () => {
   it("puts the version, environment and path ON the clipboard, above the tail", async () => {
     mockReport();
     mockInvoke("read_log_tail", () => "[2026-08-27][12:01:13][INFO] open_repo /mnt/c/dev/app");
-    render(<SettingsScreen />);
+    render(<BackupPage />);
 
     await userEvent.click(
       await screen.findByRole("button", { name: /copy last 500 lines/i }),
@@ -82,7 +70,7 @@ describe("the Settings diagnostics panel", () => {
 
   it("offers neither action when no log file has been written yet", async () => {
     mockReport({ logExists: false, logSizeBytes: null });
-    render(<SettingsScreen />);
+    render(<BackupPage />);
 
     // A button that reveals a nonexistent path fails in the file manager, where
     // the error is the OS's problem to explain and it explains it badly.
@@ -100,7 +88,7 @@ describe("the Settings diagnostics panel", () => {
     mockInvoke("read_log_tail", () => {
       throw { kind: "Io", message: "cannot read the log: permission denied" };
     });
-    render(<SettingsScreen />);
+    render(<BackupPage />);
 
     await userEvent.click(
       await screen.findByRole("button", { name: /copy last 500 lines/i }),

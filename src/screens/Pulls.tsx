@@ -223,7 +223,7 @@ export function PullsScreen() {
 function GateEmpty({ gate }: { gate: ForgeGate }) {
   const detection = useForgeStore((s) => s.detection);
   const toSettings = () =>
-    useNavStore.getState().setIntent({ kind: "switch-screen", screen: "settings" });
+    useNavStore.getState().setIntent({ kind: "open-settings", page: "git.integrations" });
 
   if (gate === "no-repo") {
     return (

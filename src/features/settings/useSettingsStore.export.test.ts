@@ -116,7 +116,10 @@ const PORTABLE = [
 // `terminalShell` (#243) is a PATH to a binary on this machine, so it is denied
 // for the same reason `lastCreateDir` is — see NON_PORTABLE_KEYS for the
 // contrast with `externalDiffTool`, which holds a tool name and does travel.
-const EXCLUDED = ["lastCreateDir", "identities", "terminalShell"];
+// `settingsPage` (#settings-nav) says where one person was standing in the
+// side menu, not how the app should behave — the same reasoning as
+// `lastCreateDir`.
+const EXCLUDED = ["lastCreateDir", "identities", "terminalShell", "settingsPage"];
 
 describe("the exported key set", () => {
   it("is exactly the schema minus the deny-list", async () => {
@@ -709,5 +712,32 @@ describe("downloadSettings", () => {
       URL.createObjectURL = origCreate;
       URL.revokeObjectURL = origRevoke;
     }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SETTINGS PAGE (#settings-nav)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("settingsPage is remembered but never shared (#settings-nav)", () => {
+  it("defaults to the first page", async () => {
+    const store = await freshStore();
+    expect(store.useSettingsStore.getState().settingsPage).toBe("general.appearance");
+  });
+
+  it("is denied on export", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().set("settingsPage", "git.diff");
+    expect(exported(store).settings).not.toHaveProperty("settingsPage");
+  });
+
+  it("is ignored on import", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().set("settingsPage", "git.diff");
+    const report = store.useSettingsStore
+      .getState()
+      .importSettings(payloadOf({ settingsPage: "advanced.cli" }));
+    expect(store.useSettingsStore.getState().settingsPage).toBe("git.diff");
+    expect(report.ignored).toContain("settingsPage");
   });
 });

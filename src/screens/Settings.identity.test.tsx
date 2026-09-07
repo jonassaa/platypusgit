@@ -13,25 +13,8 @@ import { getInvokeCalls, mockInvoke, resetInvokeMock } from "@/test/invokeMock";
 import { WithDialogs, resetDialogs } from "@/test/dialog";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { SettingsScreen } from "./Settings";
+import { CommitPage } from "@/features/settings/pages/commit";
 import type { GitIdentity } from "@/lib/types";
-
-function mockRestOfSettings() {
-  mockInvoke("cli_shim_status", () => ({
-    installed: true,
-    shimPath: "/usr/local/bin/pgit",
-    target: "/usr/bin/platypusgit",
-    source: "package",
-    pathState: "onPath",
-  }));
-  mockInvoke("diagnostics_report", () => ({
-    logPath: "/tmp/platypusgit.log",
-    logExists: false,
-    logSizeBytes: 0,
-    environment: "host os=macos arch=aarch64 git=2.43.0",
-    version: "0.1.0",
-  }));
-}
 
 const GLOBAL_IDENTITY: GitIdentity = {
   name: { value: "Ada Lovelace", scope: "global" },
@@ -44,7 +27,6 @@ beforeEach(() => {
   localStorage.clear();
   resetInvokeMock();
   resetDialogs();
-  mockRestOfSettings();
   useSettingsStore.getState().reset();
   useRepoStore.setState({ current: null } as never);
 });
@@ -52,7 +34,7 @@ beforeEach(() => {
 function renderSettings() {
   render(
     <WithDialogs>
-      <SettingsScreen />
+      <CommitPage />
     </WithDialogs>,
   );
 }

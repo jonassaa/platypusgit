@@ -27,6 +27,10 @@ import {
   pgFlash,
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import {
+  SettingsCard,
+  SettingsRow,
+} from "@/features/settings/layout/SettingsCard";
 import type { ForgeKind } from "@/lib/types";
 import type { ForgeAccount } from "./forgeAccounts";
 import { forgeLabel } from "./forgeLabels";
@@ -78,12 +82,14 @@ export function ForgeSettings() {
 
   return (
     <div data-testid="settings-forge">
-      <Section
+      <SettingsCard
+        id="integrations"
         title="Integrations"
         subtitle="Pull and merge requests. A forge API token is a separate credential from the one git pushes with — it is stored under its own key and never replaces it. A host can hold several accounts; the active one is what pull requests are listed and opened as."
       >
         {hosts.length === 0 && (
-          <Row
+          <SettingsRow
+            id="integrations.none"
             label="No forge detected"
             hint="Open a repository whose remote points at GitHub or GitLab, and its host appears here."
             control={<span />}
@@ -101,7 +107,8 @@ export function ForgeSettings() {
           />
         ))}
         {error && (
-          <Row
+          <SettingsRow
+            id="integrations.error"
             label="Last error"
             hint={<span style={{ color: "var(--git-removed)" }}>{error}</span>}
             control={
@@ -115,7 +122,7 @@ export function ForgeSettings() {
             }
           />
         )}
-      </Section>
+      </SettingsCard>
     </div>
   );
 }
@@ -210,7 +217,7 @@ function AccountRow({
   };
 
   return (
-    <Row
+    <ForgeRow
       label={account.login}
       testId={`forge-account-${host}-${key}`}
       hint={
@@ -318,7 +325,7 @@ function AddAccountRow({
   };
 
   return (
-    <Row
+    <ForgeRow
       label={host}
       hint={
         hasAccounts ? (
@@ -389,67 +396,19 @@ function AddAccountRow({
   );
 }
 
-// ─── Local copies of the Settings screen's layout helpers ────────────────────
-// Same shape as `Section` / `Row` in screens/Settings.tsx. Kept local rather than
-// exported from there so this feature does not import from a screen; the screen
-// owns its own layout, this owns its own.
+// ─── AccountRow / AddAccountRow's row shape ───────────────────────────────────
+//
+// NOT SettingsRow: these are per-account rows over DATA (a host can hold
+// several accounts, one row each, plus one "add another" row), not fixed
+// settings — there is no stable id to index and no case for `data-setting-id`.
+// They also need two things SettingsRow's fixed shape does not carry: a
+// testId per instance (the unit tests below key off it — one row per account)
+// and an inline badge beside a monospace label ("Active", not a second line of
+// prose). `Section` above them is gone in favour of the shared `SettingsCard`;
+// this row shape stays local because it solves a different problem than
+// `SettingsRow` does.
 
-function Section({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      style={{
-        marginTop: 20,
-        background: "var(--bg-1)",
-        border: "1px solid var(--border-0)",
-        borderRadius: "var(--r-4)",
-        overflow: "hidden",
-      }}
-    >
-      <header
-        style={{
-          padding: "12px 16px 10px",
-          borderBottom: "1px solid var(--border-0)",
-          background: "var(--bg-2)",
-        }}
-      >
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--fs-11)",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-            color: "var(--fg-1)",
-            fontWeight: 600,
-          }}
-        >
-          {title}
-        </div>
-        {subtitle && (
-          <div
-            style={{
-              marginTop: 4,
-              fontSize: "var(--fs-12)",
-              color: "var(--fg-3)",
-            }}
-          >
-            {subtitle}
-          </div>
-        )}
-      </header>
-      <div>{children}</div>
-    </section>
-  );
-}
-
-function Row({
+function ForgeRow({
   label,
   hint,
   control,

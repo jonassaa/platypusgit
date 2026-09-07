@@ -131,6 +131,10 @@ const EXPECTED: { [K in NavIntent["kind"]]: Expectation<K> } = {
     intent: { kind: "switch-screen", screen: "branches" },
     screen: "branches",
   },
+  "open-settings": {
+    intent: { kind: "open-settings", page: "git.diff" },
+    screen: "settings",
+  },
 };
 
 /** Everything the shell and any destination screen may reach for on mount. */

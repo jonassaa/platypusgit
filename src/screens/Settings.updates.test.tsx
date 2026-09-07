@@ -10,35 +10,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "@/test/invokeMock";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
-import { SettingsScreen } from "./Settings";
-
-/** The rest of the Settings screen loads too; give it what it asks for. */
-function mockRestOfSettings() {
-  mockInvoke("cli_shim_status", () => ({
-    installed: true,
-    shimPath: "/usr/local/bin/pgit",
-    target: "/usr/bin/platypusgit",
-    source: "package",
-    pathState: "onPath",
-  }));
-  // The section probes this on mount now (#360) — it decides whether ANY update
-  // control is rendered. Ordinary install by default; the Store block overrides.
-  mockInvoke("get_update_capability", () => "self-update");
-  mockInvoke("diagnostics_report", () => ({
-    logPath: "/tmp/platypusgit.log",
-    logExists: false,
-    logSizeBytes: 0,
-    environment: "host os=macos arch=aarch64 git=2.43.0",
-    version: "0.1.0",
-  }));
-}
+import { UpdatesPage } from "@/features/settings/pages/updates";
 
 let checked: boolean[];
 
 beforeEach(() => {
   checked = [];
   localStorage.clear();
-  mockRestOfSettings();
+  // The page probes this on mount (#360) — it decides whether ANY update
+  // control is rendered. Ordinary install by default; the Store block overrides.
+  mockInvoke("get_update_capability", () => "self-update");
   useSettingsStore.getState().set("updateCheckMode", "auto");
   useUpdateStore.setState({
     status: "idle",
@@ -77,7 +58,7 @@ const pickMode = async (label: string) => {
 
 describe("Settings → Updates: the check preference", () => {
   it("offers the three modes through PGSelect and persists the choice", async () => {
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     // The labels are the promise the user reads; assert them, not the values.
     const rows = await openModeOptions();
     expect(rows.map((r) => r.textContent)).toEqual([
@@ -98,7 +79,7 @@ describe("Settings → Updates: the check preference", () => {
 
   it("keeps the manual button live under 'only when I ask'", async () => {
     useSettingsStore.getState().set("updateCheckMode", "manual");
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     expect(checkButton()).not.toBeDisabled();
     await userEvent.click(checkButton());
     expect(checked).toEqual([true]);
@@ -106,7 +87,7 @@ describe("Settings → Updates: the check preference", () => {
 
   it("disables the button and explains itself under 'never'", async () => {
     useSettingsStore.getState().set("updateCheckMode", "never");
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     expect(checkButton()).toBeDisabled();
     expect(
       screen.getByText(/update checks are turned off/i),
@@ -118,7 +99,7 @@ describe("Settings → Updates: the check preference", () => {
 
   it("is one click back out of 'never' — not a dead end", async () => {
     useSettingsStore.getState().set("updateCheckMode", "never");
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     await pickMode("Only when I ask");
     expect(useSettingsStore.getState().updateCheckMode).toBe("manual");
     await waitFor(() => expect(checkButton()).not.toBeDisabled());
@@ -136,7 +117,7 @@ describe("Settings → Updates: a Microsoft Store install", () => {
   });
 
   it("renders the version and the Store note, and no update controls", async () => {
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     expect(
       await screen.findByTestId("update-store-managed"),
     ).toHaveTextContent(/microsoft store/i);
@@ -153,7 +134,7 @@ describe("Settings → Updates: a Microsoft Store install", () => {
   });
 
   it("names no command, download or release page", async () => {
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     const section = await screen.findByTestId("settings-updates");
     // The note says who updates this install and stops. "Where to get the new
     // one" is the sentence that failed certification.
@@ -161,7 +142,7 @@ describe("Settings → Updates: a Microsoft Store install", () => {
   });
 
   it("makes no update check while rendering", async () => {
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     await screen.findByTestId("update-store-managed");
     expect(checked).toEqual([]);
   });
@@ -171,7 +152,7 @@ describe("Settings → Updates: a Microsoft Store install", () => {
     // not consulting them — the same call the channel row already makes when
     // checks are off.
     useSettingsStore.getState().set("updateCheckMode", "manual");
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     await screen.findByTestId("update-store-managed");
     expect(useSettingsStore.getState().updateCheckMode).toBe("manual");
   });
@@ -179,7 +160,7 @@ describe("Settings → Updates: a Microsoft Store install", () => {
 
 describe("Settings → Updates: last checked", () => {
   it("says never when nothing has been checked yet", () => {
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     expect(screen.getByTestId("update-last-checked")).toHaveTextContent(
       /never/i,
     );
@@ -187,7 +168,7 @@ describe("Settings → Updates: last checked", () => {
 
   it("shows a relative time once a check has run", () => {
     useUpdateStore.setState({ lastCheckedAt: Date.now() - 2 * 3600 * 1000 });
-    render(<SettingsScreen />);
+    render(<UpdatesPage />);
     expect(screen.getByTestId("update-last-checked")).toHaveTextContent("2h ago");
   });
 });

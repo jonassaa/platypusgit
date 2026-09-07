@@ -25,6 +25,7 @@ import {
   watchSystemAppearance,
   type Appearance,
 } from "./systemAppearance";
+import { FIRST_PAGE, type SettingsPageId } from "@/features/settings/nav/types";
 
 const STORAGE_KEY = "pg-settings-v2";
 
@@ -978,6 +979,15 @@ interface PersistedState {
   updateChannel: UpdateChannel;
   /** Parent directory last used for Clone/Init, prefilled next time. */
   lastCreateDir: string;
+  /**
+   * The Settings page the side menu was last on.
+   *
+   * NOT portable — see NON_PORTABLE_KEYS. Per-machine UI memory, like
+   * `lastCreateDir`. Typed as the union so a removed page id cannot survive a
+   * refactor silently; `coerceSettings` still waves any string through, which is
+   * why `resolvePageId` guards the read side.
+   */
+  settingsPage: SettingsPageId;
 }
 
 export interface SettingsState extends PersistedState {
@@ -1072,6 +1082,7 @@ const DEFAULTS: PersistedState = {
   updateCheckMode: "auto",
   updateChannel: "stable",
   lastCreateDir: "",
+  settingsPage: FIRST_PAGE,
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1136,6 +1147,13 @@ export const NON_PORTABLE_KEYS: readonly (keyof PersistedState)[] = [
    * portable answer, and it is what an import leaves in place.
    */
   "terminalShell",
+  /**
+   * The last-visited Settings page. Denied because an export is a file people
+   * SHARE and this describes nothing about how the app should behave — only
+   * where one person happened to be standing. Importing it would yank a
+   * colleague's Settings to an unrelated page on their next visit.
+   */
+  "settingsPage",
 ];
 
 /** `DEFAULTS`' keys minus the deny-list — exactly what an export carries. */
