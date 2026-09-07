@@ -1649,6 +1649,48 @@ update checks back on for someone who turned them off.
   does NOT (forwards `title` only). Row components need explicit prop threading
   for new attributes.
 
+### The icon set is lucide, behind one seam
+
+Every glyph in the app comes from `lucide-react`, and `src/design/icons.tsx` is
+the **only** file that imports it. Surfaces render `<PGIcon name="…" />` with a
+name from the `IconName` union; `ICONS` is the `Record<IconName, LucideIcon>`
+that resolves it. `test/iconSet.test.ts` fails the build if anything else
+imports `lucide-react` — that one seam is why the set could be swapped at all
+(it was hand-drawn SVG paths until then, and no feature had reached past
+`PGIcon` to the paths).
+
+Three things are load-bearing:
+
+- **`strokeWidth` is expressed on a 16-unit grid, not lucide's 24.** A stroke's
+  rendered thickness is `strokeWidth * size / grid`, so `PGIcon` scales the
+  width it hands lucide by `24/16`. That is what keeps `strokeWidth={1.5}`
+  rendering at the weight the hand-drawn set had, at every `size` — including
+  the `size={10} strokeWidth={2.5}` checkbox glyphs in `primitives.tsx`. Change
+  the scale and every icon in the app gets lighter or heavier at once.
+- **`name` is `IconName | string`, so a typo type-checks.** It has to stay wide
+  because a name can arrive from data (`lib/fileIcon.ts` resolves one per path),
+  and an unknown name renders a visible dashed square rather than collapsing
+  the row. The cost is that `icon="refhesh"` compiles: `Reflog.tsx` shipped
+  `icon="refresh"` against a union that had no `refresh` and nothing failed, so
+  `test/iconSet.test.ts` also checks every string-literal icon name at a call
+  site against the union.
+- **lucide adds `aria-hidden="true"`** to an icon with no children and no a11y
+  prop, and *merges* rather than replaces `className` (the svg keeps its
+  `lucide-<kebab-name>` class). Icon-only controls are therefore still named by
+  the `title` on the button, never by the glyph.
+
+Lucide has a full git vocabulary, which is why it is the set here: `GitBranch`,
+`GitMerge`, `GitFork`, `GitPullRequest`, `GitCommitHorizontal`,
+`GitMergeConflict`, plus `Folder`/`FolderOpen` and `FolderGit2` for submodules.
+Radix Icons was evaluated and rejected for this — 318 glyphs with no folder and
+no branch/merge/tag/terminal at all, which would have made ~17 of the app's
+names generic approximations.
+
+The diff-layout toggle in `History.tsx` shows the layout **currently** in
+effect: `panelBottom` (`PanelBottom`) when the diff panel is below the log,
+`panelRight` (`PanelRight`) when it is beside it, with `aria-pressed` tracking
+`beside`.
+
 ### One error banner, and it never spells the enum (#212)
 
 `PGErrorBanner` (`src/design/error-banner.tsx`) is the dismissible red strip an

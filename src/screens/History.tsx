@@ -1707,7 +1707,7 @@ function HistoryToolbarRight({
         onClick={(e) => openAt(e.clientX, e.clientY + 4, null)}
       />
       <PGIconButton
-        icon="diff"
+        icon={diffLayout === "below" ? "panelBottom" : "panelRight"}
         size="md"
         title={
           diffLayout === "below"
