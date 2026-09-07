@@ -98,9 +98,11 @@ Rules that keep the gates honest:
   check blocks the PR forever. The gate fails on a skip it cannot explain. On
   push/dispatch every filter output falls back to `true`.
 - **The push-to-`main` e2e run is a deliberate duplicate** (issue 189):
-  required checks are non-strict and merges are squashes, so the tree landing
-  on `main` can differ from what the PR tested — the push run is the only
-  thing that ever tests `main` itself. `concurrency: cancel-in-progress`
+  required checks are non-strict and a rebase merge replays the branch's
+  commits onto whatever tip `main` has by then, so the tree landing on `main`
+  can differ from what the PR tested — and the intermediate commits the replay
+  writes were never a tested tree at all, since CI only ever ran on the branch
+  head. The push run is the only thing that ever tests `main` itself. `concurrency: cancel-in-progress`
   collapses merge bursts. Revisit only if runner minutes become the constraint.
 
 ## Two workflows that are not gates — they exist to buy CI time back
