@@ -245,6 +245,7 @@ export function PGButtonGroup({ options, value, onChange, size = "md" }: PGButto
               display: "inline-flex",
               alignItems: "center",
               gap: 5,
+              whiteSpace: "nowrap",
               transition: "background var(--t-fast), color var(--t-fast)",
             }}
           >

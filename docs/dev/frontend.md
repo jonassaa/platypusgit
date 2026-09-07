@@ -1659,6 +1659,18 @@ update checks back on for someone who turned them off.
 - `PGButton`/`PGInput` spread `...rest` onto their DOM node; `PGIconButton`
   does NOT (forwards `title` only). Row components need explicit prop threading
   for new attributes.
+- **A control that sits in a toolbar declares `white-space: nowrap`.**
+  `PGToolbar` is a fixed-height (36px) flex row that does NOT wrap, so a narrow
+  window makes flexbox squeeze every shrinkable item in it. A label with a
+  space in it then breaks at that space and stacks two lines inside a
+  22px-high button, bulging the toolbar — which is what History's "This branch"
+  scope did. `nowrap` fixes both halves at once: it stops the break, and
+  because a flex item's automatic minimum size is its min-content size, it also
+  stops the squeeze, so the control holds its width rather than being clipped.
+  `PGButton` and `PGButtonGroup` carry it; `primitives.buttonGroup.test.tsx`
+  pins the group's (jsdom has no layout, so the property IS the test). What
+  yields instead is whatever can ellipsize — `PGSelect` and `PGSearchInput`
+  both do.
 
 ### The icon set is lucide, behind one seam
 
