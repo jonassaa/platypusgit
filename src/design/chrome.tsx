@@ -471,14 +471,23 @@ export function PGActivityBar({
 }) {
   return (
     <div
+      data-pg-activity-bar=""
       style={{
         width: 44,
+        // The rail fills its container, not its content: the `flex: 1` spacer
+        // below is what pins Settings to the bottom edge, and a spacer in an
+        // auto-height box has nothing to claim. AppShell wraps the bar in a
+        // `PGPane` div, so the bar is a BLOCK child (height: auto) and not the
+        // flex item it was before #11 — without this the rail's background and
+        // right border stopped just under the gear, mid-window.
+        height: "100%",
         background: "var(--bg-titlebar)",
         borderRight: "1px solid var(--border-0)",
         display: "flex",
         flexDirection: "column",
         padding: "6px 0",
         flexShrink: 0,
+        boxSizing: "border-box",
       }}
     >
       {items.map((it, idx) => {
@@ -538,7 +547,9 @@ export function PGActivityBar({
           </PGTooltip>
         );
       })}
-      <div style={{ flex: 1 }} />
+      {/* Pins Settings to the bottom edge — only works because the rail
+          itself is full height (see `height` above). */}
+      <div data-pg-activity-spacer="" style={{ flex: 1 }} />
       <PGTooltip content="Settings" placement="right">
         <button
           onClick={onSettingsClick}
