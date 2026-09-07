@@ -1962,6 +1962,93 @@ commit` typed into the pane moves the graph already. A user who turned the
 watcher off gets no automatic refresh from the terminal either — documented,
 not worked around: a second mechanism for the same job would also fire on `ls`.
 
+## Reporting an issue from inside the app
+
+`features/report/` turns "something is broken" into a diagnosable GitHub issue.
+The log was already reachable (#274 put its path, and a *Copy last 500 lines*
+button, in Settings); what was missing was everything around it — knowing that
+Settings held the log at all, knowing the project is on GitHub, and filling in
+an Environment section by hand from facts the app had already printed.
+
+**Four entry points, one dialog.**
+
+| Where | Seeded with |
+|---|---|
+| the titlebar's `bug` button (`AppShell`'s `AppTitlebar`) | nothing |
+| `PGErrorBanner`'s `report` action | `errorBannerText(error)` |
+| Settings → Backup & diagnostics → *Report an issue* | nothing |
+| `PGErrorBoundary`'s *Report this bug* | the throw's `message` |
+
+`<ReportIssueDialog />` is mounted **once**, by `AppShell`, beside
+`PGDialogHost`. Settings is a screen below that point, so one mount serves the
+first three; a second mount anywhere is a second dialog that can open over the
+first.
+
+**The log travels by clipboard, never in the URL.** A GitHub
+`issues/new?body=…` URL answers **HTTP 414** somewhere around 8 KB, and
+`read_log_tail` returns up to `TAIL_CAP_BYTES`. So the split is by size:
+
+- *in the URL* — title, `labels=bug`, the body skeleton mirroring
+  `.github/ISSUE_TEMPLATE/bug_report.md`, and Environment prefilled with
+  version / os / arch / git version. `issueUrl` enforces `MAX_URL_LEN` (6000)
+  by trimming the **summary**, the only unbounded part, so no amount of pasted
+  prose can produce a 414.
+- *on the clipboard* — the whole report, log tail included, with a
+  `<!-- Paste … -->` marker in the body saying so.
+
+`copyAndOpenIssue` therefore copies **strictly before** it opens: a failed copy
+does not open the browser, because sending someone to a form that says "paste
+your report" with an empty clipboard is worse than saying nothing.
+
+Passing `body` and **not** `template=` is deliberate — given both, the two
+contend for the same field and which wins is GitHub's business. The body is
+written in `report.ts` instead, mirroring the template's headings.
+
+**Privacy.** No network call exists here: the app writes the clipboard and
+hands a URL to `openUrl`. The report is nonetheless the most revealing text the
+app assembles in one place — a log tail carries repository paths, branch names,
+remote URLs and hook output — so two rules hold, and they are why this is a
+dialog rather than a one-click button:
+
+- the preview renders the **exact string** that will be copied, in full, not a
+  summary of it;
+- environment and log tail are independently opt-out, and the checkbox filters
+  the **clipboard**, not just the display (there is a test for precisely that —
+  an opt-out that only filtered the preview would be worse than none, because
+  the user would believe they had removed the paths).
+
+The version line survives every opt-out: a report whose build is unknown cannot
+be acted on. An excluded section is *absent*, never present-and-empty — a
+`── log tail ──` rule with nothing under it reads like an empty log rather than
+an unread one, which is also what a failed `read_log_tail` must not look like.
+
+**The error boundary is the exception, and it is load-bearing.**
+`PGDialogHost` and `ReportIssueDialog` are both mounted by `AppShell`, which is
+mounted inside `PGErrorBoundary` (`main.tsx`). After a render throw React has
+unmounted that whole subtree, so from the boundary there is no dialog host, no
+dialog, and nothing subscribed to `useReportStore` — `openReport()` would set a
+flag nobody reads and the button would silently do nothing.
+
+So the boundary takes an `onReport?: (error: Error) => void`, on the same terms
+as the `onReload` it already had, and `main.tsx` wires it to `fileBugReport`,
+which gathers, copies and opens with no React tree involved. The callback also
+keeps IPC out of `src/design/`: nothing there imports `@/lib/tauri`, and the
+same reasoning is why `PGErrorBanner` takes `onReport` instead of reaching for
+the store itself. `error-boundary.test.tsx` renders the boundary with **no**
+host mounted at all — that absence is the boundary's real world, not a
+simplification of it.
+
+`report.ts` is pure (no React, no IPC, no clipboard) and `fileReport.ts` owns
+every side effect, which is what makes the boundary's path possible at all. One
+report format: Settings' *Copy last 500 lines* button assembles its text with
+the same `buildReport`, so the two surfaces cannot drift.
+
+**A test note.** These specs use `fireEvent`, not `userEvent`.
+`userEvent.setup()` **replaces `navigator.clipboard`** with its own stub in
+order to implement copy/paste, which detaches any `writeText` spy installed
+before it — every clipboard assertion then passes against userEvent's internal
+clipboard while asserting nothing about the app.
+
 ## Dialogs
 
 - **Never `window.confirm`/`window.prompt`** — `pgConfirm`/`pgPrompt` from

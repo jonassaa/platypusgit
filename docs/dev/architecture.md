@@ -688,6 +688,21 @@ features/            Components + Zustand store colocated per feature:
 │                    docs/dev/distribution.md), semver.ts (§11 precedence,
 │                    tested), UpdateChip, UpdatePanel (Escape via
 │                    app.closeOverlay)
+├── report/          In-app bug reporting. report.ts is PURE (buildReport +
+│                    issueUrl, bounded by MAX_URL_LEN — a GitHub
+│                    issues/new?body= URL answers 414 well below the size of a
+│                    log tail, so the URL carries only the small facts plus a
+│                    paste marker and the report itself travels on the
+│                    CLIPBOARD); fileReport.ts owns every side effect
+│                    (gatherReport → copyReport → openUrl, copy strictly
+│                    BEFORE open, plus fileBugReport for a caller with no UI);
+│                    ReportIssueDialog (mounted ONCE by AppShell, so the
+│                    titlebar button, the error banner and the Settings row
+│                    all share it); useReportStore. PGErrorBoundary cannot use
+│                    the dialog — it mounts ABOVE PGDialogHost — so it takes an
+│                    onReport callback that main.tsx wires to fileBugReport.
+│                    Reads diagnostics_report + read_log_tail; makes no network
+│                    call of any kind
 ├── auth/            useAuthStore (ONE pending challenge + retry closure — never
 │                    the secret) + CredentialDialog. withAuthRetry LIVES IN
 │                    useRepoStore.ts, exported — never grow a second retry path.
