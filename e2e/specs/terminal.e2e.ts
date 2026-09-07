@@ -15,8 +15,12 @@ import { basicRepo, TempRepo } from "../support/tempRepo";
 import {
   TERMINAL_VIEW,
   jsChord,
+  jsKey,
   jsTypeInTerminal,
+  openPalette,
   openRepo,
+  paletteDialog,
+  paletteInput,
   resetApp,
   terminalText,
 } from "../support/app";
@@ -89,5 +93,45 @@ describe("the built-in terminal", () => {
       timeoutMsg: "the terminal panel did not come back",
     });
     await expect(await terminalText()).toContain(marker);
+  });
+
+  // The palette route, and it is here rather than in `palette.e2e.ts` because
+  // only a real webview can answer it: the row is built from `buildCommands()`,
+  // and vitest asserting on that ARRAY is exactly the shape of test that passed
+  // for months while `terminal.toggle` had a chord, a cheat-sheet entry and no
+  // palette row at all. "Row never appeared" is an e2e-only finding here — it
+  // was for "New window" (#256).
+  it("opens from the command palette, and the row then offers the way back", async () => {
+    repo = basicRepo();
+    await openRepo(repo.path);
+
+    await openPalette();
+    await $(paletteInput).setValue("terminal");
+    const show = $(paletteDialog).$("[data-pal-index]*=Show terminal");
+    await show.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: 'palette row "Show terminal" never appeared',
+    });
+    await show.click();
+
+    await $(TERMINAL_VIEW).waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the terminal panel never appeared after the palette row",
+    });
+
+    // The label is state, not a fixed string: with the panel up, the same row
+    // is the way out. Asserted through the real palette because the flip is
+    // read from the store when the list is BUILT, so a stale build would show
+    // "Show terminal" over an open panel.
+    await openPalette();
+    await $(paletteInput).setValue("terminal");
+    await $(paletteDialog)
+      .$("[data-pal-index]*=Hide terminal")
+      .waitForDisplayed({
+        timeout: 10_000,
+        timeoutMsg:
+          'the palette still offered "Show terminal" with the panel open',
+      });
+    await jsKey(paletteInput, "Escape");
   });
 });

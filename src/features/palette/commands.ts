@@ -12,6 +12,7 @@ import { prNoun, prNumberLabel } from "@/features/forge/forgeLabels";
 import { useSubmodulesStore } from "@/features/submodules/useSubmodulesStore";
 import { useWorktreesStore } from "@/features/worktrees/useWorktreesStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
+import { useTerminalStore } from "@/features/terminal/useTerminalStore";
 import { openCompare } from "@/features/compare/useCompareStore";
 import { WORKDIR } from "@/features/compare/compareSides";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
@@ -463,6 +464,36 @@ export function buildCommands(): PaletteItem[] {
           }
         })();
       }),
+    });
+  }
+
+  // -- the built-in terminal (#243) --
+  //
+  // Listed by hand, because the palette is a CURATED list and not a projection
+  // of the action catalog: `terminal.toggle` has existed in `ACTIONS` with a
+  // chord and a cheat-sheet entry since #243 and still never appeared here —
+  // the same gap an e2e run found for "New window". Without this row the panel
+  // has exactly one route in, and a user who has not pressed `?` cannot find
+  // out it exists.
+  //
+  // Only with a repository open. The shell opens in the ACTIVE repository's
+  // working directory, and `TerminalPanel` renders nothing at all without one,
+  // so the row would otherwise toggle a panel that cannot appear.
+  //
+  // The LABEL says what will happen; the ID does not move. `PaletteItem.id` is
+  // the frecency key, so an id that flipped with the panel would split one
+  // command's ranking across two half-learned rows.
+  if (repo.current) {
+    items.push({
+      type: "command",
+      id: "action:toggle-terminal",
+      search: "Terminal shell console command line prompt toggle show hide",
+      label: useTerminalStore.getState().open
+        ? "Hide terminal"
+        : "Show terminal",
+      icon: "terminal",
+      actionId: "terminal.toggle",
+      run: direct(() => useTerminalStore.getState().toggle()),
     });
   }
 

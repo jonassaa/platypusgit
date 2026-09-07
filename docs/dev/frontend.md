@@ -1801,6 +1801,18 @@ default** — a terminal nobody asked for should not spawn a shell for every
 repository they open, and a `.zshrc` that runs nvm would then be paid for on
 every tab, invisibly.
 
+**Two routes in, and the second one had to be added by hand.** `terminal.toggle`
+(`` Ctrl+` ``/`` Mod+` ``) shipped with #243; the palette row did not, because
+**the palette is a CURATED list and not a projection of `ACTIONS`** — putting an
+action in the catalog gives it a chord and a cheat-sheet entry and nothing else.
+So the feature spent releases reachable only by a chord, which is the same gap
+an e2e run found for "New window" (#256), and the vitest layer cannot see it:
+asserting on `buildCommands()`'s array passes for an action that has no row.
+Anything user-facing added to `ACTIONS` from now on gets a row in
+`features/palette/commands.ts` in the same commit, and the row's label is read
+from the store when the list is BUILT (`Show terminal` / `Hide terminal`) while
+its id stays put, because `PaletteItem.id` is the frecency key.
+
 Four rules that are easy to break:
 
 - **Sizing is MEASURED, never observed.** WebKitGTK has no `ResizeObserver`, so
