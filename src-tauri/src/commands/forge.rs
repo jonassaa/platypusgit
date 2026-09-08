@@ -137,6 +137,53 @@ pub async fn forge_detect(
     Ok(remote::detect(&remotes, &host_kinds))
 }
 
+/// The forge's web page for one commit, or `null` when there is not one.
+///
+/// A pure URL build over the same detection `forge_detect` uses — **no network
+/// call and no token**, because a commit page is public-or-not on the forge's
+/// side and asking would mean an API round trip to produce a string we can
+/// derive. That also means this works for a repository whose forge the user has
+/// never authenticated against.
+///
+/// `null` rather than an error for the ordinary cases — no remote, an
+/// unparseable remote, or a host that is neither GitHub nor GitLab (a bare
+/// `git://` server has no web UI to open). The menu renders that as a disabled
+/// entry; a self-hosted instance becomes openable as soon as the user maps its
+/// host in Settings, which is the same `host_kinds` map every other forge
+/// feature reads.
+#[tauri::command]
+pub async fn forge_commit_url(
+    state: State<'_, AppState>,
+    repo_id: String,
+    oid: String,
+    host_kinds: HashMap<String, ForgeKind>,
+) -> AppResult<Option<String>> {
+    let backend = state.backend.clone();
+    let id = RepoId(repo_id);
+    let remotes = tokio::task::spawn_blocking(move || backend.remotes(&id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))??;
+    let Some(found) = remote::detect(&remotes, &host_kinds) else {
+        return Ok(None);
+    };
+    let Some(kind) = found.kind else {
+        return Ok(None);
+    };
+    let repo = ForgeRepo {
+        host: found.host,
+        owner: found.owner,
+        name: found.name,
+        kind,
+    };
+    // A malformed host or a non-hex oid is a refusal from the builders, not a
+    // silent `null`: those mean a caller sent something wrong, and hiding it
+    // would leave the entry mysteriously disabled.
+    Ok(Some(match kind {
+        ForgeKind::GitHub => crate::forge::github::commit_url(&repo, &oid)?,
+        ForgeKind::GitLab => crate::forge::gitlab::commit_url(&repo, &oid)?,
+    }))
+}
+
 /// Validate a token against the forge, then store it in one account slot.
 ///
 /// Validation FIRST, deliberately: storing on submit would persist a typo into

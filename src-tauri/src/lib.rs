@@ -496,6 +496,7 @@ pub fn run() {
             commands::watch::watch_stop,
             commands::update::open_url,
             commands::forge::forge_detect,
+            commands::forge::forge_commit_url,
             commands::forge::forge_sign_in,
             commands::forge::forge_sign_out,
             commands::forge::forge_token_status,
