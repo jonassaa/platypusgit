@@ -11,6 +11,7 @@ import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { headAncestryOf } from "@/features/commits/headAncestry";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
+import { commitChildren } from "@/features/commits/commitChildren";
 import { rewordCommit } from "@/features/commits/rewordCommit";
 import { dropCommit } from "@/features/commits/dropCommit";
 import { undoCommit } from "@/features/commits/undoCommit";
@@ -482,7 +483,23 @@ export function diffCopyMenuItems(
   return items;
 }
 
-export function commitMenuItems(commit: { sha?: string; subject?: string } | null): ContextMenuItem[] {
+export function commitMenuItems(
+  commit: { sha?: string; subject?: string } | null,
+  opts?: {
+    /**
+     * Move the caller's selection to `oid` — what "Go to parent / child commit"
+     * does.
+     *
+     * A CALLBACK because History owns its selection as local component state,
+     * which a builder living in `src/design/` cannot reach. Same shape and same
+     * reason as `PGErrorBanner`'s `onReport`.
+     *
+     * Absent means the caller has no selection to move, and both entries are
+     * OMITTED rather than rendered dead — this menu is used outside History too.
+     */
+    onGoTo?: (oid: string) => void;
+  },
+): ContextMenuItem[] {
   const sha = commit?.sha || "—";
   // Ancestry for the rebase entry points, from the full log. The base is the
   // commit's FIRST PARENT — never the next log row, which on a graph is often a
@@ -783,6 +800,12 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       },
     },
     { divider: true },
+    // Graph navigation, next to the inspection group above it rather than the
+    // rewrite group: these two move the SELECTION and change nothing. Both are
+    // absent unless the caller supplied a way to move it.
+    ...(opts?.onGoTo
+      ? [...gotoItems(commit?.sha ?? null, commits, opts.onGoTo), { divider: true }]
+      : []),
     ...bisectSubmenu(commit?.sha ?? null),
     { divider: true },
     {
@@ -949,6 +972,71 @@ function checkoutBranchItems(oid: string | null | undefined): ContextMenuItem[] 
  *
  * Deliberately no keyboard chords anywhere in this group: see the design doc.
  */
+/**
+ * "Go to parent / child commit" — Rider puts these on Left/Right; ours are
+ * menu-only, because `chord.ts` is single-stroke (modifiers plus one base key)
+ * and Left/Right are already list expand/collapse.
+ *
+ * One target → an inline entry. SEVERAL → a submenu, because a merge has two
+ * parents and a branch point has two children, and jumping to one silently
+ * would be a guess dressed as a fact. None → a disabled entry that says why,
+ * and for a child the honest reason is **the loaded log**, not the repository:
+ * `commits` is a prefix of history, so "none loaded" is all this can know.
+ */
+function gotoItems(
+  sha: string | null,
+  commits: CommitInfo[],
+  onGoTo: (oid: string) => void,
+): ContextMenuItem[] {
+  const self = sha ? (commits.find((c) => c.oid === sha) ?? null) : null;
+  // A parent outside the loaded window is still a real, navigable oid — the
+  // caller's selection can move to it and the log will page to reach it — so an
+  // unknown parent keeps its oid and loses only its subject.
+  const parents = (self?.parents ?? []).map((p) => {
+    const known = commits.find((c) => c.oid === p);
+    return { oid: p, summary: known?.summary ?? "" };
+  });
+  const children = sha
+    ? commitChildren(commits, sha).map((c) => ({ oid: c.oid, summary: c.summary }))
+    : [];
+
+  const entry = (
+    verb: "parent" | "child",
+    targets: { oid: string; summary: string }[],
+    emptyReason: string,
+  ): ContextMenuItem => {
+    if (targets.length === 0) {
+      return {
+        icon: "dot",
+        label: `Go to ${verb} commit — ${emptyReason}`,
+        disabled: true,
+      };
+    }
+    if (targets.length === 1) {
+      return {
+        icon: "dot",
+        label: `Go to ${verb} commit`,
+        onClick: () => onGoTo(targets[0].oid),
+      };
+    }
+    return {
+      icon: "dot",
+      label: `Go to ${verb} commit`,
+      submenu: targets.map((t) => ({
+        icon: "dot",
+        label: `${t.oid.slice(0, 7)} — ${t.summary}`.trim(),
+        onClick: () => onGoTo(t.oid),
+      })),
+    };
+  };
+
+  return [
+    entry("parent", parents, "root commit"),
+    // NOT "no child exists" — see the note above.
+    entry("child", children, "none in the loaded log"),
+  ];
+}
+
 function bisectSubmenu(sha: string | null): ContextMenuItem[] {
   const bisect = useRepoStore.getState().bisectStatus;
   const short = sha ? sha.slice(0, 7) : "—";
