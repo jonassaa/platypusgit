@@ -845,6 +845,46 @@ therefore belongs in `features/`, not `design/`.
   `MAX_BARREN_PAGES`, or it walks the whole repository. New client-side log
   filters inherit that trap.
 
+## Navigating from the History menu
+
+Two entries that read the repository and change nothing, so neither goes near
+`confirmRewrite`.
+
+- **`browse-rev` is routed by `AppShell` but consumed by `RepoBrowser`.** The
+  shell only calls `enterScreen("repo")` and deliberately does NOT clear the
+  intent; the browser reads it on mount, sets the same `rev` its toolbar picker
+  writes, and clears it there. That keeps one source of truth for "what am I
+  browsing" instead of a shell-owned copy. A new kind with no `case` in the
+  shell sets an intent and navigates nowhere with **nothing failing** — not
+  tsc, not the unit tests, not e2e (#133) — which is why
+  `AppShell.navroutes.test.tsx` types `EXPECTED` as a mapped type over
+  `NavIntent["kind"]`: a new kind will not compile until it has a sample and a
+  destination.
+- **`Show repository at this revision` ignores ancestry**, unlike every rewrite
+  entry. Browsing a tree reads nothing and writes nothing, so a commit on any
+  branch is fair game.
+- **`Go to parent / child commit` takes a CALLBACK (`onGoTo`)** because
+  History's selection is local component state (`History.tsx`'s
+  `useState<Selection>`), which a builder in `src/design/` cannot reach — the
+  same shape and the same reason as `PGErrorBanner`'s `onReport`. With no
+  callback the two entries are **omitted entirely** rather than rendered dead,
+  because this menu is also used outside History.
+- **The builder History passes must be a `useCallback`, never an inline arrow.**
+  An arrow changes identity every render, cascades through `onRowContext` into
+  every row and kills `PGCommitRow`'s memo. That is #68 G9, and it has regressed
+  once already — the comment beside `onCommitMulti` records the first time.
+- **One target is inline, several give a submenu.** A merge has two parents and
+  a branch point two children; picking one silently would be a guess presented
+  as a fact.
+- **The child entry blames the LOADED LOG, not the repository.** `s.commits` is
+  a prefix of history, so `commitChildren` returning nothing means "none
+  loaded" — the label says exactly that, and a test asserts it does not say "no
+  child exists". A parent outside the window stays *enabled*, because its oid is
+  genuine even unloaded; `goToCommit` then flashes rather than no-opping when it
+  cannot reach the row.
+- **Selection moves scroll by INDEX** through `useWindowedList`, never
+  `scrollIntoView`: the target row is usually unmounted (#68 G10).
+
 ## Rewriting one commit from the History menu
 
 Five entries in `commitMenuItems` rewrite history — *Edit commit message*,

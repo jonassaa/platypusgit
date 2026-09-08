@@ -89,7 +89,9 @@ describe("browse-rev intent", () => {
     render(<RepoBrowserScreen />);
     await waitFor(() => expect(revCalls().length).toBeGreaterThan(0));
     // A reader must be able to tell they are NOT looking at the working tree.
-    expect(await screen.findByText(/Browsing/)).toBeTruthy();
+    const badge = await screen.findByTestId("browsing-rev");
+    expect(badge.getAttribute("data-rev")).toBe(REV);
+    expect(badge.textContent).toContain("Browsing");
   });
 
   it("clears the intent, so a later repo switch is not re-hijacked by it", async () => {
@@ -108,14 +110,14 @@ describe("browse-rev intent", () => {
   // one would be asserting the default filter, not this feature.)
   it("does not browse at a revision when there is no intent", async () => {
     render(<RepoBrowserScreen />);
-    await waitFor(() => expect(screen.queryByText(/Browsing/)).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("browsing-rev")).toBeNull());
     expect(revCalls()).toHaveLength(0);
   });
 
   it("ignores an intent meant for another screen, and leaves it standing", async () => {
     useNavStore.getState().setIntent({ kind: "blame", path: "a.txt" });
     render(<RepoBrowserScreen />);
-    await waitFor(() => expect(screen.queryByText(/Browsing/)).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("browsing-rev")).toBeNull());
     expect(revCalls()).toHaveLength(0);
     // Consuming another screen's intent would strand that navigation.
     expect(useNavStore.getState().intent).toMatchObject({ kind: "blame" });

@@ -974,9 +974,15 @@ export function RepoBrowserScreen() {
         right={
           <>
             {browsingRev ? (
-              <PGBadge tone="muted" icon="history">
-                Browsing {rev}
-              </PGBadge>
+              // The testid, not the prose, is what e2e waits on: "Browsing" is
+              // user-facing copy an edit could redden a required gate over, and
+              // `div*=Browsing` would resolve to whichever innermost div holds
+              // the phrase. PGBadge does not spread rest props, hence the wrapper.
+              <span data-testid="browsing-rev" data-rev={rev}>
+                <PGBadge tone="muted" icon="history">
+                  Browsing {rev}
+                </PGBadge>
+              </span>
             ) : (
               <PGButtonGroup
                 value={filterMode}
