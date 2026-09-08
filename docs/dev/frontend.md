@@ -885,6 +885,33 @@ Two entries that read the repository and change nothing, so neither goes near
 - **Selection moves scroll by INDEX** through `useWindowedList`, never
   `scrollIntoView`: the target row is usually unmounted (#68 G10).
 
+## "Push all up to here" — publishing part of a branch
+
+- **The confirm names the real effect: "Pushes 3 of your 7 commits".** The
+  label cannot say how much of the branch it covers, and someone who reads
+  "push all up to here" as "push everything" has published work they meant to
+  hold back. Both counts come from `ahead_behind` against the upstream — one
+  against the commit, one against `HEAD` — and when either cannot be read the
+  sentence **omits the numbers** rather than inventing them. A wrong count here
+  is worse than no count.
+- **Two gates, each preventing a different surprise.** A commit outside HEAD's
+  ancestry is refused, because pushing it would publish a foreign branch's
+  history to this branch's ref; a branch with no upstream is refused, because
+  there is no destination to infer and a guessed `origin/<branch>` publishes to
+  a remote nobody chose. Both say which in the label.
+- **`pushTarget()` splits the upstream, and strips only the leading
+  `<remote>/`.** A branch may itself contain slashes (`release/2026/09`), so
+  splitting on every `/` truncates it. Remote resolution reuses
+  `remoteOfUpstream`, which picks the LONGEST matching remote name — that
+  matters when one remote's name is a prefix of another's.
+- **Fast-forward only.** No force is offered anywhere on this path; a push that
+  would discard remote commits is refused by the remote and lands in
+  `PGErrorBanner` like any other network failure.
+- Being a long-running op that can raise a credential challenge, it joins
+  `RepoActivity` through `withAuthRetry` with `{ key, label }` — never a
+  `finally` at the call site, which would clear the label while the password
+  dialog was still open.
+
 ## "View in browser" on a commit
 
 - **The flow lives in `features/forge/openCommitInBrowser.ts`, not in the menu**,

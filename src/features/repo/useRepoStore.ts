@@ -79,6 +79,7 @@ import {
   pruneRemote,
   pull as pullRemote,
   push as pushRemote,
+  pushCommit as pushCommitFn,
   pushDeleteBranch as pushDeleteBranchFn,
   pushTag as pushTagFn,
   rebaseAbort,
@@ -479,6 +480,20 @@ interface RepoStoreState extends RepoSlice {
     remote: string,
     branch: string,
     force?: PushForce,
+    /** Skip `pre-push` for this push only (#232). */
+    noVerify?: boolean,
+  ) => Promise<void>;
+  /**
+   * Push history only UP TO `oid`, onto `branch` on `remote`.
+   *
+   * Fast-forward only — there is no force variant, so a push that would discard
+   * commits is refused by the remote. Does not set tracking: the branch's
+   * upstream is what decided the destination.
+   */
+  pushCommit: (
+    remote: string,
+    oid: string,
+    branch: string,
     /** Skip `pre-push` for this push only (#232). */
     noVerify?: boolean,
   ) => Promise<void>;
@@ -2134,6 +2149,23 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       },
       (e) => setErrorFor(repo.id, e),
       { key: "push", label: `Pushing ${remote}/${branch}…` },
+    );
+  },
+
+  async pushCommit(remote, oid, branch, noVerify = false) {
+    const repo = get().current;
+    if (!repo) return;
+    await withAuthRetry(
+      repo.id,
+      async (creds) => {
+        await pushCommitFn(repo.id, remote, oid, branch, creds, noVerify);
+        setActivity(repo.id, "push", "Refreshing…");
+        await get().refreshAll();
+      },
+      (e) => setErrorFor(repo.id, e),
+      // withAuthRetry OWNS the label. A `finally` at the call site would clear
+      // it while the password dialog was still open.
+      { key: "push", label: `Pushing ${shortOid(oid)} to ${remote}/${branch}…` },
     );
   },
 

@@ -381,6 +381,7 @@ pub fn run() {
             commands::commits::commit,
             commands::commits::amend_head_message,
             commands::commits::format_patch,
+            commands::branches::push_commit,
             commands::commits::file_history,
             commands::commits::verify_commit,
             commands::commits::commit_notes,

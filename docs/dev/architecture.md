@@ -466,6 +466,19 @@ commands/        Thin Tauri handlers, one file per area:
 ├── branches.rs  list_branches/tags/stashes/remotes,
 │                checkout/create/delete/rename_branch, set_upstream,
 │                fetch, fetch_all, pull, push,
+│                push_commit (publish history only UP TO one commit —
+│                `git push <remote> <oid>:refs/heads/<branch>`. A REFSPEC push,
+│                which is what makes "up to here" expressible: an ordinary push
+│                sends whatever the branch points at. FAST-FORWARD ONLY by
+│                construction — no force variant exists on this path, so a push
+│                that would discard remote commits is refused by the remote and
+│                surfaces like any other network error, and `--force-with-lease`
+│                on a PARTIAL push is deliberately out of scope. No `-u` either:
+│                the branch's upstream is what decided the destination, so
+│                re-pointing it here would be circular. Both halves of the
+│                refspec are validated before it is built — validate_sha on the
+│                oid, validate_ref_name on the branch — so neither can smuggle
+│                in an option or a second refspec),
 │                unshallow (#255 — `git fetch --unshallow`, on the one runner;
 │                answers false instead of relaying git's refusal when the
 │                repository is already complete),
