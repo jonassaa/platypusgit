@@ -291,14 +291,33 @@ commit <short>
 ## The file this lands in
 
 `src/design/context-menu.tsx` is 2522 lines and `commitMenuItems` is ~250 of
-them. Eight more entries plus helpers makes a bad file worse, so the work opens
-with a **move-only commit**: `commitMenuItems`, `commitMultiMenuItems` and their
-private helpers move to `src/design/context-menu.commit.tsx`, re-exported from
-`context-menu.tsx` so every existing import and every guard test keeps working
-unchanged. Reviewable as a no-op diff.
+them, so eight more entries with their flows inline makes a bad file worse.
 
-This is a targeted improvement to code the work is already inside, not a
-refactor of its own — no other menu builder moves.
+**Splitting that file was considered and rejected.** Moving `commitMenuItems`
+out requires also extracting the `ContextMenuItem` type (declared there,
+consumed by ~15 builders), `customActionItems` and `headBranch`, all three
+shared with the file and file-multi builders — otherwise the new module and
+`context-menu.tsx` import each other. That is three new modules and a
+restructure of the type every menu builder depends on, for a file the work only
+passes through. It also invites exactly the conflict class recorded in
+`docs/dev/` about large `main` refactors: several sessions work this repo at
+once, and a moved 2500-line file makes every other branch that touched it look
+partly unlanded.
+
+Instead, **each entry's flow lives in its own `features/commits/` module** and
+the menu entry is a few lines that call it. That is already this codebase's
+shape — `buildRebasePlan`, `runRebasePlan`, `squashMessage` and `stackedRefs`
+all live there and are all called from `commitMenuItems` today. The menu file
+grows by tens of lines rather than hundreds, and every flow becomes unit
+testable without rendering a menu:
+
+| module | owns |
+| --- | --- |
+| `features/commits/commitMessageText.ts` | `fullCommitMessage(commit)` — a commit's message as text; `combinedSquashMessage` is rewritten to call it |
+| `features/commits/rewriteWarning.ts` | the §2 published-commit check and the confirm line it adds |
+| `features/commits/rewordCommit.ts` | prompt → HEAD amend or reword plan |
+| `features/commits/dropCommit.ts` | confirm → drop plan |
+| `features/commits/undoCommit.ts` | confirm → soft reset to parent |
 
 ## Decisions taken, with reasons
 
@@ -364,7 +383,7 @@ before the next branches off `main`:
 
 | PR | Entries | New backend op |
 | --- | --- | --- |
-| 1 | move-only split, §2 warning, Edit Commit Message, Drop, Undo Commit | message-only amend |
+| 1 | §2 warning, Edit Commit Message, Drop, Undo Commit | message-only amend |
 | 2 | Show Repository at Revision, Go to Parent / Child | — |
 | 3 | View in browser | commit web URL |
 | 4 | Create Patch… | format-patch |
