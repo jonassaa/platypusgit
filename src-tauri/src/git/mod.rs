@@ -626,6 +626,33 @@ pub trait GitBackend: Send + Sync {
     // === commit ===
     fn commit(&self, repo_id: &RepoId, opts: CommitOptions) -> AppResult<CommitResult>;
 
+    /// Replace HEAD's commit message and nothing else.
+    ///
+    /// `git commit --amend --only -m <msg>`: `tree: None` on `Commit::amend`
+    /// reuses the commit's ORIGINAL tree, so the index is never read. That is
+    /// the difference from `commit` with `amend: true`, which writes the index
+    /// tree and would fold staged changes into the commit being reworded — and
+    /// it is what lets this run against a dirty worktree, which the rebase
+    /// engine refuses outright. Rewording the commit you are sitting on is the
+    /// common case, so it does not go through a replay.
+    ///
+    /// `expected_oid` is what the caller believed HEAD was. HEAD can move
+    /// between a context menu opening and its click landing, so the check and
+    /// the amend happen under ONE lock acquisition; a mismatch refuses with
+    /// `InvalidArgument` and writes nothing.
+    ///
+    /// The author is preserved and only the committer is refreshed, as git does.
+    /// The MESSAGE hooks run (`prepare-commit-msg`, `commit-msg`) but
+    /// `pre-commit` does not: the tree cannot change here, so a hook that lints
+    /// content has nothing to inspect. `no_verify` skips them all.
+    fn amend_head_message(
+        &self,
+        repo_id: &RepoId,
+        expected_oid: &str,
+        message: &str,
+        no_verify: bool,
+    ) -> AppResult<CommitResult>;
+
     /// The repository's `commit.template` and comment prefix (#252).
     ///
     /// A read, not a commit step: the composer asks once per repository and
