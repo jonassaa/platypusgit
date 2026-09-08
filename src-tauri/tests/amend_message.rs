@@ -337,6 +337,63 @@ fn a_stale_oid_is_refused_before_any_hook_runs() {
     );
 }
 
+/// HEAD moving DURING the hook window is the case the advisory early check
+/// cannot catch, and the only case the under-lock check exists for.
+///
+/// Measured, not assumed: deleting the under-lock check leaves every other test
+/// in this file green, because the early check absorbs them all. THIS is the
+/// test that fails — without the second check the amend lands on whatever HEAD
+/// became, silently rewording a commit the user never chose.
+///
+/// The `commit-msg` hook makes its own commit, which moves HEAD inside exactly
+/// the window between the two checks. Hooks run outside the per-repo lock (they
+/// must, or a hook shelling out to git would deadlock against us), which is what
+/// makes that window real rather than theoretical.
+#[test]
+fn a_head_move_during_the_hook_window_is_refused() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let workdir = tr.path().display().to_string();
+    write_hook(
+        tr.path(),
+        "commit-msg",
+        // `--no-verify` AND a one-shot marker: the hook's own commit would
+        // otherwise re-run this same hook, which forks until the OS refuses.
+        &format!(
+            "#!/bin/sh\n\
+             [ -f '{workdir}/.hook-fired' ] && exit 0\n\
+             : > '{workdir}/.hook-fired'\n\
+             cd '{workdir}' || exit 0\n\
+             : > moved.txt\n\
+             git add moved.txt\n\
+             git -c user.name=Hook -c user.email=hook@example.com commit -q --no-verify -m 'moved by the hook'\n"
+        ),
+    );
+    let (backend, handle) = tr.open_with_backend();
+    let chosen_oid = tr
+        .repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .id()
+        .to_string();
+
+    let err = backend
+        .amend_head_message(&handle.id, &chosen_oid, "reworded", false)
+        .expect_err("HEAD moved mid-flight, so the reword must be refused");
+    assert!(matches!(err, AppError::InvalidArgument(_)), "got {err:?}");
+
+    // The hook's commit is still HEAD and was NOT reworded — the op declined
+    // rather than rewriting a commit nobody chose.
+    let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(
+        head.message().unwrap().trim(),
+        "moved by the hook",
+        "the hook's own commit must be left exactly as it was"
+    );
+    assert_ne!(head.id().to_string(), chosen_oid);
+}
+
 /// Write an executable hook into the repo's `.git/hooks`.
 fn write_hook(root: &std::path::Path, name: &str, body: &str) {
     let dir = root.join(".git").join("hooks");
