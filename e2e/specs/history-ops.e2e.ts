@@ -206,3 +206,89 @@ describe("history multi cherry-pick", () => {
     expect(repo.git("branch", "--show-current").trim()).toBe("main");
   });
 });
+
+describe("rewording a commit", () => {
+  let repo: TempRepo;
+
+  afterEach(async () => {
+    await resetApp();
+    repo.dispose();
+  });
+
+  // THE case a one-step rebase plan cannot serve: the rebase engine refuses any
+  // worktree or index modification, so routing HEAD through a plan would fail
+  // for anyone with uncommitted work — which is most reword attempts. This
+  // asserts the message changed AND that the dirt is still exactly where it was.
+  it("rewords HEAD with a dirty worktree, consuming none of it", async () => {
+    repo = cherryRepo(); // main: 3 commits, HEAD = "fix: update a.txt"
+    // Dirty BEFORE openRepo — the store reads status once, on open.
+    repo.write("a.txt", "dirty unstaged\n");
+    repo.write("untracked.txt", "not staged\n");
+    repo.write("staged.txt", "staged before the reword\n");
+    repo.git("add", "staged.txt");
+    const treeBefore = repo.git("rev-parse", "HEAD^{tree}").trim();
+
+    await openRepo(repo.path);
+    await stubNativeDialogs({ promptText: "reworded by e2e", confirm: true });
+    await switchScreen("history");
+    await scrollCommitListTo("fix: update a.txt");
+    await $('[data-testid="commit-row"]*=fix: update a.txt').waitForDisplayed({
+      timeout: 15_000, timeoutMsg: "HEAD row missing",
+    });
+
+    await jsContextMenu('[data-testid="commit-row"]', { text: "fix: update a.txt" });
+    await jsClickMenuItem("Edit commit message…");
+
+    // History repaints only once the backend call has returned, so this cannot
+    // match an intermediate state the way a `log -1` poll could.
+    await $('[data-testid="commit-row"]*=reworded by e2e').waitForDisplayed({
+      timeout: 20_000, timeoutMsg: "History never showed the reworded commit",
+    });
+
+    // Message rewritten, tree untouched, history the same length: an amend, not
+    // a replay.
+    expect(repo.git("log", "-1", "--pretty=%B")).toContain("reworded by e2e");
+    expect(repo.git("rev-parse", "HEAD^{tree}").trim()).toBe(treeBefore);
+    expect(repo.git("rev-list", "--count", "HEAD").trim()).toBe("3");
+
+    // And every kind of dirt survived, unconsumed. The staged file in
+    // particular must NOT be in the reworded commit — that is what separates
+    // this op from commit(amend: true).
+    expect(repo.read("a.txt")).toBe("dirty unstaged\n");
+    expect(repo.read("untracked.txt")).toBe("not staged\n");
+    expect(repo.git("diff", "--cached", "--name-only")).toContain("staged.txt");
+    expect(repo.git("ls-tree", "--name-only", "HEAD")).not.toContain("staged.txt");
+  });
+
+  // The other path: an older commit goes through the rebase engine's Reword
+  // action, which replays every commit after it.
+  it("rewords an older commit and replays the commits after it", async () => {
+    repo = cherryRepo();
+    const headBefore = repo.git("rev-parse", "HEAD").trim();
+
+    await openRepo(repo.path);
+    await stubNativeDialogs({ promptText: "reworded parent", confirm: true });
+    await switchScreen("history");
+    await scrollCommitListTo("feat: add b.txt");
+    await $('[data-testid="commit-row"]*=feat: add b.txt').waitForDisplayed({
+      timeout: 15_000, timeoutMsg: "target row missing",
+    });
+
+    await jsContextMenu('[data-testid="commit-row"]', { text: "feat: add b.txt" });
+    await jsClickMenuItem("Edit commit message…");
+
+    await $('[data-testid="commit-row"]*=reworded parent').waitForDisplayed({
+      timeout: 25_000, timeoutMsg: "History never showed the reworded commit",
+    });
+
+    // The reworded message is in history, the descendant survived, and HEAD is a
+    // NEW commit because it was replayed onto the reworded parent.
+    const log = repo.git("log", "--pretty=%s");
+    expect(log).toContain("reworded parent");
+    expect(log).toContain("fix: update a.txt");
+    expect(log).not.toContain("feat: add b.txt");
+    expect(repo.git("rev-parse", "HEAD").trim()).not.toBe(headBefore);
+    expect(repo.git("rev-list", "--count", "HEAD").trim()).toBe("3");
+    expect(repo.git("status", "--porcelain").trim()).toBe("");
+  });
+});
