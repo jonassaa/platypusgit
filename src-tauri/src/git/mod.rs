@@ -653,6 +653,29 @@ pub trait GitBackend: Send + Sync {
         no_verify: bool,
     ) -> AppResult<CommitResult>;
 
+    /// Write one mailbox-format patch file per commit into `out_dir`, returning
+    /// the paths written in the order they were created.
+    ///
+    /// `git format-patch`, which libgit2 has no equivalent for — so this shells
+    /// out through `proc::git`. Mailbox format rather than a plain diff on
+    /// purpose: it carries the author, the date and the full message, so
+    /// `git am` reconstructs the commit rather than just its changes.
+    ///
+    /// `oids` is expected OLDEST-FIRST, and each commit gets its own invocation
+    /// with an explicit `--start-number`. Separate invocations would each
+    /// restart numbering at `0001` and overwrite one another, which is the whole
+    /// reason the numbering is passed rather than left to git.
+    ///
+    /// A merge commit has no patch: `format-patch` skips one silently, so a
+    /// merge among `oids` is refused up front instead of producing a short list
+    /// the caller cannot account for.
+    fn format_patch(
+        &self,
+        repo_id: &RepoId,
+        oids: &[String],
+        out_dir: &Path,
+    ) -> AppResult<Vec<String>>;
+
     /// The repository's `commit.template` and comment prefix (#252).
     ///
     /// A read, not a commit step: the composer asks once per repository and

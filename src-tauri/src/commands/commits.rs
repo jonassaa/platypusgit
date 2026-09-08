@@ -199,6 +199,31 @@ pub async fn amend_head_message(
     .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Export commits as mailbox-format patch files into `out_dir`.
+///
+/// `git format-patch`, so the files carry author, date and message and `git am`
+/// reconstructs each commit — not a plain diff, which would only carry the
+/// changes. `oids` is OLDEST-FIRST; the numbering follows that order.
+///
+/// The directory comes from the user through the OS folder picker, so it is
+/// already a place they chose. It is used as given: this writes where they
+/// pointed, and refusing paths outside some notion of "allowed" would break the
+/// only reason anyone exports a patch.
+#[tauri::command]
+pub async fn format_patch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    oids: Vec<String>,
+    out_dir: String,
+) -> AppResult<Vec<String>> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let dir = std::path::PathBuf::from(out_dir);
+    tokio::task::spawn_blocking(move || backend.format_patch(&repo_id, &oids, &dir))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 /// The repository's `commit.template` + comment prefix (#252).
 ///
 /// Called once per commit-screen visit. A configured template that cannot be

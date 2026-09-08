@@ -5258,6 +5258,94 @@ impl GitBackend for Libgit2Backend {
         Ok(CommitResult { oid, message })
     }
 
+    fn format_patch(
+        &self,
+        repo_id: &RepoId,
+        oids: &[String],
+        out_dir: &std::path::Path,
+    ) -> AppResult<Vec<String>> {
+        if oids.is_empty() {
+            return Err(AppError::InvalidArgument(
+                "no commits were given to export".to_string(),
+            ));
+        }
+
+        // Resolve every oid AND refuse a merge before writing anything. A
+        // partial export is worse than none: `format-patch` skips a merge
+        // silently, so the caller would get a shorter list than it asked for
+        // with nothing saying which commit vanished.
+        let full: Vec<String> = self.with_repo_read(repo_id, |repo| {
+            let mut out = Vec::with_capacity(oids.len());
+            for oid in oids {
+                let commit = repo
+                    .revparse_single(oid)
+                    .map_err(|_| AppError::InvalidRef(oid.clone()))?
+                    .peel_to_commit()
+                    .map_err(|_| AppError::InvalidRef(oid.clone()))?;
+                if commit.parent_count() > 1 {
+                    return Err(AppError::InvalidArgument(format!(
+                        "{} is a merge commit, which has no patch to export",
+                        &oid[..7.min(oid.len())]
+                    )));
+                }
+                out.push(commit.id().to_string());
+            }
+            Ok(out)
+        })?;
+
+        let repo_path = self.repo_path(repo_id)?;
+        let dir = out_dir
+            .to_str()
+            .ok_or_else(|| AppError::InvalidPath(out_dir.display().to_string()))?;
+
+        let mut written = Vec::with_capacity(full.len());
+        for (i, oid) in full.iter().enumerate() {
+            // ONE invocation per commit with an explicit --start-number. Left to
+            // git, each invocation numbers from 0001 and the files overwrite one
+            // another; `-1` keeps each to its own commit rather than a range.
+            //
+            // NO `--` before the oid, deliberately, and this is the one place
+            // where this codebase's usual "end option parsing with `--`" rule
+            // would be actively wrong: `--` separates revisions from PATHSPECS,
+            // so `-- <oid>` asks git to export commits touching a *file* named
+            // like that oid — which selects nothing and writes no files.
+            //
+            // Safe without it because `oid` is not user text: it is
+            // `commit.id().to_string()` from the resolution above, so it is 40
+            // hex characters and cannot begin with a dash.
+            let out = crate::proc::git(&repo_path)
+                .args([
+                    "format-patch",
+                    "-1",
+                    "--start-number",
+                    &(i + 1).to_string(),
+                    "-o",
+                    dir,
+                    oid,
+                ])
+                .output()
+                .map_err(|e| AppError::Io(e.to_string()))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                return Err(AppError::Git(format!("git format-patch: {stderr}")));
+            }
+            // format-patch prints each path it wrote, one per line.
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                let line = line.trim();
+                if !line.is_empty() {
+                    written.push(line.to_string());
+                }
+            }
+        }
+
+        if written.is_empty() {
+            return Err(AppError::Git(
+                "git format-patch wrote no files".to_string(),
+            ));
+        }
+        Ok(written)
+    }
+
     fn commit_template(
         &self,
         repo_id: &RepoId,
