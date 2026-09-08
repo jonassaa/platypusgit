@@ -216,6 +216,14 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   file starts behaving differently depending on where you opened it; the blob
   ceiling is `blob_ceiling`, raised per file and never removed.
   (`docs/dev/frontend.md`, `docs/dev/backend.md`)
+- **One rewrite confirm — `confirmRewrite`** (`features/commits/
+  rewriteWarning.ts`). Every entry that rewrites history (reword, undo, fixup,
+  squash, drop) goes through it, so all five say the same thing about a commit
+  already on the upstream; a sixth joins it rather than asking its own way.
+  `isPublished` is `aheadBehind(oid, upstream).behind === 0` and reversing that
+  pair inverts the warning SILENTLY. Rewording HEAD is a message-only amend, not
+  a one-step rebase plan — the engine refuses a dirty worktree.
+  (`docs/dev/frontend.md`, `docs/dev/backend.md`)
 - **One commit-message composition surface** — `features/commits/message/`
   (`useCommitComposer` + `CommitMessageBar`). A new way to compose message text
   joins it; it never grows a second surface beside it. The box stays plain text
