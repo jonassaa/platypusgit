@@ -59,4 +59,53 @@ describe("buildRebasePlan", () => {
       { oid: "d", action: "Squash", message: "all" },
     ]);
   });
+
+  it("marks only the target Reword and carries its message", () => {
+    // Base is the target's parent, so the target is INSIDE the plan.
+    expect(
+      buildRebasePlan(commits, "b", { kind: "reword", targetOid: "c", message: "new subject" }),
+    ).toEqual([
+      { oid: "c", action: "Reword", message: "new subject" },
+      { oid: "d", action: "Pick", message: null },
+    ]);
+  });
+
+  it("rewords the newest commit as a one-step plan", () => {
+    expect(
+      buildRebasePlan(commits, "c", { kind: "reword", targetOid: "d", message: "tip" }),
+    ).toEqual([{ oid: "d", action: "Reword", message: "tip" }]);
+  });
+
+  it("carries no message on commits the reword replays over", () => {
+    const plan = buildRebasePlan(commits, "a", {
+      kind: "reword",
+      targetOid: "b",
+      message: "new",
+    });
+    expect(plan?.filter((s) => s.action === "Pick").every((s) => s.message === null)).toBe(
+      true,
+    );
+  });
+
+  it("returns null for a reword whose base is outside the loaded range", () => {
+    expect(
+      buildRebasePlan(commits, "zzz", { kind: "reword", targetOid: "c", message: "x" }),
+    ).toBeNull();
+  });
+
+  it("marks only the target Drop and leaves newer commits picked", () => {
+    expect(buildRebasePlan(commits, "b", { kind: "drop", targetOid: "c" })).toEqual([
+      { oid: "c", action: "Drop", message: null },
+      { oid: "d", action: "Pick", message: null },
+    ]);
+  });
+
+  it("carries no message on the dropped step", () => {
+    const plan = buildRebasePlan(commits, "b", { kind: "drop", targetOid: "c" });
+    expect(plan?.[0].message).toBeNull();
+  });
+
+  it("returns null for a drop whose base is outside the loaded range", () => {
+    expect(buildRebasePlan(commits, "zzz", { kind: "drop", targetOid: "c" })).toBeNull();
+  });
 });

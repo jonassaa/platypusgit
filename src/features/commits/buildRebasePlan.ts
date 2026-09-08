@@ -9,6 +9,12 @@ import type { CommitInfo, RebaseStep, RebaseAction } from "@/lib/types";
  *   - "edit-from": every commit is a plain pick (equivalent to `rebase -i fromOid^`).
  *   - { kind: "fixup", targetOid }: target becomes "fixup".
  *   - { kind: "squash", targetOid, message }: target becomes "squash" with a custom message.
+ *   - { kind: "reword", targetOid, message }: target becomes "Reword" carrying
+ *     the new message. Pass the target's FIRST PARENT as `fromOid` so the
+ *     target is inside the plan — a reword whose base is the target itself
+ *     replays everything after it and rewords nothing.
+ *   - { kind: "drop", targetOid }: target becomes "Drop"; everything newer stays
+ *     a pick and replays onto the target's parent.
  *   - { kind: "squash-range", oids, message }: collapse a contiguous selection
  *     into one commit — the oldest selected oid stays "pick", every other
  *     selected oid becomes "squash" carrying `message`; commits outside the
@@ -30,6 +36,8 @@ export function buildRebasePlan(
   mode:
     | { kind: "edit-from" }
     | { kind: "fixup"; targetOid: string }
+    | { kind: "reword"; targetOid: string; message: string }
+    | { kind: "drop"; targetOid: string }
     | { kind: "squash"; targetOid: string; message: string }
     | { kind: "squash-range"; oids: string[]; message: string },
 ): RebaseStep[] | null {
@@ -54,6 +62,11 @@ export function buildRebasePlan(
       action = "Drop";
     } else if (mode.kind === "fixup" && c.oid === mode.targetOid) {
       action = "Fixup";
+    } else if (mode.kind === "reword" && c.oid === mode.targetOid) {
+      action = "Reword";
+      message = mode.message;
+    } else if (mode.kind === "drop" && c.oid === mode.targetOid) {
+      action = "Drop";
     } else if (mode.kind === "squash" && c.oid === mode.targetOid) {
       action = "Squash";
       message = mode.message;
