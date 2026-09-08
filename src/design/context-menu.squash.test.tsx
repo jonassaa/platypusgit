@@ -7,7 +7,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { commitMenuItems, commitMultiMenuItems, type ContextMenuItem } from "./context-menu";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { WithDialogs, acceptDialog, resetDialogs } from "@/test/dialog";
+import { WithDialogs, acceptDialog, dismissDialog, resetDialogs } from "@/test/dialog";
 import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
 import type { CommitInfo, RebaseStep } from "@/lib/types";
 
@@ -164,16 +164,47 @@ describe("right-click Squash into parent", () => {
 });
 
 describe("right-click Fixup into parent", () => {
-  it("runs in place with no prompt and no plan screen", async () => {
+  // Fixup now goes through the SHARED rewrite confirm, so it says the same
+  // thing about a published commit as reword, drop and undo do. What has not
+  // changed is the rest of this test's original point: no MESSAGE prompt (a
+  // fixup keeps the parent's message by definition) and no detour through the
+  // Rebase plan screen.
+  it("runs in place behind one confirm, with no message prompt and no plan screen", async () => {
+    render(
+      <WithDialogs>
+        <div />
+      </WithDialogs>,
+    );
     const item = labeled(
       commitMenuItems({ sha: B, subject: "commit B" }),
       /Fixup this commit into its parent/,
     );
-    await item.onClick?.();
+    void item.onClick?.();
+
+    // A confirm, not a prompt: there is nothing to type.
+    await screen.findByTestId("dialog-confirm");
+    expect(screen.queryByTestId("dialog-input")).toBeNull();
+    await acceptDialog();
 
     await waitFor(() => expect(rebaseStarts().length).toBe(1));
     const plan = rebaseStarts()[0].args.plan as RebaseStep[];
     expect(plan.find((s) => s.oid === B)?.action).toBe("Fixup");
     expect(useNavStore.getState().intent).toBeNull();
+  });
+
+  it("starts nothing when that confirm is declined", async () => {
+    render(
+      <WithDialogs>
+        <div />
+      </WithDialogs>,
+    );
+    void labeled(
+      commitMenuItems({ sha: B, subject: "commit B" }),
+      /Fixup this commit into its parent/,
+    ).onClick?.();
+
+    await screen.findByTestId("dialog-cancel");
+    await dismissDialog();
+    expect(rebaseStarts()).toHaveLength(0);
   });
 });
