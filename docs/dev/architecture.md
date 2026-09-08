@@ -534,7 +534,17 @@ commands/        Thin Tauri handlers, one file per area:
 │                which the issue calls the valuable half of the feature
 ├── forge.rs     forge_detect, forge_sign_in/sign_out/token_status/validate_token,
 │                forge_list_pull_requests, forge_pull_request_checks,
-│                forge_create_pull_request, forge_checkout_pull_request. Owns
+│                forge_create_pull_request, forge_checkout_pull_request,
+│                forge_commit_url (the forge's WEB page for one commit — a pure
+│                build over forge_detect's detection, with NO network call and
+│                NO token, because the url is derivable and asking would be a
+│                round trip to produce a string we already have; that also makes
+│                it work for a forge nobody has signed into. Returns null for
+│                the ordinary "there is no page" cases — no remote, an
+│                unparseable one, or a host that is neither forge — which the
+│                menu renders as a disabled entry, but PROPAGATES a malformed
+│                host or non-hex oid as an error rather than hiding a caller
+│                bug behind a mysteriously disabled item). Owns
 │                ForgeTokens + blocking_forge (redacts tokens from errors).
 │                Every token-using command takes an `account` slot (#233),
 │                absent/null = the pre-#233 slot, and ForgeTokens is keyed

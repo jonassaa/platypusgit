@@ -12,6 +12,7 @@ import { headAncestryOf } from "@/features/commits/headAncestry";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import { commitChildren } from "@/features/commits/commitChildren";
+import { openCommitInBrowser } from "@/features/forge/openCommitInBrowser";
 import { rewordCommit } from "@/features/commits/rewordCommit";
 import { dropCommit } from "@/features/commits/dropCommit";
 import { undoCommit } from "@/features/commits/undoCommit";
@@ -838,6 +839,19 @@ export function commitMenuItems(
       onClick: () => {
         navigator.clipboard?.writeText(commit?.subject || "");
         pgFlash("copied subject");
+      },
+    },
+    // Always enabled: whether a forge page exists is a BACKEND question (which
+    // remote, which host, is that host a known forge) and menu building stays
+    // synchronous. See openCommitInBrowser for why gating on the cached forge
+    // detection would be worse.
+    {
+      icon: "external",
+      label: "View in browser",
+      disabled: !commit?.sha,
+      onClick: () => {
+        if (!commit?.sha) return;
+        void openCommitInBrowser(commit.sha);
       },
     },
     // The user's own commands, last (#225). Deliberately not on
