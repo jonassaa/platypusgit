@@ -170,6 +170,35 @@ pub async fn commit(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// Replace HEAD's commit message, leaving the tree and the index alone.
+///
+/// The reword path for HEAD. An older commit is reworded by the rebase engine
+/// instead (`RebaseAction::Reword`), but the engine refuses a dirty worktree and
+/// rewording the commit you are sitting on is the common case — so it gets a
+/// path that does not need a replay. See the trait doc for why this is not
+/// `commit` with `amend: true`.
+#[tauri::command]
+pub async fn amend_head_message(
+    state: State<'_, AppState>,
+    repo_id: String,
+    // What the caller believed HEAD was; a mismatch refuses and writes nothing.
+    // HEAD can move between a context menu opening and its click landing.
+    expected_oid: String,
+    message: String,
+    // Skip the message hooks for this reword only, matching `commit`'s option.
+    // Optional so a caller that omits it keeps hooks ON, the safe default.
+    no_verify: Option<bool>,
+) -> AppResult<CommitResult> {
+    let backend = state.backend.clone();
+    let repo_id = RepoId(repo_id);
+    let no_verify = no_verify.unwrap_or(false);
+    tokio::task::spawn_blocking(move || {
+        backend.amend_head_message(&repo_id, &expected_oid, &message, no_verify)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
 /// The repository's `commit.template` + comment prefix (#252).
 ///
 /// Called once per commit-screen visit. A configured template that cannot be

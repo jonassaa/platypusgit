@@ -405,7 +405,17 @@ commands/        Thin Tauri handlers, one file per area:
 │                explorer.exe / xdg-open exit-code traps). LOG_FILE here must
 │                track the file_name configured in lib.rs — the plugin does not
 │                report what it picked. Thin over src-tauri/src/diagnostics.rs
-├── commits.rs   get_log, commit, file_history, verify_commit (SELECTED commit
+├── commits.rs   get_log, commit, amend_head_message (HEAD's message and
+│                NOTHING else — `tree: None` on Commit::amend reuses the
+│                original tree, so the index is never read. That is what
+│                separates it from commit(amend: true), which writes the index
+│                tree and would fold staged changes into the commit being
+│                reworded, and it is why it works on a dirty worktree — which
+│                the rebase engine refuses, making a one-step Reword plan
+│                useless for the most common reword of all. Takes the oid the
+│                caller believed was HEAD and refuses a mismatch, checked
+│                under the SAME lock as the amend), file_history,
+│                verify_commit (SELECTED commit
 │                only, never per row), commit_notes, which is lazy for the
 │                same reason (#253 — the log walk is the hot path, so notes are
 │                read for the selected commit and cost the page nothing), and

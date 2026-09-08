@@ -379,6 +379,7 @@ pub fn run() {
             commands::commits::commits_between,
             commands::commits::ahead_behind,
             commands::commits::commit,
+            commands::commits::amend_head_message,
             commands::commits::file_history,
             commands::commits::verify_commit,
             commands::commits::commit_notes,
