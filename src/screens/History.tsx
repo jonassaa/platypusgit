@@ -255,8 +255,8 @@ export function HistoryScreen() {
     () => resolveHeadDecor(headMarks, headWeight),
     [headMarks, headWeight],
   );
-  const { onContextMenu: onCommitContext, menu: commitMenu } =
-    useContextMenu<{ sha: string; subject: string }>(commitMenuItems);
+  // The commit menu is built further down, once `order` and the windowed list
+  // it navigates through exist — see `commitMenuBuilder`.
   // The imported builder directly — an inline arrow here changed onCommitMulti's
   // identity every render, which cascaded through onRowContext into every row
   // and made PGCommitRow's memo dead (#68 G9, regressed).
@@ -378,6 +378,41 @@ export function HistoryScreen() {
     setSel((prev) => clickSelection(order, prev, oid, { range }));
     setLeadOid(oid);
   };
+
+  // "Go to parent / child commit". The menu builder lives in `src/design/` and
+  // cannot reach this screen's selection, which is LOCAL component state — so it
+  // takes this as a callback, the same shape and reason as PGErrorBanner's
+  // onReport.
+  //
+  // Scrolls by INDEX through the windowed list, never scrollIntoView: the target
+  // row is usually unmounted (#68 G10).
+  const goToCommit = React.useCallback(
+    (oid: string) => {
+      const i = order.indexOf(oid);
+      if (i < 0) {
+        // A real oid this screen cannot reach: past the loaded page, or filtered
+        // out of the visible list. Say so rather than no-op silently — the menu
+        // offers an unloaded PARENT deliberately, since its oid is genuine even
+        // when the log has not paged that far.
+        pgFlash("that commit is not in the visible log");
+        return;
+      }
+      setSel((prev) => clickSelection(order, prev, oid, {}));
+      setLeadOid(oid);
+      win.scrollToIndex(i);
+    },
+    [order, win.scrollToIndex],
+  );
+  // A stable builder, NOT an inline arrow: an arrow here changes identity every
+  // render, which cascades through onRowContext into every row and kills
+  // PGCommitRow's memo — #68 G9, which has regressed once already.
+  const commitMenuBuilder = React.useCallback(
+    (c: { sha: string; subject: string } | null) =>
+      commitMenuItems(c, { onGoTo: goToCommit }),
+    [goToCommit],
+  );
+  const { onContextMenu: onCommitContext, menu: commitMenu } =
+    useContextMenu<{ sha: string; subject: string }>(commitMenuBuilder);
 
   // Enter / "View combined diff": one commit → its own diff full-screen
   // (commit-self, matching the inline panel — not commit-vs-HEAD); 2+ →
