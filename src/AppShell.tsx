@@ -400,6 +400,13 @@ export function AppShell() {
       case "blame":
         enterDeep("blame");
         break;
+      // The repo browser owns the revision itself — it already has a `rev` and a
+      // toolbar that sets it, so the intent is left in place for the screen to
+      // read on mount rather than lifted into a store here. Do NOT clearIntent:
+      // RepoBrowser clears it once it has consumed the rev.
+      case "browse-rev":
+        enterScreen("repo");
+        break;
       case "rebase-plan":
       // The base-only variant (186). Same destination: the Rebase screen owns
       // the range walk and the plan either way.

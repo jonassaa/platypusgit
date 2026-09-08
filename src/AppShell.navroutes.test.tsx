@@ -102,6 +102,10 @@ const EXPECTED: { [K in NavIntent["kind"]]: Expectation<K> } = {
     intent: { kind: "file-history", path: "src/a.ts" },
     screen: "fileHistory",
   },
+  "browse-rev": {
+    intent: { kind: "browse-rev", rev: OID, label: "aaaaaaa — commit 0" },
+    screen: "repo",
+  },
   blame: {
     intent: { kind: "blame", path: "src/a.ts" },
     screen: "blame",

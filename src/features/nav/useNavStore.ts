@@ -25,6 +25,16 @@ export type NavIntent =
   | { kind: "ref-compare"; left: CompareSide; right: CompareSide }
   | { kind: "file-history"; path: string }
   | { kind: "blame"; path: string }
+  /**
+   * Browse the whole tree as it was at one revision — Rider's "Show Repository
+   * at Revision".
+   *
+   * `RepoBrowser` has done this since it shipped (`listFilesAtRev`,
+   * `readFileContentAtRev`, a "Browsing {rev}" header) and its only entry point
+   * was its own toolbar, so a commit could not reach it. `rev` is a full oid;
+   * `label` is what the browser names on screen.
+   */
+  | { kind: "browse-rev"; rev: string; label: string }
   | { kind: "rebase-plan"; plan: RebaseStep[] }
   /**
    * Replay the current branch onto a NEW base, interactively (186) — the

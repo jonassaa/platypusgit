@@ -789,6 +789,22 @@ export function commitMenuItems(
         useNavStore.getState().setIntent({ kind: "commit-self", oid: commit.sha });
       },
     },
+    // Neither a diff nor a rewrite: the whole tree AS IT WAS. The repo browser
+    // has done this since it shipped and its only way in was its own toolbar,
+    // so a commit could not reach it.
+    {
+      icon: "folder",
+      label: "Show repository at this revision",
+      disabled: !commit?.sha,
+      onClick: () => {
+        if (!commit?.sha) return;
+        useNavStore.getState().setIntent({
+          kind: "browse-rev",
+          rev: commit.sha,
+          label: `${sha.slice(0, 7)} — ${commit.subject ?? ""}`.trim(),
+        });
+      },
+    },
     // Kept alongside it: a genuinely different question — this commit's tree
     // against the working tree, not against its parent.
     {
