@@ -50,6 +50,13 @@ fn exports_one_commit_as_a_mailbox_patch() {
 
 /// THE case `--start-number` exists for. Without it each invocation writes
 /// `0001-…` and later commits clobber earlier ones.
+///
+/// Measured: removing `--start-number` fails THIS test and only this one. In
+/// particular `the_series_order_matches_the_oids_given` below still passes
+/// without it, because two commits with different subjects produce two
+/// different filenames even when both are numbered `0001` — so a fixture whose
+/// commits happen to sort correctly hides the bug. This one uses
+/// `linear_history`, whose subjects are uniform, and counts the files.
 #[test]
 fn numbers_a_multi_commit_export_as_a_series() {
     let tr = TempRepo::with_initial_commit("hello\n");

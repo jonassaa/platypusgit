@@ -12,6 +12,7 @@ import { headAncestryOf } from "@/features/commits/headAncestry";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import { commitChildren } from "@/features/commits/commitChildren";
+import { createPatch } from "@/features/commits/createPatch";
 import { openCommitInBrowser } from "@/features/forge/openCommitInBrowser";
 import { rewordCommit } from "@/features/commits/rewordCommit";
 import { dropCommit } from "@/features/commits/dropCommit";
@@ -582,6 +583,17 @@ export function commitMenuItems(
       label: "Revert commit",
       onClick: () => {
         if (commit?.sha) useRepoStore.getState().revert(commit.sha);
+      },
+    },
+    {
+      icon: "file",
+      // A merge has no patch — `format-patch` skips one silently, so the
+      // backend refuses it and the entry says so rather than writing nothing.
+      label: isMerge ? "Create patch — merge commit" : "Create patch…",
+      disabled: isMerge || !commit?.sha,
+      onClick: () => {
+        if (!commit?.sha || isMerge) return;
+        void createPatch([commit.sha]);
       },
     },
     {
@@ -1421,6 +1433,21 @@ export function commitMultiMenuItems(oids: string[]): ContextMenuItem[] {
           })
         )
           useRepoStore.getState().cherryPickMany(plan.oids);
+      },
+    },
+    {
+      icon: "file",
+      // `plan.oids` is already oldest→newest, which is the order the series is
+      // numbered in — 0001 must be the oldest commit or the patches replay
+      // backwards. A merge among them is refused whole by the backend, since a
+      // series with a hole in it is not a series.
+      label: plan.hasMerge
+        ? `Create ${n} patches — contains a merge`
+        : `Create ${n} patches…`,
+      disabled: plan.hasMerge,
+      onClick: () => {
+        if (plan.hasMerge) return;
+        void createPatch(plan.oids);
       },
     },
     {
