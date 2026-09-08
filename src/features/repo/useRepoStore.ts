@@ -46,6 +46,7 @@ import {
   checkoutRef,
   cherryPick,
   commit as commitFn,
+  amendHeadMessage as amendHeadMessageFn,
   continueOperation,
   createBranch,
   createTag,
@@ -372,6 +373,14 @@ interface RepoStoreState extends RepoSlice {
     /** Skip every commit-side hook for this commit only (#232). */
     noVerify?: boolean,
   ) => Promise<CommitResult | null>;
+  /**
+   * Reword HEAD in place, message only. Resolves true when history changed.
+   *
+   * `expectedOid` guards against HEAD moving between the menu opening and the
+   * click landing — see `amendHeadMessage`. Distinct from `commit(amend)`,
+   * which writes the index tree and would fold in staged changes.
+   */
+  amendMessage: (expectedOid: string, message: string) => Promise<boolean>;
   /** Dismiss the hook refusal on display (#232). */
   clearHookRejection: () => void;
   /**
@@ -1405,6 +1414,39 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       }
       setErrorFor(repo.id, e);
       return null;
+    }
+  },
+
+  async amendMessage(expectedOid, message) {
+    const repo = get().current;
+    if (!repo) return false;
+    // Clear the previous refusal first, exactly as `commit` does: a stale block
+    // sitting above a fresh attempt reads as though the new attempt failed too.
+    setFor(repo.id, { hookRejection: null, noSignature: false });
+    const before = headSnapshot();
+    try {
+      await amendHeadMessageFn(repo.id, expectedOid, message);
+      await get().refreshAll();
+      // Undoable like any other history rewrite: an amend REPLACES the tip, so
+      // before/after already describes putting the original commit back, with
+      // no special case needed.
+      noteUndo(repo.id, "commit", "reword", before);
+      return true;
+    } catch (e) {
+      // Same three surfaces as `commit`, for the same three reasons — a hook
+      // refusal needs somewhere that scrolls, and a missing identity is a
+      // question the panel answers in place rather than a failure to report.
+      if (isAppError(e) && e.kind === "HookRejected") {
+        await get().refreshAll();
+        setFor(repo.id, { hookRejection: e.message as HookRejection });
+        return false;
+      }
+      if (isNoSignatureError(e)) {
+        setFor(repo.id, { noSignature: true });
+        return false;
+      }
+      setErrorFor(repo.id, e);
+      return false;
     }
   },
 

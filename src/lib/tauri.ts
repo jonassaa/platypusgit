@@ -549,6 +549,34 @@ export async function commit(
 }
 
 /**
+ * Replace HEAD's commit message and nothing else — the reword path for the
+ * commit you are sitting on.
+ *
+ * Message-only by construction: the backend reuses the commit's original tree
+ * and never reads the index, so this works with a dirty worktree and cannot
+ * fold staged changes into the commit being reworded. `commit(amend: true)` is
+ * NOT an alternative — it writes the index tree.
+ *
+ * `expectedOid` is what the caller believed HEAD was. A mismatch is refused
+ * rather than rewording whatever is there now: HEAD can move between a context
+ * menu opening and its click landing.
+ */
+export async function amendHeadMessage(
+  repoId: string,
+  expectedOid: string,
+  message: string,
+  /** Skip the message hooks for this reword only (matches `commit`). */
+  noVerify = false,
+): Promise<CommitResult> {
+  return invoke<CommitResult>("amend_head_message", {
+    repoId,
+    expectedOid,
+    message,
+    noVerify,
+  });
+}
+
+/**
  * Signature status of ONE commit (#61 D6).
  *
  * Lazy and per-selection by design: a badge on every log row would mean a
