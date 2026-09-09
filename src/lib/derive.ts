@@ -4,6 +4,7 @@ import type {
   CommitInfo,
   FileDiff,
   FileStatus,
+  RefInfo,
   StatusFlag,
 } from "./types";
 
@@ -195,30 +196,73 @@ export function remoteBranches(branches: BranchInfo[]): BranchInfo[] {
 }
 
 /**
- * Convert a commit's ref list into the pill-shaped ref objects the
- * UI expects. First HEAD-pointing local branch gets the accent tone.
+ * Convert a commit's ref list into the pill-shaped ref objects the UI expects.
+ * The branch HEAD points at gets the accent tone and the arrow.
+ *
+ * Tone AND glyph come off `RefInfo.kind`, never off the name. The name cannot
+ * answer the question — a tag and a branch are both just `v1.0` or `main`, and
+ * a `/` belongs to plenty of names that are not remote-tracking ones — so this
+ * used to guess with `r.includes("/")` and got three things wrong at once:
+ * every tag wore a branch icon, `release/1.0` (a tag) and `feat/x` (a local
+ * branch) were split into a remote called `release`/`feat`, and History's
+ * "Local labels" filter then hid both, since it hides whatever has a `remote`.
  */
 export function mapCommitRefs(
-  refs: string[],
+  refs: RefInfo[],
   headBranch: string | null,
 ): {
   name: string;
   tone: "accent" | "violet" | "green" | "amber";
+  icon: "branch" | "tag" | "link";
   remote?: string;
   ref: string;
 }[] {
   // `ref` is the name git knows, carried alongside the display name because the
   // display name is lossy: HEAD's pill reads "HEAD→main", and a remote ref is
   // split into name + remote. A drag or any other op needs the original (#91).
-  return refs.map((r) => {
-    if (r.startsWith("origin/") || r.includes("/")) {
-      const [remote, ...rest] = r.split("/");
-      return { name: rest.join("/"), tone: "violet" as const, remote, ref: r };
+  return refs.map(({ name, kind }) => {
+    switch (kind) {
+      case "Tag":
+        // Amber and a tag glyph — the pair the tag badge beside it already
+        // uses. A tag IS a ref, but it is not a branch: it does not move, and
+        // nothing about its name is a remote prefix.
+        return { name, tone: "amber" as const, icon: "tag" as const, ref: name };
+      case "Remote": {
+        const [prefix, ...rest] = name.split("/");
+        // A remote-tracking ref is `<remote>/<branch>` — except for a
+        // hand-made `refs/remotes/foo`, which has no branch half. Splitting
+        // that one blindly leaves an EMPTY pill, so it keeps its name and
+        // simply has no remote to dim.
+        return rest.length === 0
+          ? { name, tone: "violet" as const, icon: "branch" as const, ref: name }
+          : {
+              name: rest.join("/"),
+              tone: "violet" as const,
+              icon: "branch" as const,
+              remote: prefix,
+              ref: name,
+            };
+      }
+      case "Other":
+        // `refs/bisect/*` mid-bisect, a fetched `refs/pull/N/head`. Shown
+        // whole and with a neutral glyph: these are real refs on the row, but
+        // calling them branches is how one ends up on a menu that would move
+        // it.
+        return { name, tone: "violet" as const, icon: "link" as const, ref: name };
+      case "Branch":
+      default:
+        // `default` is the wire's, not the union's: an older frontend against
+        // a newer backend must still draw the pill, and a branch is the safe
+        // reading of an unknown ref kind.
+        return name === headBranch
+          ? {
+              name: `HEAD→${name}`,
+              tone: "accent" as const,
+              icon: "branch" as const,
+              ref: name,
+            }
+          : { name, tone: "green" as const, icon: "branch" as const, ref: name };
     }
-    if (r === headBranch) {
-      return { name: `HEAD→${r}`, tone: "accent" as const, ref: r };
-    }
-    return { name: r, tone: "green" as const, ref: r };
   });
 }
 

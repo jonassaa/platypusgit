@@ -92,6 +92,30 @@ export interface FileStatus {
   submodule?: boolean;
 }
 
+/**
+ * What kind of ref one of a commit's decorations names. Mirrors Rust `RefKind`.
+ *
+ * It arrives from the backend because the name cannot carry it: tags and
+ * branches share one namespace of shorthands, and a `/` says nothing either —
+ * `feat/x` is a local branch, `origin/x` a remote-tracking one, `release/1.0`
+ * an ordinary tag. Guessing from the string put a branch icon on every tag and
+ * read `release/1.0` as a remote called `release`.
+ */
+export type RefKind = "Branch" | "Remote" | "Tag" | "Other";
+
+/**
+ * One ref pointing at a commit — what decorates a log row. Mirrors Rust
+ * `RefInfo`.
+ *
+ * `name` is git's own shorthand (`main`, `origin/main`, `v1.0.0`,
+ * `bisect/bad`), so it is what an op may be named with; `mapCommitRefs` turns
+ * it into the pill's display string, which is lossy on purpose.
+ */
+export interface RefInfo {
+  name: string;
+  kind: RefKind;
+}
+
 export interface CommitInfo {
   oid: string;
   shortOid: string;
@@ -102,7 +126,7 @@ export interface CommitInfo {
   /** unix timestamp, seconds */
   timestamp: number;
   parents: string[];
-  refs: string[];
+  refs: RefInfo[];
 }
 
 /** One page of a resumable log walk (#68 G11). Mirrors Rust `LogPage`. */

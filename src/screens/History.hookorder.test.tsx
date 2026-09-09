@@ -25,7 +25,7 @@ const commit: CommitInfo = {
   email: "dev@example.com",
   timestamp: 1_700_000_000,
   parents: [],
-  refs: ["refs/heads/main"],
+  refs: [{ name: "main", kind: "Branch" }],
 };
 
 describe("History screen when the log arrives after mount", () => {

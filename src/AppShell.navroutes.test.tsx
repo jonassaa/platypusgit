@@ -48,7 +48,7 @@ const COMMITS: CommitInfo[] = [OID, OID2].map((oid, i) => ({
   email: "dev@example.com",
   timestamp: 1_700_000_000 - i,
   parents: i === 0 ? [OID2] : [],
-  refs: i === 0 ? ["refs/heads/main"] : [],
+  refs: i === 0 ? [{ name: "main", kind: "Branch" as const }] : [],
 }));
 
 const DIFF: FileDiff = {

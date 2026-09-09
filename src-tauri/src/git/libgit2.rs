@@ -33,6 +33,7 @@ use super::{
         LogFilter, LogPage,
         OversizedBlob,
         RebaseAction, RebaseProgress, RebaseProgressSink, RebaseStatus, RebaseStep, RebaseSummary,
+        RefInfo, RefKind,
         ReflogEntry, ReflogOp, RemoteInfo,
         RepoHandle, RepoId, RepoState, ResetMode, ShallowInfo, StashInfo, StashSaveOptions,
         StatusFlag,
@@ -2700,35 +2701,50 @@ fn push_page_start(
 }
 
 /// Map git2's per-ref lookup by target OID. Scans once per log call.
-fn collect_ref_map(repo: &Repository) -> HashMap<git2::Oid, Vec<String>> {
+fn collect_ref_map(repo: &Repository) -> HashMap<git2::Oid, Vec<RefInfo>> {
     // A map, not a list: every log walk decorates each of its rows from this,
     // and a linear scan per row was O(refs x rows) with a clone per hit.
-    let mut out: HashMap<git2::Oid, Vec<String>> = HashMap::new();
+    let mut out: HashMap<git2::Oid, Vec<RefInfo>> = HashMap::new();
     if let Ok(refs) = repo.references() {
         for r in refs.flatten() {
             let name = match r.shorthand() {
                 Ok(n) => n.to_string(),
                 Err(_) => continue,
             };
+            // Ask git which kind of ref this is, here, where the answer is free
+            // and exact. The name that travels cannot be re-classified later:
+            // a tag and a branch share one namespace, so the frontend used to
+            // guess and got every tag wrong. `is_branch` is refs/heads only,
+            // hence the explicit Other arm rather than a `_ => Branch` default.
+            let kind = if r.is_tag() {
+                RefKind::Tag
+            } else if r.is_remote() {
+                RefKind::Remote
+            } else if r.is_branch() {
+                RefKind::Branch
+            } else {
+                RefKind::Other
+            };
+            let info = RefInfo { name, kind };
             // Peel annotated tags to the commit they point at. Only TAGS: a
             // branch or remote ref's target already IS the commit oid, and
             // peeling costs an object read per ref — thousands, on a repo with
             // many remote branches, on every page fetch.
-            if r.is_tag() {
+            if kind == RefKind::Tag {
                 if let Ok(peeled) = r.peel(git2::ObjectType::Commit) {
                     if let Some(c) = peeled.as_commit() {
-                        out.entry(c.id()).or_default().push(name);
+                        out.entry(c.id()).or_default().push(info);
                         continue;
                     }
                 }
             }
             if let Some(oid) = r.target() {
-                out.entry(oid).or_default().push(name);
+                out.entry(oid).or_default().push(info);
             } else if let Ok(peeled) = r.peel(git2::ObjectType::Commit) {
                 // Symbolic refs (origin/HEAD) have no direct target; resolve
                 // them the way the old always-peel did so their pill survives.
                 if let Some(c) = peeled.as_commit() {
-                    out.entry(c.id()).or_default().push(name);
+                    out.entry(c.id()).or_default().push(info);
                 }
             }
         }
@@ -3554,7 +3570,7 @@ impl GitBackend for Libgit2Backend {
             for oid in walk.by_ref().take(limit) {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
-                let refs: Vec<String> = ref_map.get(&oid).cloned().unwrap_or_default();
+                let refs: Vec<RefInfo> = ref_map.get(&oid).cloned().unwrap_or_default();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
                 frontier.visit(oid, commit.parent_ids());
@@ -3726,7 +3742,7 @@ impl GitBackend for Libgit2Backend {
                     }
                 }
 
-                let refs: Vec<String> = ref_map.get(&oid).cloned().unwrap_or_default();
+                let refs: Vec<RefInfo> = ref_map.get(&oid).cloned().unwrap_or_default();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
                 out.push(info);
@@ -3773,7 +3789,7 @@ impl GitBackend for Libgit2Backend {
             for oid in walk {
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
-                let refs: Vec<String> = ref_map.get(&oid).cloned().unwrap_or_default();
+                let refs: Vec<RefInfo> = ref_map.get(&oid).cloned().unwrap_or_default();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
                 out.push(info);
@@ -3810,7 +3826,7 @@ impl GitBackend for Libgit2Backend {
                 }
                 let oid = oid?;
                 let commit = repo.find_commit(oid)?;
-                let refs: Vec<String> = ref_map.get(&oid).cloned().unwrap_or_default();
+                let refs: Vec<RefInfo> = ref_map.get(&oid).cloned().unwrap_or_default();
                 let mut info = commit_to_info(&commit);
                 info.refs = refs;
                 out.push(info);
