@@ -6,6 +6,11 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
 import { useOverlayStore } from "./useOverlayStore";
 import { useReportStore } from "@/features/report/useReportStore";
+import { useThemeEditorStore } from "@/features/settings/theme/useThemeEditorStore";
+import {
+  BUILTIN_THEMES,
+  useSettingsStore,
+} from "@/features/settings/useSettingsStore";
 import { useUpdateStore } from "@/features/update/useUpdateStore";
 import { useTabsStore } from "@/features/repo/useTabsStore";
 import { newTab } from "@/features/repo/tabs";
@@ -123,6 +128,49 @@ describe("default runners", () => {
     expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
     expect(useReportStore.getState().open).toBe(true);
     useReportStore.setState({ open: false, seed: "" });
+  });
+
+  it("app.closeOverlay closes the theme editor AND restores the pre-draft theme", () => {
+    useOverlayStore.setState({ cheatSheetOpen: false });
+    useSettingsStore.getState().setActiveThemeId("light");
+    const before = document.documentElement.style.getPropertyValue("--bg-0");
+
+    useThemeEditorStore.getState().openNew(BUILTIN_THEMES[0]);
+    useThemeEditorStore.getState().patchColors({ bg0: "#123456" });
+    expect(document.documentElement.style.getPropertyValue("--bg-0")).toBe("#123456");
+
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+
+    expect(useThemeEditorStore.getState().open).toBeNull();
+    // Closing has to RESTORE, not merely unmount: an Escape that only hid the
+    // dialog would leave the abandoned draft painted on the whole app.
+    expect(document.documentElement.style.getPropertyValue("--bg-0")).toBe(before);
+    // ...and declines once there is nothing left to close.
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(false);
+  });
+
+  it("app.closeOverlay dismisses the credential prompt before the theme editor", () => {
+    useOverlayStore.setState({ cheatSheetOpen: false });
+    // Same precedence the report dialog is pinned for (#212). The editor is on
+    // PGModal's base layer; the prompt is on `nested`, above it, and is
+    // answered first — otherwise Escape closes the editor out from under a
+    // prompt some other op is still waiting on.
+    useThemeEditorStore.getState().openNew(BUILTIN_THEMES[0]);
+    useAuthStore.getState().raise({
+      host: "github.com",
+      kind: "Https",
+      retry: async () => {},
+      onDismiss: () => {},
+    });
+
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+
+    expect(useAuthStore.getState().challenge).toBeNull();
+    expect(useThemeEditorStore.getState().open).not.toBeNull();
+
+    // A second Escape then closes the editor itself.
+    expect(ACTIONS["app.closeOverlay"].run?.()).toBe(true);
+    expect(useThemeEditorStore.getState().open).toBeNull();
   });
 
   it("app.closeOverlay also closes an open create dialog (clone or init)", () => {
