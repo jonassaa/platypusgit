@@ -6,11 +6,11 @@ import { readUserFile, writeUserFile } from "./tauri";
  * The ONE way this app puts a file on disk or reads one back (#435).
  *
  * Export used to be a `Blob`, an `<a download>` and a synthetic click, and
- * import a hidden `<input type="file">`. The download attribute is ignored by
- * WebKitGTK, so on Linux every export button did nothing at all — silently,
- * with no error to report. Both are browser affordances in an app that has
- * native dialogs, so both are gone; `test/fileSave.test.ts` fails the build if
- * either comes back.
+ * import a hidden file input. The download attribute is ignored by WebKitGTK,
+ * so on Linux every export button did nothing at all — silently, with no error
+ * to report. Both are browser affordances in an app that has native dialogs,
+ * so both are gone; `test/fileSave.test.ts` fails the build if either comes
+ * back. (That guard greps for the literals, so this comment names neither.)
  *
  * A cancelled dialog resolves to `null`, never a throw: a dismissal is "no
  * answer", the same reading `pgConfirm` and `pgPrompt` give it. Every save

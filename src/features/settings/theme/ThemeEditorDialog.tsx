@@ -7,6 +7,9 @@ import {
   type ThemeDef,
 } from "@/features/settings/useSettingsStore";
 
+import { exportThemeDraftToFile } from "@/features/settings/themeFiles";
+import { appErrorMessage } from "@/lib/errors";
+
 import { ColorEditor } from "./ColorEditor";
 
 export function ThemeEditorDialog({
@@ -108,6 +111,16 @@ export function ThemeEditorDialog({
       pgFlash(`Saved "${trimmed}"`);
     }
     onClose();
+  };
+
+  /** Write the UNSAVED draft to a file the user picks. */
+  const handleExportDraft = async () => {
+    try {
+      const path = await exportThemeDraftToFile({ name, mode: themeMode, colors });
+      if (path) pgFlash(`Exported to ${path}`);
+    } catch (err) {
+      pgFlash(`Export failed: ${appErrorMessage(err)}`);
+    }
   };
 
   const handleResetColors = () => {
@@ -258,35 +271,9 @@ export function ThemeEditorDialog({
             size="sm"
             variant="default"
             icon="download"
-            onClick={() => {
-              // Export the current draft without saving.
-              const payload = JSON.stringify(
-                {
-                  $schema: "https://platypusgit.dev/theme.schema.json",
-                  version: 1,
-                  name,
-                  mode: themeMode,
-                  colors,
-                },
-                null,
-                2,
-              );
-              const slug = (name || "theme")
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/(^-|-$)/g, "");
-              const blob = new Blob([payload], { type: "application/json" });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `${slug || "theme"}.pgtheme.json`;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              URL.revokeObjectURL(url);
-            }}
+            onClick={() => void handleExportDraft()}
           >
-            Export draft
+            Export draft…
           </PGButton>
           <div style={{ flex: 1 }} />
           <PGButton size="sm" variant="ghost" onClick={handleCancel}>
