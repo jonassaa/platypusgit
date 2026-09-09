@@ -1,14 +1,5 @@
-import React from "react";
+import { PGButton, PGButtonGroup, PGIconButton, pgFlash } from "@/design";
 import {
-  PGButton,
-  PGButtonGroup,
-  PGIconButton,
-  PGSelect,
-  pgConfirm,
-  pgFlash,
-} from "@/design";
-import {
-  BUILTIN_THEMES,
   DENSITY_STEP_PX,
   ZOOM_MAX,
   ZOOM_MIN,
@@ -18,11 +9,8 @@ import {
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { SettingsCard, SettingsRow } from "@/features/settings/layout/SettingsCard";
 import { ThemeEditorDialog } from "@/features/settings/theme/ThemeEditorDialog";
-import { useThemeEditorStore } from "@/features/settings/theme/useThemeEditorStore";
-import {
-  exportThemeToFile,
-  importThemeFromFile,
-} from "@/features/settings/themeFiles";
+import { ThemeGallery } from "@/features/settings/theme/ThemeGallery";
+import { importThemeFromFile } from "@/features/settings/themeFiles";
 import type { SettingsPageMeta } from "@/features/settings/nav/types";
 import { commitDateText, type DateFormat } from "@/lib/commitDate";
 import { appErrorMessage } from "@/lib/errors";
@@ -44,9 +32,9 @@ export const meta: SettingsPageMeta = {
         // Ungated, the index described all three at once and a search for
         // "light theme" on a fresh install (mode "fixed") reported "1 result"
         // and drew a card header with no rows under it.
-        { id: "appearance.light", label: "Light theme", when: "themeFollowsSystem" },
-        { id: "appearance.dark", label: "Dark theme", keywords: "dark mode", when: "themeFollowsSystem" },
-        { id: "appearance.theme", label: "Theme", keywords: "colors palette custom editor export", when: "themeFixed" },
+        { id: "appearance.light", label: "Light theme", keywords: "gallery preview swatch", when: "themeFollowsSystem" },
+        { id: "appearance.dark", label: "Dark theme", keywords: "dark mode gallery preview swatch", when: "themeFollowsSystem" },
+        { id: "appearance.theme", label: "Theme", keywords: "colors palette custom editor export import gallery preview swatch duplicate contrast", when: "themeFixed" },
         { id: "appearance.density", label: "UI density", keywords: "compact cozy comfortable row height spacing" },
         { id: "appearance.dateFormat", label: "Date format", keywords: "relative absolute iso timestamp" },
         { id: "appearance.headMarks", label: "Current position (HEAD)", keywords: "bar tint ring marker" },
@@ -66,44 +54,7 @@ export function AppearancePage() {
   const active = s.getActiveTheme();
   const isBuiltin = !!active.builtin;
 
-  const themeOptions = React.useMemo(() => {
-    const builtins = BUILTIN_THEMES.map((t) => ({
-      value: t.id,
-      label: t.name,
-    }));
-    const customs = s.customThemes.map((t) => ({
-      value: t.id,
-      label: `★ ${t.name}`,
-    }));
-    return [...builtins, ...customs];
-  }, [s.customThemes]);
-
-  // Each half of the pairing may only name a theme of its own mode — offering
-  // a dark theme as "the light one" would let the user build a pairing that
-  // never switches.
-  const pairOptions = React.useMemo(() => {
-    const of = (mode: "dark" | "light") => [
-      ...BUILTIN_THEMES.filter((t) => t.mode === mode).map((t) => ({
-        value: t.id,
-        label: t.name,
-      })),
-      ...s.customThemes
-        .filter((t) => t.mode === mode)
-        .map((t) => ({ value: t.id, label: `★ ${t.name}` })),
-    ];
-    return { light: of("light"), dark: of("dark") };
-  }, [s.customThemes]);
-
   const following = s.themePreference.mode === "system";
-
-  const onExport = async () => {
-    try {
-      const path = await exportThemeToFile(active.id);
-      if (path) pgFlash(`Exported to ${path}`);
-    } catch (err) {
-      pgFlash(`Export failed: ${appErrorMessage(err)}`);
-    }
-  };
 
   const onImport = async () => {
     try {
@@ -112,19 +63,6 @@ export function AppearancePage() {
     } catch (err) {
       pgFlash(`Import failed: ${appErrorMessage(err)}`);
     }
-  };
-
-  const onDelete = async () => {
-    if (
-      !(await pgConfirm({
-        title: `Delete theme "${active.name}"?`,
-        body: "Custom themes aren't recoverable unless you exported the file.",
-        danger: true,
-        confirmLabel: "Delete theme",
-      }))
-    )
-      return;
-    s.deleteTheme(active.id);
   };
 
   return (
@@ -161,53 +99,35 @@ export function AppearancePage() {
           <SettingsRow
             id="appearance.light"
             label="Light theme"
-            hint="Applied while the OS is in light appearance."
-            control={
-              <PGSelect
-                value={s.themePreference.lightId}
-                onChange={(v) => s.setPairedThemeId("light", v)}
-                options={pairOptions.light}
-                size="sm"
-                style={{ minWidth: 200 }}
-              />
-            }
+            stacked
+            hint="Applied while the OS is in light appearance. Only light themes are offered — a pairing whose halves share a mode never switches."
+            control={<ThemeGallery appearance="light" />}
           />
           <SettingsRow
             id="appearance.dark"
             label="Dark theme"
+            stacked
             hint="Applied while the OS is in dark appearance."
-            control={
-              <PGSelect
-                value={s.themePreference.darkId}
-                onChange={(v) => s.setPairedThemeId("dark", v)}
-                options={pairOptions.dark}
-                size="sm"
-                style={{ minWidth: 200 }}
-              />
-            }
+            control={<ThemeGallery appearance="dark" />}
           />
         </>
       ) : (
         <SettingsRow
           id="appearance.theme"
           label="Theme"
+          stacked
           hint={
             isBuiltin
-              ? "Built-in themes are read-only. Click “New custom theme” to fork and edit."
-              : "Custom theme. Click “Edit custom theme” to change its colors."
+              ? "Built-in themes are read-only — Duplicate one to start your own."
+              : "Custom theme. Edit, duplicate, export or delete it on its card."
           }
-          control={
-            <PGSelect
-              value={active.id}
-              onChange={(v) => s.setActiveThemeId(v)}
-              options={themeOptions}
-              size="sm"
-              style={{ minWidth: 200 }}
-            />
-          }
+          control={<ThemeGallery />}
         />
       )}
 
+      {/* Edit, Duplicate, Export and Delete live on the cards, next to the
+          theme they act on. Import is the one action that belongs to no
+          existing card, so it is the only button left here. */}
       <div
         style={{
           padding: "10px 16px",
@@ -219,45 +139,6 @@ export function AppearancePage() {
           background: "var(--bg-0)",
         }}
       >
-        {!isBuiltin && (
-          <PGButton
-            size="sm"
-            variant="primary"
-            icon="edit"
-            onClick={() => useThemeEditorStore.getState().openEdit(active)}
-          >
-            Edit custom theme…
-          </PGButton>
-        )}
-        <PGButton
-          size="sm"
-          variant={isBuiltin ? "primary" : "default"}
-          icon="plus"
-          onClick={() => useThemeEditorStore.getState().openNew(active)}
-          title="Create a new custom theme starting from the active one"
-        >
-          New custom theme…
-        </PGButton>
-        {!isBuiltin && (
-          <PGButton
-            size="sm"
-            variant="default"
-            icon="trash"
-            onClick={() => void onDelete()}
-          >
-            Delete
-          </PGButton>
-        )}
-        <div style={{ flex: 1 }} />
-        <PGButton
-          size="sm"
-          variant="default"
-          icon="download"
-          onClick={() => void onExport()}
-          title="Write this theme to a .pgtheme.json file"
-        >
-          Export…
-        </PGButton>
         <PGButton
           size="sm"
           variant="default"
@@ -265,8 +146,11 @@ export function AppearancePage() {
           onClick={() => void onImport()}
           title="Read a .pgtheme.json file"
         >
-          Import…
+          Import theme…
         </PGButton>
+        <span style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
+          Adds a theme from a file someone exported.
+        </span>
       </div>
 
       <SettingsRow
