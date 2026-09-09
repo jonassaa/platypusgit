@@ -5,9 +5,16 @@ import { THEME_COLOR_FIELDS, type ThemeColors } from "@/features/settings/useSet
 export function ColorEditor({
   colors,
   onPatch,
+  badgeFor,
 }: {
   colors: ThemeColors;
   onPatch: (p: Partial<ThemeColors>) => void;
+  /**
+   * Optional trailing content per field — the editor passes a contrast ratio
+   * for the pairs `CONTRAST_PAIRS` names, so a finding is visible where the
+   * colour is edited and not only in the summary under the preview.
+   */
+  badgeFor?: (key: keyof ThemeColors) => React.ReactNode;
 }) {
   const groups: Array<{
     title: string;
@@ -40,7 +47,10 @@ export function ColorEditor({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+              // 190px, not 240: the editor's left column is ~410px, so a 240px
+              // minimum fitted exactly ONE field per row and made the list
+              // twice as long to scroll as it needs to be.
+              gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
               gap: 8,
             }}
           >
@@ -53,6 +63,7 @@ export function ColorEditor({
                 onChange={(v) =>
                   onPatch({ [f.key]: v } as Partial<ThemeColors>)
                 }
+                badge={badgeFor?.(f.key)}
               />
             ))}
           </div>
@@ -67,11 +78,13 @@ export function ColorField({
   hint,
   value,
   onChange,
+  badge,
 }: {
   label: string;
   hint?: string;
   value: string;
   onChange: (v: string) => void;
+  badge?: React.ReactNode;
 }) {
   const [draft, setDraft] = React.useState(value);
   React.useEffect(() => setDraft(value), [value]);
@@ -111,6 +124,7 @@ export function ColorField({
       >
         <input
           type="color"
+          aria-label={`${label} colour picker`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           style={{
@@ -137,6 +151,9 @@ export function ColorField({
         </div>
         <div style={{ marginTop: 2 }}>
           <input
+            // The field's accessible name, so a test (and a screen reader)
+            // can reach "Background · base" rather than an unlabelled box.
+            aria-label={label}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => commitHex(draft)}
@@ -164,6 +181,7 @@ export function ColorField({
           />
         </div>
       </div>
+      {badge}
     </div>
   );
 }

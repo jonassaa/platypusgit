@@ -23,6 +23,7 @@
     "core:webview:allow-set-webview-zoom",
     "dialog:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "os:default",
     "log:default"
   ]

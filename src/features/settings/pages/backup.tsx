@@ -9,6 +9,10 @@ import {
   type SettingsImportReport,
 } from "@/features/settings/useSettingsStore";
 import { appErrorMessage } from "@/lib/errors";
+import {
+  exportSettingsToFile,
+  readSettingsFile,
+} from "@/features/settings/themeFiles";
 import { buildReport } from "@/features/report/report";
 import { useReportStore } from "@/features/report/useReportStore";
 import { diagnosticsReport, readLogTail, revealLogFile } from "@/lib/tauri";
@@ -55,37 +59,41 @@ export const meta: SettingsPageMeta = {
  * enough on its own to earn a file.
  */
 export function BackupPage() {
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [exportedTo, setExportedTo] = React.useState<string | null>(null);
   const [report, setReport] = React.useState<
     (SettingsImportReport & { keymapApplied: string | null }) | null
   >(null);
   const [failure, setFailure] = React.useState<string | null>(null);
 
-  const onExport = () => {
+  const onExport = async () => {
     setReport(null);
     setFailure(null);
-    const name = useSettingsStore.getState().downloadSettings({
-      keymapPresetId: useKeymapStore.getState().activePresetId,
-    });
-    setExportedTo(name);
-    pgFlash(`Exported ${name}`);
+    try {
+      const path = await exportSettingsToFile({
+        keymapPresetId: useKeymapStore.getState().activePresetId,
+      });
+      // Cancel is not a failure and says nothing.
+      if (!path) return;
+      setExportedTo(path);
+      pgFlash(`Exported to ${path}`);
+    } catch (err) {
+      setFailure(appErrorMessage(err));
+    }
   };
 
-  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+  const onImport = async () => {
     setExportedTo(null);
     setReport(null);
     setFailure(null);
-    let text: string;
+    let picked: { path: string; contents: string } | null;
     try {
-      text = await file.text();
+      picked = await readSettingsFile();
     } catch (err) {
       setFailure(appErrorMessage(err));
       return;
     }
+    // Cancel is "no answer", not a failure.
+    if (!picked) return;
     // Asked before applying, not after: an import replaces every preference at
     // once, and the file is the one thing the user can still recognise here.
     if (
@@ -93,7 +101,7 @@ export function BackupPage() {
         title: "Replace your settings with this file?",
         body: (
           <>
-            Every preference in <Mono>{file.name}</Mono> is applied to this
+            Every preference in <Mono>{picked.path}</Mono> is applied to this
             machine. Nothing in your repositories changes, and what changed is
             listed afterwards.
           </>
@@ -105,7 +113,7 @@ export function BackupPage() {
 
     let result: SettingsImportReport;
     try {
-      result = useSettingsStore.getState().importSettings(text);
+      result = useSettingsStore.getState().importSettings(picked.contents);
     } catch (err) {
       setFailure(appErrorMessage(err));
       return;
@@ -197,7 +205,7 @@ export function BackupPage() {
           hint={
             exportedTo ? (
               <span data-testid="settings-export-result">
-                Saved <Mono>{exportedTo}</Mono> to your downloads folder.
+                Saved to <Mono>{exportedTo}</Mono>.
               </span>
             ) : (
               <>
@@ -208,8 +216,8 @@ export function BackupPage() {
             )
           }
           control={
-            <PGButton size="sm" icon="download" onClick={onExport}>
-              Export settings
+            <PGButton size="sm" icon="download" onClick={() => void onExport()}>
+              Export settings…
             </PGButton>
           }
         />
@@ -234,22 +242,10 @@ export function BackupPage() {
             )
           }
           control={
-            <PGButton
-              size="sm"
-              icon="upload"
-              onClick={() => fileInputRef.current?.click()}
-            >
+            <PGButton size="sm" icon="upload" onClick={() => void onImport()}>
               Import settings…
             </PGButton>
           }
-        />
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/json,.json"
-          onChange={onImportFile}
-          data-testid="settings-import-input"
-          style={{ display: "none" }}
         />
       </SettingsCard>
 

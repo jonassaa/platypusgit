@@ -1535,6 +1535,22 @@ export async function revealLogFile(): Promise<void> {
   return invoke<void>("reveal_log_file");
 }
 
+/**
+ * Read a file the user picked in a native open dialog.
+ *
+ * Capped at 4 MiB by the backend, and a folder is a refusal — see
+ * `commands/userfile.rs`. Go through `lib/userFile.ts` rather than calling this
+ * directly: the path has to come from a dialog.
+ */
+export async function readUserFile(path: string): Promise<string> {
+  return invoke<string>("read_user_file", { path });
+}
+
+/** Write a file to the path the user picked in a native save dialog. */
+export async function writeUserFile(path: string, contents: string): Promise<void> {
+  return invoke<void>("write_user_file", { path, contents });
+}
+
 export function checkForUpdate(channel: UpdateChannel): Promise<UpdateInfo> {
   return invoke<UpdateInfo>("check_for_update", { channel });
 }

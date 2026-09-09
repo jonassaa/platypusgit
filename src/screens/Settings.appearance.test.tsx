@@ -5,7 +5,6 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { WithDialogs, resetDialogs } from "@/test/dialog";
-import { pgPickOption, pgSelectTrigger, pgSelectValues } from "@/test/select";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { AppearancePage } from "@/features/settings/pages/appearance";
 
@@ -58,25 +57,34 @@ describe("the Appearance control", () => {
   it("offers only light themes as the light half, and only dark as the dark", () => {
     useSettingsStore.getState().setThemeFollowMode("system");
     renderSettings();
-    const light = pgSelectValues(pgSelectTrigger(row("Light theme")));
-    const dark = pgSelectValues(pgSelectTrigger(row("Dark theme")));
+    const named = (el: HTMLElement) =>
+      within(el)
+        .getAllByRole("radio")
+        .map((card) => card.getAttribute("aria-label"));
+    const light = named(row("Light theme"));
+    const dark = named(row("Dark theme"));
     // A pairing whose halves are the same mode never switches — the control
     // must make that unrepresentable rather than validating it after the fact.
-    expect(light).toEqual(["light", "github-light"]);
-    expect(dark).toContain("dark-cool");
-    expect(dark).not.toContain("light");
-    expect(light).not.toContain("nord");
+    // The picker is a gallery of cards now, but the rule is the same one.
+    expect(light).toEqual(["Light", "GitHub Light"]);
+    expect(dark).toContain("Dark · Cool");
+    expect(dark).not.toContain("Light");
+    expect(light).not.toContain("Nord");
   });
 
   it("applies the pick that matches the current OS appearance", () => {
     useSettingsStore.getState().setThemeFollowMode("system");
     renderSettings();
-    pgPickOption(pgSelectTrigger(row("Dark theme")), "dracula");
+    fireEvent.click(
+      within(row("Dark theme")).getByRole("radio", { name: "Dracula" }),
+    );
     expect(useSettingsStore.getState().themePreference.darkId).toBe("dracula");
     expect(document.documentElement.dataset.theme).toBe("dracula");
 
     // …and stores the other half without touching the screen.
-    pgPickOption(pgSelectTrigger(row("Light theme")), "github-light");
+    fireEvent.click(
+      within(row("Light theme")).getByRole("radio", { name: "GitHub Light" }),
+    );
     expect(useSettingsStore.getState().themePreference.lightId).toBe("github-light");
     expect(document.documentElement.dataset.theme).toBe("dracula");
   });

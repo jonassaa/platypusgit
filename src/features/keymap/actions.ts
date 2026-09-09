@@ -13,6 +13,7 @@ import { useAuthStore } from "@/features/auth/useAuthStore";
 import { useCreateStore } from "@/features/create/useCreateStore";
 import { useCreateTagStore } from "@/features/tags/useCreateTagStore";
 import { useReportStore } from "@/features/report/useReportStore";
+import { useThemeEditorStore } from "@/features/settings/theme/useThemeEditorStore";
 import { useForgeStore } from "@/features/forge/useForgeStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { usePaletteStore } from "@/features/palette/usePaletteStore";
@@ -345,6 +346,16 @@ export const ACTIONS: Record<ActionId, ActionDef> = {
       // failure the auth branch above is ordered to prevent.
       if (useReportStore.getState().open) {
         useReportStore.getState().closeReport();
+        return true;
+      }
+      // The theme editor, on the same PGModal base layer and in this chain for
+      // the same reason. Its `close()` also RESTORES the theme that was live
+      // when it opened: an Escape that only unmounted the dialog would leave
+      // the abandoned draft painted on the app, which is why the dialog used
+      // to own its own keydown listener — the anti-pattern design/modal.tsx
+      // names.
+      if (useThemeEditorStore.getState().open) {
+        useThemeEditorStore.getState().close();
         return true;
       }
       if (useUpdateStore.getState().panelOpen) {

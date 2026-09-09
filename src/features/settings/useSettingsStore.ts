@@ -484,43 +484,64 @@ const SYNTAX_TOKENS: Record<"dark" | "light", Record<string, string>> = {
   },
 };
 
-/** Apply theme by writing every color slot to CSS vars on :root. */
+/**
+ * Every CSS var a theme sets, as a plain map.
+ *
+ * Extracted out of `applyTheme` so a theme can be painted somewhere OTHER than
+ * `:root` — a gallery card, the editor's preview pane — without a second copy
+ * of the slot-to-var mapping. Before this, nothing could render a theme except
+ * the active one, which is why there had never been a swatch or a preview
+ * anywhere in Settings.
+ *
+ * `themeVars.test.ts` asserts this map is exactly what `applyTheme` writes, so
+ * the two cannot drift: a new colour slot or a new derived token lands here and
+ * every surface gets it.
+ */
+export function themeVars(theme: ThemeDef): Record<string, string> {
+  const c = theme.colors;
+  // Mode-calibrated semantics + accent-derived selection tints. Part of the map
+  // on every apply (not only on a mode change) so switching dark → light →
+  // dark can't leave a stale calibration behind.
+  const mode = theme.mode === "light" ? "light" : "dark";
+  return {
+    "--bg-0": c.bg0,
+    "--bg-1": c.bg1,
+    "--bg-2": c.bg2,
+    "--bg-3": c.bg3,
+    "--bg-4": c.bg4,
+    "--bg-titlebar": c.titlebar,
+    "--fg-0": c.fg0,
+    "--fg-1": c.fg1,
+    "--fg-2": c.fg2,
+    "--fg-3": c.fg3,
+    "--fg-4": c.fg4,
+    "--border-0": c.border0,
+    "--border-1": c.border1,
+    "--border-2": c.border2,
+    "--accent": c.accent,
+    "--accent-ink": c.accentInk,
+    // logo colors fall back to the brand palette for themes persisted before
+    // the logo slots existed.
+    "--logo": c.logo ?? LOGO_PRIMARY,
+    "--logo-2": c.logo2 ?? LOGO_SECONDARY,
+    "--ring": `0 0 0 2px ${c.accent}80`,
+    ...SEMANTIC_TOKENS[mode],
+    ...SELECTION_TOKENS[mode],
+    ...SYNTAX_TOKENS[mode],
+  };
+}
+
+/**
+ * Apply a theme by writing every CSS var it sets to `:root`.
+ *
+ * The `data-theme` / `data-theme-mode` stamps stay here rather than in
+ * `themeVars`: they are the document's IDENTITY, not paint, and a preview
+ * rendering some other theme inside this one must not claim to be it.
+ */
 export function applyTheme(theme: ThemeDef) {
   const root = document.documentElement;
-  const c = theme.colors;
-  root.style.setProperty("--bg-0", c.bg0);
-  root.style.setProperty("--bg-1", c.bg1);
-  root.style.setProperty("--bg-2", c.bg2);
-  root.style.setProperty("--bg-3", c.bg3);
-  root.style.setProperty("--bg-4", c.bg4);
-  root.style.setProperty("--bg-titlebar", c.titlebar);
-  root.style.setProperty("--fg-0", c.fg0);
-  root.style.setProperty("--fg-1", c.fg1);
-  root.style.setProperty("--fg-2", c.fg2);
-  root.style.setProperty("--fg-3", c.fg3);
-  root.style.setProperty("--fg-4", c.fg4);
-  root.style.setProperty("--border-0", c.border0);
-  root.style.setProperty("--border-1", c.border1);
-  root.style.setProperty("--border-2", c.border2);
-  root.style.setProperty("--accent", c.accent);
-  root.style.setProperty("--accent-ink", c.accentInk);
-  // logo colors fall back to the brand palette for themes persisted before the
-  // logo slots existed.
-  root.style.setProperty("--logo", c.logo ?? LOGO_PRIMARY);
-  root.style.setProperty("--logo-2", c.logo2 ?? LOGO_SECONDARY);
-  root.style.setProperty("--ring", `0 0 0 2px ${c.accent}80`);
-  // Mode-calibrated semantics + accent-derived selection tints. Written on
-  // every apply (not only on a mode change) so switching dark → light → dark
-  // can't leave a stale calibration behind.
-  const mode = theme.mode === "light" ? "light" : "dark";
-  for (const [token, value] of Object.entries(SEMANTIC_TOKENS[mode])) {
-    root.style.setProperty(token, value);
-  }
-  for (const [token, value] of Object.entries(SELECTION_TOKENS[mode])) {
-    root.style.setProperty(token, value);
-  }
-  for (const [token, value] of Object.entries(SYNTAX_TOKENS[mode])) {
-    root.style.setProperty(token, value);
+  for (const [name, value] of Object.entries(themeVars(theme))) {
+    root.style.setProperty(name, value);
   }
   root.dataset.theme = theme.id;
   root.dataset.themeMode = theme.mode;
@@ -1025,7 +1046,6 @@ export interface SettingsState extends PersistedState {
   deleteTheme: (id: string) => void;
   duplicateTheme: (id: string, newName?: string) => ThemeDef;
   exportTheme: (id: string) => string;
-  downloadTheme: (id: string) => void;
   importThemeJson: (json: string) => ThemeDef;
   /**
    * Serialise every portable setting to one versioned JSON string (#254).
@@ -1033,11 +1053,6 @@ export interface SettingsState extends PersistedState {
    * writes; machine-specific keys (`NON_PORTABLE_KEYS`) do not.
    */
   exportSettings: (opts?: SettingsExportOptions) => string;
-  /**
-   * `exportSettings` plus the download. Returns the filename, because "your
-   * settings were exported" is useless without saying to what.
-   */
-  downloadSettings: (opts?: SettingsExportOptions) => string;
   /**
    * Apply a settings file and report what it changed — an import that replaces
    * every preference silently is indistinguishable from one that did nothing.
@@ -1648,6 +1663,17 @@ function validateTheme(obj: unknown): ThemeDef {
   };
 }
 
+/**
+ * Validate a theme file WITHOUT adding it to the store.
+ *
+ * `importThemeJson` is the store's version and it keeps the theme; this is for
+ * loading a file into the editor's DRAFT, where the user has not decided to
+ * keep it yet. Pure on purpose — same validation, no side effect.
+ */
+export function parseThemeJson(json: string): ThemeDef {
+  return validateTheme(JSON.parse(json));
+}
+
 const initial = load();
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -1840,24 +1866,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     return JSON.stringify(payload, null, 2);
   },
 
-  downloadTheme(id) {
-    const json = get().exportTheme(id);
-    const theme = findTheme(get(), id);
-    const slug = (theme?.name ?? "theme")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${slug || "theme"}.pgtheme.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  },
-
   importThemeJson(json) {
     const parsed = JSON.parse(json);
     const theme = validateTheme(parsed);
@@ -1899,25 +1907,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       null,
       2,
     );
-  },
-
-  downloadSettings(opts) {
-    const json = get().exportSettings(opts);
-    // Date, not timestamp: this is a file people keep and re-read, so a name
-    // they can recognise beats a name that is unique.
-    const filename = `platypusgit-settings-${new Date()
-      .toISOString()
-      .slice(0, 10)}.json`;
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    return filename;
   },
 
   importSettings(json) {

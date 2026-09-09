@@ -321,6 +321,147 @@ describe("settings", () => {
   });
 
   /**
+   * Creating a custom theme, end to end, in the real webview (#435 revamp).
+   *
+   * What only a real run proves: the gallery renders a card per theme in the
+   * real engine, Duplicate opens the editor seeded from that card, the live
+   * preview and the app repaint from one `themeVars` map, and the saved theme
+   * survives as the active one.
+   *
+   * **Export and import are deliberately NOT here.** They open a NATIVE save
+   * or open dialog, which WebDriver cannot drive at all — so a green e2e suite
+   * is not evidence that #435 is fixed. That evidence is
+   * `src-tauri/tests/user_file.rs` plus the `saveTextFile` component tests,
+   * and `test/fileSave.test.ts` for the pattern never coming back.
+   */
+  it("duplicates a built-in theme into a custom one and keeps it", async () => {
+    repo = dirtyRepo();
+    await openRepo(repo.path);
+    await openSettings("general.appearance");
+
+    // The gallery, not a dropdown of names: one card per theme, each a real
+    // preview painted in its own colours.
+    const nordCard = $('[role="radio"][aria-label="Nord"]');
+    await nordCard.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "theme gallery never rendered the Nord card",
+    });
+
+    await $('button[aria-label="Duplicate Nord"]').click();
+
+    // The editor is a PGModal reading useThemeEditorStore, so its own name
+    // field is the signal that the draft opened — not the dialog wrapper,
+    // which several other overlays also produce.
+    const nameField = $('[data-testid="theme-editor-name"]');
+    await nameField.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "theme editor never opened from Duplicate",
+    });
+    await nameField.setValue("E2E Theme");
+
+    // The preview paints from the DRAFT, in its own subtree — the property
+    // that makes a card able to show a theme other than the active one.
+    const previewAccent = await browser.execute(() => {
+      const el = document.querySelector("[data-testid='theme-preview']");
+      return el ? (el as HTMLElement).style.getPropertyValue("--accent") : null;
+    });
+    expect(previewAccent).toBeTruthy();
+
+    await $('[data-testid="theme-editor-save"]').click();
+
+    // Acceptance: the new theme is what the app is wearing, and the gallery
+    // says so on its own card. `data-theme` is what `applyTheme` stamps, so a
+    // draft id here would mean the save never went through the store.
+    const savedCard = $('[role="radio"][aria-label="E2E Theme"]');
+    await savedCard.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "the saved theme never appeared as a gallery card",
+    });
+    await browser.waitUntil(
+      async () => (await savedCard.getAttribute("aria-checked")) === "true",
+      { timeout: 10_000, timeoutMsg: "the saved theme never became the active card" },
+    );
+    const themeId = await browser.execute(() => document.documentElement.dataset.theme);
+    expect(themeId).not.toBe("__draft__");
+    expect(themeId).toMatch(/^custom-/);
+  });
+
+  /**
+   * The file commands behind every export, over REAL IPC on real WebKitGTK.
+   *
+   * This is the closest thing to evidence for #435 that an automated test can
+   * produce. What it does NOT cover is the native save dialog: WebDriver
+   * cannot drive an OS modal, so `saveTextFile`'s first half is out of reach
+   * here and is covered by component tests against the mocked plugin.
+   *
+   * What it DOES cover is everything the old implementation got wrong, on the
+   * platform that reported it: the commands are registered under the names the
+   * frontend calls, their argument names match, `dialog`/fs access is actually
+   * permitted by `capabilities/default.json`, and a write really lands on a
+   * Linux filesystem and reads back byte-for-byte. The old code never reached
+   * a command at all — it handed the file to an `<a download>` that WebKitGTK
+   * silently ignores.
+   *
+   * executeOnce: a driver-retry re-run would re-issue the write.
+   */
+  it("writes and reads a real file through the export commands", async () => {
+    repo = dirtyRepo();
+    await openRepo(repo.path);
+
+    const path = `/tmp/pg-e2e-theme-${Date.now()}.pgtheme.json`;
+    const body = JSON.stringify(
+      { $schema: "https://platypusgit.dev/theme.schema.json", version: 1, name: "IPC" },
+      null,
+      2,
+    );
+
+    const wrote = await executeOnce(
+      async (p: string, contents: string) => {
+        const core = (window as unknown as {
+          __TAURI__?: { core?: { invoke: (c: string, a?: unknown) => Promise<unknown> } };
+        }).__TAURI__?.core;
+        if (!core) return "no bridge";
+        try {
+          await core.invoke("write_user_file", { path: p, contents });
+          return "ok";
+        } catch (e) {
+          return `write failed: ${String(e)}`;
+        }
+      },
+      path,
+      body,
+    );
+    expect(wrote).toBe("ok");
+
+    const readBack = await browser.execute(async (p: string) => {
+      const core = (window as unknown as {
+        __TAURI__?: { core?: { invoke: (c: string, a?: unknown) => Promise<unknown> } };
+      }).__TAURI__?.core;
+      try {
+        return (await core!.invoke("read_user_file", { path: p })) as string;
+      } catch (e) {
+        return `read failed: ${String(e)}`;
+      }
+    }, path);
+    expect(readBack).toBe(body);
+
+    // A folder is a refusal, not a surprise — the cap and the type checks are
+    // the reason a mis-picked path cannot become a gigabyte-sized IPC message.
+    const folder = await browser.execute(async () => {
+      const core = (window as unknown as {
+        __TAURI__?: { core?: { invoke: (c: string, a?: unknown) => Promise<unknown> } };
+      }).__TAURI__?.core;
+      try {
+        await core!.invoke("read_user_file", { path: "/tmp" });
+        return "unexpectedly succeeded";
+      } catch (e) {
+        return JSON.stringify(e);
+      }
+    });
+    expect(folder).toContain("InvalidPath");
+  });
+
+  /**
    * The report dialog against the real webview.
    *
    * What only a real run proves: the diagnostics commands actually answer on

@@ -1848,6 +1848,64 @@ update checks back on for someone who turned them off.
   a half naming a theme this machine lacks and **re-derives** `activeThemeId`
   from this machine's own appearance: the exported id only records which half
   was on screen where the file was written.
+- **One file save/open path — `lib/userFile.ts`.** `saveTextFile` and
+  `openTextFile` are the only way this app writes a file or reads one back.
+  Export used to be a `Blob`, an `<a download>` and a synthetic click; import a
+  hidden file input. **A webview is not a browser:** WebKitGTK ignores the
+  download attribute, so on Linux every export button did nothing, silently —
+  which is how #435 survived a release. Both are browser affordances in an app
+  that has native dialogs, and `test/fileSave.test.ts` fails the build for
+  either coming back (it greps shipped `src/` for `createObjectURL`, a
+  `.download =` assignment and a file input, and asserts `userFile.ts` is the
+  only module importing the dialog plugin's `save`). Two rules the callers keep:
+  **a save returns the PATH**, so a surface says *Saved to `/home/you/x.json`*
+  rather than guessing at a downloads folder the app never chose; and **a
+  cancelled dialog is `null`, never a throw** — a dismissal is "no answer", the
+  reading `pgConfirm` and `pgPrompt` already give it. `features/settings/
+  themeFiles.ts` is the side-effecting half (dialogs and bytes) over the store's
+  PURE `exportTheme` / `exportSettings`, the same split `features/report/` makes
+  between `report.ts` and `fileReport.ts`. `readSettingsFile` reads WITHOUT
+  applying, because the Backup page asks before replacing every preference.
+- **One theme renderer — `themeVars(theme)`.** It returns every CSS var a theme
+  sets as a plain map; `applyTheme` is one writer of it (to `:root`, plus the
+  `data-theme` stamps, which are the document's IDENTITY and deliberately not in
+  the map). `ThemePreview` writes the same map to its own subtree and reads no
+  `:root` var, which is what lets a light theme's card stay light on a dark
+  page. `themeVars.test.ts` asserts the map is exactly what `applyTheme` writes,
+  so the two cannot drift — a new colour slot lands in one place and every
+  surface gets it. Before the extraction nothing could render a theme except the
+  active one, which is why Settings had never had a swatch or a preview.
+- **The theme picker is a gallery, not a dropdown** (`theme/ThemeGallery.tsx`).
+  Cards carry a real `ThemePreview` and their own Edit / Duplicate / Export /
+  Delete, so an action sits next to the theme it acts on; Import is the only one
+  left on the page, because it belongs to no existing card. It is a `radiogroup`
+  and arrow keys ACTIVATE as they move, so browsing is a live preview rather
+  than a focus walk. Following the system shows TWO galleries, each filtered to
+  its own mode — the rule the old `pairOptions` enforced, because a pairing
+  whose halves share a mode never switches. **The row ids stay
+  `appearance.theme` / `.light` / `.dark`** or `settings.index.test.tsx` fails
+  and Settings search stops finding the picker.
+- **The theme editor's draft lives in a store** (`useThemeEditorStore`), for two
+  reasons. `app.closeOverlay`'s chain in `features/keymap/actions.ts` reads
+  *stores*, because a handler registered from a component runs BEFORE the
+  default runner and would take Escape ahead of the credential prompt — local
+  React state cannot join that chain, which is exactly why the old dialog grew
+  the `window.addEventListener("keydown")` that `design/modal.tsx` names as an
+  anti-pattern. And **closing must RESTORE**: `close()` re-applies the theme
+  that was live on open, so Escape, the backdrop and Cancel are one path; an
+  Escape that only unmounted would leave the abandoned draft painted on the
+  app. `save()` is the one exit that does not restore. The editor's branch sits
+  below the credential prompt's, pinned by a test.
+- **Contrast warnings advise, never block.** `theme/contrast.ts` measures the
+  four pairs that decide whether the app is readable (primary text on the
+  canvas, secondary and muted on a panel, button text on the accent) — not every
+  combination, because a report with twenty findings is one nobody reads. Save
+  is never disabled by a finding: a deliberately low-contrast theme is the
+  user's own call. A user never reads a colour-slot key; each finding carries
+  prose. `deriveTheme` is the guided start (base + accent) and recalculates
+  `accentInk` alone, preferring the base theme's own inks so derived themes stay
+  in the family — it is deliberately not a palette generator, because shifting
+  the greys too produces palettes nobody can predict or correct.
 - **One theme format.** `themePayload()` is the per-theme serialiser behind both
   `exportTheme` and the settings bundle; the bundle adds only `id`, because
   `activeThemeId` has to stay resolvable. `normalizeCustomThemes` is lenient in
