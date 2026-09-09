@@ -219,4 +219,41 @@ describe("remote operations", () => {
 
     expect(pair.bareGit("rev-parse", "main").trim()).toBe(bareBefore);
   });
+
+  // "Push all up to here": a REFSPEC push, so the remote lands on the commit
+  // that was chosen rather than on the branch tip. The whole point is that it
+  // is PARTIAL, so the fixture needs two unpushed commits and the assertion has
+  // to distinguish the middle one from HEAD.
+  it("pushes history up to one commit, leaving the rest local", async () => {
+    pair = remoteRepo(); // origin/main == main, upstream set
+    pair.repo.commitFile("first.txt", "1\n", "feat: first unpushed");
+    const middle = pair.repo.git("rev-parse", "HEAD").trim();
+    pair.repo.commitFile("second.txt", "2\n", "feat: second unpushed");
+    const tip = pair.repo.git("rev-parse", "HEAD").trim();
+    expect(middle).not.toBe(tip);
+
+    await openRepo(pair.repo.path);
+    await stubNativeDialogs({ confirm: true });
+    await switchScreen("history");
+    await $('[data-testid="commit-row"]*=feat: first unpushed').waitForDisplayed({
+      timeout: 15_000, timeoutMsg: "the middle commit's row never appeared",
+    });
+
+    await jsContextMenu('[data-testid="commit-row"]', { text: "feat: first unpushed" });
+    await jsClickMenuItem("Push all up to here…");
+
+    // Repo truth on the BARE remote is the acceptance, waited on because there
+    // is no UI signal for "the remote moved" — the activity label clears on
+    // completion either way.
+    await browser.waitUntil(
+      async () => pair!.bareGit("rev-parse", "main").trim() === middle,
+      { timeout: 30_000, timeoutMsg: "origin/main never advanced to the chosen commit" },
+    );
+
+    // PARTIAL: the remote has the middle commit and NOT the tip, and the local
+    // branch is untouched.
+    expect(pair.bareGit("rev-parse", "main").trim()).toBe(middle);
+    expect(pair.repo.git("rev-parse", "HEAD").trim()).toBe(tip);
+    expect(pair.repo.git("log", "--pretty=%s")).toContain("feat: second unpushed");
+  });
 });

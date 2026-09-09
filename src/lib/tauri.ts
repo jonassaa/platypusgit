@@ -909,6 +909,37 @@ export async function pushTag(
   return invoke<void>("push_tag", { repoId, remote, name, credentials });
 }
 
+/**
+ * Push history only up to `oid`, onto `branch` on `remote`.
+ *
+ * `git push <remote> <oid>:refs/heads/<branch>` — a refspec push, which is what
+ * makes "up to here" expressible at all: an ordinary push sends whatever the
+ * branch points at.
+ *
+ * **Fast-forward only.** There is no force variant on this path, so the remote
+ * refuses anything that would discard commits and the refusal arrives like any
+ * other network error. It also does not set tracking: the branch's upstream is
+ * what decided where this goes.
+ */
+export async function pushCommit(
+  repoId: string,
+  remote: string,
+  oid: string,
+  branch: string,
+  credentials?: Credentials,
+  /** Skip `pre-push` for this push only (#232). */
+  noVerify = false,
+): Promise<void> {
+  return invoke<void>("push_commit", {
+    repoId,
+    remote,
+    oid,
+    branch,
+    credentials,
+    noVerify,
+  });
+}
+
 /** Delete a branch on the remote (see `pushTag` for the credential contract). */
 export async function pushDeleteBranch(
   repoId: string,

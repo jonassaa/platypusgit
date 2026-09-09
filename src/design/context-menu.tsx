@@ -13,6 +13,7 @@ import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
 import { commitChildren } from "@/features/commits/commitChildren";
 import { createPatch } from "@/features/commits/createPatch";
+import { pushTarget, pushUpToHere } from "@/features/commits/pushUpToHere";
 import { openCommitInBrowser } from "@/features/forge/openCommitInBrowser";
 import { rewordCommit } from "@/features/commits/rewordCommit";
 import { dropCommit } from "@/features/commits/dropCommit";
@@ -786,6 +787,23 @@ export function commitMenuItems(
       onClick: () => {
         if (!commit?.sha) return;
         void dropCommit({ oid: commit.sha }, rewriteCtx(commits));
+      },
+    },
+    {
+      icon: "push",
+      // Gated on ancestry AND on an upstream: pushing a commit HEAD cannot
+      // reach would publish a foreign branch's history to this branch's ref,
+      // and with no upstream there is no destination to infer — guessing
+      // `origin/<branch>` would publish to a remote nobody chose.
+      label: !onBranch
+        ? "Push all up to here — not on this branch"
+        : !pushTarget()
+          ? "Push all up to here — this branch tracks nothing"
+          : "Push all up to here…",
+      disabled: !onBranch || !pushTarget() || !commit?.sha,
+      onClick: () => {
+        if (!commit?.sha) return;
+        void pushUpToHere(commit.sha);
       },
     },
     { divider: true },

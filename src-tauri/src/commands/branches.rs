@@ -497,6 +497,70 @@ fn push_args(
     args
 }
 
+/// `git push <remote> <oid>:refs/heads/<branch>` — publish history only up to
+/// one commit.
+///
+/// A REFSPEC push, which is what makes "up to here" expressible: the ordinary
+/// push sends whatever the branch points at, and there is no way to say "stop
+/// at this commit" without naming the source explicitly.
+///
+/// **Fast-forward only, by construction** — no force variant is offered, so the
+/// remote refuses anything that would discard commits and the refusal surfaces
+/// like any other network error. `--force-with-lease` on a partial push is its
+/// own design question and is deliberately out of scope.
+///
+/// No `-u`: this does not establish tracking. The branch's upstream is what
+/// decided where this push goes, so re-pointing it here would be circular.
+fn push_commit_args(remote: &str, oid: &str, branch: &str, no_verify: bool) -> Vec<String> {
+    let mut args: Vec<String> = vec!["push".to_string(), "--progress".to_string()];
+    args.push(remote.to_string());
+    // The FULL destination ref, not a bare branch name: `<oid>:main` would make
+    // git guess, and it guesses differently depending on whether `main` already
+    // exists on the remote.
+    args.push(format!("{oid}:refs/heads/{branch}"));
+    if no_verify {
+        args.push("--no-verify".to_string());
+    }
+    args
+}
+
+/// Push history up to one commit to `branch` on `remote`.
+///
+/// See [`push_commit_args`] for the shape and why there is no force option.
+#[tauri::command]
+pub async fn push_commit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_id: String,
+    remote: String,
+    oid: String,
+    branch: String,
+    credentials: Option<Credentials>,
+    // Skip `pre-push` for this push only (#232).
+    no_verify: Option<bool>,
+) -> AppResult<()> {
+    // Both halves of the refspec are validated before it is built: the oid must
+    // be hex and the branch must be a name git would accept, so neither can
+    // introduce an option or a second refspec. Secrets travel in env, never
+    // argv, which `run_git_progress` already guarantees.
+    crate::forge::validate_sha(&oid)?;
+    crate::forge::validate_ref_name(&branch)?;
+
+    let repo_id = RepoId(repo_id);
+    let path = get_repo_path(&state, &repo_id).await?;
+    let args = push_commit_args(&remote, &oid, &branch, no_verify.unwrap_or(false));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git_progress(
+        &app,
+        &path,
+        &repo_id,
+        NetOp::Push,
+        &arg_refs,
+        credentials.as_ref(),
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn push(
     app: AppHandle,
@@ -573,6 +637,51 @@ mod push_args_tests {
                 "--no-verify"
             ]
         );
+    }
+
+    // ─── push_commit_args ───────────────────────────────────────────────────
+
+    #[test]
+    fn pushes_a_full_destination_refspec() {
+        // The FULL ref, not a bare name: `<oid>:main` makes git guess, and it
+        // guesses differently depending on whether `main` exists on the remote.
+        assert_eq!(
+            push_commit_args("origin", "abc1234", "main", false),
+            vec!["push", "--progress", "origin", "abc1234:refs/heads/main"]
+        );
+    }
+
+    /// No force flag exists on this path, and no `-u`: fast-forward only, and
+    /// the upstream is what decided where the push goes, so re-pointing it here
+    /// would be circular.
+    #[test]
+    fn carries_no_force_and_no_upstream_flag() {
+        let args = push_commit_args("origin", "abc1234", "main", false);
+        assert!(!args.iter().any(|a| a.starts_with("--force")), "{args:?}");
+        assert!(!args.iter().any(|a| a == "-u"), "{args:?}");
+    }
+
+    #[test]
+    fn no_verify_is_appended_when_asked() {
+        assert_eq!(
+            push_commit_args("origin", "abc1234", "feat/x", true),
+            vec![
+                "push",
+                "--progress",
+                "origin",
+                "abc1234:refs/heads/feat/x",
+                "--no-verify"
+            ]
+        );
+    }
+
+    /// A branch name with slashes stays one refspec — it must not be split or
+    /// re-escaped.
+    #[test]
+    fn a_slashed_branch_name_stays_one_refspec() {
+        let args = push_commit_args("origin", "abc1234", "release/2026/09", false);
+        assert_eq!(args[3], "abc1234:refs/heads/release/2026/09");
+        assert_eq!(args.len(), 4, "no extra argument may appear: {args:?}");
     }
 
     use super::*;
