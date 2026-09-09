@@ -29,7 +29,7 @@ const COMMITS: CommitInfo[] = Array.from({ length: 3 }, (_, i) => ({
   email: "dev@example.com",
   timestamp: 1_700_000_000 - i * 3600,
   parents: i < 2 ? [`${i + 1}`.repeat(40)] : [],
-  refs: i === 0 ? ["refs/heads/main"] : [],
+  refs: i === 0 ? [{ name: "main", kind: "Branch" as const }] : [],
 }));
 
 const STATUS: FileStatus[] = [

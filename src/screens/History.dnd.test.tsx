@@ -19,7 +19,12 @@ const HEAD_OID = "a".repeat(40);
 const FEATURE_OID = "b".repeat(40);
 const OLD_OID = "c".repeat(40);
 
-function makeCommit(oid: string, summary: string, parents: string[], refs: string[]): CommitInfo {
+function makeCommit(
+  oid: string,
+  summary: string,
+  parents: string[],
+  branches: string[],
+): CommitInfo {
   return {
     oid,
     shortOid: oid.slice(0, 7),
@@ -29,7 +34,9 @@ function makeCommit(oid: string, summary: string, parents: string[], refs: strin
     email: "dev@example.com",
     timestamp: 1_700_000_000,
     parents,
-    refs,
+    // Every ref this fixture puts on a row is a local branch —
+    // dragging one is what the suite is about.
+    refs: branches.map((name) => ({ name, kind: "Branch" as const })),
   };
 }
 

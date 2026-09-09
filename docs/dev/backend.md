@@ -1392,6 +1392,33 @@ ops behind the history-arrowing ladder in #400. Every other read-only op —
 still exclusive. Not because it must be, but because each needs its own proof it
 writes nothing, and moving one is a one-word change.
 
+## What decorates a log row, and which KIND of ref it is
+
+`collect_ref_map` (`libgit2.rs`) scans every ref once per log call and hands the
+walk a `Vec<RefInfo>` per commit — `{ name, kind }`, where `kind` is
+`Branch` / `Remote` / `Tag` / `Other` (`git/types.rs`).
+
+- **The kind is decided here because only here is it free and exact.** git is
+  asked (`is_tag` → `is_remote` → `is_branch`), and the answer travels. What
+  travels is the SHORTHAND (`main`, `origin/main`, `v1.0.0`, `bisect/bad`), and
+  a shorthand cannot be re-classified downstream: tags and branches share one
+  namespace of display names, so `v1.0` says nothing about which it is, and a
+  `/` says nothing either — `feat/x` is a local branch, `origin/x` a
+  remote-tracking one, `release/1.0` an ordinary tag. The frontend used to guess
+  with `name.includes("/")` and got three things wrong at once; see
+  `docs/dev/frontend.md`, "The ref pills on a log row".
+- **`is_branch` is `refs/heads/*` only**, hence a real `Other` arm rather than a
+  `_ => Branch` default. `refs/bisect/*` (while a bisect runs) and a fetched
+  `refs/pull/N/head` point at commits IN the walk, so they DO reach a row.
+  Naming them as themselves is the point — anything called a branch turns up on
+  menus that would move it.
+- **Only tags are peeled.** An annotated tag points at a tag object, so it
+  reaches its commit through `peel`; a branch or remote ref's target already IS
+  the commit oid, and peeling costs an object read per ref — thousands of them,
+  per page, on a repo with many remote branches.
+- `src-tauri/tests/log_decoration.rs` pins all of it, including a tag and a
+  branch of the same name staying two distinct decorations.
+
 ## Reading the log (#274)
 
 Where it is — `tauri_plugin_log`'s `LogDir` target, i.e. Tauri's `app_log_dir`:

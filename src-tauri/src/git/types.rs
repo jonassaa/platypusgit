@@ -149,6 +149,40 @@ pub struct DeleteFailure {
     pub reason: String,
 }
 
+/// What kind of ref one of a commit's decorations names.
+///
+/// The KIND comes from the backend because a shorthand cannot carry it. Tags
+/// and branches share one namespace of display names, so `v1.0` says nothing
+/// about which it is; and a slash means nothing either — `feat/x` is a local
+/// branch, `origin/x` a remote-tracking one, `release/1.0` a perfectly ordinary
+/// tag. Guessing from the string is what put a branch icon on every tag and
+/// split `release/1.0` into a remote called `release`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub enum RefKind {
+    /// `refs/heads/*`.
+    Branch,
+    /// `refs/remotes/*` — the name is `<remote>/<branch>`.
+    Remote,
+    /// `refs/tags/*`, lightweight or annotated alike.
+    Tag,
+    /// Any other ref pointing at a commit in the walk: `refs/bisect/*` while a
+    /// bisect is running, a fetched `refs/pull/N/head`. Named as what it is
+    /// rather than dressed up as a branch.
+    Other,
+}
+
+/// One ref pointing at a commit — what decorates a log row.
+///
+/// `name` is git's own shorthand (`main`, `origin/main`, `v1.0.0`,
+/// `bisect/bad`), which is what an op can be named with; the display string a
+/// pill shows is derived from it in the frontend and is lossy on purpose.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefInfo {
+    pub name: String,
+    pub kind: RefKind,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {
@@ -161,7 +195,7 @@ pub struct CommitInfo {
     /// Unix timestamp, seconds.
     pub timestamp: i64,
     pub parents: Vec<String>,
-    pub refs: Vec<String>,
+    pub refs: Vec<RefInfo>,
 }
 
 /// Filter applied to the commit log walk. All fields are ANDed together;

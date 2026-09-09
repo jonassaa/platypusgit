@@ -845,6 +845,33 @@ therefore belongs in `features/`, not `design/`.
   `MAX_BARREN_PAGES`, or it walks the whole repository. New client-side log
   filters inherit that trap.
 
+## The ref pills on a log row
+
+`mapCommitRefs` (`lib/derive.ts`) turns the `RefInfo[]` the backend put on a
+commit into pills; `PGCommitRow` hands each one to `PGBranchPill`.
+
+- **Tone and glyph come off `kind`, never off the name.** A tag gets amber and
+  the `tag` glyph — the same pair the tag badge beside it already uses — because
+  a tag is a ref but not a branch: it does not move, and nothing in its name is
+  a remote prefix. Only `Remote` splits `<remote>/<name>`. `Other`
+  (`bisect/bad`, a fetched `pull/1/head`) is shown whole with a neutral glyph.
+- **Guessing from the string broke three things at once**, which is why the kind
+  is on the wire (`docs/dev/backend.md`, "What decorates a log row"): every tag
+  wore a branch icon; `release/1.0` (a tag) and `feat/x` (a local branch) were
+  each split into a remote that does not exist; and "Local labels" — which drops
+  whatever carries a `remote` — then hid both.
+- **The HEAD arrow belongs to the BRANCH.** `git tag main` is legal, so the
+  `HEAD→` prefix is gated on `kind === "Branch"` as well as the name.
+- **`ref` is the name git knows** (#91), carried beside the lossy display name
+  because that is what a drag names. A pill's `data-pg-ref` is the drag payload
+  and the drop target, so a tag pill drags: `git merge v1.0` and `git rebase
+  onto v1.0` are both things git does, and `resolveGraphDrop` needs no kind.
+- What an OP is named with still comes off the store, not off these pills —
+  `branchesAtCommit` in `design/context-menu.tsx` says why.
+- `lib/derive.refs.test.ts` pins the mapping; `screens/History.refs.test.tsx`
+  pins the glyph that actually renders, because it travels three hops each of
+  which defaults to `branch`.
+
 ## Navigating from the History menu
 
 Two entries that read the repository and change nothing, so neither goes near
