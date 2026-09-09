@@ -209,6 +209,8 @@ export function RepoBrowserScreen() {
   const [sortMode, setSortMode] = React.useState<SortMode>("asc");
   const [viewMode, setViewMode] = useTreeViewMode("pg-repo-view-mode");
   const setNavIntent = useNavStore((s) => s.setIntent);
+  const intent = useNavStore((s) => s.intent);
+  const clearIntent = useNavStore((s) => s.clearIntent);
   // Three panes in one container: tree | preview (flexible) | inspector (#162).
   // So each fixed pane caps itself against the preview's floor AND the other
   // fixed pane. The tree reserves the inspector's MINIMUM while the inspector
@@ -242,6 +244,19 @@ export function RepoBrowserScreen() {
     setRev(null);
     setSel(emptySelection);
   }, [repo?.id]);
+
+  // "Show repository at this revision" (the commit context menu). AppShell has
+  // already put us on this screen and deliberately left the intent standing —
+  // this is the only place that knows what `rev` means, so consuming it here
+  // keeps the revision in the ONE piece of state the toolbar picker also
+  // writes, rather than growing a second source of truth for what is being
+  // browsed.
+  React.useEffect(() => {
+    if (intent?.kind !== "browse-rev") return;
+    setRev(intent.rev);
+    setSel(emptySelection);
+    clearIntent();
+  }, [intent, clearIntent]);
 
   // Refresh the full file list each time the user picks "All" so the tree
   // reflects newly created / deleted files.
@@ -959,9 +974,15 @@ export function RepoBrowserScreen() {
         right={
           <>
             {browsingRev ? (
-              <PGBadge tone="muted" icon="history">
-                Browsing {rev}
-              </PGBadge>
+              // The testid, not the prose, is what e2e waits on: "Browsing" is
+              // user-facing copy an edit could redden a required gate over, and
+              // `div*=Browsing` would resolve to whichever innermost div holds
+              // the phrase. PGBadge does not spread rest props, hence the wrapper.
+              <span data-testid="browsing-rev" data-rev={rev}>
+                <PGBadge tone="muted" icon="history">
+                  Browsing {rev}
+                </PGBadge>
+              </span>
             ) : (
               <PGButtonGroup
                 value={filterMode}

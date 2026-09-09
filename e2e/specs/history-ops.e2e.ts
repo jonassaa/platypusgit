@@ -260,6 +260,37 @@ describe("rewording a commit", () => {
     expect(repo.git("ls-tree", "--name-only", "HEAD")).not.toContain("staged.txt");
   });
 
+  // Reading the tree AS IT WAS, which changes nothing — the other half of what
+  // the commit menu gained. The assertion is that the browser lists a file that
+  // exists at that revision and NOT one added later: that is what proves the
+  // at-rev backend call drove the tree, rather than the working copy.
+  it("browses the repository at a commit's revision", async () => {
+    repo = cherryRepo(); // a.txt at the root commit, b.txt added later
+    await openRepo(repo.path);
+    await switchScreen("history");
+    await scrollCommitListTo("feat: add a.txt");
+    await $('[data-testid="commit-row"]*=feat: add a.txt').waitForDisplayed({
+      timeout: 15_000, timeoutMsg: "root-ish row missing",
+    });
+
+    await jsContextMenu('[data-testid="commit-row"]', { text: "feat: add a.txt" });
+    await jsClickMenuItem("Show repository at this revision");
+
+    // The browser says which revision it is on — a reader must be able to tell
+    // this is not the working tree. Waits on the TESTID, not the copy.
+    await $('[data-testid="browsing-rev"]').waitForDisplayed({
+      timeout: 20_000,
+      timeoutMsg: "the repo browser never entered at-rev mode",
+    });
+    // a.txt existed at that commit; b.txt did not.
+    await $('[data-pg-row][data-path="a.txt"]').waitForDisplayed({
+      timeout: 20_000, timeoutMsg: "a.txt was not listed at that revision",
+    });
+    await expect($('[data-pg-row][data-path="b.txt"]')).not.toBeExisting();
+    // Nothing was written.
+    expect(repo.git("status", "--porcelain").trim()).toBe("");
+  });
+
   // The other path: an older commit goes through the rebase engine's Reword
   // action, which replays every commit after it.
   it("rewords an older commit and replays the commits after it", async () => {
