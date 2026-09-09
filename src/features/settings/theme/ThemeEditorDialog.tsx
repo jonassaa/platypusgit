@@ -160,6 +160,7 @@ export function ThemeEditorDialog() {
           >
             <Field label="Name">
               <PGInput
+                data-testid="theme-editor-name"
                 value={ed.name}
                 onChange={ed.setName}
                 placeholder="My cool theme"
@@ -308,7 +309,13 @@ export function ThemeEditorDialog() {
           <PGButton size="sm" variant="ghost" onClick={ed.close}>
             Cancel
           </PGButton>
-          <PGButton size="sm" variant="primary" icon="check" onClick={onSave}>
+          <PGButton
+            data-testid="theme-editor-save"
+            size="sm"
+            variant="primary"
+            icon="check"
+            onClick={onSave}
+          >
             {isNew ? "Create theme" : "Save changes"}
           </PGButton>
         </footer>

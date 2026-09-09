@@ -993,6 +993,49 @@ patch text in the format git parses, not a rendering.
 - **Read-only.** Writing needs a ref to pick, a merge strategy for the notes
   tree, and a push story; it is a separate feature, not a missing button.
 
+## Writing a file the user picked (#435)
+
+`commands/userfile.rs` — `read_user_file` and `write_user_file`, the native half
+of every export and import in the app.
+
+**What was wrong.** Theme and settings export wrote their file the way a web
+page would: a `Blob`, an `<a download>` and a synthetic click. WebKitGTK ignores
+the `download` attribute on a blob URL, so on Linux "Export theme" did nothing
+at all — no file, no error, no log line. The report (#435, Ubuntu 26.04) was a
+user clicking a button and watching nothing happen. On top of that, only
+`dialog:allow-open` was granted in `capabilities/default.json`, so even a
+correct save dialog would have been denied at runtime: two independent causes of
+the same silence.
+
+**The trust model.** These commands take an absolute path the **user** chose in
+a native save or open dialog (`@tauri-apps/plugin-dialog`, behind
+`src/lib/userFile.ts`). Nothing in the frontend may synthesise a path for them.
+That is the reason `write_user_file` refuses to create parent directories: a
+dialog's path always has a parent that exists, so a request to invent one is a
+request that did not come from a dialog.
+
+- Reads are capped at `MAX_USER_FILE_BYTES` (4 MiB). A settings bundle with
+  every custom theme is tens of kilobytes; the cap is there because the path
+  comes from a file picker, and a mis-picked disk image should be a refusal
+  rather than a webview swallowing a gigabyte.
+- A directory is `InvalidPath`, not `Io` — "you picked a folder" is a different
+  sentence from "the disk said no".
+- Both wrap their `std::fs` call in `spawn_blocking`. Not for libgit2's reasons:
+  `std::fs` is sync, and blocking a runtime worker on a slow network volume
+  would stall every other command with it.
+- **No new `AppError` variant.** `Io` and `InvalidPath` already existed, so the
+  Rust enum and its TS union stayed as they were and `test/appErrors.test.ts`
+  needed nothing.
+
+**Why not `tauri-plugin-fs`.** Two thin commands match how every other backend
+capability here is exposed, and the plugin's scope configuration would be a
+second, parallel answer to "may the webview touch this path" — one more place
+to keep in step with the first.
+
+`src-tauri/tests/user_file.rs` asserts the boring properties: an exact round
+trip, truncation on rewrite, a missing file as `Io`, a directory and an
+oversized file as `InvalidPath`, a blank path refused, and no silent `mkdir`.
+
 ## Spawning processes (issue 172)
 
 - **Never write `Command::new` outside `src-tauri/src/proc.rs`** —

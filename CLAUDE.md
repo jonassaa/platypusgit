@@ -152,6 +152,13 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
 - **Never `Command::new` outside `src-tauri/src/proc.rs`** — a guard test
   fails the build. Use the `proc::git*`/`proc::program*` constructors.
   (`docs/dev/backend.md`)
+- **One file save/open path — `lib/userFile.ts`.** A webview is not a browser:
+  WebKitGTK ignores `<a download>`, so every export in the app silently did
+  nothing on Linux (#435). Native `save()`/`open()` over
+  `commands/userfile.rs`; a save returns the PATH so a surface can name the
+  file, and a cancel is `null`, never a throw. No `<a download>`, no file
+  input, no `createObjectURL` in shipped `src/` — `test/fileSave.test.ts` fails
+  the build. (`docs/dev/frontend.md`)
 - **One credential path.** Network git ops go through
   `commands::net::run_git_authenticated`; frontend retries via `useRepoStore`'s
   exported `withAuthRetry`. Never a second auth path. Secrets travel in env,

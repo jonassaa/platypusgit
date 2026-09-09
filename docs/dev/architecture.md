@@ -505,6 +505,17 @@ commands/        Thin Tauri handlers, one file per area:
 │                gigabyte-sized IPC message
 ├── update.rs    check_for_update, get_update_capability, open_url — thin
 │                handlers for src-tauri/src/update.rs (same basename, two files)
+├── userfile.rs  read_user_file, write_user_file (#435) — the native half of
+│                every export and import. The path is one the USER chose in a
+│                native save/open dialog (src/lib/userFile.ts); the frontend may
+│                never synthesise one, which is why write_user_file refuses to
+│                create parent directories. Reads are capped at
+│                MAX_USER_FILE_BYTES (4 MiB) and a folder is an InvalidPath, so
+│                a mis-picked disk image is a refusal rather than a webview that
+│                swallows a gigabyte. Deliberately not tauri-plugin-fs: two thin
+│                commands match how every other capability here is exposed, and
+│                the plugin's scope config would be a second, parallel answer to
+│                "may the webview touch this path"
 ├── windows.rs   register_window_repos, next_window_label (#256) — thin over
 │                src-tauri/src/windows.rs (same basename, two files).
 │                register_window_repos is called on every tab-strip persist,
@@ -679,8 +690,10 @@ features/            Components + Zustand store colocated per feature:
 │                    useRowReorder, StageDropBar. See frontend.md
 ├── reflog/          useReflogStore, DirtyTreeDialog, ReflogActionDialog
 ├── settings/        useSettingsStore (autoFetch, defaultPullMode, …), headMarks,
-│                    systemAppearance (OS light/dark → themePreference)
-│                    + HeadMarksControl. The searchable, side-menu-navigated
+│                    systemAppearance (OS light/dark → themePreference),
+│                    themeFiles.ts (the side-effecting half of export/import —
+│                    the store keeps the PURE serialisers, same split
+│                    features/report/ makes) + HeadMarksControl. The searchable, side-menu-navigated
 │                    screen lives in four subdirectories:
 │   ├── layout/      SettingsCard / SettingsRow — the one card/row pair every
 │   │                page renders through — plus filterContext (which row ids
@@ -695,8 +708,18 @@ features/            Components + Zustand store colocated per feature:
 │   ├── pages/       The ten pages themselves, one file each, every one
 │   │                exporting a pure `meta` beside its component — see
 │   │                frontend.md's "Settings is a registry" section
-│   └── theme/       ColorEditor + ThemeEditorDialog, split out of the
-│                    Appearance page for size
+│   └── theme/       Everything the Appearance page's theme half is made of
+│                    (#435 revamp): ThemeGallery (the card picker that replaced
+│                    a dropdown of names), ThemePreview (a miniature of the real
+│                    app, painted from themeVars into its OWN subtree — the one
+│                    renderer behind both the cards and the editor's pane),
+│                    ThemeEditorDialog (a PGModal, no props: it reads
+│                    useThemeEditorStore so app.closeOverlay can close it),
+│                    useThemeEditorStore (the draft + the pre-draft theme
+│                    close() restores), ColorEditor (the 18 slots),
+│                    contrast.ts (WCAG ratios for the four pairs that decide
+│                    readability — advisory, never blocking) and deriveTheme.ts
+│                    (base + accent → palette, with the ink recalculated)
 ├── palette/         usePaletteStore (step stack + chips), commands catalog,
 │                    frecency, CommandPalette (⌘P; rows show live keymap chords)
 ├── keymap/          actions.ts (catalog + default runners), presets.ts (rider +
@@ -814,7 +837,12 @@ features/            Components + Zustand store colocated per feature:
 
 lib/                 tauri.ts (typed invoke wrappers — frontend NEVER calls
                      invoke directly), types.ts (mirrors Rust types.rs),
-                     errors.ts (AppError union 1:1 with Rust), derive.ts
+                     errors.ts (AppError union 1:1 with Rust),
+                     userFile.ts (saveTextFile / openTextFile — the ONE way this
+                     app writes a file or reads one back; a webview is not a
+                     browser, so no <a download> and no file input, and
+                     test/fileSave.test.ts fails the build for either),
+                     derive.ts
                      (selectors), syntax/ (Shiki OFF the main thread:
                      tokenizeCore.ts, shiki.ts — the ONE lazy instance,
                      engine-javascript not WASM —, langs.ts (explicit
