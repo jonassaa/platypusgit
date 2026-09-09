@@ -29,6 +29,28 @@ pub fn api_base(host: &str) -> AppResult<String> {
     Ok(format!("https://{host}/api/v3"))
 }
 
+/// Web page for one commit — `https://<host>/<owner>/<repo>/commit/<sha>`.
+///
+/// The BROWSER url, not an API one, so it is built from the host as it appears
+/// in the remote rather than from [`api_base`]: github.com serves its API on
+/// `api.github.com`, and sending a reader there would show them JSON.
+///
+/// Validated exactly as the API builders are — `validate_host` plus
+/// `validate_sha`, and every path segment percent-encoded — because the owner
+/// and name come from a remote URL the repository controls, and this string is
+/// handed to the user's browser. `opener::safe_url` refuses anything but https
+/// as a second gate.
+pub fn commit_url(repo: &ForgeRepo, sha: &str) -> AppResult<String> {
+    validate_host(&repo.host)?;
+    validate_sha(sha)?;
+    Ok(format!(
+        "https://{}/{}/commit/{}",
+        repo.host,
+        repo_path(repo),
+        encode_segment(sha)
+    ))
+}
+
 /// `owner/repo`, each segment percent-encoded so a crafted remote cannot
 /// traverse the API path.
 fn repo_path(repo: &ForgeRepo) -> String {

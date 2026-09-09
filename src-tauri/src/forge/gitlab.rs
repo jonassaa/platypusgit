@@ -40,6 +40,42 @@ fn project_id(repo: &ForgeRepo) -> String {
     encode_segment(&format!("{}/{}", repo.owner, repo.name))
 }
 
+/// Web page for one commit — `https://<host>/<namespace>/<repo>/-/commit/<sha>`.
+///
+/// **Deliberately NOT built from [`project_id`].** That encodes the project path
+/// *whole*, slashes included, because GitLab's API takes it as a single `:id`
+/// path parameter. A browser URL needs real `/` separators between namespace
+/// segments, so each segment is encoded on its own — a subgroup path like
+/// `group/sub/repo` has to stay three path segments, and
+/// `group%2Fsub%2Frepo` is not a page. Pinned by
+/// `tests/forge_commit_url.rs::gitlab_keeps_a_subgroup_path_as_real_segments`,
+/// which fails (with two siblings) if this is switched to `project_id`.
+///
+/// The `/-/` infix is GitLab's own separator between the project path and the
+/// route; it is what keeps a project actually named `commit` from colliding.
+///
+/// Validated as the API builders are, because owner and name come from a remote
+/// URL the repository controls and this string is handed to the user's browser;
+/// `opener::safe_url` refuses anything but https as a second gate.
+pub fn commit_url(repo: &ForgeRepo, sha: &str) -> AppResult<String> {
+    validate_host(&repo.host)?;
+    validate_sha(sha)?;
+    let namespace = repo
+        .owner
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(encode_segment)
+        .collect::<Vec<_>>()
+        .join("/");
+    Ok(format!(
+        "https://{}/{}/{}/-/commit/{}",
+        repo.host,
+        namespace,
+        encode_segment(&repo.name),
+        encode_segment(sha)
+    ))
+}
+
 /// Draft state for a title, tolerating an older instance that only reports the
 /// prefix and a newer one that also sets `draft`/`work_in_progress`.
 fn draft_of(v: &serde_json::Value, title: &str) -> bool {

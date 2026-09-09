@@ -885,6 +885,27 @@ Two entries that read the repository and change nothing, so neither goes near
 - **Selection moves scroll by INDEX** through `useWindowedList`, never
   `scrollIntoView`: the target row is usually unmounted (#68 G10).
 
+## "View in browser" on a commit
+
+- **The flow lives in `features/forge/openCommitInBrowser.ts`, not in the menu**,
+  because `src/design/` imports no `@/lib/tauri` — the same boundary that makes
+  `PGErrorBanner` take an `onReport`.
+- **The entry is always enabled and the answer arrives on click.** Whether a
+  page exists is a backend question (which remote, which host, is that host a
+  known forge), and menu building must stay synchronous. Gating on
+  `useForgeStore`'s cached `detection` was considered and rejected: that cache
+  is filled when the Pull requests screen refreshes, so a user who has never
+  opened it would find the entry disabled on an ordinary GitHub repository. A
+  repository with no page flashes a sentence naming the reason instead.
+- **Nothing is sent.** The url is *derived* from the remote with no network call
+  and no token, then handed to the browser through `open_url` —
+  `opener::safe_url`, https-only. No hostname is hard-coded, so
+  `test/privacy.test.ts`'s allow-list is untouched; a test asserts the flow
+  makes exactly two IPC calls and nothing else.
+- A self-hosted instance becomes openable as soon as its host is mapped in
+  Settings, which is the same `hostKinds` map every other forge feature reads —
+  and the flash says so.
+
 ## Rewriting one commit from the History menu
 
 Five entries in `commitMenuItems` rewrite history — *Edit commit message*,

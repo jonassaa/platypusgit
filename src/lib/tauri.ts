@@ -1666,6 +1666,22 @@ export function forgeDetect(
 }
 
 /**
+ * The forge's web page for one commit, or `null` when there is not one.
+ *
+ * No network call and no token — the url is derived from the remote, so this
+ * also answers for a forge the user has never signed into. `null` is the
+ * ordinary "no page exists" answer (no remote, an unparseable one, or a host
+ * that is neither GitHub nor GitLab); the menu renders that as disabled.
+ */
+export function forgeCommitUrl(
+  repoId: string,
+  oid: string,
+  hostKinds: Record<string, ForgeKind>,
+): Promise<string | null> {
+  return invoke<string | null>("forge_commit_url", { repoId, oid, hostKinds });
+}
+
+/**
  * Validate `token` against `host`'s API and then store it, resolving with the
  * identity it belongs to. Validation happens FIRST: storing on submit would
  * persist a typo into the user's keychain.
