@@ -387,6 +387,81 @@ describe("settings", () => {
   });
 
   /**
+   * The file commands behind every export, over REAL IPC on real WebKitGTK.
+   *
+   * This is the closest thing to evidence for #435 that an automated test can
+   * produce. What it does NOT cover is the native save dialog: WebDriver
+   * cannot drive an OS modal, so `saveTextFile`'s first half is out of reach
+   * here and is covered by component tests against the mocked plugin.
+   *
+   * What it DOES cover is everything the old implementation got wrong, on the
+   * platform that reported it: the commands are registered under the names the
+   * frontend calls, their argument names match, `dialog`/fs access is actually
+   * permitted by `capabilities/default.json`, and a write really lands on a
+   * Linux filesystem and reads back byte-for-byte. The old code never reached
+   * a command at all — it handed the file to an `<a download>` that WebKitGTK
+   * silently ignores.
+   *
+   * executeOnce: a driver-retry re-run would re-issue the write.
+   */
+  it("writes and reads a real file through the export commands", async () => {
+    repo = dirtyRepo();
+    await openRepo(repo.path);
+
+    const path = `/tmp/pg-e2e-theme-${Date.now()}.pgtheme.json`;
+    const body = JSON.stringify(
+      { $schema: "https://platypusgit.dev/theme.schema.json", version: 1, name: "IPC" },
+      null,
+      2,
+    );
+
+    const wrote = await executeOnce(
+      async (p: string, contents: string) => {
+        const core = (window as unknown as {
+          __TAURI__?: { core?: { invoke: (c: string, a?: unknown) => Promise<unknown> } };
+        }).__TAURI__?.core;
+        if (!core) return "no bridge";
+        try {
+          await core.invoke("write_user_file", { path: p, contents });
+          return "ok";
+        } catch (e) {
+          return `write failed: ${String(e)}`;
+        }
+      },
+      path,
+      body,
+    );
+    expect(wrote).toBe("ok");
+
+    const readBack = await browser.execute(async (p: string) => {
+      const core = (window as unknown as {
+        __TAURI__?: { core?: { invoke: (c: string, a?: unknown) => Promise<unknown> } };
+      }).__TAURI__?.core;
+      try {
+        return (await core!.invoke("read_user_file", { path: p })) as string;
+      } catch (e) {
+        return `read failed: ${String(e)}`;
+      }
+    }, path);
+    expect(readBack).toBe(body);
+
+    // A folder is a refusal, not a surprise — the cap and the type checks are
+    // the reason a mis-picked path cannot become a gigabyte-sized IPC message.
+    const folder = await browser.execute(async () => {
+      const core = (window as unknown as {
+        __TAURI__?: { core?: { invoke: (c: string, a?: unknown) => Promise<unknown> } };
+      }).__TAURI__?.core;
+      try {
+        await core!.invoke("read_user_file", { path: "/tmp" });
+        return "unexpectedly succeeded";
+      } catch (e) {
+        return JSON.stringify(e);
+      }
+    });
+    expect(folder).toContain("InvalidPath");
+  });
+
+  /**
    * The report dialog against the real webview.
    *
    * What only a real run proves: the diagnostics commands actually answer on
