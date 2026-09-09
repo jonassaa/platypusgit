@@ -19,6 +19,10 @@ import {
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { SettingsCard, SettingsRow } from "@/features/settings/layout/SettingsCard";
 import { ThemeEditorDialog } from "@/features/settings/theme/ThemeEditorDialog";
+import {
+  exportThemeToFile,
+  importThemeFromFile,
+} from "@/features/settings/themeFiles";
 import type { SettingsPageMeta } from "@/features/settings/nav/types";
 import { commitDateText, type DateFormat } from "@/lib/commitDate";
 import { appErrorMessage } from "@/lib/errors";
@@ -60,7 +64,6 @@ const DATE_SAMPLE_TS = Math.floor(DATE_SAMPLE_NOW / 1000) - 60 * 60 * 24 * 21;
 export function AppearancePage() {
   const s = useSettingsStore();
   const active = s.getActiveTheme();
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const isBuiltin = !!active.builtin;
 
   const [editor, setEditor] = React.useState<
@@ -97,16 +100,19 @@ export function AppearancePage() {
 
   const following = s.themePreference.mode === "system";
 
-  const onImportClick = () => fileInputRef.current?.click();
-
-  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+  const onExport = async () => {
     try {
-      const text = await file.text();
-      const theme = s.importThemeJson(text);
-      pgFlash(`Imported "${theme.name}"`);
+      const path = await exportThemeToFile(active.id);
+      if (path) pgFlash(`Exported to ${path}`);
+    } catch (err) {
+      pgFlash(`Export failed: ${appErrorMessage(err)}`);
+    }
+  };
+
+  const onImport = async () => {
+    try {
+      const theme = await importThemeFromFile();
+      if (theme) pgFlash(`Imported “${theme.name}”`);
     } catch (err) {
       pgFlash(`Import failed: ${appErrorMessage(err)}`);
     }
@@ -251,27 +257,20 @@ export function AppearancePage() {
           size="sm"
           variant="default"
           icon="download"
-          onClick={() => s.downloadTheme(active.id)}
-          title="Download as .pgtheme.json"
+          onClick={() => void onExport()}
+          title="Write this theme to a .pgtheme.json file"
         >
-          Export
+          Export…
         </PGButton>
         <PGButton
           size="sm"
           variant="default"
           icon="upload"
-          onClick={onImportClick}
-          title="Import a .pgtheme.json file"
+          onClick={() => void onImport()}
+          title="Read a .pgtheme.json file"
         >
           Import…
         </PGButton>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/json,.json,.pgtheme.json"
-          onChange={onImportFile}
-          style={{ display: "none" }}
-        />
       </div>
 
       <SettingsRow

@@ -1025,7 +1025,6 @@ export interface SettingsState extends PersistedState {
   deleteTheme: (id: string) => void;
   duplicateTheme: (id: string, newName?: string) => ThemeDef;
   exportTheme: (id: string) => string;
-  downloadTheme: (id: string) => void;
   importThemeJson: (json: string) => ThemeDef;
   /**
    * Serialise every portable setting to one versioned JSON string (#254).
@@ -1033,11 +1032,6 @@ export interface SettingsState extends PersistedState {
    * writes; machine-specific keys (`NON_PORTABLE_KEYS`) do not.
    */
   exportSettings: (opts?: SettingsExportOptions) => string;
-  /**
-   * `exportSettings` plus the download. Returns the filename, because "your
-   * settings were exported" is useless without saying to what.
-   */
-  downloadSettings: (opts?: SettingsExportOptions) => string;
   /**
    * Apply a settings file and report what it changed — an import that replaces
    * every preference silently is indistinguishable from one that did nothing.
@@ -1648,6 +1642,17 @@ function validateTheme(obj: unknown): ThemeDef {
   };
 }
 
+/**
+ * Validate a theme file WITHOUT adding it to the store.
+ *
+ * `importThemeJson` is the store's version and it keeps the theme; this is for
+ * loading a file into the editor's DRAFT, where the user has not decided to
+ * keep it yet. Pure on purpose — same validation, no side effect.
+ */
+export function parseThemeJson(json: string): ThemeDef {
+  return validateTheme(JSON.parse(json));
+}
+
 const initial = load();
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -1840,24 +1845,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     return JSON.stringify(payload, null, 2);
   },
 
-  downloadTheme(id) {
-    const json = get().exportTheme(id);
-    const theme = findTheme(get(), id);
-    const slug = (theme?.name ?? "theme")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${slug || "theme"}.pgtheme.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  },
-
   importThemeJson(json) {
     const parsed = JSON.parse(json);
     const theme = validateTheme(parsed);
@@ -1899,25 +1886,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       null,
       2,
     );
-  },
-
-  downloadSettings(opts) {
-    const json = get().exportSettings(opts);
-    // Date, not timestamp: this is a file people keep and re-read, so a name
-    // they can recognise beats a name that is unique.
-    const filename = `platypusgit-settings-${new Date()
-      .toISOString()
-      .slice(0, 10)}.json`;
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    return filename;
   },
 
   importSettings(json) {

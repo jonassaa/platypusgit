@@ -683,39 +683,6 @@ describe("schema version", () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// DOWNLOAD
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe("downloadSettings", () => {
-  it("names the file it wrote, so the UI can say where it went", async () => {
-    const store = await freshStore();
-    const hrefs: string[] = [];
-    const names: string[] = [];
-    const origCreate = URL.createObjectURL;
-    const origRevoke = URL.revokeObjectURL;
-    const origClick = HTMLAnchorElement.prototype.click;
-    URL.createObjectURL = vi.fn(() => "blob:settings") as typeof URL.createObjectURL;
-    URL.revokeObjectURL = vi.fn() as typeof URL.revokeObjectURL;
-    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
-      names.push(this.download);
-      hrefs.push(this.href);
-    };
-    try {
-      const name = store.useSettingsStore.getState().downloadSettings();
-      expect(name).toMatch(/^platypusgit-settings-\d{4}-\d{2}-\d{2}\.json$/);
-      expect(names).toEqual([name]);
-      expect(hrefs).toEqual(["blob:settings"]);
-      // No anchor left behind in the document.
-      expect(document.querySelectorAll("a")).toHaveLength(0);
-    } finally {
-      HTMLAnchorElement.prototype.click = origClick;
-      URL.createObjectURL = origCreate;
-      URL.revokeObjectURL = origRevoke;
-    }
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════════════
 // SETTINGS PAGE (#settings-nav)
 // ═════════════════════════════════════════════════════════════════════════════
 

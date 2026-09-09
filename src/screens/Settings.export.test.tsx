@@ -8,27 +8,18 @@
 //     every preference silently.
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it } from "vitest";
 
-import { mockInvoke } from "@/test/invokeMock";
+import { getInvokeCalls, mockInvoke } from "@/test/invokeMock";
+import {
+  lastDialogSaveOptions,
+  mockDialogOpen,
+  mockDialogSave,
+} from "@/test/dialogMock";
 import { WithDialogs, acceptDialog, dismissDialog, resetDialogs } from "@/test/dialog";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { useKeymapStore } from "@/features/keymap";
 import { BackupPage } from "@/features/settings/pages/backup";
-
-// jsdom's Blob has no `text()`, and both file-import paths in Settings read the
-// picked file with `file.text()` (the real WKWebView/WebKitGTK/WebView2 all have
-// it). FileReader IS implemented, so bridge the two.
-if (typeof Blob.prototype.text !== "function") {
-  Blob.prototype.text = function (this: Blob) {
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsText(this);
-    });
-  };
-}
 
 /** BackupPage's Diagnostics card loads too; give it what it asks for. */
 function mockRestOfSettings() {
@@ -41,73 +32,71 @@ function mockRestOfSettings() {
   }));
 }
 
-let downloads: string[];
-let origClick: () => void;
-let origCreate: typeof URL.createObjectURL;
-let origRevoke: typeof URL.revokeObjectURL;
+/** Where the native save dialog pretends the user chose to put the file. */
+const SAVED_TO = "/home/you/platypusgit-settings-2026-09-09.json";
 
 beforeEach(() => {
   localStorage.clear();
   resetDialogs();
   mockRestOfSettings();
   useSettingsStore.getState().reset();
-  downloads = [];
-  origClick = HTMLAnchorElement.prototype.click;
-  origCreate = URL.createObjectURL;
-  origRevoke = URL.revokeObjectURL;
-  // jsdom has no blob-URL plumbing and no downloads; record what the anchor was
-  // told to save instead.
-  URL.createObjectURL = vi.fn(
-    () => "blob:settings",
-  ) as unknown as typeof URL.createObjectURL;
-  URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL;
-  HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
-    downloads.push(this.download);
-  };
+  // Export goes through a native save dialog and a backend write (#435), not a
+  // blob URL and an anchor click - WebKitGTK ignores the latter, which is why
+  // this whole path was replaced.
+  mockDialogSave(SAVED_TO);
+  mockInvoke("write_user_file", () => undefined);
 });
 
 afterEach(() => {
-  HTMLAnchorElement.prototype.click = origClick;
-  URL.createObjectURL = origCreate;
-  URL.revokeObjectURL = origRevoke;
   resetDialogs();
 });
+
+/** What the backend was actually told to write, if anything. */
+const written = () => getInvokeCalls().filter((c) => c.cmd === "write_user_file");
 
 // Deliberately distinct from Appearance's theme "Export" / "Import…" pair —
 // two buttons called Import… on one screen is ambiguous for a user and
 // ambiguous for a query.
 const exportButton = () =>
-  screen.getByRole("button", { name: /^export settings$/i });
+  screen.getByRole("button", { name: /^export settings…$/i });
 const importButton = () =>
   screen.getByRole("button", { name: /^import settings…$/i });
-const importInput = () =>
-  screen.getByTestId("settings-import-input") as HTMLInputElement;
 
 /**
- * Feed the hidden file input. `userEvent.upload` clicks the element first, and
- * this input is `display: none` (the visible control is the Import… button), so
- * the change event is dispatched directly.
+ * Answer the native open dialog with `json`, then click Import…
+ *
+ * There is no hidden `<input type="file">` any more: the path comes from
+ * `@tauri-apps/plugin-dialog` and the bytes from `read_user_file`, so the mock
+ * seam is the dialog plus the command rather than a change event on an input.
  */
 async function pickFile(json: string, name = "platypusgit-settings.json") {
-  const file = new File([json], name, { type: "application/json" });
+  mockDialogOpen(`/home/you/${name}`);
+  mockInvoke("read_user_file", () => json);
   await act(async () => {
-    fireEvent.change(importInput(), { target: { files: [file] } });
+    fireEvent.click(importButton());
   });
 }
 
 describe("Settings → Settings file: export", () => {
-  it("offers both halves as buttons, with the file picker behind Import…", async () => {
+  it("offers both halves as buttons that open a native dialog", async () => {
     render(
       <WithDialogs>
         <BackupPage />
       </WithDialogs>,
     );
     expect(exportButton()).toBeTruthy();
-    // The visible control is a button; the <input type="file"> is hidden behind
-    // it, so the section reads like the rest of Settings.
     expect(importButton()).toBeTruthy();
-    expect(importInput().style.display).toBe("none");
-    await userEvent.click(importButton());
+    // Both are plain buttons now. The hidden <input type="file"> they used to
+    // stand in front of is gone, along with the anchor-click export beside it -
+    // `test/fileSave.test.ts` fails the build if either comes back.
+    expect(screen.queryByTestId("settings-import-input")).toBeNull();
+    // Cancelling says nothing and changes nothing.
+    mockDialogOpen(null);
+    await act(async () => {
+      fireEvent.click(importButton());
+    });
+    expect(screen.queryByTestId("settings-import-report")).toBeNull();
+    expect(screen.queryByTestId("settings-import-error")).toBeNull();
   });
 
   it("names the file it wrote", async () => {
@@ -118,11 +107,26 @@ describe("Settings → Settings file: export", () => {
     );
     await userEvent.click(exportButton());
     const said = await screen.findByTestId("settings-export-result");
-    expect(downloads).toHaveLength(1);
-    // The filename on screen is the filename the browser was given — a message
-    // that says "exported" without saying to what is not an answer.
-    expect(said.textContent).toContain(downloads[0]);
-    expect(downloads[0]).toMatch(/^platypusgit-settings-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(written()).toHaveLength(1);
+    // The PATH on screen is the path the file actually went to - a message that
+    // says "exported" without saying to what is not an answer, and the old copy
+    // guessed at a "downloads folder" the app never chose.
+    expect(said.textContent).toContain(SAVED_TO);
+    expect((lastDialogSaveOptions() as { defaultPath: string }).defaultPath).toMatch(
+      /^platypusgit-settings-\d{4}-\d{2}-\d{2}\.json$/,
+    );
+  });
+
+  it("writes nothing when the save dialog is cancelled", async () => {
+    mockDialogSave(null);
+    render(
+      <WithDialogs>
+        <BackupPage />
+      </WithDialogs>,
+    );
+    await userEvent.click(exportButton());
+    expect(written()).toHaveLength(0);
+    expect(screen.queryByTestId("settings-export-result")).toBeNull();
   });
 
   it("puts the active keymap preset in the file", async () => {
