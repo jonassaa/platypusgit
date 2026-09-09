@@ -22,7 +22,7 @@ import {
   type HeadDecor,
 } from "@/features/settings/headMarks";
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
-import { GRAPH_PAD, commitRowGrid, laneX } from "./graph-geometry";
+import { COL_PAD, GRAPH_PAD, commitRowGrid, laneX } from "./graph-geometry";
 import type { WindowRange } from "@/lib/useWindowedList";
 import type {
   RebaseAction,
@@ -1726,7 +1726,11 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           alignItems: "center",
           gap: 6,
           minWidth: 0,
-          paddingRight: 10,
+          paddingRight: COL_PAD,
+          // Below SUBJECT_MIN_W the cell is narrower than its contents, and the
+          // pills do not shrink (half a pill reads as a different branch), so
+          // without this they painted over the author column instead.
+          overflow: "hidden",
         }}
       >
         {/* Ahead of the branch pills: the one mark that says "you are here" in
@@ -1779,6 +1783,15 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           alignItems: "center",
           gap: 6,
           color: "var(--fg-2)",
+          // Not just a narrow-pane fix: the name's ellipsis is on the span, but
+          // the CELL had no 0 minimum and no padding, so a long author ("Gaurav
+          // Vijay Jadhav") grew the flex box past its track and ran into the
+          // date at ANY pane width. The avatar keeps its 16px (PGAvatar is
+          // flex-shrink: 0), so what gets cut is the name — and the padding is
+          // what the name is cut to CLEAR, which is why AUTHOR_MIN_W counts it.
+          minWidth: 0,
+          overflow: "hidden",
+          paddingRight: COL_PAD,
         }}
       >
         <PGAvatar name={author} size={16} />

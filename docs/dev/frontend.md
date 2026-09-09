@@ -1023,6 +1023,55 @@ version is that `commitMenuItems` cannot leave without also extracting the
   for the density reason one column over: `undefined` reaching the grid resolves
   every `Npx` template to `auto` and collapses the column on every row at once.
 
+## What yields when the commit list is narrow
+
+- **The subject has a FLOOR and the author name is what gives way.** Every
+  other track in `commitRowGrid` is a fixed pixel width, so before this the
+  subject's `1fr` was the only track that could yield — and it yielded
+  everything. Measured in Chrome at 420px (`COMMIT_LIST_MIN_W`, the narrowest
+  the list can be dragged), a five-lane row gave the subject **22px** while the
+  author name held a rigid 150. So the template now reads
+  `minmax(SUBJECT_MIN_W, 1fr)` for the subject and
+  `minmax(AUTHOR_MIN_W, AUTHOR_COL_W)` for the author: the name truncates, then
+  disappears, and the avatar still says who. Nothing about this is measured —
+  it is track sizing, so it holds in WebKitGTK, which has neither container
+  queries nor `ResizeObserver`.
+- **The order the `minmax()`es are written in is not free.** CSS grid grows a
+  track with a fixed maximum to that maximum BEFORE it hands anything to an
+  `fr` track, so between 420px and ~560px the author column fills to 150 first
+  and the subject sits at its floor. That is the accepted trade for a pure-CSS
+  fix: getting the subject to grow first needs a flexible author track (which
+  never stops growing) or `fit-content()` (which sizes each ROW to its own
+  author and un-aligns the columns from each other and from the header). A
+  future pass wanting subject-first growth needs a measured width, not a
+  cleverer template.
+- **The floors are only worth anything if they FIT**, so
+  `COMMIT_LIST_MIN_W` lives in `design/graph-geometry.ts` beside the widths it
+  is the sum of — `graphWidth(4) + SHA_COL_W + SUBJECT_MIN_W + AUTHOR_MIN_W +
+  DATE_COL_W.relative`, exactly 420 — and `git-components.narrow.test.tsx`
+  fails the build when a raised minimum (or a wider Date column) breaks the
+  arithmetic. Past that sum the grid overflows its pane instead of squeezing,
+  and what falls off the right edge is the DATE column. A repository whose
+  gutter is at `GRAPH_MAX_W` is over the sum by construction; the gutter is not
+  width-aware yet.
+- **Every cell clips, and clipping alone was not enough.** The subject cell's
+  pills and HEAD badge do not shrink (half a pill reads as a different branch
+  name), so past the floor they were painting over the author column, and the
+  author cell had neither a 0 minimum nor padding — "Gaurav Vijay Jadhav" ran
+  into the date at EVERY pane width, not just a narrow one. Hence `COL_PAD`:
+  one number for the gutter a full-width value truncates to clear, shared by
+  the subject cell, the author cell and History's header captions. Those
+  captions are plain spans in the same shrinking tracks, and two plain spans in
+  a too-narrow grid do not truncate, they overlap — the narrow log headed its
+  columns "SUBJECTAUTHOR", and with clipping but no padding, "AUTHORDATE".
+- **Reflog is the surface that needed this most**, and it is why the fix lives
+  in the shared template rather than in History: its list pane is 35% of the
+  window with a 280px floor, and the pre-fix row spent 310px of that on fixed
+  tracks — so its subject was under 100px below an ~1170px window and gone
+  entirely below ~890px. It still reserves the full author column for a value
+  it always passes as `""`; a content-aware column there would have to be
+  content-aware for the whole LIST, not per row.
+
 ## `git notes` in the commit detail panel (#253)
 
 - **Notes hang off the SELECTED commit, never the log page.** `CommitNotes`

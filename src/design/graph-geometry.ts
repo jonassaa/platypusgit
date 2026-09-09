@@ -45,6 +45,54 @@ export const DATE_COL_W: Record<DateFormat, number> = {
   both: 200,
 };
 
+/** The short-oid column. Seven hex digits of monospace, plus the gap. */
+export const SHA_COL_W = 70;
+
+/**
+ * Gutter kept clear at the right of a column whose content can fill it — the
+ * subject cell, the author cell, and every caption in History's header.
+ *
+ * A shared number because it is load-bearing in two places at once: it is what
+ * makes a full-width value TRUNCATE instead of touching the column beside it
+ * (a 19-character author name ran into the date at every pane width, and the
+ * header captions read "AUTHORDATE"), and it is a term in `AUTHOR_MIN_W` — the
+ * avatar has to clear the date too.
+ */
+export const COL_PAD = 10;
+
+/**
+ * The narrowest the subject column may become, and the narrowest the author
+ * column may become — the row's YIELD ORDER, in two numbers.
+ *
+ * Every other track is fixed, so before these existed the subject was the only
+ * one that could give, and it gave everything: measured in Chrome at 420px, a
+ * five-lane row left the subject **22px** while the author name held a rigid
+ * 150. The subject is the column people read, so it is the column with a floor,
+ * and the author name is what yields instead — down to `AUTHOR_MIN_W`: the
+ * avatar (16px), the flex gap after it, and `COL_PAD`, so the narrowest author
+ * column is an avatar that still clears the date. The name truncates, then
+ * disappears, and the avatar still says who.
+ *
+ * Anything under the sum of these minimums overflows the pane rather than
+ * squeezing further, which drops the DATE column off the right edge — see
+ * `COMMIT_LIST_MIN_W`, and the guard in `git-components.narrow.test.tsx` that
+ * keeps the two in agreement.
+ */
+export const SUBJECT_MIN_W = 140;
+export const AUTHOR_COL_W = 150;
+export const AUTHOR_MIN_W = 16 + 6 + COL_PAD;
+
+/**
+ * Floor for what is left of the commit list when a detail panel is dragged
+ * open (#162), and therefore the narrowest row the columns above are designed
+ * for: exactly `graphWidth(4) + SHA + SUBJECT_MIN + AUTHOR_MIN + DATE`, the
+ * five-lane log at the relative date format.
+ *
+ * It lives here, beside the widths it is the sum of, because that is the only
+ * place the arithmetic can be checked.
+ */
+export const COMMIT_LIST_MIN_W = 420;
+
 /**
  * Grid template shared by PGCommitRow and History's column header, so the two
  * cannot drift. `graphW === 0` drops the graph column entirely — that is
@@ -56,6 +104,19 @@ export const DATE_COL_W: Record<DateFormat, number> = {
  * same number. It defaults to the relative width so a caller with no notion of
  * the setting (tests, any surface that only ever shows "3w ago") gets exactly
  * the old template.
+ *
+ * The two `minmax()`es are the whole of the narrow-pane behaviour, and the
+ * order they are written in is not free: CSS grid grows a track with a fixed
+ * maximum to that maximum BEFORE it hands anything to an `fr` track, so the
+ * author column fills to `AUTHOR_COL_W` first and only then does the subject
+ * grow past its floor. That is why the author's maximum stays a number rather
+ * than a second `fr` — a fractional author track never stops growing, and
+ * `fit-content()` sizes each ROW to its own author, which un-aligns the
+ * columns from each other and from the header.
  */
-export const commitRowGrid = (graphW: number, dateW: number = DATE_COL_W.relative): string =>
-  graphW > 0 ? `${graphW}px 70px 1fr 150px ${dateW}px` : `70px 1fr 150px ${dateW}px`;
+export const commitRowGrid = (graphW: number, dateW: number = DATE_COL_W.relative): string => {
+  const cols =
+    `${SHA_COL_W}px minmax(${SUBJECT_MIN_W}px, 1fr) ` +
+    `minmax(${AUTHOR_MIN_W}px, ${AUTHOR_COL_W}px) ${dateW}px`;
+  return graphW > 0 ? `${graphW}px ${cols}` : cols;
+};

@@ -12,6 +12,12 @@ import {
   maxVisibleCol,
 } from "./graph-geometry";
 
+/**
+ * The template's tracks. Two of them are `minmax()`es carrying a comma and a
+ * space, so counting columns is no longer `split(" ")`.
+ */
+const tracks = (template: string) => template.replace(/,\s+/g, ",").split(" ");
+
 describe("graph geometry", () => {
   it("pins the lane constants", () => {
     // Literals, not derived: if any of these move, the SVG path math and the
@@ -55,12 +61,19 @@ describe("graph geometry", () => {
     expect(isGraphClamped(100)).toBe(true);
   });
 
+  // The subject's floor and the author's minimum are the row's yield order —
+  // see `git-components.narrow.test.tsx` for what they are for. Spelled out
+  // literally here, not composed from the constants, so that changing one of
+  // those numbers has to be a deliberate edit to a template somebody reads.
   it("builds a five-column grid with the graph, four without", () => {
-    expect(commitRowGrid(152)).toBe("152px 70px 1fr 150px 90px");
+    expect(commitRowGrid(152)).toBe(
+      "152px 70px minmax(140px, 1fr) minmax(32px, 150px) 90px",
+    );
     // graphW of 0 means "no graph column at all" (Reflog), which is NOT the
     // same as graphWidth(0)=24, a real one-lane log.
-    expect(commitRowGrid(0)).toBe("70px 1fr 150px 90px");
-    expect(commitRowGrid(0).split(" ")).toHaveLength(4);
+    expect(commitRowGrid(0)).toBe("70px minmax(140px, 1fr) minmax(32px, 150px) 90px");
+    expect(tracks(commitRowGrid(0))).toHaveLength(4);
+    expect(tracks(commitRowGrid(152))).toHaveLength(5);
   });
 
   // The Date column's width follows the user's date format (#354): a
@@ -76,9 +89,11 @@ describe("graph geometry", () => {
     expect(DATE_COL_W.absolute).toBeGreaterThan(DATE_COL_W.relative);
     expect(DATE_COL_W.both).toBeGreaterThan(DATE_COL_W.absolute);
     expect(commitRowGrid(152, DATE_COL_W.absolute)).toBe(
-      `152px 70px 1fr 150px ${DATE_COL_W.absolute}px`,
+      `152px 70px minmax(140px, 1fr) minmax(32px, 150px) ${DATE_COL_W.absolute}px`,
     );
-    expect(commitRowGrid(0, DATE_COL_W.both)).toBe(`70px 1fr 150px ${DATE_COL_W.both}px`);
+    expect(commitRowGrid(0, DATE_COL_W.both)).toBe(
+      `70px minmax(140px, 1fr) minmax(32px, 150px) ${DATE_COL_W.both}px`,
+    );
   });
 
   // Fixed-width monospace: the widest string the mode can produce has to fit,

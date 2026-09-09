@@ -31,6 +31,24 @@ describe("smoke", () => {
       timeout: 20_000,
       timeoutMsg: "History showed no commit rows after opening the repo",
     });
+    // The row's columns are ONE CSS string (`commitRowGrid`), and the two
+    // `minmax()`es in it are the whole of what keeps the subject column from
+    // collapsing in a narrow pane. A webview that would not parse that value
+    // drops the WHOLE property and lays every row out as a single auto track —
+    // which reads as a styling nit and is actually the log losing its columns.
+    // No jsdom test can see it and Chrome cannot answer it for WebKitGTK, so
+    // the real webview is asked here: the property resolved, into five tracks.
+    const columns = await browser.execute(
+      () =>
+        getComputedStyle(document.querySelector('[data-testid="commit-row"]')!)
+          .gridTemplateColumns,
+    );
+    expect(columns).not.toBe("none");
+    // Either form is a pass: engines report the USED track widths here, but a
+    // specified `minmax(140px, 1fr)` carries a space of its own, so close it up
+    // before counting rather than assuming which one came back.
+    expect(columns.replace(/,\s+/g, ",").split(" ")).toHaveLength(5);
+
     // branch chip shows main
     await expect($('[data-testid="branch-chip"]')).toHaveText(
       expect.stringContaining("main"),
