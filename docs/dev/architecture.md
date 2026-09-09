@@ -414,7 +414,18 @@ commands/        Thin Tauri handlers, one file per area:
 │                the rebase engine refuses, making a one-step Reword plan
 │                useless for the most common reword of all. Takes the oid the
 │                caller believed was HEAD and refuses a mismatch, checked
-│                under the SAME lock as the amend), file_history,
+│                under the SAME lock as the amend), format_patch (mailbox
+│                patches via `git format-patch`, which libgit2 has no
+│                equivalent for — so it shells out through proc::git. ONE
+│                invocation per commit carrying an explicit --start-number,
+│                because separate invocations each number from 0001 and
+│                overwrite one another. Every oid is resolved and every merge
+│                refused BEFORE anything is written: format-patch skips a merge
+│                silently, so a partial export would hand back a shorter list
+│                with nothing naming the commit that vanished. NOTE it passes
+│                no `--` before the revision — that separator introduces
+│                PATHSPECS, so `-- <oid>` selects nothing; safe because the oid
+│                is a resolved 40-hex id, not user text), file_history,
 │                verify_commit (SELECTED commit
 │                only, never per row), commit_notes, which is lazy for the
 │                same reason (#253 — the log walk is the hot path, so notes are

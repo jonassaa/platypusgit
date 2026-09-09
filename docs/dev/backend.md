@@ -1541,6 +1541,38 @@ affects every reword of an older commit and every `Reword` step run from the
 Rebase screen, so it predates this op and belongs to its own change with its own
 tests.
 
+## `format_patch` — mailbox patches, and the `--` that must NOT be there
+
+libgit2 has no `format-patch`, so this shells out through `proc::git`. Mailbox
+format rather than a plain diff, because the files carry author, date and
+message and `git am` reconstructs the commit; `tests/format_patch.rs` proves
+that round-trip against a second repository.
+
+- **One invocation per commit, with an explicit `--start-number`.** Left to
+  itself every invocation numbers from `0001` and the files overwrite one
+  another, so a three-commit export leaves one file — silently. Measured:
+  removing the flag fails `numbers_a_multi_commit_export_as_a_series` and only
+  that test. In particular the *order* test still passes without it, because two
+  commits with different subjects produce two different filenames even when both
+  are numbered `0001` — a fixture whose subjects happen to differ hides the bug,
+  which is why the numbering test uses `linear_history` and counts files.
+- **No `--` before the revision, and this is the one place the usual rule is
+  actively wrong.** This codebase ends option parsing with `--` before every
+  user-supplied value; but `--` introduces **pathspecs**, so `-- <oid>` asks for
+  commits touching a *file* named like that oid, selects nothing, and writes no
+  files. (That was the first implementation, and the tests caught it.) Safe
+  without the separator because the oid is `commit.id().to_string()` from a
+  resolution done first — 40 hex characters, which cannot begin with a dash.
+- **Everything is resolved and every merge refused BEFORE anything is written.**
+  `format-patch` skips a merge silently, so a partial export would hand back a
+  shorter list with nothing naming the commit that vanished. A merge anywhere in
+  the selection refuses the whole export: a series with a hole is not a series.
+- The output directory comes from the OS folder picker, so it is a place the
+  user chose, and is used as given. No new Tauri permission —
+  `dialog:allow-open` is already granted and is the same call Clone / Init /
+  Worktree make. A *save-file* picker would be wrong: `format-patch` names its
+  own files and one request can produce several.
+
 ## Stacked branches: `--update-refs` is implemented, not passed through (#240)
 
 Our rebase is our **own replay** — `rebase_start_with_progress` detaches at the

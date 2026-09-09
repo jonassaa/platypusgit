@@ -577,6 +577,24 @@ export async function amendHeadMessage(
 }
 
 /**
+ * Export commits as mailbox-format patch files into `outDir`, resolving with
+ * the paths written.
+ *
+ * `oids` must be OLDEST-FIRST: the series is numbered in the order given, so a
+ * reversed list numbers the newest commit `0001` and replays backwards.
+ *
+ * Mailbox format (`git format-patch`), not a plain diff — the files carry
+ * author, date and message, so `git am` reconstructs each commit.
+ */
+export async function formatPatch(
+  repoId: string,
+  oids: string[],
+  outDir: string,
+): Promise<string[]> {
+  return invoke<string[]>("format_patch", { repoId, oids, outDir });
+}
+
+/**
  * Signature status of ONE commit (#61 D6).
  *
  * Lazy and per-selection by design: a badge on every log row would mean a

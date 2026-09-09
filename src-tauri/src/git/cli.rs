@@ -274,6 +274,15 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
 
+    fn format_patch(
+        &self,
+        _repo_id: &RepoId,
+        _oids: &[String],
+        _out_dir: &std::path::Path,
+    ) -> AppResult<Vec<String>> {
+        Err(AppError::NotImplemented)
+    }
+
     fn commit_template(
         &self,
         _repo_id: &RepoId,
