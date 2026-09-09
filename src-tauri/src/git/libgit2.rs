@@ -1412,6 +1412,20 @@ fn find_delta_index(diff: &git2::Diff, path: &Path) -> AppResult<usize> {
 ///
 /// A signing failure returns an error and leaves HEAD untouched: falling back to
 /// an unsigned commit would leave the user believing they had signed it.
+/// The refusal when HEAD is not what the caller believed it was.
+///
+/// `InvalidArgument` rather than a variant of its own: the frontend has no
+/// special remedy for this beyond showing the sentence, and a new `AppError`
+/// variant costs the TS union plus `appErrorDetail` prose in the same commit.
+fn stale_head(actual: &str, expected: &str) -> AppError {
+    let short = |s: &str| s.chars().take(7).collect::<String>();
+    AppError::InvalidArgument(format!(
+        "HEAD has moved since that commit was chosen — it is now {}, not {}. Nothing was changed.",
+        short(actual),
+        short(expected),
+    ))
+}
+
 fn commit_signed(
     repo: &Repository,
     sig: &git2::Signature<'_>,
@@ -5126,6 +5140,118 @@ impl GitBackend for Libgit2Backend {
         // DISCARDED because git discards it. Reporting a commit that exists as
         // failed would send the user hunting for work that already landed.
         if !opts.no_verify {
+            let _ = hooks::run_hook(&repo_path, "post-commit", &[]);
+        }
+
+        Ok(CommitResult { oid, message })
+    }
+
+    fn amend_head_message(
+        &self,
+        repo_id: &RepoId,
+        expected_oid: &str,
+        message: &str,
+        no_verify: bool,
+    ) -> AppResult<CommitResult> {
+        use crate::git::hooks;
+        use crate::git::signature::default_signature;
+
+        /// Run one hook and turn a refusal into the error the frontend renders.
+        /// Mirrors `commit`'s own `gate`.
+        fn gate(workdir: &std::path::Path, name: &str, args: &[&str]) -> AppResult<()> {
+            let out = hooks::run_hook(workdir, name, args)?;
+            if out.rejected() {
+                return Err(AppError::HookRejected(crate::error::HookRejection {
+                    hook: name.to_string(),
+                    output: out.output,
+                }));
+            }
+            Ok(())
+        }
+
+        // Refused HERE, before any hook runs, exactly as `commit` does: every
+        // caller of this method is a caller that meant to write history, and a
+        // refusal must not have run anybody's hook.
+        if message.trim().is_empty() {
+            return Err(AppError::InvalidArgument(
+                "the commit message is empty".to_string(),
+            ));
+        }
+
+        let repo_path = self.repo_path(repo_id)?;
+
+        // An ADVISORY early check, so a reword that is already doomed does not
+        // run the user's `commit-msg` hook first. It is not the authoritative
+        // one — that happens under the write lock below, because anything
+        // checked out here can change before the amend. Both exist on purpose.
+        let head_now = self.with_repo_read(repo_id, |repo| {
+            let head = repo.head().map_err(|_| AppError::Unborn)?;
+            Ok(head.peel_to_commit().map_err(|_| AppError::Unborn)?.id().to_string())
+        })?;
+        if head_now != expected_oid {
+            return Err(stale_head(&head_now, expected_oid));
+        }
+
+        // `pre-commit` is deliberately NOT run: `tree: None` below means this op
+        // cannot change the tree, so a hook that lints content has nothing to
+        // inspect. A documented deviation from `git commit --amend --only`,
+        // which runs it. The MESSAGE hooks do run — a `commit-msg` that enforces
+        // a format is exactly what should fire on a reword.
+        let message = if no_verify {
+            message.to_string()
+        } else {
+            let git_dir = self.with_repo_read(repo_id, |repo| Ok(repo.path().to_path_buf()))?;
+            let msg_path = git_dir.join("COMMIT_EDITMSG");
+            std::fs::write(&msg_path, message).map_err(|e| AppError::Io(e.to_string()))?;
+            let msg_arg = msg_path
+                .to_str()
+                .ok_or_else(|| AppError::InvalidPath(msg_path.display().to_string()))?;
+
+            // Source is always `message`, with no third argument — the same
+            // pair `commit` passes, because we too supply the text rather than
+            // taking it from a commit.
+            gate(&repo_path, "prepare-commit-msg", &[msg_arg, "message"])?;
+            gate(&repo_path, "commit-msg", &[msg_arg])?;
+
+            // Re-read: either hook may have rewritten the file, and what it left
+            // there is what git would commit.
+            std::fs::read_to_string(&msg_path).map_err(|e| AppError::Io(e.to_string()))?
+        };
+
+        // ONE acquisition for verify-and-mutate. Splitting these is the stash
+        // TOCTOU shape: HEAD could move between the check and the amend, and the
+        // hooks above have just given it time to.
+        let oid = self.with_repo(repo_id, |repo| {
+            let head_ref = repo.head().map_err(|_| AppError::Unborn)?;
+            let head = head_ref.peel_to_commit().map_err(|_| AppError::Unborn)?;
+            let actual = head.id().to_string();
+            if actual != expected_oid {
+                return Err(stale_head(&actual, expected_oid));
+            }
+
+            let sig = default_signature(repo)?;
+
+            // Through the ONE signing chain, so a signed commit stays signed and
+            // a signing failure creates nothing. The rebase engine's own Reword
+            // arm does not do this and drops the signature — a pre-existing gap,
+            // recorded in docs/dev/backend.md.
+            if crate::git::signing::config_wants_signing(repo) {
+                let tree = head.tree()?;
+                return commit_signed(repo, &sig, &message, &tree, Some(&head_ref), true);
+            }
+
+            // `tree: None` reuses the original tree — this is the message-only
+            // part. `author: None` preserves the author; only the committer is
+            // refreshed, which is what git's `--amend` does.
+            let new_oid =
+                head.amend(Some("HEAD"), None, Some(&sig), None, Some(&message), None)?;
+            Ok(new_oid.to_string())
+        })?;
+
+        // `post-commit` runs after the ref moved and its exit code is DISCARDED,
+        // because git discards it. A commit that exists must not be reported as
+        // failed.
+        if !no_verify {
             let _ = hooks::run_hook(&repo_path, "post-commit", &[]);
         }
 

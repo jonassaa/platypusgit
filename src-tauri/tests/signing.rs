@@ -381,3 +381,69 @@ fn a_signing_failure_fails_the_commit_instead_of_committing_unsigned() {
     let head_after = tr.repo.head().unwrap().peel_to_commit().unwrap().id();
     assert_eq!(head_before, head_after, "HEAD must not move: {err:?}");
 }
+
+// ─── reword ──────────────────────────────────────────────────────────────────
+
+/// A reword goes through the ONE signing chain, so a repository that signs its
+/// commits does not quietly get an unsigned one back.
+///
+/// This is the property the rebase engine's own `Reword` arm does NOT have — it
+/// calls `Commit::amend` directly and drops the signature. Recorded in
+/// `docs/dev/backend.md`; the gap predates this test.
+#[test]
+fn a_reworded_commit_keeps_a_signature() {
+    let Some((tr, _keydir)) = ssh_signing_repo() else {
+        eprintln!("ssh-keygen unavailable — skipping signed reword test");
+        return;
+    };
+    {
+        let mut c = tr.repo.config().unwrap();
+        c.set_bool("commit.gpgsign", true).unwrap();
+    }
+    let (backend, handle) = tr.open_with_backend();
+    let head = tr
+        .repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .id()
+        .to_string();
+
+    let out = backend
+        .amend_head_message(&handle.id, &head, "reworded and signed", false)
+        .expect("signed reword");
+
+    // Same trap as commit_signed: it writes the object but does not move HEAD.
+    let after = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(after.id().to_string(), out.oid, "the reword must be HEAD");
+    assert_eq!(after.message().unwrap(), "reworded and signed");
+    let header = after
+        .header_field_bytes("gpgsig")
+        .expect("a reworded commit must carry a gpgsig header");
+    assert!(!header.is_empty(), "signature must not be empty");
+}
+
+/// And a signing failure creates nothing, rather than leaving an unsigned
+/// commit the user believes is signed.
+#[test]
+fn a_reword_whose_signing_fails_changes_nothing() {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    {
+        let mut c = tr.repo.config().unwrap();
+        c.set_str("gpg.format", "ssh").unwrap();
+        c.set_str("gpg.ssh.program", "definitely-not-a-real-program").unwrap();
+        c.set_str("user.signingkey", "/nonexistent/key").unwrap();
+        c.set_bool("commit.gpgsign", true).unwrap();
+    }
+    let (backend, handle) = tr.open_with_backend();
+    let before = tr.repo.head().unwrap().peel_to_commit().unwrap().id();
+
+    let err = backend
+        .amend_head_message(&handle.id, &before.to_string(), "should fail", false)
+        .expect_err("a signing failure must fail the reword");
+
+    let after = tr.repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(before, after.id(), "HEAD must not move: {err:?}");
+    assert_eq!(after.message().unwrap(), "initial");
+}

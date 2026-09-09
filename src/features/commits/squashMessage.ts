@@ -1,4 +1,5 @@
 import type { CommitInfo } from "@/lib/types";
+import { fullCommitMessage } from "./commitMessageText";
 
 /**
  * Default message for a squash: every squashed commit's own message, oldest
@@ -17,8 +18,7 @@ export function combinedSquashMessage(
   for (const oid of oids) {
     const c = byOid.get(oid);
     if (!c) continue;
-    const body = c.body?.trim();
-    parts.push(body ? `${c.summary}\n\n${body}` : c.summary);
+    parts.push(fullCommitMessage(c));
   }
   return parts.join("\n\n");
 }

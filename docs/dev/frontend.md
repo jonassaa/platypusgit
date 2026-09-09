@@ -845,6 +845,56 @@ therefore belongs in `features/`, not `design/`.
   `MAX_BARREN_PAGES`, or it walks the whole repository. New client-side log
   filters inherit that trap.
 
+## Rewriting one commit from the History menu
+
+Five entries in `commitMenuItems` rewrite history — *Edit commit message*,
+*Undo this commit*, *Fixup*, *Squash*, *Drop this commit*. Each flow lives in
+its own `features/commits/` module and the menu entry is a few lines calling it,
+which is the shape `buildRebasePlan` / `runRebasePlan` / `squashMessage` already
+have. Splitting `context-menu.tsx` was considered and rejected — see the spec
+(`docs/superpowers/specs/2026-09-08-commit-menu-parity-spec.md`); the short
+version is that `commitMenuItems` cannot leave without also extracting the
+`ContextMenuItem` type and `customActionItems`, which every other builder shares.
+
+- **`rewriteCtx(commits)` is gathered at menu-BUILD time and is synchronous.**
+  Menu building runs on every right-click; the one async thing a rewrite needs —
+  the published-commit check — is made by the flow inside `onClick`. A store read
+  moved into a flow would make the flows untestable without a store, which is
+  the reason the context is a parameter rather than something they fetch.
+- **`confirmRewrite` is the single confirm for all five.** It appends
+  `rewriteWarning`'s sentence when `isPublished` says the commit is already
+  contained in the branch's upstream. `isPublished` is
+  `aheadBehind(repoId, oid, upstream).behind === 0` — "on `a`, not on `b`" — and
+  **reversing that pair inverts the warning silently**, so the argument order has
+  its own test. An unresolvable upstream answers `false` rather than throwing: a
+  warning is a courtesy and must never block the operation.
+- **Squash puts the warning in its PROMPT's body, not a confirm in front of it.**
+  Squash already asks a question, and a second modal over the first cannot be
+  dismissed predictably (see the queue note in `dialog.tsx`). Same sentence, one
+  dialog.
+- **Reword takes two paths, and the split is load-bearing.** For HEAD it calls
+  `useRepoStore.amendMessage`, a message-only amend that needs no replay and so
+  tolerates a dirty worktree; for an older commit it builds a one-target
+  `Reword` plan. The rebase engine refuses a dirty worktree, so routing HEAD
+  through a plan would fail the most common reword there is. See
+  `docs/dev/backend.md` for the op.
+- **An unchanged message is a no-op.** Accepting the reword prompt without
+  editing returns early: rewriting the commit would give every descendant a new
+  id for nothing, and on a published commit it would demand a force-push for
+  nothing.
+- **A merge is refused per MECHANISM, not per commit shape.** *Edit commit
+  message* disables a merge only on the rebase path — `buildRebasePlan` always
+  emits `Drop` for a merge, so rewording an older one would flatten history —
+  while a merge sitting at HEAD stays editable, because amending keeps its
+  parents. *Drop* refuses every merge for the same underlying reason.
+- **Each disabled entry says WHY in its own label**, as the neighbouring rebase
+  entries do. `context-menu.rewrite.test.tsx` asserts the label text, so it is
+  the contract rather than decoration.
+- **No keybindings and no keymap actions.** Rider's `Ctrl+R, R` is a two-stroke
+  sequence and `chord.ts` is single-stroke only (modifiers + one base key, plus
+  the synthetic `DoubleShift`), so matching it needs a prefix-key layer in the
+  chord core — a separate feature from these entries.
+
 ## How a commit date is written (#354)
 
 - **`lib/commitDate.ts` is the ONE place a timestamp becomes text.** History

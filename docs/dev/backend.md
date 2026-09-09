@@ -1496,6 +1496,51 @@ Two things about it that are easy to get wrong:
   because a timing test in a parallel test binary gets warmed by a sibling and
   passes vacuously.
 
+## `amend_head_message` — HEAD's message and nothing else
+
+The reword path for the commit HEAD is on. `Commit::amend` with **`tree: None`**
+reuses the commit's original tree, so the index is never read — git's
+`commit --amend --only -m`.
+
+- **Why HEAD does not go through the rebase engine.** `RebaseAction::Reword` has
+  worked end to end for as long as the Rebase screen has existed, but
+  `rebase_start_with_progress` refuses any worktree or index modification
+  (`libgit2.rs`, the `is_wt_modified()` block). Rewording the commit you are
+  sitting on, while you have uncommitted work, is the most common reword there
+  is — so it gets a path that needs no replay, and nothing downstream changes id.
+- **Why not `commit` with `amend: true`.** That writes the **index** tree
+  (`fresh_index(repo)?; index.write_tree()?`), so it would silently fold staged
+  changes into the commit being reworded. `amend_ignores_staged_changes` is the
+  assertion that fails if anyone reimplements this on top of it.
+- **`expected_oid` is checked TWICE, and both checks earn their place.** An
+  advisory read first, so a doomed reword does not run the user's `commit-msg`
+  hook; then the authoritative one **inside the same `with_repo` closure as the
+  amend**, because the hooks run outside the lock and have just given HEAD time
+  to move. Measured: deleting the second check leaves every other test in
+  `tests/amend_message.rs` green — the early check absorbs them all. The one
+  test that catches it is
+  `a_head_move_during_the_hook_window_is_refused`, whose `commit-msg` hook makes
+  its own commit (with `--no-verify` and a one-shot marker, or it forks until the
+  OS refuses). A mismatch returns `InvalidArgument` and writes nothing.
+- **The author is preserved; only the committer is refreshed**, as git's
+  `--amend` does. Note this deliberately differs from `commit(amend: true)`,
+  which passes the current signature as the author too.
+- **It goes through `commit_signed`**, so a repository that signs its commits
+  does not get an unsigned one back and a signing failure creates nothing
+  (`signing.rs::a_reworded_commit_keeps_a_signature`,
+  `a_reword_whose_signing_fails_changes_nothing`).
+- **Hooks: the message ones run, `pre-commit` does not.** A documented deviation
+  from git, which runs all three. A hook that validates message format is
+  exactly what should fire on a reword; one that runs tests has nothing to
+  inspect when the tree cannot change by construction. `post-commit` runs with
+  its exit code discarded, as in `commit`. `no_verify` skips them all.
+
+**Known gap, pre-existing and not fixed here:** the rebase engine's own `Reword`
+arm calls `Commit::amend` directly and therefore **drops a signature**. That
+affects every reword of an older commit and every `Reword` step run from the
+Rebase screen, so it predates this op and belongs to its own change with its own
+tests.
+
 ## Stacked branches: `--update-refs` is implemented, not passed through (#240)
 
 Our rebase is our **own replay** — `rebase_start_with_progress` detaches at the

@@ -54,4 +54,32 @@ describe("buildRebasePlan with merges in range", () => {
     const plan = buildRebasePlan(linear, A, { kind: "edit-from" });
     expect(plan!.map((s) => s.action)).toEqual(["Pick"]);
   });
+
+  it("a merge is dropped even when it is the reword target", () => {
+    // The menu refuses this, but the builder must not produce it either: the
+    // backend accepts no action on a merge except MainlinePick, and a Reword
+    // step on one would be rejected mid-replay, after earlier picks had already
+    // been committed.
+    //
+    // THIS is the test that catches the merge check being reordered below the
+    // reword arm — verified by planting that reordering, which failed this
+    // assertion and only this one.
+    const plan = buildRebasePlan(log, A, { kind: "reword", targetOid: M, message: "x" });
+    expect(plan!.find((s) => s.oid === M)!.action).toBe("Drop");
+    expect(plan!.find((s) => s.oid === M)!.message).toBeNull();
+  });
+
+  it("still drops a merge the reword only replays over", () => {
+    const plan = buildRebasePlan(log, A, { kind: "reword", targetOid: C, message: "x" });
+    expect(plan!.map((s) => [s.oid, s.action])).toEqual([
+      [F, "Pick"],
+      [C, "Reword"],
+      [M, "Drop"],
+    ]);
+  });
+
+  it("a merge stays dropped when it is the drop target", () => {
+    const plan = buildRebasePlan(log, A, { kind: "drop", targetOid: M });
+    expect(plan!.find((s) => s.oid === M)!.action).toBe("Drop");
+  });
 });

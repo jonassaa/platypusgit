@@ -11,6 +11,15 @@ import { planCommitSelection } from "@/features/commits/planCommitSelection";
 import { headAncestryOf } from "@/features/commits/headAncestry";
 import { runRebasePlanNow } from "@/features/commits/runRebasePlan";
 import { combinedSquashMessage } from "@/features/commits/squashMessage";
+import { rewordCommit } from "@/features/commits/rewordCommit";
+import { dropCommit } from "@/features/commits/dropCommit";
+import { undoCommit } from "@/features/commits/undoCommit";
+import {
+  confirmRewrite,
+  isPublished,
+  rewriteWarning,
+  type RewriteCtx,
+} from "@/features/commits/rewriteWarning";
 import type {
   ActionContext,
   BranchInfo,
@@ -490,6 +499,10 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
   const onBranch = !!self;
   const isMerge = (self?.parents.length ?? 0) > 1;
   const baseOid = self?.parents[0] ?? null;
+  // Which commit HEAD is sitting on. The reword and undo entries branch on it:
+  // rewording HEAD is an in-place amend that needs no replay (and so tolerates
+  // a dirty worktree), and undoing a commit only means anything for HEAD.
+  const isHead = !!commit?.sha && commit.sha === (useRepoStore.getState().headInfo?.headOid ?? null);
   return [
     { __menuTitle: `commit ${sha.slice(0, 7)}` },
     // ABOVE the detached-HEAD entry (#179): when a branch is here, checking it
@@ -616,6 +629,39 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       ],
     },
     {
+      icon: "edit",
+      // A merge is refused only on the REBASE path. buildRebasePlan emits Drop
+      // for a merge, so rewording an older one would flatten history — but
+      // amending HEAD's own message keeps its parents, so a merge sitting at
+      // HEAD is fine. The restriction follows the mechanism, not the commit
+      // shape.
+      label: !onBranch
+        ? "Edit commit message — not on this branch"
+        : isMerge && !isHead
+          ? "Edit commit message — merge commit"
+          : !isHead && !baseOid
+            ? "Edit commit message — root commit"
+            : "Edit commit message…",
+      disabled: !onBranch || (isMerge && !isHead) || (!isHead && !baseOid),
+      onClick: () => {
+        if (!commit?.sha) return;
+        void rewordCommit({ oid: commit.sha }, rewriteCtx(commits));
+      },
+    },
+    {
+      icon: "undo",
+      label: !isHead
+        ? "Undo this commit — only the last commit can be undone"
+        : !baseOid
+          ? "Undo this commit — root commit"
+          : "Undo this commit…",
+      disabled: !isHead || !baseOid,
+      onClick: () => {
+        if (!commit?.sha) return;
+        void undoCommit({ oid: commit.sha }, rewriteCtx(commits));
+      },
+    },
+    {
       icon: "fix",
       label: !onBranch
         ? "Fixup into parent — not on this branch"
@@ -625,6 +671,22 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       disabled: !onBranch || isMerge || !baseOid,
       onClick: async () => {
         if (!commit?.sha || isMerge || !baseOid) return;
+        // Through the SHARED rewrite confirm (#published-commit warning), so
+        // fixup says the same thing about a pushed commit as reword, drop and
+        // undo do. Five entries that rewrite history must not split into two
+        // behaviours.
+        const ctx = rewriteCtx(commits);
+        if (
+          !(await confirmRewrite({
+            title: `Fixup ${sha.slice(0, 7)} into its parent?`,
+            body: "The two commits become one, keeping the parent's message. Every commit after them is replayed with a new id.",
+            confirmLabel: "Fixup",
+            repoId: ctx.repoId,
+            oid: commit.sha,
+            upstream: ctx.upstream,
+          }))
+        )
+          return;
         const plan = buildRebasePlan(commits, baseOid, {
           kind: "fixup",
           targetOid: commit.sha,
@@ -646,9 +708,19 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
       onClick: async () => {
         if (!commit?.sha || isMerge || !baseOid) return;
         const target = commit.sha;
+        // The published-commit warning goes in THIS prompt's body rather than a
+        // confirm in front of it: squash already asks a question, and a second
+        // modal stacked over the first cannot be dismissed predictably (see the
+        // queue note in dialog.tsx). Same sentence, one dialog.
+        const ctx = rewriteCtx(commits);
+        const warning = rewriteWarning(
+          ctx.upstream,
+          await isPublished(ctx.repoId, target, ctx.upstream),
+        );
+        const intro = "Message for the combined commit — the parent's, then this one's.";
         const msg = await pgPrompt({
           title: "Squash into parent",
-          body: "Message for the combined commit — the parent's, then this one's.",
+          body: warning ? `${intro}\n\n${warning}` : intro,
           // The parent is the older of the two, so its message leads.
           initialValue: combinedSquashMessage([baseOid, target], byOid(commits)),
           confirmLabel: "Squash",
@@ -665,6 +737,25 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
         const outcome = await runRebasePlanNow(plan);
         if (outcome === "done") pgFlash("squashed into parent");
         else if (outcome === "paused") pgFlash("squash paused — see the Conflicts screen");
+      },
+    },
+    {
+      icon: "trash",
+      // A merge is refused for the same reason fixup and squash refuse one:
+      // buildRebasePlan emits Drop for a merge to mean "flatten this branch",
+      // which is not what a reader clicking "drop this commit" is asking for.
+      label: !onBranch
+        ? "Drop this commit — not on this branch"
+        : isMerge
+          ? "Drop this commit — merge commit"
+          : !baseOid
+            ? "Drop this commit — root commit"
+            : "Drop this commit…",
+      danger: true,
+      disabled: !onBranch || isMerge || !baseOid,
+      onClick: () => {
+        if (!commit?.sha) return;
+        void dropCommit({ oid: commit.sha }, rewriteCtx(commits));
       },
     },
     { divider: true },
@@ -727,6 +818,23 @@ export function commitMenuItems(commit: { sha?: string; subject?: string } | nul
 /** Oid → commit, for the squash prompts' prefilled messages. */
 function byOid(commits: CommitInfo[]): Map<string, CommitInfo> {
   return new Map(commits.map((c) => [c.oid, c]));
+}
+
+/**
+ * The store reads the rewrite flows need, gathered at menu-BUILD time.
+ *
+ * Synchronous, which is all menu building may be — it runs on every right-click.
+ * The one asynchronous thing a rewrite needs, the published-commit check, is
+ * made by the flow inside `onClick`.
+ */
+function rewriteCtx(commits: CommitInfo[]): RewriteCtx {
+  const s = useRepoStore.getState();
+  return {
+    commits,
+    repoId: s.current?.id ?? "",
+    upstream: currentBranch(s.branches)?.upstream ?? null,
+    headOid: s.headInfo?.headOid ?? null,
+  };
 }
 
 /**

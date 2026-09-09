@@ -264,6 +264,16 @@ impl GitBackend for CliBackend {
         Err(AppError::NotImplemented)
     }
 
+    fn amend_head_message(
+        &self,
+        _repo_id: &RepoId,
+        _expected_oid: &str,
+        _message: &str,
+        _no_verify: bool,
+    ) -> AppResult<CommitResult> {
+        Err(AppError::NotImplemented)
+    }
+
     fn commit_template(
         &self,
         _repo_id: &RepoId,
