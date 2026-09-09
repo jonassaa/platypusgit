@@ -1,178 +1,126 @@
 import React from "react";
-import { PGButton, PGButtonGroup, PGIcon, PGInput, pgFlash } from "@/design";
+
 import {
-  applyTheme,
+  PGButton,
+  PGButtonGroup,
+  PGIcon,
+  PGInput,
+  PGModal,
+  PGSelect,
+  pgConfirm,
+  pgFlash,
+} from "@/design";
+import {
+  BUILTIN_THEMES,
   useSettingsStore,
   type ThemeColors,
-  type ThemeDef,
 } from "@/features/settings/useSettingsStore";
-
-import { exportThemeDraftToFile } from "@/features/settings/themeFiles";
+import {
+  exportThemeDraftToFile,
+  readThemeFromFile,
+} from "@/features/settings/themeFiles";
 import { appErrorMessage } from "@/lib/errors";
 
-import { ColorEditor } from "./ColorEditor";
+import { ColorEditor, ColorField } from "./ColorEditor";
+import { CONTRAST_PAIRS, contrastRatio, contrastReport } from "./contrast";
+import { ThemePreview } from "./ThemePreview";
+import { useThemeEditorStore } from "./useThemeEditorStore";
 
-export function ThemeEditorDialog({
-  mode,
-  sourceTheme,
-  onClose,
-}: {
-  mode: "new" | "edit";
-  sourceTheme: ThemeDef;
-  onClose: () => void;
-}) {
-  const [name, setName] = React.useState(
-    mode === "new" ? `${sourceTheme.name} (custom)` : sourceTheme.name,
+/**
+ * The theme editor.
+ *
+ * Takes no props: it reads `useThemeEditorStore` for its open state, so the
+ * Appearance page mounts it unconditionally and `app.closeOverlay` can close it
+ * (see the store's own comment for why that matters). There is deliberately no
+ * local Escape listener — `design/modal.tsx` documents that a component-local
+ * capture-phase handler is the anti-pattern #47 was fixed to avoid.
+ *
+ * Two columns: controls, and a preview of the real UI. Live-apply to `:root`
+ * stays — seeing the actual window change is worth keeping — but it is no
+ * longer the ONLY feedback, which is what made a dimmed, 90%-obscured window
+ * the judge of a palette.
+ */
+export function ThemeEditorDialog() {
+  const ed = useThemeEditorStore();
+  const customThemes = useSettingsStore((s) => s.customThemes);
+  const [showAll, setShowAll] = React.useState(false);
+
+  if (!ed.open) return null;
+
+  const isNew = ed.open.mode === "new";
+  const source = ed.open.sourceTheme;
+  const findings = contrastReport(ed.colors);
+
+  /** Every theme the guided start can begin from. */
+  const baseOptions = [
+    ...BUILTIN_THEMES.map((t) => ({ value: t.id, label: t.name })),
+    ...customThemes.map((t) => ({ value: t.id, label: `★ ${t.name}` })),
+  ];
+
+  /** True while the draft still holds exactly the colours it opened with. */
+  const untouched = (Object.keys(ed.colors) as (keyof ThemeColors)[]).every(
+    (k) => ed.colors[k] === source.colors[k],
   );
-  const [themeMode, setThemeMode] = React.useState<"dark" | "light">(sourceTheme.mode);
-  const [colors, setColors] = React.useState<ThemeColors>({ ...sourceTheme.colors });
 
-  // Capture the theme that was active on open, so Cancel can restore it.
-  const originalActiveRef = React.useRef<ThemeDef | null>(null);
-  if (originalActiveRef.current === null) {
-    originalActiveRef.current = useSettingsStore.getState().getActiveTheme();
-  }
-
-  // Live preview: apply draft to CSS vars whenever it changes.
-  React.useEffect(() => {
-    applyTheme({
-      id: "__draft__",
-      name,
-      mode: themeMode,
-      colors,
-    });
-  }, [name, themeMode, colors]);
-
-  // Close on Escape.
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleCancel();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleCancel = () => {
-    // Restore the theme that was active before the dialog opened.
-    const orig = originalActiveRef.current;
-    if (orig) applyTheme(orig);
-    onClose();
-  };
-
-  const handleSave = () => {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      pgFlash("Theme name can't be empty");
+  const onModeChange = async (next: "dark" | "light") => {
+    if (next === ed.themeMode) return;
+    const rebaseTo = BUILTIN_THEMES.find((t) => t.mode === next)!;
+    // Nothing to lose while the draft is still the source's own palette, so
+    // re-base without asking.
+    if (untouched) {
+      ed.applyBase(rebaseTo.id, ed.colors.accent);
       return;
     }
-    const store = useSettingsStore.getState();
-    if (mode === "new") {
-      // Create a new custom theme, make it active.
-      // First switch to source so saveAsNewTheme copies right colors — but we
-      // have our own draft, so inject directly.
-      const created = store.saveAsNewTheme(trimmed);
-      // Overwrite its colors/mode with the draft.
-      useSettingsStore.setState((st) => ({
-        customThemes: st.customThemes.map((t) =>
-          t.id === created.id
-            ? { ...t, name: trimmed, mode: themeMode, colors: { ...colors } }
-            : t,
-        ),
-      }));
-      // Through the store, not just `setState`: the draft's dark/light toggle
-      // may have flipped the mode the duplicate inherited, and in "follow the
-      // system" mode that decides WHICH half of the pairing this theme is.
-      useSettingsStore.getState().setActiveThemeId(created.id);
-      // Re-apply so the saved version is what's showing.
-      applyTheme({
-        ...created,
-        name: trimmed,
-        mode: themeMode,
-        colors,
-      });
-      pgFlash(`Saved "${trimmed}"`);
-    } else {
-      // Edit existing custom theme.
-      useSettingsStore.setState((st) => ({
-        customThemes: st.customThemes.map((t) =>
-          t.id === sourceTheme.id
-            ? { ...t, name: trimmed, mode: themeMode, colors: { ...colors } }
-            : t,
-        ),
-      }));
-      useSettingsStore.getState().setActiveThemeId(sourceTheme.id);
-      applyTheme({
-        ...sourceTheme,
-        name: trimmed,
-        mode: themeMode,
-        colors,
-      });
-      pgFlash(`Saved "${trimmed}"`);
-    }
-    onClose();
+    const rebase = await pgConfirm({
+      title: `Re-base the colours for ${next} mode?`,
+      body: `${
+        next === "light" ? "Dark greys under a light calibration" : "Light greys under a dark calibration"
+      } are unreadable. Re-basing keeps your accent and takes the rest from the built-in ${next} theme. Your edits to the other colours are lost.`,
+      confirmLabel: "Re-base colours",
+      cancelLabel: "Keep my colours",
+    });
+    if (rebase) ed.applyBase(rebaseTo.id, ed.colors.accent);
+    else ed.setThemeMode(next);
   };
 
-  /** Write the UNSAVED draft to a file the user picks. */
-  const handleExportDraft = async () => {
+  const onExport = async () => {
     try {
-      const path = await exportThemeDraftToFile({ name, mode: themeMode, colors });
+      const path = await exportThemeDraftToFile({
+        name: ed.name,
+        mode: ed.themeMode,
+        colors: ed.colors,
+      });
       if (path) pgFlash(`Exported to ${path}`);
     } catch (err) {
       pgFlash(`Export failed: ${appErrorMessage(err)}`);
     }
   };
 
-  const handleResetColors = () => {
-    setColors({ ...sourceTheme.colors });
-    setThemeMode(sourceTheme.mode);
+  const onImport = async () => {
+    try {
+      const theme = await readThemeFromFile();
+      if (!theme) return;
+      ed.setColors(theme.colors);
+      ed.setThemeMode(theme.mode);
+      pgFlash(`Loaded “${theme.name}” into this draft`);
+    } catch (err) {
+      pgFlash(`Import failed: ${appErrorMessage(err)}`);
+    }
   };
 
-  const patch = (p: Partial<ThemeColors>) =>
-    setColors((c) => ({ ...c, ...p }));
+  const onSave = () => {
+    const saved = ed.save();
+    if (!saved) {
+      pgFlash("Theme name can't be empty");
+      return;
+    }
+    pgFlash(`Saved “${saved.name}”`);
+  };
 
   return (
-    <div
-      onClick={handleCancel}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.55)",
-        backdropFilter: "blur(2px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 100,
-        padding: 24,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={mode === "new" ? "New custom theme" : "Edit custom theme"}
-        style={{
-          width: "min(860px, 100%)",
-          maxHeight: "100%",
-          display: "flex",
-          flexDirection: "column",
-          background: "var(--bg-1)",
-          border: "1px solid var(--border-1)",
-          borderRadius: "var(--r-5)",
-          boxShadow: "var(--shadow-3)",
-          overflow: "hidden",
-        }}
-      >
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "12px 16px",
-            borderBottom: "1px solid var(--border-0)",
-            background: "var(--bg-2)",
-          }}
-        >
+    <PGModal onCancel={ed.close} width={920}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <header style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <PGIcon name="edit" size={14} style={{ color: "var(--accent)" }} />
           <div
             style={{
@@ -184,106 +132,248 @@ export function ThemeEditorDialog({
               fontWeight: 600,
             }}
           >
-            {mode === "new" ? "New custom theme" : "Edit custom theme"}
+            {isNew ? "New custom theme" : "Edit custom theme"}
           </div>
           <div style={{ flex: 1 }} />
-          <PGButton size="sm" variant="ghost" onClick={handleResetColors}>
+          <PGButton size="sm" variant="ghost" onClick={ed.revert}>
             Revert changes
           </PGButton>
         </header>
 
-        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border-0)" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(320px, 1fr) minmax(300px, 1fr)",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          {/* ── Controls ─────────────────────────────────────────────────── */}
           <div
             style={{
               display: "flex",
-              gap: 12,
-              alignItems: "center",
-              flexWrap: "wrap",
+              flexDirection: "column",
+              gap: 10,
+              maxHeight: "62vh",
+              overflow: "auto",
             }}
           >
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                flex: 1,
-                minWidth: 240,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: "var(--fs-12)",
-                  color: "var(--fg-2)",
-                  width: 48,
-                  flexShrink: 0,
-                }}
-              >
-                Name
-              </span>
+            <Field label="Name">
               <PGInput
-                value={name}
-                onChange={setName}
+                value={ed.name}
+                onChange={ed.setName}
                 placeholder="My cool theme"
                 style={{ flex: 1 }}
               />
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
-                Mode
-              </span>
+            </Field>
+
+            <Field label="Mode">
               <PGButtonGroup
                 size="sm"
-                value={themeMode}
-                onChange={(v) => setThemeMode(v as "dark" | "light")}
+                value={ed.themeMode}
+                onChange={(v) => void onModeChange(v as "dark" | "light")}
                 options={[
                   { value: "dark", label: "Dark" },
                   { value: "light", label: "Light" },
                 ]}
               />
+            </Field>
+
+            <Field label="Start from">
+              <PGSelect
+                data-testid="theme-editor-base"
+                title="Take the palette from another theme"
+                value={ed.baseId}
+                onChange={(v) => ed.applyBase(v, ed.colors.accent)}
+                options={baseOptions}
+                size="sm"
+                style={{ flex: 1 }}
+              />
+            </Field>
+
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <span style={{ width: 76, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <ColorField
+                  label="Accent"
+                  hint="Primary actions, active tabs, focus rings. Everything else comes from the base."
+                  value={ed.colors.accent}
+                  onChange={(v) => ed.applyBase(ed.baseId, v)}
+                  badge={<RatioBadge a="accentInk" b="accent" colors={ed.colors} />}
+                />
+                <div
+                  style={{
+                    marginTop: 4,
+                    fontSize: "var(--fs-11)",
+                    color: "var(--fg-3)",
+                  }}
+                >
+                  Takes the palette from another theme and keeps your accent — the
+                  button text is recalculated so it stays readable.
+                </div>
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                background: "transparent",
+                border: "none",
+                padding: "6px 0",
+                cursor: "pointer",
+                color: "var(--fg-1)",
+                fontSize: "var(--fs-12)",
+                textAlign: "left",
+              }}
+              aria-expanded={showAll}
+            >
+              <PGIcon name={showAll ? "chevronDown" : "chevronRight"} size={12} />
+              All colours (18)
+            </button>
+
+            {showAll && (
+              <div style={{ margin: "0 -16px" }}>
+                <ColorEditor
+                  colors={ed.colors}
+                  onPatch={ed.patchColors}
+                  badgeFor={(key) => {
+                    const pair = CONTRAST_PAIRS.find((p) => p.a === key);
+                    return pair ? (
+                      <RatioBadge a={pair.a} b={pair.b} colors={ed.colors} />
+                    ) : null;
+                  }}
+                />
+              </div>
+            )}
           </div>
-          <div
-            style={{
-              marginTop: 6,
-              fontSize: "var(--fs-11)",
-              color: "var(--fg-3)",
-            }}
-          >
-            Changes preview live. Cancel to discard, Save to keep.
+
+          {/* ── Preview ──────────────────────────────────────────────────── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <ThemePreview
+              theme={{ name: ed.name, mode: ed.themeMode, colors: ed.colors }}
+              size="pane"
+            />
+            {findings.length > 0 && (
+              <div
+                data-testid="theme-contrast-warnings"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  padding: "8px 10px",
+                  border: "1px solid var(--border-0)",
+                  borderRadius: "var(--r-3)",
+                  background: "var(--bg-1)",
+                }}
+              >
+                {findings.map((f) => (
+                  <div
+                    key={`${f.a}-${f.b}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontSize: "var(--fs-11)",
+                      color:
+                        f.level === "bad" ? "var(--git-removed)" : "var(--git-modified)",
+                    }}
+                  >
+                    <PGIcon name="warn" size={12} />
+                    <span style={{ flex: 1, minWidth: 0 }}>{f.what}</span>
+                    <span style={{ fontFamily: "var(--font-mono)" }}>
+                      {f.ratio.toFixed(1)}:1
+                    </span>
+                  </div>
+                ))}
+                <div style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
+                  Below the 4.5:1 readability guideline. Saving is still up to you.
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-          <ColorEditor colors={colors} onPatch={patch} />
-        </div>
-
-        <footer
-          style={{
-            padding: "10px 16px",
-            borderTop: "1px solid var(--border-0)",
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            background: "var(--bg-2)",
-          }}
-        >
-          <PGButton
-            size="sm"
-            variant="default"
-            icon="download"
-            onClick={() => void handleExportDraft()}
-          >
+        <footer style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <PGButton size="sm" icon="download" onClick={() => void onExport()}>
             Export draft…
           </PGButton>
+          <PGButton size="sm" icon="upload" onClick={() => void onImport()}>
+            Import into draft…
+          </PGButton>
           <div style={{ flex: 1 }} />
-          <PGButton size="sm" variant="ghost" onClick={handleCancel}>
+          <PGButton size="sm" variant="ghost" onClick={ed.close}>
             Cancel
           </PGButton>
-          <PGButton size="sm" variant="primary" icon="check" onClick={handleSave}>
-            {mode === "new" ? "Create theme" : "Save changes"}
+          <PGButton size="sm" variant="primary" icon="check" onClick={onSave}>
+            {isNew ? "Create theme" : "Save changes"}
           </PGButton>
         </footer>
       </div>
+    </PGModal>
+  );
+}
+
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <label
+        htmlFor={htmlFor}
+        style={{
+          fontSize: "var(--fs-12)",
+          color: "var(--fg-2)",
+          width: 76,
+          flexShrink: 0,
+        }}
+      >
+        {label}
+      </label>
+      {children}
     </div>
+  );
+}
+
+/**
+ * The measured ratio, beside the colour it belongs to.
+ *
+ * The summary under the preview says what is wrong; this says it where the
+ * colour is actually edited, so a fix does not require scrolling back.
+ */
+function RatioBadge({
+  a,
+  b,
+  colors,
+}: {
+  a: keyof ThemeColors;
+  b: keyof ThemeColors;
+  colors: ThemeColors;
+}) {
+  const ratio = contrastRatio(colors[a] ?? "", colors[b] ?? "");
+  if (!Number.isFinite(ratio)) return null;
+  const bad = ratio < 3;
+  const low = ratio < 4.5;
+  return (
+    <span
+      title={`Contrast against the paired colour: ${ratio.toFixed(2)}:1`}
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--fs-10)",
+        color: bad ? "var(--git-removed)" : low ? "var(--git-modified)" : "var(--fg-3)",
+        flexShrink: 0,
+      }}
+    >
+      {ratio.toFixed(1)}:1
+    </span>
   );
 }

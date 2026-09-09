@@ -13,12 +13,12 @@ import {
   ZOOM_MAX,
   ZOOM_MIN,
   useSettingsStore,
-  type ThemeDef,
   type ThemeFollowMode,
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { SettingsCard, SettingsRow } from "@/features/settings/layout/SettingsCard";
 import { ThemeEditorDialog } from "@/features/settings/theme/ThemeEditorDialog";
+import { useThemeEditorStore } from "@/features/settings/theme/useThemeEditorStore";
 import {
   exportThemeToFile,
   importThemeFromFile,
@@ -65,10 +65,6 @@ export function AppearancePage() {
   const s = useSettingsStore();
   const active = s.getActiveTheme();
   const isBuiltin = !!active.builtin;
-
-  const [editor, setEditor] = React.useState<
-    { kind: "new"; source: ThemeDef } | { kind: "edit"; id: string } | null
-  >(null);
 
   const themeOptions = React.useMemo(() => {
     const builtins = BUILTIN_THEMES.map((t) => ({
@@ -228,7 +224,7 @@ export function AppearancePage() {
             size="sm"
             variant="primary"
             icon="edit"
-            onClick={() => setEditor({ kind: "edit", id: active.id })}
+            onClick={() => useThemeEditorStore.getState().openEdit(active)}
           >
             Edit custom theme…
           </PGButton>
@@ -237,7 +233,7 @@ export function AppearancePage() {
           size="sm"
           variant={isBuiltin ? "primary" : "default"}
           icon="plus"
-          onClick={() => setEditor({ kind: "new", source: active })}
+          onClick={() => useThemeEditorStore.getState().openNew(active)}
           title="Create a new custom theme starting from the active one"
         >
           New custom theme…
@@ -373,17 +369,10 @@ export function AppearancePage() {
         }
       />
 
-      {editor && (
-        <ThemeEditorDialog
-          mode={editor.kind}
-          sourceTheme={
-            editor.kind === "new"
-              ? editor.source
-              : (s.customThemes.find((t) => t.id === editor.id) ?? active)
-          }
-          onClose={() => setEditor(null)}
-        />
-      )}
+      {/* Mounted unconditionally: the editor reads its own open state from
+          `useThemeEditorStore`, which is what lets `app.closeOverlay` close it
+          and restore the pre-draft theme. */}
+      <ThemeEditorDialog />
     </SettingsCard>
   );
 }
