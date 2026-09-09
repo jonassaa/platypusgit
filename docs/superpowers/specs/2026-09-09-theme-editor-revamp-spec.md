@@ -209,6 +209,24 @@ props. What changes:
   `modal.tsx` documents that a component-local capture-phase Escape listener is
   precisely the anti-pattern issue #47 was fixed to avoid. Escape routes through
   `app.closeOverlay`, like every other dialog.
+- **The draft moves into a store** — `features/settings/theme/useThemeEditorStore.ts`,
+  holding `{ mode, sourceTheme, name, themeMode, colors, originalTheme }`.
+  Two reasons, and the first is not cosmetic:
+  - `app.closeOverlay`'s chain in `features/keymap/actions.ts` reads *stores*
+    (`useCreateStore`, `useCreateTagStore`, `useReportStore`), because a
+    registered per-component handler runs **before** the default runner and
+    would take Escape ahead of the credential prompt. Local React state cannot
+    join that chain, which is why the editor grew the local listener it should
+    not have had.
+  - **Closing must restore.** `close()` re-applies `originalTheme`, so Escape,
+    the backdrop click and Cancel are one path. An Escape that only unmounted
+    the dialog would leave the abandoned draft painted on the app — the bug the
+    current `handleCancel` avoids only because it owns the keystroke itself.
+
+  The editor's branch goes after `useReportStore`'s and before
+  `useUpdateStore`'s: same `PGModal` base layer as the other dialogs, still
+  below the credential prompt's `nested` layer. `actions.test.ts` gets a case
+  pinning that order, the way #212's does.
 - **Two columns.** Controls left, `ThemePreview size="pane"` right, contrast
   warnings under the preview. Live-apply to `:root` stays — seeing the real
   window change is worth keeping, and Cancel still restores the theme captured
