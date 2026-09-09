@@ -491,6 +491,8 @@ pub fn run() {
             commands::ssh::ssh_key_generate,
             commands::update::check_for_update,
             commands::update::get_update_capability,
+            commands::userfile::read_user_file,
+            commands::userfile::write_user_file,
             commands::custom_action::run_custom_action,
             commands::windows::register_window_repos,
             commands::windows::next_window_label,
