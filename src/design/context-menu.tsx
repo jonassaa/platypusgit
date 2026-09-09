@@ -277,6 +277,19 @@ export function PGContextMenu({
     padding: "4px 0",
     minWidth: 220,
     maxWidth: 320,
+    // A menu can be taller than the window — the commit menu is ~734px at its
+    // MINIMUM (31 items, one branch at the commit, no custom actions). Without
+    // these two the correction below degenerates: `vh - r.height - 4` goes
+    // negative, `Math.max` pins the menu at `top: 4`, and everything past the
+    // bottom edge is unreachable with no scrollbar and no keyboard route.
+    //
+    // Bounding the height is also what keeps that correction honest —
+    // `r.height` can no longer exceed the viewport, so the flip always lands at
+    // a non-negative top. Unconditional on purpose: a threshold would work for
+    // whichever menu it was tuned against and quietly fail for the next one to
+    // grow.
+    maxHeight: "calc(100vh - 8px)",
+    overflowY: "auto",
     fontFamily: "var(--font-sans)",
     fontSize: "var(--fs-12)",
     color: "var(--fg-0)",

@@ -2075,6 +2075,37 @@ one word (`locked`) with the variable text as a sibling span, `flexShrink: 0`
 on the badge. Screens that are all-path (`Worktrees`) skip the centred
 `maxWidth: 1100` column — the cap ate exactly the width the paths needed.
 
+### A context menu is height-bounded, and that is what keeps it reachable
+
+`menuStyle` carries `maxHeight: calc(100vh - 8px)` + `overflowY: auto`, and both
+are **unconditional**. Without them the off-screen correction degenerates:
+
+```ts
+if (y + r.height + 4 > vh) ny = Math.max(4, vh - r.height - 4);
+```
+
+For a menu taller than the window, `vh - r.height - 4` is negative, `Math.max`
+pins it at `top: 4`, and everything past the bottom edge is **unreachable** —
+no scrollbar, no keyboard route. Bounding the height is also what makes that
+correction honest, because `r.height` can then never exceed the viewport.
+
+This is not hypothetical: the commit menu measures **31 items / 24 rows /
+~734px at its MINIMUM** — one branch at the commit, no custom actions, no tags.
+`checkoutBranchItems` grows with every branch pointing at the commit and
+`customActionItems` with every user-defined command, so the real ceiling is
+open-ended, and the last entry (*View in browser*) is the first thing lost.
+
+Two things follow for anyone adding menu entries:
+
+- **A submenu inherits the bound for free**, because `PGContextMenu` renders
+  submenus by recursing into itself (see below). The *Check out branch* submenu
+  is the one that grows without limit.
+- **Do not make the bound conditional on item count.** A threshold works for
+  whichever menu it was tuned against and silently fails for the next one to
+  grow. `context-menu.overflow.test.tsx` asserts it applies to a 3-item menu as
+  well as a 60-item one, and jsdom does no layout — so those assertions are on
+  the style contract, which is the layer a regression would land in.
+
 ### A submenu is its own portal, and dismissal is a PRESS (#422)
 
 `PGContextMenu` renders each submenu by recursing into itself, and every
