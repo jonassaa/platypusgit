@@ -13,20 +13,32 @@
 // with no test failing and nothing in the diff that looks like a security
 // change. That is the exact failure this file exists to make loud.
 //
-// It guards two things, because the block surviving is not the same as the fix
-// surviving:
+// It guards three things, because the block surviving is not the same as the
+// fix surviving:
 //
-//   1. every security override key is still present in `package.json`, and
+//   1. every security override key is still present in `package.json`,
 //   2. no version actually resolved in `pnpm-lock.yaml` is below the advisory's
 //      first patched version — which also catches a block that was kept but a
-//      lockfile that was never regenerated against it.
+//      lockfile that was never regenerated against it, and
+//   3. `extract-zip` resolves NOWHERE in the lockfile, which is the one fix
+//      here that a floor cannot express (see below).
 //
 // If this test fails, do NOT delete the entry to make it pass. Restore the
 // block (`git show origin/main:package.json`), re-run `pnpm install`, and check
-// the lockfile diff. The reasoning behind each entry, and the one advisory
-// deliberately left open (`extract-zip`, which has no patched version at all),
-// are in `docs/dev/testing.md`; the one shipped advisory we cannot fix
-// (`glib`) is in `docs/dev/distribution.md`.
+// the lockfile diff. The reasoning behind each entry is in
+// `docs/dev/testing.md`; the one shipped advisory we cannot fix (`glib`) is in
+// `docs/dev/distribution.md`.
+//
+// One entry is guarded by ABSENCE rather than by a floor, because a floor
+// cannot express it: `extract-zip` is unmaintained and has **no patched
+// version at all** (latest is 2.0.1, from 2023), so there is no number to sit
+// above. GHSA-7pqw-9j4j-h8q3 is fixed here by deleting the package from the
+// tree instead — `@puppeteer/browsers` 3.x dropped the dependency, so the
+// override forces that major and the whole subtree leaves. That is why the
+// third `describe` below asserts `extract-zip` resolves NOWHERE. A floor entry
+// would have been worse than nothing: it is keyed by major, so a dropped
+// override that let 2.13.2 back in would pass a `@puppeteer/browsers` 3.x
+// floor vacuously and re-open the advisory in silence.
 //
 // One entry in `FLOORS` has NO matching override key, on purpose: `esbuild`.
 // `vite` 7.3.6 widened its range to `^0.27.0 || ^0.28.0`, which deduped the
@@ -70,6 +82,11 @@ const FLOORS: Array<{
   { name: "esbuild", major: 0, min: "0.28.1", why: "GHSA-g7r4-m6w7-qqqr — dev-server arbitrary file read; deduped out by vite >= 7.3.6, not by an override" },
   { name: "fast-xml-parser", major: 5, min: "5.10.1", why: "GHSA-8r6m-32jq-jx6q — DOCTYPE resets entity expansion limits" },
   { name: "form-data", major: 4, min: "4.0.6", why: "GHSA-hmw2-7cc7-3qxx — CRLF injection in multipart field names" },
+  // Currently resolves NOWHERE, so this floor passes vacuously: `ip-address`
+  // reached the tree through `proxy-agent` <- `@puppeteer/browsers` 2.x, and
+  // the @puppeteer/browsers override took that subtree out. Kept anyway: the
+  // override key and this floor cost nothing while the package is absent, and
+  // they are what catches it arriving again by some other route.
   { name: "ip-address", major: 10, min: "10.3.1", why: "GHSA-mwp4-54f8-5fhr — leading-zero octets decoded as decimal, SSRF bypass" },
   { name: "js-yaml", major: 4, min: "4.3.1", why: "GHSA-5p4m-2wfm-xmqj — quadratic CPU in !!omap resolution" },
   { name: "serialize-javascript", major: 7, min: "7.0.5", why: "GHSA-5c6j-r48x-rmvq + GHSA-qj8w-gfj5-8c6v — RCE and CPU-exhaustion DoS" },
@@ -86,6 +103,10 @@ const FLOORS: Array<{
  *  — so the selector is not cosmetic and the key shape is part of the fix. */
 const REQUIRED_KEYS = [
   "@babel/core",
+  // Not a floor entry — see the absence guard below. This key is what forces
+  // `@puppeteer/browsers` across a major (`@wdio/utils` asks for `^2.2.0`),
+  // which is the only way `extract-zip` leaves the tree.
+  "@puppeteer/browsers",
   "brace-expansion@1",
   "brace-expansion@2",
   "browserslist",
@@ -152,25 +173,28 @@ describe("the pnpm.overrides security block survives (#346)", () => {
   });
 });
 
+const lock = read("pnpm-lock.yaml");
+
+/** Every version of `name` that the lockfile actually resolves. Reads the
+ *  `packages:`/`snapshots:` keys, which are the resolved versions — not the
+ *  requested ranges, which is what makes this an assertion about what gets
+ *  installed rather than about what someone asked for.
+ *
+ *  The full `major.minor.patch` shape is required, not a bare leading digit:
+ *  the lockfile also records the override table itself, where our own
+ *  `undici@6` / `brace-expansion@1` SELECTOR keys sit at the same
+ *  indentation. A looser pattern reads those selectors as versions and the
+ *  floor check then fails against "6".
+ *
+ *  Module scope on purpose: the floor check and the `extract-zip` absence
+ *  check below both need it, and two copies of this regex would drift. */
+function resolved(name: string): string[] {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^ {2}'?${escaped}@(\\d+\\.\\d+\\.\\d+[^:'(]*)`, "gm");
+  return [...lock.matchAll(re)].map((m) => m[1].trim());
+}
+
 describe("no resolved version sits below its advisory floor (#346)", () => {
-  const lock = read("pnpm-lock.yaml");
-
-  /** Every version of `name` that the lockfile actually resolves. Reads the
-   *  `packages:`/`snapshots:` keys, which are the resolved versions — not the
-   *  requested ranges, which is what makes this an assertion about what gets
-   *  installed rather than about what someone asked for.
-   *
-   *  The full `major.minor.patch` shape is required, not a bare leading digit:
-   *  the lockfile also records the override table itself, where our own
-   *  `undici@6` / `brace-expansion@1` SELECTOR keys sit at the same
-   *  indentation. A looser pattern reads those selectors as versions and the
-   *  floor check then fails against "6". */
-  function resolved(name: string): string[] {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`^ {2}'?${escaped}@(\\d+\\.\\d+\\.\\d+[^:'(]*)`, "gm");
-    return [...lock.matchAll(re)].map((m) => m[1].trim());
-  }
-
   it("finds the lockfile it is meant to be reading", () => {
     // Cheap canary: if the lockfile format changes shape, `resolved()` starts
     // returning [] for everything and every assertion below passes vacuously.
@@ -195,4 +219,49 @@ describe("no resolved version sits below its advisory floor (#346)", () => {
       ).toEqual([]);
     });
   }
+});
+
+describe("the extract-zip subtree stays pruned (#346)", () => {
+  // GHSA-7pqw-9j4j-h8q3 (high, CWE-22: an archive entry that is a symlink out
+  // of the destination, followed by a regular file of the same name, writes
+  // through the planted symlink) plus GHSA-jmr9-qjv8-65gv. `extract-zip` is
+  // unmaintained — 2.0.1 is the latest and the fix upstream (PR 160) was never
+  // released — so there is no version to bump or floor to. It arrived via
+  // `@puppeteer/browsers` <- `@wdio/utils`: a Chrome/Edge downloader this repo
+  // never invokes, because `e2e/wdio.conf.ts` sets `browserName: "tauri"`.
+  //
+  // `@puppeteer/browsers` 3.x dropped `extract-zip` outright, so the override
+  // deletes the package instead of patching it. Absence is the only assertable
+  // form of this fix, and it is strictly stronger than a floor: it fails for
+  // ANY route back into the tree, not just the one we know about.
+
+  it("resolves no extract-zip at all", () => {
+    expect(
+      resolved("extract-zip"),
+      `extract-zip is back in the lockfile. It has NO patched version, so ` +
+        `there is nothing to bump to — the fix is that it is absent. Either ` +
+        `pnpm.overrides["@puppeteer/browsers"] was dropped (restore it from ` +
+        `origin/main and re-run pnpm install), or something new pulls ` +
+        `extract-zip in and needs its own override. See docs/dev/testing.md.`,
+    ).toEqual([]);
+  });
+
+  it("resolves @puppeteer/browsers on 3.x or later", () => {
+    // The mechanism behind the assertion above, checked separately so a
+    // dropped override reads as "the override is gone" rather than leaving the
+    // absence failure to be diagnosed from scratch. `@wdio/utils` asks for
+    // `^2.2.0`, so without the override pnpm resolves 2.x and extract-zip
+    // returns.
+    const versions = resolved("@puppeteer/browsers");
+
+    expect(versions.length, "no @puppeteer/browsers in the lockfile at all — if the e2e runner no longer depends on it, delete this describe block and the override key.").toBeGreaterThan(0);
+
+    const stragglers = versions.filter((v) => Number.parseInt(v.split(".")[0], 10) < 3);
+    expect(
+      stragglers,
+      `@puppeteer/browsers@${stragglers.join(", ")} is below 3.x, which is ` +
+        `the major that dropped extract-zip. Restore ` +
+        `pnpm.overrides["@puppeteer/browsers"] and re-run pnpm install.`,
+    ).toEqual([]);
+  });
 });

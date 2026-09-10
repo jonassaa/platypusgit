@@ -349,11 +349,39 @@ Two entries have a story worth recording so they are not re-litigated:
   matching override key** in `test/depOverrides.test.ts`, so a `vite` pin or
   downgrade that re-introduces 0.27.x fails the build instead of silently
   re-opening GHSA-g7r4-m6w7-qqqr.
-- **`extract-zip` has no patched version at all**, and is dismissed as
-  tolerable risk. It arrives via `@puppeteer/browsers` ← `@wdio/utils` — a
-  Chrome/Edge downloader this repo never invokes, because `e2e/wdio.conf.ts`
-  sets `browserName: "tauri"`. Pruning that subtree would take `ip-address`
-  with it; worth measuring, not yet done.
+- **`extract-zip` has no patched version at all**, so it is the one entry fixed
+  by **deletion rather than by a floor** (Dependabot alert 66 — an alert
+  number, not an issue; `#66` is an unrelated PR). 2.0.1 is the latest release,
+  from 2023, and the upstream fix (PR 160) was never published — there is no
+  number to bump or floor to. It arrived via `@puppeteer/browsers` ←
+  `@wdio/utils`, a Chrome/Edge downloader this repo never invokes because
+  `e2e/wdio.conf.ts` sets `browserName: "tauri"`, which is why it sat open as
+  tolerated risk for a while. `@puppeteer/browsers` **3.x dropped the
+  dependency outright**, so `pnpm.overrides` forces that major across
+  `@wdio/utils`'s own `^2.2.0` request and the whole subtree leaves the
+  lockfile. Measured: `pnpm audit` goes from 4 advisories to 2, both remaining
+  ones (`deepmerge-ts`, `smol-toml`) pre-existing and untouched.
+
+  Three things about that override are load-bearing:
+
+  - It is guarded by **absence**, not by a floor —
+    `test/depOverrides.test.ts`'s third `describe` asserts `extract-zip`
+    resolves nowhere. A floor entry would be worse than nothing here: floors
+    are keyed by major, so a dropped override letting 2.13.2 back in would
+    pass a 3.x floor *vacuously* and re-open the advisory in silence.
+  - Pruning took **`ip-address` out with it** (via `proxy-agent`), along with
+    `socks`, the `pac-*` chain, `progress`, `get-stream` and `yauzl`'s old
+    route in. Its override key and floor entry are deliberately **kept**: they
+    cost nothing while the package is absent and are what catches it arriving
+    by another route. Same for the `ip-address` floor now passing vacuously —
+    that is annotated in the test, not silently tolerated.
+  - 3.x is **ESM-only** and wants **Node >= 22.12.0**, and it demotes
+    `proxy-agent` and `yauzl` to *optional* peers. All fine here, and each was
+    checked rather than assumed: the sole consumer (`@wdio/utils`) imports it
+    as ESM with no CJS `require` anywhere in the tree, CI and `Dockerfile.e2e`
+    both track latest Node 22.x, `yauzl` still resolves for the optional peer,
+    and `proxy-agent` going uninstalled only removes proxy support from the
+    downloader this repo never calls.
 
 **The trap:** a Dependabot npm PR regenerates the lockfile and drops the whole
 `pnpm.overrides` block. Restore it before merging any such PR, or the merge
@@ -367,8 +395,8 @@ trace back to an override or to one of its own dependencies — anything else is
 opportunistic drift that does not belong in a security commit.
 
 And because these packages ARE the e2e runner (`ws`, `undici`,
-`serialize-javascript`, `js-yaml`, `fast-xml-parser`), a change here is not
-proven by `pnpm test`. It needs a real Docker e2e run.
+`serialize-javascript`, `js-yaml`, `fast-xml-parser`, `@puppeteer/browsers`), a
+change here is not proven by `pnpm test`. It needs a real Docker e2e run.
 
 ## `test/` at the repo root — doc invariants (#147, #150)
 
