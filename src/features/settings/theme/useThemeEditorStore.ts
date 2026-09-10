@@ -62,6 +62,11 @@ function allThemes(): ThemeDef[] {
   return [...BUILTIN_THEMES, ...useSettingsStore.getState().customThemes];
 }
 
+/** What a new draft is called before the user names it themselves. */
+function autoName(base: { name: string }): string {
+  return `${base.name} (custom)`;
+}
+
 const EMPTY_DRAFT = {
   open: null,
   name: "",
@@ -96,7 +101,7 @@ export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
     openNew(source) {
       set({
         open: { mode: "new", sourceTheme: source },
-        name: `${source.name} (custom)`,
+        name: autoName(source),
         themeMode: source.mode,
         colors: { ...source.colors },
         baseId: source.id,
@@ -148,12 +153,21 @@ export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
     },
 
     applyBase(baseId, accent) {
+      const s = get();
       const base = allThemes().find((t) => t.id === baseId);
       if (!base) return;
+      // A NEW draft is named after the palette it starts from, so re-basing
+      // has to move the name too — otherwise "Add theme" leaves you with a
+      // "Dracula (custom)" built out of Solarized. Only while the name is
+      // still the automatic one: nothing overwrites what the user typed, and
+      // an existing theme being edited already has a name of its own.
+      const from = allThemes().find((t) => t.id === s.baseId);
+      const auto = s.open?.mode === "new" && !!from && s.name === autoName(from);
       set({
         baseId,
         themeMode: base.mode,
         colors: deriveTheme(base, accent ?? base.colors.accent),
+        ...(auto ? { name: autoName(base) } : null),
       });
       preview();
     },
@@ -162,7 +176,7 @@ export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
       const open = get().open;
       if (!open) return;
       set({
-        name: open.mode === "new" ? `${open.sourceTheme.name} (custom)` : open.sourceTheme.name,
+        name: open.mode === "new" ? autoName(open.sourceTheme) : open.sourceTheme.name,
         themeMode: open.sourceTheme.mode,
         colors: { ...open.sourceTheme.colors },
         baseId: open.sourceTheme.id,
