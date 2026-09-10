@@ -69,6 +69,7 @@
     "overrides": {
       "@wdio/native-utils": "2.5.0",
       "@babel/core": "^7.29.6",
+      "@puppeteer/browsers": "^3.2.2",
       "brace-expansion@1": "^1.1.16",
       "brace-expansion@2": "^2.1.2",
       "browserslist": "^4.28.7",
