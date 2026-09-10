@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { normalizeHex } from "@/lib/color";
 import type { PullMode } from "@/lib/tauri";
 import { type DateFormat, isDateFormat } from "@/lib/commitDate";
 import { DATE_COL_W } from "@/design/graph-geometry";
@@ -1009,6 +1010,18 @@ interface PersistedState {
    * why `resolvePageId` guards the read side.
    */
   settingsPage: SettingsPageId;
+  /**
+   * Colours chosen in `PGColorSwatch` recently, newest first, canonical hex.
+   *
+   * Incidental state rather than a setting — there is no control for it, so it
+   * joins no Settings page and `settings.index.test.tsx` has nothing to check.
+   * Array-valued, so the scalar type-guard in `coerceSettings` reads it as
+   * `"object"` and never looks inside: it gets its own normalizer, the same
+   * call `customThemes` and `headMarks` made.
+   *
+   * NOT portable — see NON_PORTABLE_KEYS.
+   */
+  recentColors: string[];
 }
 
 export interface SettingsState extends PersistedState {
@@ -1040,6 +1053,15 @@ export interface SettingsState extends PersistedState {
    * in `main.tsx`; exported so a test can flip the OS without one.
    */
   syncSystemAppearance: (appearance: Appearance) => void;
+  /**
+   * Remember a colour the user settled on, newest first, de-duplicated and
+   * capped at [`RECENT_COLORS_MAX`].
+   *
+   * Called on COMMIT — when a picker closes on a colour that was kept — never
+   * on every frame of a drag, or the list would be ten neighbouring shades of
+   * the same blue.
+   */
+  pushRecentColor: (hex: string) => void;
   updateActiveColors: (patch: Partial<ThemeColors>) => void;
   saveAsNewTheme: (name: string) => ThemeDef;
   renameTheme: (id: string, name: string) => void;
@@ -1098,6 +1120,7 @@ const DEFAULTS: PersistedState = {
   updateChannel: "stable",
   lastCreateDir: "",
   settingsPage: FIRST_PAGE,
+  recentColors: [],
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1169,6 +1192,14 @@ export const NON_PORTABLE_KEYS: readonly (keyof PersistedState)[] = [
    * colleague's Settings to an unrelated page on their next visit.
    */
   "settingsPage",
+  /**
+   * Recently picked colours. Denied for the same reason as `settingsPage`: it
+   * is one person's history, not a description of how the app should behave,
+   * and importing it would replace a colleague's own list with colours they
+   * have never used. The custom THEMES those colours went into are portable —
+   * that is the finished artefact, and this is the scratch pad.
+   */
+  "recentColors",
 ];
 
 /** `DEFAULTS`' keys minus the deny-list — exactly what an export carries. */
@@ -1326,6 +1357,32 @@ function normalizeCustomThemes(value: unknown, fallback: ThemeDef[]): ThemeDef[]
  * `BUILTIN_THEMES[0]`), so the worst case is the theme the person already had
  * rather than an app with no theme at all.
  */
+/** How many colours the picker's Recent row remembers. */
+export const RECENT_COLORS_MAX = 10;
+
+/**
+ * A stored `recentColors` into something the picker can render.
+ *
+ * Lenient in the same direction `normalizeCustomThemes` chose: an unusable
+ * entry costs only itself, because the alternative — dropping the list on one
+ * bad element — throws away nine good colours to punish a tenth. Every survivor
+ * goes through `normalizeHex`, so the list the picker compares against the
+ * current value is canonical and one colour can never appear twice under two
+ * spellings.
+ */
+function normalizeRecentColors(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const hex = normalizeHex(entry);
+    if (!hex || out.includes(hex)) continue;
+    out.push(hex);
+    if (out.length === RECENT_COLORS_MAX) break;
+  }
+  return out;
+}
+
 function normalizeThemePreference(value: unknown): ThemePreference {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...DEFAULT_THEME_PREFERENCE };
@@ -1505,6 +1562,10 @@ function coerceSettings(
   // action saved before `surfaces` existed is carried forward as a palette
   // action, which is the only surface it ever had.
   out.customActions = coerceCustomActions(out.customActions) ?? base.customActions;
+
+  // Recently picked colours. Array-valued, so the scalar type-guard above never
+  // looked at them either.
+  out.recentColors = normalizeRecentColors(out.recentColors);
 
   // THEME PREFERENCE (#236). Runs after `customThemes` so both the repair and
   // the seed can see the theme list this payload actually brings.
@@ -1743,6 +1804,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ activeThemeId });
     persist(snapshot(get()));
     applyResolved(get());
+  },
+
+  pushRecentColor(hex) {
+    const norm = normalizeHex(hex);
+    if (!norm) return;
+    const rest = get().recentColors.filter((c) => c !== norm);
+    set({ recentColors: [norm, ...rest].slice(0, RECENT_COLORS_MAX) });
+    persist(snapshot(get()));
   },
 
   updateActiveColors(patch) {

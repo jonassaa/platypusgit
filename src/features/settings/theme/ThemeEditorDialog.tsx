@@ -201,6 +201,12 @@ export function ThemeEditorDialog() {
                   value={ed.colors.accent}
                   onChange={(v) => ed.applyBase(ed.baseId, v)}
                   badge={<RatioBadge a="accentInk" b="accent" colors={ed.colors} />}
+                  // The guided start's one field gets the same picker as the
+                  // eighteen behind the disclosure — a wheel that appeared on
+                  // the collapsed rows but not on the field everybody edits
+                  // would be missing from where it matters most.
+                  palette={ed.colors}
+                  slot="accent"
                 />
                 <div
                   style={{

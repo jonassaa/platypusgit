@@ -119,7 +119,16 @@ const PORTABLE = [
 // `settingsPage` (#settings-nav) says where one person was standing in the
 // side menu, not how the app should behave — the same reasoning as
 // `lastCreateDir`.
-const EXCLUDED = ["lastCreateDir", "identities", "terminalShell", "settingsPage"];
+const EXCLUDED = [
+  "lastCreateDir",
+  "identities",
+  "terminalShell",
+  "settingsPage",
+  // The colour picker's Recent row: one person's history, not a description of
+  // how the app behaves. The custom THEMES those colours went into are
+  // portable — that is the finished artefact, this is the scratch pad.
+  "recentColors",
+];
 
 describe("the exported key set", () => {
   it("is exactly the schema minus the deny-list", async () => {

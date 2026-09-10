@@ -218,3 +218,106 @@ describe("ThemeEditorDialog", () => {
     expect(ed().colors.bg0).not.toBe(dark.colors.bg0);
   });
 });
+
+describe("ThemeEditorDialog — the colour picker", () => {
+  beforeEach(() => {
+    resetDialogs();
+    ed().close();
+    useSettingsStore.getState().reset();
+  });
+
+  const swatchFor = (label: RegExp) =>
+    screen.getByRole("button", { name: label });
+  const picker = () => document.querySelector("[data-pg-colorpicker]");
+
+  it("hands every slot a real picker instead of the host's colour dialog", () => {
+    // The whole point: `<input type="color">` was a hand-off to whatever the
+    // webview felt like showing — an unthemed OS panel on macOS, and on
+    // WebKitGTK a control of exactly the shape that silently does nothing.
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+    expect(document.querySelector('input[type="color"]')).toBeNull();
+    fireEvent.click(swatchFor(/^background · base — #1a1d24/i));
+    expect(picker()).toBeTruthy();
+  });
+
+  it("offers the theme's own palette inside the picker", () => {
+    // "Make the border match the panel" is the most-used move in a theme
+    // editor, and without this it means reading a hex off one row and typing
+    // it into another.
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+    fireEvent.click(swatchFor(/^border · subtle/i));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Background · panel \(#1e222a\)$/ }),
+    );
+    expect(ed().colors.border0).toBe("#1e222a");
+  });
+
+  it("measures a paired slot against its partner while it is being dragged", () => {
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+    fireEvent.click(swatchFor(/^foreground · primary/i));
+    // fg0 against bg0 — the pair CONTRAST_PAIRS names first.
+    expect(screen.getByTestId("colorpicker-contrast")).toBeTruthy();
+  });
+
+  it("measures a BACKGROUND against its text, not only the text against it", () => {
+    // A background is exactly what you drag while watching readability, so the
+    // partner lookup has to read both sides of a pair.
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+    fireEvent.click(swatchFor(/^background · base/i));
+    expect(screen.getByTestId("colorpicker-contrast")).toBeTruthy();
+  });
+
+  it("says nothing about contrast for a slot that is in no pair", () => {
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+    fireEvent.click(swatchFor(/^logo · bill/i));
+    expect(screen.queryByTestId("colorpicker-contrast")).toBeNull();
+  });
+
+  it("remembers a colour once it is settled on, not once per drag frame", async () => {
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+    fireEvent.click(swatchFor(/^accent · on-ink/i));
+    const hex = screen.getByLabelText("Hex");
+    fireEvent.change(hex, { target: { value: "#ff8800" } });
+    fireEvent.keyDown(hex, { key: "Enter" });
+    // Still open, so nothing is remembered yet.
+    expect(useSettingsStore.getState().recentColors).toEqual([]);
+    await new Promise((r) => setTimeout(r, 0));
+    fireEvent.mouseDown(document.body);
+    expect(useSettingsStore.getState().recentColors).toEqual(["#ff8800"]);
+  });
+
+  it("offers those remembered colours back", () => {
+    useSettingsStore.getState().pushRecentColor("#ff8800");
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+    fireEvent.click(swatchFor(/^border · default/i));
+    fireEvent.click(screen.getByRole("button", { name: /^#ff8800$/ }));
+    expect(ed().colors.border1).toBe("#ff8800");
+  });
+
+  it("gives the Accent field the same picker as the eighteen", () => {
+    // The guided start's accent field is a ColorField too, and a picker that
+    // appeared on the collapsed rows but not on the one field everybody edits
+    // would be the feature missing from where it matters most.
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(swatchFor(/^accent — #5aa8e8/i));
+    expect(picker()).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /^Background · panel \(#1e222a\)$/ }),
+    ).toBeTruthy();
+  });
+});
