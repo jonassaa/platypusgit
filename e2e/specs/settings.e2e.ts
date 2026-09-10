@@ -5,7 +5,7 @@ import {
 import {
   openRepo, reopenRepo, resetApp, stubNativeDialogs, confirmCallCount,
   openPalette, paletteDialog, paletteInput, switchScreen, stagedRow, changeRow,
-  executeOnce, openSettings,
+  executeOnce, openSettings, jsKey,
 } from "../support/app";
 
 async function clickPaletteRow(text: string): Promise<void> {
@@ -384,6 +384,123 @@ describe("settings", () => {
     const themeId = await browser.execute(() => document.documentElement.dataset.theme);
     expect(themeId).not.toBe("__draft__");
     expect(themeId).toMatch(/^custom-/);
+  });
+
+  /**
+   * The colour picker, on the real engine.
+   *
+   * Worth a case for the same reason the export ones below are: what it
+   * replaced was `<input type="color">`, a hand-off to a host dialog, and a
+   * native control of that class is silently inert on WebKitGTK (#435). No
+   * component test can tell the difference — jsdom renders no dialog either
+   * way — so "the picker opens and changes a colour here" is a claim only this
+   * layer can make.
+   *
+   * Two of the three assertions are engine-specific on purpose. The wheel is
+   * an ImageData written per pixel and blitted with `putImageData`, and the
+   * unit suite paints it into a STUB context that records nothing, so whether
+   * WebKitGTK 605 produces actual pixels is untested until here. And Escape's
+   * ordering — the picker claims the chord, the dialog behind it survives — is
+   * a real capture-phase dispatcher racing a real portal.
+   */
+  it("picks a colour with the wheel instead of the host's colour dialog", async () => {
+    repo = dirtyRepo();
+    await openRepo(repo.path);
+    await openSettings("general.appearance");
+
+    const nordCard = $('[role="radio"][aria-label="Nord"]');
+    await nordCard.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "theme gallery never rendered the Nord card",
+    });
+    await $('button[aria-label="Duplicate Nord"]').click();
+    await $('[data-testid="theme-editor-name"]').waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "theme editor never opened from Duplicate",
+    });
+
+    // No native colour input anywhere in the editor — `test/nativeColorInput.
+    // test.ts` guards the source, this checks what the webview actually built.
+    expect(
+      await browser.execute(() => !!document.querySelector('input[type="color"]')),
+    ).toBe(false);
+
+    // The guided start's Accent swatch. The eighteen slot rows carry one too,
+    // including their own "Accent", but they live behind the collapsed
+    // disclosure — so while it is shut this selector is unambiguous.
+    await $('button[aria-label^="Accent — "]').click();
+    const picker = $("[data-pg-colorpicker]");
+    await picker.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "the colour picker popover never opened",
+    });
+
+    // The wheel really painted. A stubbed 2D context (what the unit suite
+    // hands the painter) would leave this all-zero, and so would a WebKitGTK
+    // without `createImageData` — which is the failure mode that has to be
+    // caught on the engine rather than in jsdom.
+    const wheel = await browser.execute(() => {
+      const canvas = document.querySelector(
+        "[data-pg-colorpicker] canvas",
+      ) as HTMLCanvasElement | null;
+      if (!canvas || !canvas.width) return null;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      // Dead centre is zero saturation at full value: white, opaque.
+      const px = ctx.getImageData(
+        Math.floor(canvas.width / 2),
+        Math.floor(canvas.height / 2),
+        1,
+        1,
+      ).data;
+      return { r: px[0], g: px[1], b: px[2], a: px[3] };
+    });
+    expect(wheel).not.toBeNull();
+    expect(wheel!.a).toBeGreaterThan(0);
+    expect(wheel!.r).toBeGreaterThan(200);
+    expect(wheel!.g).toBeGreaterThan(200);
+    expect(wheel!.b).toBeGreaterThan(200);
+
+    const accentOf = () =>
+      browser.execute(() =>
+        getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
+      );
+    const before = await accentOf();
+    expect(before).toBeTruthy();
+
+    // The keyboard equivalent of dragging the wheel, which is also the only
+    // half of it WebDriver can reach — a synthetic pointer drag would stand in
+    // for a gesture nobody makes.
+    const hue = '[role="slider"][aria-label="HSV hue"]';
+    await $(hue).waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg: "the picker never rendered its hue slider",
+    });
+    for (let i = 0; i < 20; i++) await jsKey(hue, "ArrowRight");
+
+    // Live-applied to the real document, which is what makes the app repaint
+    // behind the dialog while a colour is being chosen.
+    await browser.waitUntil(async () => (await accentOf()) !== before, {
+      timeout: 10_000,
+      timeoutMsg: "moving the hue slider never repainted --accent",
+    });
+
+    // Escape belongs to the picker while it is open: the popover goes, the
+    // theme editor stays. Registered-always-declining-while-closed is what
+    // makes both halves true, and only a real dispatcher proves the ordering.
+    await jsKey("[data-pg-colorpicker]", "Escape");
+    await picker.waitForExist({
+      reverse: true,
+      timeout: 10_000,
+      timeoutMsg: "Escape did not close the colour picker",
+    });
+    expect(await $('[data-testid="theme-editor-name"]').isExisting()).toBe(true);
+
+    // And a dismissal is not an answer — the colour goes back.
+    await browser.waitUntil(async () => (await accentOf()) === before, {
+      timeout: 10_000,
+      timeoutMsg: "Escape closed the picker without restoring the colour",
+    });
   });
 
   /**

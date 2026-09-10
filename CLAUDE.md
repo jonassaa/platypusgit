@@ -184,7 +184,9 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   from `@/design`; every one of them reads a dismissal as "no answer", never as a
   choice. (`docs/dev/frontend.md`)
 - **No native `<select>`/`<option>` in shipped `src/`** — `PGSelect`; a guard
-  test enforces it. (`docs/dev/frontend.md`)
+  test enforces it. Same for `<input type="color">` — `PGColorSwatch`, whose
+  HSV state, held channel values and revert-on-dismiss are each a bug the
+  obvious version ships. (`docs/dev/frontend.md`)
 - **Design system lives in `src/design/`**, imported from `@/design`. Do NOT
   add `src/components/ui/`. Never hardcode the accent hue — CSS vars/theme
   tokens only. New list-row surfaces opt into UI density (`var(--row-step)`).

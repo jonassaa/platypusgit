@@ -1,6 +1,14 @@
 import React from "react";
 
-import { THEME_COLOR_FIELDS, type ThemeColors } from "@/features/settings/useSettingsStore";
+import { PGColorSwatch, type ColorSwatchOption } from "@/design";
+import {
+  THEME_COLOR_FIELDS,
+  useSettingsStore,
+  type ThemeColors,
+} from "@/features/settings/useSettingsStore";
+import { normalizeHex } from "@/lib/color";
+
+import { CONTRAST_PAIRS } from "./contrast";
 
 export function ColorEditor({
   colors,
@@ -64,6 +72,8 @@ export function ColorEditor({
                   onPatch({ [f.key]: v } as Partial<ThemeColors>)
                 }
                 badge={badgeFor?.(f.key)}
+                palette={colors}
+                slot={f.key}
               />
             ))}
           </div>
@@ -79,21 +89,40 @@ export function ColorField({
   value,
   onChange,
   badge,
+  palette,
+  slot,
 }: {
   label: string;
   hint?: string;
   value: string;
   onChange: (v: string) => void;
   badge?: React.ReactNode;
+  /**
+   * The whole draft, offered inside the picker as swatches.
+   *
+   * "Make the border match the panel" is the most-used move in here, and
+   * without it that means reading a hex off one row and typing it into another.
+   */
+  palette?: ThemeColors;
+  /** Which slot this edits, for the picker's contrast partner. */
+  slot?: keyof ThemeColors;
 }) {
   const [draft, setDraft] = React.useState(value);
   React.useEffect(() => setDraft(value), [value]);
+  const recentColors = useSettingsStore((s) => s.recentColors);
+  const pushRecentColor = useSettingsStore((s) => s.pushRecentColor);
 
   const commitHex = (v: string) => {
     const normalized = normalizeHex(v);
     if (!normalized) return;
     onChange(normalized);
   };
+
+  const swatches: ColorSwatchOption[] | undefined = palette
+    ? THEME_COLOR_FIELDS.map((f) => ({ hex: palette[f.key], label: f.label }))
+    : undefined;
+
+  const contrast = slot ? contrastPartner(slot, palette) : null;
 
   return (
     <div
@@ -108,34 +137,16 @@ export function ColorField({
       }}
       title={hint}
     >
-      <label
-        style={{
-          position: "relative",
-          width: 28,
-          height: 28,
-          borderRadius: "var(--r-3)",
-          border: "1px solid var(--border-1)",
-          background: value,
-          cursor: "pointer",
-          flexShrink: 0,
-          overflow: "hidden",
-          boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.15)",
-        }}
-      >
-        <input
-          type="color"
-          aria-label={`${label} colour picker`}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          style={{
-            position: "absolute",
-            inset: 0,
-            opacity: 0,
-            cursor: "pointer",
-            border: "none",
-          }}
-        />
-      </label>
+      <PGColorSwatch
+        label={label}
+        value={value}
+        onChange={onChange}
+        onCommit={pushRecentColor}
+        swatches={swatches}
+        recent={recentColors}
+        contrast={contrast ?? undefined}
+        title={hint}
+      />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
@@ -186,14 +197,23 @@ export function ColorField({
   );
 }
 
-export function normalizeHex(v: string): string | null {
-  const raw = v.trim().toLowerCase().replace(/^#/, "");
-  if (/^[0-9a-f]{3}$/.test(raw)) {
-    return `#${raw
-      .split("")
-      .map((ch) => ch + ch)
-      .join("")}`;
-  }
-  if (/^[0-9a-f]{6}$/.test(raw)) return `#${raw}`;
-  return null;
+/**
+ * The colour this slot is read against, for the picker's live ratio.
+ *
+ * Reads BOTH sides of a `CONTRAST_PAIRS` entry, unlike the row's own badge,
+ * which only fires for the `a` side. A background is exactly what someone drags
+ * while watching whether the text on it still reads, so `bg0` has to know about
+ * `fg0` — the pair is symmetric even though the list only spells it one way.
+ */
+function contrastPartner(
+  slot: keyof ThemeColors,
+  palette?: ThemeColors,
+): { against: string; label: string } | null {
+  if (!palette) return null;
+  const pair = CONTRAST_PAIRS.find((p) => p.a === slot || p.b === slot);
+  if (!pair) return null;
+  const other = pair.a === slot ? pair.b : pair.a;
+  const label = THEME_COLOR_FIELDS.find((f) => f.key === other)?.label ?? other;
+  return { against: palette[other], label };
 }
+

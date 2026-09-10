@@ -622,7 +622,11 @@ design/              In-house design system (NOT components/ui/), exported via
                      window), modal.tsx (PGModal), resizable.tsx (PGResizeHandle
                      + usePaneSize), paneSize.ts (pure clamp), ui-helpers.tsx
                      (pgFlash — ONE reused toast element — + PG_FLASH_MS),
-                     use-prevent-browser-context-menu.ts
+                     use-prevent-browser-context-menu.ts, color-picker.tsx
+                     (PGColorSwatch — the wheel/slider popover that replaced
+                     <input type="color">, never a native colour input) and
+                     colorWheel.ts (pure wheel + slider geometry, the reason
+                     jsdom can test any of it)
 
 screens/             One per activity-bar item + deep views: RepoBrowser,
                      CommitPanel, History, DiffViewer, Branches, Rebase, Remote,
@@ -716,7 +720,9 @@ features/            Components + Zustand store colocated per feature:
 │                    ThemeEditorDialog (a PGModal, no props: it reads
 │                    useThemeEditorStore so app.closeOverlay can close it),
 │                    useThemeEditorStore (the draft + the pre-draft theme
-│                    close() restores), ColorEditor (the 18 slots),
+│                    close() restores), ColorEditor (the 18 slots — each row is
+                    an inline hex field plus a PGColorSwatch carrying the
+                    draft's own palette and the slot's contrast partner),
 │                    contrast.ts (WCAG ratios for the four pairs that decide
 │                    readability — advisory, never blocking) and deriveTheme.ts
 │                    (base + accent → palette, with the ink recalculated)
@@ -854,7 +860,10 @@ lib/                 tauri.ts (typed invoke wrappers — frontend NEVER calls
                      usePrefetchSyntax.ts), diffRows.ts (flat DiffRow model:
                      line | fill | fold, + hunkAnchorRows), diffMinimap.ts (pure
                      minimap core), cssColor.ts (hex/rgb()/oklch() → sRGB — a
-                     canvas can't take CSS vars), wordDiff.ts,
+                     canvas can't take CSS vars — plus the OKLCh inverse and
+                     srgbChromaCeiling), color.ts (hex/HSV/HSL + the picker's
+                     HSV/HSL/RGB/OKLCH model registry and slider tracks; THE
+                     normalizeHex), wordDiff.ts,
                      pairChangedLines.ts (which rem pairs with which add — one
                      definition, three surfaces), lineSpans.ts (syntax ×
                      word-diff tiling, plus find marks), diffFind.ts (find in

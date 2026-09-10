@@ -503,3 +503,92 @@ describe("useSettingsStore custom actions", () => {
     expect(useSettingsStore.getState().customActions).toEqual([]);
   });
 });
+
+describe("recentColors", () => {
+  it("starts empty, so the picker shows no row at all", async () => {
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().recentColors).toEqual([]);
+  });
+
+  it("puts the newest colour first", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().pushRecentColor("#ff8800");
+    useSettingsStore.getState().pushRecentColor("#123456");
+    expect(useSettingsStore.getState().recentColors).toEqual(["#123456", "#ff8800"]);
+  });
+
+  it("moves a colour already in the list rather than repeating it", async () => {
+    const { useSettingsStore } = await freshStore();
+    for (const hex of ["#ff8800", "#123456", "#ff8800"]) {
+      useSettingsStore.getState().pushRecentColor(hex);
+    }
+    expect(useSettingsStore.getState().recentColors).toEqual(["#ff8800", "#123456"]);
+  });
+
+  it("canonicalizes before comparing, so one colour is one entry", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().pushRecentColor("#FF8800");
+    useSettingsStore.getState().pushRecentColor("f80");
+    expect(useSettingsStore.getState().recentColors).toEqual(["#ff8800"]);
+  });
+
+  it("keeps at most ten", async () => {
+    const { useSettingsStore } = await freshStore();
+    for (let i = 0; i < 15; i++) {
+      useSettingsStore.getState().pushRecentColor(`#0000${i.toString(16)}0`);
+    }
+    expect(useSettingsStore.getState().recentColors).toHaveLength(10);
+  });
+
+  it("ignores a value that is not a colour", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().pushRecentColor("rebeccapurple");
+    expect(useSettingsStore.getState().recentColors).toEqual([]);
+  });
+
+  it("survives a reload", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().pushRecentColor("#ff8800");
+    const again = await freshStore();
+    expect(again.useSettingsStore.getState().recentColors).toEqual(["#ff8800"]);
+  });
+
+  it("repairs a stored list of junk instead of trusting it", async () => {
+    // Array-valued, so the scalar type-guard in coerceSettings never looked at
+    // it: this arrives from localStorage — or a shared settings file — exactly
+    // as it was written, and an unusable entry must cost only itself.
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ recentColors: ["#ABC", 7, null, "nope", "#123456"] }),
+    );
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().recentColors).toEqual(["#aabbcc", "#123456"]);
+  });
+
+  it("falls back to empty when the stored value is not a list", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ recentColors: "#ff8800" }));
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().recentColors).toEqual([]);
+  });
+
+  it("truncates an over-long stored list", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        recentColors: Array.from({ length: 40 }, (_, i) => `#0000${(i % 16).toString(16)}0`),
+      }),
+    );
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().recentColors.length).toBeLessThanOrEqual(10);
+  });
+
+  it("stays out of a settings export — it is this machine's history", async () => {
+    // An export is a file people SHARE. Which colours someone tried last week
+    // is not a preference describing how the app should behave, and a colleague
+    // importing it gains nothing and loses their own list.
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().pushRecentColor("#ff8800");
+    const bag = JSON.parse(useSettingsStore.getState().exportSettings());
+    expect(JSON.stringify(bag)).not.toContain("ff8800");
+  });
+});

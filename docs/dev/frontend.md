@@ -1981,6 +1981,44 @@ update checks back on for someone who turned them off.
   overwrites what the user typed, and an edit of an existing theme never
   renames it. Without that, "Add theme" left you saving a "Dracula (custom)"
   built entirely out of Solarized.
+- **One colour picker — `PGColorSwatch`** (`design/color-picker.tsx`), and a
+  guard test (`test/nativeColorInput.test.ts`) fails the build for a native
+  `<input type="color">` anywhere in shipped `src/`. The native control was
+  never a picker but a hand-off: an unstyled OS panel that offers hex and the
+  host's own colour model, nothing that helps build the RAMP a theme actually
+  is, untestable (the dialog is a host window, so it could stop working
+  entirely with the suite green), and of exactly the class that is silently
+  inert on WebKitGTK — see `<a download>` and #435. Four things about the
+  replacement are load-bearing:
+  - **HSV is the state; the hex is derived.** A grey has no hue and black has
+    neither hue nor saturation, so reading the state back out of the colour
+    teleports the wheel cursor to red the instant saturation reaches zero.
+    `hexToHsv(hex, prev)` carries the angle across, and a ref is what gives it
+    something to carry when the colour arrives from OUTSIDE the popover (a
+    palette swatch, the hex field, the editor's Revert).
+  - **The selected model's channel values are HELD, not re-derived per render.**
+    Re-deriving quantizes them and the error ACCUMULATES — ten presses of a
+    one-degree step moved the hue 10.14°, and the readout crept away from the
+    number it had just shown. The residual 0.14° in the stored hex is inherent:
+    a theme colour is eight bits a channel, which is why the draft and not the
+    hex is the source of truth.
+  - **The wheel paints once, at full brightness, and is dimmed by compositing
+    black.** Exact rather than approximate — HSV's value scales all three
+    channels linearly — so the brightness slider costs one composite instead of
+    re-running a 28k-pixel loop per frame. The geometry lives in a pure
+    `colorWheel.ts` for the reason `selectPos.ts` does: jsdom lays nothing out,
+    so a rendered wheel measures 0×0.
+  - **Escape and dismissal follow PGSelect exactly** — `app.closeOverlay`,
+    registered always and DECLINING while closed, so an open picker eats the
+    chord and the theme editor survives while a closed one hands it back. A
+    dismissal REVERTS (a dismissal is not an answer, the rule `pgConfirm` and
+    the editor's own `close()` both follow); a click away keeps and is the only
+    thing that reports to `recentColors`. The outside-press handler consults
+    `pressIsInsideMenu`, or the swatch's own portalled context menu closes the
+    popover on `mousedown` and lands its click on a detached node (#422).
+  `recentColors` is per-machine and **NON_PORTABLE** — an export is a file
+  people share, and one person's colour history describes nothing about how the
+  app behaves. It has no Settings row because it has no control.
 - **Contrast warnings advise, never block.** `theme/contrast.ts` measures the
   four pairs that decide whether the app is readable (primary text on the
   canvas, secondary and muted on a panel, button text on the accent) — not every

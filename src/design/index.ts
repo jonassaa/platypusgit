@@ -5,6 +5,7 @@ export * from "./primitives";
 export * from "./git-components";
 export * from "./chrome";
 export * from "./context-menu";
+export * from "./color-picker";
 export * from "./dialog";
 export * from "./ui-helpers";
 export * from "./empty-state";

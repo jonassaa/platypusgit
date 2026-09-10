@@ -1,6 +1,6 @@
 import type { ThemeColors, ThemeDef } from "@/features/settings/useSettingsStore";
 
-import { normalizeHex } from "./ColorEditor";
+import { normalizeHex } from "@/lib/color";
 import { contrastRatio } from "./contrast";
 
 /**
