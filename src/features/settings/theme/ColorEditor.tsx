@@ -1,6 +1,7 @@
 import React from "react";
 
 import { THEME_COLOR_FIELDS, type ThemeColors } from "@/features/settings/useSettingsStore";
+import { normalizeHex } from "@/lib/color";
 
 export function ColorEditor({
   colors,
@@ -186,14 +187,3 @@ export function ColorField({
   );
 }
 
-export function normalizeHex(v: string): string | null {
-  const raw = v.trim().toLowerCase().replace(/^#/, "");
-  if (/^[0-9a-f]{3}$/.test(raw)) {
-    return `#${raw
-      .split("")
-      .map((ch) => ch + ch)
-      .join("")}`;
-  }
-  if (/^[0-9a-f]{6}$/.test(raw)) return `#${raw}`;
-  return null;
-}

@@ -1,6 +1,6 @@
 import type { ThemeColors } from "@/features/settings/useSettingsStore";
 
-import { normalizeHex } from "./ColorEditor";
+import { normalizeHex } from "@/lib/color";
 
 /**
  * WCAG contrast, for the four pairs that decide whether the app is readable.
