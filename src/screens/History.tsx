@@ -12,6 +12,8 @@ import {
   PGSelect,
   PGSkeleton,
   PGToolbar,
+  COL_PAD,
+  COMMIT_LIST_MIN_W,
   commitMenuItems,
   commitMultiMenuItems,
   COMMIT_ROW_BASE_H,
@@ -102,14 +104,31 @@ const MAX_BARREN_PAGES = 3;
 const INLINE_DIFF_DEBOUNCE_MS = 100;
 
 /**
- * Floors for what is left over when a detail panel is dragged open (#162). The
- * commit list is a graph plus a message column, so it needs real width; below
- * layout it only has to keep a few rows visible.
+ * Floor for what is left over when the detail panel is dragged open BELOW the
+ * list (#162) — it only has to keep a few rows visible. The width axis has the
+ * same floor, but it lives in `graph-geometry` beside the column minimums it
+ * is the sum of (`COMMIT_LIST_MIN_W`).
  */
-const COMMIT_LIST_MIN_W = 420;
 const COMMIT_LIST_MIN_H = 200;
 /** The diff beside the message inside the below-layout detail panel. */
 const DETAIL_DIFF_MIN_W = 320;
+
+/**
+ * One column caption in the header below. Clipped, and padded by the same
+ * `COL_PAD` the row's cells use, because the captions sit in the SAME tracks as
+ * those cells and those tracks shrink: an author column squeezed to its avatar
+ * is narrower than the word "AUTHOR", and two plain spans in a too-narrow grid
+ * do not truncate, they overlap — the narrow log read "SUBJECTAUTHOR" (see
+ * `SUBJECT_MIN_W`). Clipping alone still let "AUTHOR" run up against "DATE";
+ * the padding is what a caption truncates to clear, exactly as a long author
+ * name does one row below.
+ */
+const HEADER_LABEL: React.CSSProperties = {
+  overflow: "hidden",
+  whiteSpace: "nowrap",
+  textOverflow: "ellipsis",
+  paddingRight: COL_PAD,
+};
 
 export function HistoryScreen() {
   const commits = useRepoStore((s) => s.commits);
@@ -861,11 +880,13 @@ export function HistoryScreen() {
             with SHA. The count of lanes that did not fit still belongs here,
             in text: the gutter is a decorative graphic, and Phase 3 (G8)
             marks it aria-hidden, so a fade alone would state this nowhere. */}
-        <span style={{ paddingLeft: 12 }}>{hiddenLanes > 0 ? `+${hiddenLanes}` : ""}</span>
-        <span>SHA</span>
-        <span>SUBJECT</span>
-        <span>AUTHOR</span>
-        <span>DATE</span>
+        <span style={{ ...HEADER_LABEL, paddingLeft: 12 }}>
+          {hiddenLanes > 0 ? `+${hiddenLanes}` : ""}
+        </span>
+        <span style={HEADER_LABEL}>SHA</span>
+        <span style={HEADER_LABEL}>SUBJECT</span>
+        <span style={HEADER_LABEL}>AUTHOR</span>
+        <span style={HEADER_LABEL}>DATE</span>
       </div>
       <FocusableScroll
         style={{ flex: 1 }}

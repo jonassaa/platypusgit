@@ -255,6 +255,15 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
 - **The log is paged** — `s.commits` is a prefix of history, never the answer
   to "does X exist / is X an ancestor"; ask the backend.
   (`docs/dev/frontend.md`)
+- **A commit row's columns have a YIELD ORDER, and it is the template.** Every
+  track in `commitRowGrid` but the subject and the author is a fixed width, so
+  a new fixed column — or a wider one — comes straight out of the subject,
+  which is what collapsed it to 22px in a 420px pane. The subject keeps
+  `SUBJECT_MIN_W`, the author name yields to its avatar, and the sum of the
+  minimums must still fit `COMMIT_LIST_MIN_W` (`git-components.narrow.test.tsx`
+  fails the build otherwise). Anything that can fill its column keeps `COL_PAD`
+  clear on the right — header captions included — or it touches the column
+  beside it instead of truncating. (`docs/dev/frontend.md`)
 - **Drag and drop:** pointer events via `features/dnd`, never HTML5 dnd; every
   drag has a keyboard equivalent. (`docs/dev/frontend.md`)
 - **`git2::Repository` is `Send` not `Sync`** — wrap git2 work in

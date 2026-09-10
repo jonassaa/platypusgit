@@ -8,7 +8,7 @@ import { HistoryScreen } from "./History";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
-import { graphWidth } from "@/design/graph-geometry";
+import { COL_PAD, graphWidth } from "@/design/graph-geometry";
 import type { CommitInfo } from "@/lib/types";
 
 /** 40-char oids: History renders shortOid, and selection keys off the full oid. */
@@ -74,6 +74,25 @@ describe("History graph column", () => {
     const row = container.querySelector<HTMLElement>('[data-testid="commit-row"]')!;
     const header = container.querySelector<HTMLElement>('[data-testid="commit-header"]')!;
     expect(header.style.gridTemplateColumns).toBe(row.style.gridTemplateColumns);
+  });
+
+  // Sharing the template means sharing the SHRINKING: the author track is
+  // allowed to squeeze down to its avatar, which is narrower than the word
+  // "AUTHOR". Two plain spans in a too-narrow grid do not truncate, they
+  // overlap — a narrow log used to head its columns "SUBJECTAUTHOR". The
+  // padding is half the fix and not decoration: clipped but unpadded, "AUTHOR"
+  // came out flush against "DATE" instead of truncating clear of it.
+  it("clips and pads every header caption", async () => {
+    const { container } = render(<HistoryScreen />);
+    await waitFor(() => expect(rows(container).length).toBe(3));
+    const header = container.querySelector<HTMLElement>('[data-testid="commit-header"]')!;
+    const captions = [...header.children] as HTMLElement[];
+    expect(captions.length).toBe(5);
+    for (const c of captions) {
+      expect(c.style.overflow).toBe("hidden");
+      expect(c.style.textOverflow).toBe("ellipsis");
+      expect(c.style.paddingRight).toBe(`${COL_PAD}px`);
+    }
   });
 
   // The UNION is the point: searchResults has no intervening commits by
