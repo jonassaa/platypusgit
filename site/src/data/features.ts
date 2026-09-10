@@ -145,6 +145,140 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.9.0',
+    date: '2026-09-10',
+    status: 'feature',
+    summary:
+      'The right-click menu on a commit is the release: eight new entries take it to parity with the JetBrains menu it was audited against — reword, undo and drop a commit, browse the repository as it stood at that revision, walk to a parent or child, open the commit on GitHub or GitLab, export a patch series, and publish history only as far as one commit. When something does go wrong there is now a way to say so from inside the app: Report an issue assembles the report, shows you every character of it, copies it and opens a prefilled GitHub issue. And every glyph in the app was replaced — the hand-drawn set is gone, lucide is in, so a branch looks like a branch and a tag looks like a tag.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Reword, undo and drop a commit from the History menu',
+            detail:
+              'Three entries that had engine support and no way to reach it. **Edit commit message…** on HEAD is a message-only amend rather than a one-step rebase, which matters because the rebase engine refuses any modified worktree or index — routing it through the engine would have failed for anyone with uncommitted work, which is most reword attempts. The amend reuses the commit\'s original tree, so staged changes cannot be folded in behind your back; the author is preserved, the committer refreshed, and it goes through the one signing chain so a signed commit stays signed and a signing failure creates nothing. An older commit still goes through the engine. All five history-rewriting entries — reword, undo, drop, squash and fixup — now share one confirmation that names the force-push when the commit is already on the upstream; right-click Fixup previously ran with no dialog at all.',
+          },
+          {
+            title: 'Browse the repository at a revision, and walk the graph',
+            detail:
+              'The repository browser has been able to read a tree at any revision since it shipped, and the only way in was its own toolbar picker — so **Show repository at this revision** is the entry point a commit never had. Unlike every rewrite entry it is offered for a commit on any branch, because reading a tree writes nothing and ancestry is irrelevant. **Go to parent** and **Go to child commit** move the selection along the graph; one target goes inline, several give a submenu, because a merge has two parents and a branch point two children and picking one silently is a guess presented as a fact. The child entry blames the loaded log rather than the repository when it finds nothing — the log is paged, so "no child loaded" and "no child exists" are different sentences and only one of them is honest.',
+          },
+          {
+            title: 'View a commit on GitHub or GitLab',
+            detail:
+              '**View in browser** opens the commit\'s page on the forge. No network call and no token: the URL is built from your own remote, so it works for a forge you have never signed into, and nothing is sent — the app derives a string and hands it to your browser. The GitLab case is the one with a trap in it: GitLab\'s API takes a project path percent-encoded whole, slashes included, but a browser needs real separators, so a subgroup path stays several path segments instead of becoming one unvisitable blob. On GitHub the page is on the remote\'s host, not `api.github.com`, which would have shown a reader JSON. A repository with no derivable page says why and points at the Settings host mapping that makes a self-hosted instance work.',
+          },
+          {
+            title: 'Create patch files from a commit or a selection',
+            detail:
+              '**Create patch…** writes a `git format-patch` series into a directory you pick — mailbox format, not a plain diff, so the files carry author, date and full message and `git am` reconstructs the commit rather than only its changes. A merge is refused before anything is written, and a merge anywhere in a multi-commit selection refuses the whole export: `format-patch` skips merges silently, so a partial series would hand you a shorter list with nothing naming the commit that vanished. The series is numbered in the order given, oldest first.',
+          },
+          {
+            title: 'Push history up to one commit',
+            detail:
+              '**Push all up to here…** publishes your branch only as far as the commit you picked and leaves the rest local, through a refspec push — an ordinary push sends whatever the branch points at, with no way to say "stop here". The confirmation carries both counts ("pushes 3 of your 7 commits"), because the label cannot say how much of the branch it covers and that is the entire question; when a count cannot be read the sentence omits the numbers rather than inventing them. Fast-forward only by construction — there is no force variant on this path. A commit outside HEAD\'s ancestry is refused, and so is a branch with no upstream, each saying which.',
+          },
+          {
+            title: 'Report an issue from inside the app',
+            detail:
+              'A bug report is assembled for you — a summary you write, the environment (version, OS, architecture, git version) and the tail of the log — then shown in full, copied to your clipboard, and a prefilled GitHub issue opens in your browser. Four ways in: the titlebar\'s bug button, any error banner, Settings → Backup & diagnostics, and the crash screen. That last one is the reason this exists in the shape it does: after a render throw React has unmounted the dialog host, so the error boundary cannot open a dialog at all and instead runs the whole flow with no React tree under it. The log travels by clipboard rather than in the URL because a GitHub `issues/new?body=…` answers HTTP 414 somewhere around 8 KB — it works in testing, where the log is short, and fails on exactly the machine that has been running long enough to have a bug worth reporting. Copy happens strictly before open: sending someone to a form that says "paste your report" with an empty clipboard is worse than saying nothing. Nothing is ever transmitted — the app writes your clipboard and hands a URL to your browser — and because the report is the most revealing text the app assembles in one place, the preview shows the exact string that will be copied and each part is independently opt-out, filtering the clipboard rather than only the display.',
+          },
+          {
+            title: 'A real icon set',
+            detail:
+              'Every glyph in the app now comes from lucide instead of the hand-drawn set, behind the same `PGIcon` seam — 126 call sites across 54 files are untouched. It was chosen over the alternative for having the full git vocabulary: branch, merge, fork, pull request, tag, terminal, a folder for submodules and a symlinked one for worktrees, where the runner-up ships no folder and no VCS glyph beyond a commit dot, which would have turned about seventeen of this app\'s names into generic approximations in a git client. Stroke weight is preserved exactly at every size, so the app\'s visual density is unchanged. The diff-layout toggle gained real panel icons showing the layout currently in effect rather than the same generic glyph in both states, and one long-standing typo surfaced: the Reflog screen\'s refresh button had been asking for an icon name that did not exist and rendering the unknown-name fallback square.',
+          },
+          {
+            title: 'A theme gallery, with a preview of the real thing',
+            detail:
+              'Choosing a theme used to mean picking a name out of a dropdown and applying it to find out what it looked like. Themes are cards now, each with a live preview rendered from the same map the app itself is painted with — so a light theme\'s card stays light on a dark page — and each carries its own Edit, Duplicate, Export and Delete next to the theme they act on. The editor is a proper modal with an inline preview of the real UI beside the controls, rather than a palette judged through a dimmed backdrop over the tenth of the app the dialog did not cover. It adds a guided start (base colour plus accent, with button ink recalculated), advisory WCAG contrast warnings on the four pairs that decide readability — Save is never disabled by a finding, a low-contrast theme is your own call — and import into the draft, so round-tripping a theme through an external editor works. Cancel, Escape and the backdrop all restore the theme you had before you started.',
+          },
+          {
+            title: 'The history view says when it is waiting',
+            detail:
+              'Checking out a branch, pulling, and the last stretch of a rebase all take a noticeable moment, and the commit list used to sit there showing the branch you just left — a four-second checkout read as a click that did nothing. A strip above the commit list now carries the operation\'s label, git\'s percentage when there is one, an elapsed clock past three seconds, a `+N more` when operations overlap, and Cancel for the ones that can honour it. It and the status bar render from one hook, which owns every decision about what is said, so the two cannot drift apart.',
+          },
+          {
+            title: 'The Refresh button spins while it is refreshing',
+            detail:
+              'Fetch, Pull and Push have always spun; the one button whose entire job is "reload" was the one that never said it was working. It tells two cases apart by who asked: a refresh you asked for spins immediately and holds briefly whatever the backend did — a 40 ms quarter-turn reads as a rendering glitch, not an acknowledgement — while a background refresh spins only once it is slow enough to be worth mentioning. Binding it to the generic loading flag was the obvious fix and is wrong in the other direction: that flag flips on every tab switch and commit, and the titlebar would twitch all day.',
+          },
+          {
+            title: 'The built-in terminal is in the command palette',
+            detail:
+              'The terminal panel had exactly one route in — Ctrl and the backtick key — because the palette is a curated list rather than a projection of every action. The row is labelled by state ("Show terminal" / "Hide terminal") on a stable id, so a command\'s ranking is not split across two half-learned rows, and it appears only with a repository open, since the shell opens in the active repository\'s working directory.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'Submenu entries did nothing — since the first public release',
+            detail:
+              '"Reset current branch to here ▸ Hard" did nothing. Neither did any other submenu entry, nor any entry on a branch-picker row menu. A menu is a portal on the document body and dismiss-on-outside-press fires on `mousedown`, and both surfaces read a press on a menu they own as a press outside themselves — so the menu closed on the press and unmounted the entry before its click could run. The menu vanishing under the cursor is what made it read as "I clicked it and nothing happened". The backend was never reached. The e2e suite was green throughout because it clicked entries with a bare synthetic click and no preceding press, a sequence no mouse can produce; it presses first now and fails loudly if the entry vanishes under it, which is what surfaced the branch-picker half that was not in the original report.',
+          },
+          {
+            title: 'Every export in the app silently did nothing on Linux',
+            detail:
+              'Exporting a theme, exporting your settings and exporting an editor draft all wrote their file the way a web page would — a blob URL and a synthetic click on a `download` link. WebKitGTK ignores the `download` attribute, so on Linux all three were a no-op with no file, no error and no log line. A second, independent cause sat underneath: the save dialog had never been granted, so even a correct implementation would have been denied at runtime. A webview is not a browser and nothing about that mechanism is contracted to work in one, so it is replaced rather than patched: there is one native file path now, every export and import goes through it, a save returns the real path so the app can tell you where the file went instead of guessing at a downloads folder it never chose, and a cancelled dialog is a cancellation rather than an error.',
+          },
+          {
+            title: 'A click in the branch picker no longer checks out a branch',
+            detail:
+              'The titlebar picker spent a single click on a working-tree mutation — one misfire in a list of near-identical names switched branches, while the current branch\'s row answered a click with nothing at all. Click, Enter and → now all open that row\'s actions menu, the split the Branches screen already had. Check out is that menu\'s first entry, so nothing became unreachable; it costs one deliberate second press. The current branch\'s row now offers everything it can still do — merge, rename, push — rather than nothing.',
+          },
+          {
+            title: 'A context menu taller than the window was unreachable',
+            detail:
+              'There was no height bound and no scrollbar, and the off-screen correction degenerated for a menu taller than the viewport: it pinned the menu to the top and let the overflow run off the bottom edge with no keyboard route to it. The commit menu is 31 items at its minimum and grows with every branch pointing at the commit and every custom action you define, so it now exceeds any window shorter than about 740 pixels — and *View in browser*, the last entry, was the first thing lost. The bound is unconditional rather than tuned to an item count, and submenus inherit it.',
+          },
+          {
+            title: 'A tag on a History row wore a branch icon',
+            detail:
+              '`v1.0.0` looked like a branch sitting next to `main`, which is the one thing a history view exists to tell apart at a glance. Decorations arrived as bare names, leaving the pill to guess what each was from its spelling — and that guess got three things wrong at once: every tag drew a branch glyph, a tag like `release/1.0` and a local branch like `feat/x` were each split into a remote that does not exist, and the "local labels only" filter then hid both. The log walk sends the kind it already knew now, so a tag gets a tag glyph in the amber tone the tag badge beside it already uses, only a genuine remote gets split, and refs that are neither — a bisect ref, a fetched pull-request head — are named as themselves rather than called branches, which is how one ends up on a menu that would move them.',
+          },
+          {
+            title: 'A narrow History pane no longer eats the subject column',
+            detail:
+              'Every column but the subject was a rigid pixel width, so the subject was the only track that could yield and it yielded everything — at the narrowest the pane can be dragged it resolved to 22 pixels of subject against an author name holding its full 150, with the branch pills painting over the author and the header reading `SUBJECTAUTHOR`. The yield order is in the template now: the author name truncates and then disappears, the avatar still says who, and what a narrow pane costs is the author\'s name rather than the one column everybody reads. The same repro turned up two defects that were never about narrowness — a long author name ran into the date at any width, and the headers had no clipping either. Reflog needed this most and gets it for free: its list pane is a third of the window, so its subject was under 100 pixels on an ordinary display.',
+          },
+          {
+            title: 'An image that will not decode says so',
+            detail:
+              'Image detection sniffs the first bytes of a file, so a truncated or corrupt image with an intact magic number came back as an image and was handed to a preview that had no error handler — the panel showed the webview\'s broken-image glyph and said nothing, where every other non-previewable state already says something specific. It now retires that side with a sentence, keeps the byte count (which came from the backend and is still true), and tracks the failure per side, so a corrupt new version still shows the readable old one and the next file starts clean.',
+          },
+          {
+            title: 'Three layout fixes',
+            detail:
+              'The commit detail\'s clock icon no longer drops below the timestamp it belongs to; a segmented control\'s labels stay on one line instead of wrapping; and the activity bar runs to the window\'s bottom edge rather than stopping short of it.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Two windows on one repository do not share a lock',
+            detail:
+              'Unchanged from 0.7.0. Each window opens its own handles for a repository, and that is what keeps windows independent — closing a tab in one evicts nothing the other is using. The read/write gate orders one window\'s work against itself, not one window\'s against another\'s, so work you start on the same repository from two windows is still arbitrated by git\'s own `index.lock`, exactly as it is between any two git processes.',
+          },
+          {
+            title: 'A Store update lands hours after the release, not with it',
+            detail:
+              'Unchanged from 0.6.0. Submission is automatic; certification is not instant. Microsoft reviews each update before it reaches the Store, so a Store install trails the `.msi`, Scoop and winget by however long that takes — usually hours. Nothing is wrong when the Store still offers the previous version shortly after a release.',
+          },
+          {
+            title: 'Timestamps are shown in your timezone, not the author\'s',
+            detail:
+              'Unchanged from 0.5.0. Where `git log` prints the offset a commit was authored under, PlatypusGit shows that same instant on your own clock — a commit reaches the interface as unix seconds and nothing else, so matching git here is a change to what the backend sends rather than to how a date is written. The hover names the zone it used, so no stamp is ambiguous about which clock that was.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.8.0',
     date: '2026-09-07',
     status: 'feature',
