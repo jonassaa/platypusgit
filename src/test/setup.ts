@@ -133,6 +133,14 @@ HTMLCanvasElement.prototype.getContext = function stubGetContext(
     clearRect() {},
     fillRect() {},
     strokeRect() {},
+    // The colour wheel paints per-pixel into an ImageData (design/colorWheel.ts).
+    // A real buffer, not a no-op: the painter WRITES into `.data`, so a stub
+    // without it would make the wheel's paint pass throw here rather than run —
+    // which is the opposite of what this stub is for.
+    createImageData(w: number, h: number) {
+      return { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) };
+    },
+    putImageData() {},
   } as unknown as CanvasRenderingContext2D;
 } as never;
 
