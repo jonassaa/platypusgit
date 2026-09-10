@@ -1484,6 +1484,13 @@ a result is the actual control, never a copy of it that could drift — see
   takes `gates: Record<SettingRowGate, boolean>` for this reason: widening
   `SettingRowGate` is a compile error until `useSettingsIndex` answers the new
   member, where a per-gate equality test would have made it silently "always".
+- **Both settings row helpers read `--row-step`, and they move together.**
+  `SettingsRow` and `ForgeSettings`' local `ForgeRow` are separate components
+  by design (one is a fixed setting with a `data-setting-id`, the other a row
+  over account data), but they sit in the same panel, so density has to reach
+  both or neither: giving it to one leaves a forge account row a different
+  height from the setting directly above it. The card HEADER keeps its fixed
+  padding, per the density rule's chrome exemption.
 - **`data-setting-id` is selected exactly, never with `*=`, in both specs and
   e2e.** These are dotted, two-part ids (`card.row`), and one is a genuine
   substring of another today — `commit.sign` is a literal prefix of

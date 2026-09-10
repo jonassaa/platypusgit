@@ -429,7 +429,9 @@ function ForgeRow({
         display: "flex",
         alignItems: "flex-start",
         gap: 16,
-        padding: "12px 16px",
+        // Same density opt-in as `SettingsRow` (#70). These rows sit in the
+        // same panel as their siblings, so they have to scale with them.
+        padding: "calc(12px + var(--row-step) / 2) 16px",
         borderBottom: "1px solid var(--border-0)",
       }}
     >
