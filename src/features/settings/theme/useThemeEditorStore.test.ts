@@ -138,6 +138,42 @@ describe("useThemeEditorStore", () => {
     expect(ed().colors).toEqual(dark.colors);
   });
 
+  it("renames an untouched new draft after the theme it now starts from", () => {
+    // "Add theme" opens on the active theme, so the base picker is how you
+    // choose what to start from — a draft left named after a palette it no
+    // longer uses is the whole reason that flow felt wrong.
+    ed().openNew(dark);
+    expect(ed().name).toBe(`${dark.name} (custom)`);
+    ed().applyBase("light", ed().colors.accent);
+    expect(ed().name).toBe(`${light.name} (custom)`);
+  });
+
+  it("never overwrites a name the user typed when the base changes", () => {
+    ed().openNew(dark);
+    ed().setName("Midnight");
+    ed().applyBase("light", ed().colors.accent);
+    expect(ed().name).toBe("Midnight");
+  });
+
+  it("leaves the name alone when re-basing while editing an existing theme", () => {
+    ed().openNew(dark);
+    ed().setName("Mine");
+    const created = ed().save()!;
+
+    ed().openEdit(
+      useSettingsStore.getState().customThemes.find((t) => t.id === created.id)!,
+    );
+    ed().applyBase("light", ed().colors.accent);
+    expect(ed().name).toBe("Mine");
+  });
+
+  it("keeps renaming after a re-base, while the name is still automatic", () => {
+    ed().openNew(dark);
+    ed().applyBase("light", ed().colors.accent);
+    ed().applyBase("nord", ed().colors.accent);
+    expect(ed().name).toBe("Nord (custom)");
+  });
+
   it("revert returns the draft to the source it opened from", () => {
     ed().openNew(dark);
     ed().patchColors({ bg0: "#123456" });

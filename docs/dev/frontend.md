@@ -1953,8 +1953,12 @@ update checks back on for someone who turned them off.
   active one, which is why Settings had never had a swatch or a preview.
 - **The theme picker is a gallery, not a dropdown** (`theme/ThemeGallery.tsx`).
   Cards carry a real `ThemePreview` and their own Edit / Duplicate / Export /
-  Delete, so an action sits next to the theme it acts on; Import is the only one
-  left on the page, because it belongs to no existing card. It is a `radiogroup`
+  Delete, so an action sits next to the theme it acts on; **Add theme** and
+  **Import** are the two left on the page, because each makes a theme no card
+  can act on yet. Add opens the editor on the ACTIVE theme and the editor's own
+  "Start from" picker is how you change what it begins from — creating a theme
+  used to be spelled "find a card, press Duplicate", which made the starting
+  palette a decision you had to make before you had a draft. It is a `radiogroup`
   and arrow keys ACTIVATE as they move, so browsing is a live preview rather
   than a focus walk. Following the system shows TWO galleries, each filtered to
   its own mode — the rule the old `pairOptions` enforced, because a pairing
@@ -1971,7 +1975,12 @@ update checks back on for someone who turned them off.
   that was live on open, so Escape, the backdrop and Cancel are one path; an
   Escape that only unmounted would leave the abandoned draft painted on the
   app. `save()` is the one exit that does not restore. The editor's branch sits
-  below the credential prompt's, pinned by a test.
+  below the credential prompt's, pinned by a test. **A new draft is named after
+  the palette it starts from, and `applyBase` moves that name with the base** —
+  but only while the name is still the automatic `<Base> (custom)`, so nothing
+  overwrites what the user typed, and an edit of an existing theme never
+  renames it. Without that, "Add theme" left you saving a "Dracula (custom)"
+  built entirely out of Solarized.
 - **Contrast warnings advise, never block.** `theme/contrast.ts` measures the
   four pairs that decide whether the app is readable (primary text on the
   canvas, secondary and muted on a panel, button text on the accent) — not every

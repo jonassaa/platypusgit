@@ -10,6 +10,7 @@ import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import { SettingsCard, SettingsRow } from "@/features/settings/layout/SettingsCard";
 import { ThemeEditorDialog } from "@/features/settings/theme/ThemeEditorDialog";
 import { ThemeGallery } from "@/features/settings/theme/ThemeGallery";
+import { useThemeEditorStore } from "@/features/settings/theme/useThemeEditorStore";
 import { importThemeFromFile } from "@/features/settings/themeFiles";
 import type { SettingsPageMeta } from "@/features/settings/nav/types";
 import { commitDateText, type DateFormat } from "@/lib/commitDate";
@@ -32,9 +33,9 @@ export const meta: SettingsPageMeta = {
         // Ungated, the index described all three at once and a search for
         // "light theme" on a fresh install (mode "fixed") reported "1 result"
         // and drew a card header with no rows under it.
-        { id: "appearance.light", label: "Light theme", keywords: "gallery preview swatch", when: "themeFollowsSystem" },
-        { id: "appearance.dark", label: "Dark theme", keywords: "dark mode gallery preview swatch", when: "themeFollowsSystem" },
-        { id: "appearance.theme", label: "Theme", keywords: "colors palette custom editor export import gallery preview swatch duplicate contrast", when: "themeFixed" },
+        { id: "appearance.light", label: "Light theme", keywords: "gallery preview swatch add new create custom", when: "themeFollowsSystem" },
+        { id: "appearance.dark", label: "Dark theme", keywords: "dark mode gallery preview swatch add new create custom", when: "themeFollowsSystem" },
+        { id: "appearance.theme", label: "Theme", keywords: "colors palette custom editor export import gallery preview swatch duplicate contrast add new create", when: "themeFixed" },
         { id: "appearance.density", label: "UI density", keywords: "compact cozy comfortable row height spacing" },
         { id: "appearance.dateFormat", label: "Date format", keywords: "relative absolute iso timestamp" },
         { id: "appearance.headMarks", label: "Current position (HEAD)", keywords: "bar tint ring marker" },
@@ -118,7 +119,7 @@ export function AppearancePage() {
           stacked
           hint={
             isBuiltin
-              ? "Built-in themes are read-only — Duplicate one to start your own."
+              ? "Built-in themes are read-only — Add theme, or Duplicate this one, to start your own."
               : "Custom theme. Edit, duplicate, export or delete it on its card."
           }
           control={<ThemeGallery />}
@@ -126,8 +127,10 @@ export function AppearancePage() {
       )}
 
       {/* Edit, Duplicate, Export and Delete live on the cards, next to the
-          theme they act on. Import is the one action that belongs to no
-          existing card, so it is the only button left here. */}
+          theme they act on. These two belong to no card — they make a theme
+          that does not exist yet — so they sit under the gallery. "Add" opens
+          the editor on the active theme; which theme it starts from is the
+          editor's own "Start from" picker, not a card you had to find first. */}
       <div
         style={{
           padding: "10px 16px",
@@ -141,6 +144,15 @@ export function AppearancePage() {
       >
         <PGButton
           size="sm"
+          variant="primary"
+          icon="plus"
+          onClick={() => useThemeEditorStore.getState().openNew(active)}
+          title="Start a new custom theme"
+        >
+          Add theme
+        </PGButton>
+        <PGButton
+          size="sm"
           variant="default"
           icon="upload"
           onClick={() => void onImport()}
@@ -149,7 +161,8 @@ export function AppearancePage() {
           Import theme…
         </PGButton>
         <span style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
-          Adds a theme from a file someone exported.
+          A new theme starts from the one you’re using — change that in the
+          editor. Import reads a file someone exported.
         </span>
       </div>
 
