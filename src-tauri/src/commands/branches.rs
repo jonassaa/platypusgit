@@ -327,6 +327,40 @@ pub async fn unshallow(
     Ok(true)
 }
 
+/// Build `git pull` args, refusing a remote or branch git would read as an
+/// option.
+///
+/// **`--` alone does not protect a pull, and this is the one remote path where
+/// that is true.** `git pull` parses its own options, consumes the separator,
+/// and then re-runs `git fetch <remote> <refspec>` with no separator of its
+/// own — so the value reaches that fetch as an option after all. Verified
+/// against git 2.54, with the separator in place:
+/// `git pull --ff-only -- '--upload-pack=touch X;false' main` runs the named
+/// program, and so does the same value in the branch position. `git push` is
+/// not affected: it does its own parsing and nothing re-execs.
+///
+/// So the values are refused instead, the way `commands/forge.rs` refuses a
+/// remote name and `forge::validate_ref_name` refuses a branch. Untrusted
+/// rather than merely ours: git accepts `git remote add -- -evil <url>`, and a
+/// repository's config can name a remote anything at all.
+///
+/// The separator is still emitted. It is this file's rule, it does end `pull`'s
+/// own option parsing, and a reader who finds it missing here would have to
+/// re-derive all of the above.
+///
+/// `--progress` for the same reason `fetch_args` carries it: a pull is a fetch,
+/// and the fetch half is the part that takes the time.
+fn pull_args<'a>(mode_flag: &'a str, remote: &'a str, branch: &'a str) -> AppResult<Vec<&'a str>> {
+    for (what, value) in [("remote", remote), ("branch", branch)] {
+        if value.starts_with('-') {
+            return Err(AppError::InvalidArgument(format!(
+                "invalid {what} name {value:?}: a leading dash would be read as a command-line option"
+            )));
+        }
+    }
+    Ok(vec!["pull", "--progress", mode_flag, "--", remote, branch])
+}
+
 #[tauri::command]
 pub async fn pull(
     app: AppHandle,
@@ -338,20 +372,20 @@ pub async fn pull(
     credentials: Option<Credentials>,
 ) -> AppResult<()> {
     let repo_id = RepoId(repo_id);
-    let path = get_repo_path(&state, &repo_id).await?;
     let mode_flag = match mode {
         PullMode::FastForward => "--ff-only",
         PullMode::Merge => "--no-rebase",
         PullMode::Rebase => "--rebase",
     };
+    // Before the path lookup: a refused argument must cost nothing.
+    let args = pull_args(mode_flag, remote.as_str(), branch.as_str())?;
+    let path = get_repo_path(&state, &repo_id).await?;
     let outcome = run_git_progress(
         &app,
         &path,
         &repo_id,
         NetOp::Pull,
-        // `--progress` for the same reason `fetch_args` carries it: a pull is a
-        // fetch, and the fetch half is the part that takes the time.
-        &["pull", "--progress", mode_flag, remote.as_str(), branch.as_str()],
+        &args,
         credentials.as_ref(),
     )
     .await;
@@ -469,6 +503,15 @@ pub async fn fast_forward_all_branches(
 /// Build `git push` args. `set_upstream` adds `-u`, which the caller passes
 /// only when the branch has no upstream yet — re-sending `-u` on every push
 /// would rewrite tracking the user may have deliberately pointed elsewhere.
+///
+/// Options first, then `--`, then the remote and the branch: see
+/// `push_tag_args` for why the separator is there at all. The force flag and
+/// `--no-verify` used to be appended AFTER the two values, which is the reason
+/// this builder carried no separator (#212, audit finding 4) — after a `--`
+/// git reads them as refspecs, not options. Verified against git 2.54:
+/// `git push --progress -u --force-with-lease -- origin main` pushes normally,
+/// and `-- --receive-pack=/bin/false main` is refused as a strange pathname
+/// instead of running the named program.
 fn push_args(
     remote: &str,
     branch: &str,
@@ -482,8 +525,6 @@ fn push_args(
     if set_upstream {
         args.push("-u".to_string());
     }
-    args.push(remote.to_string());
-    args.push(branch.to_string());
     match force {
         PushForce::None => {}
         PushForce::WithLease => args.push("--force-with-lease".to_string()),
@@ -494,6 +535,11 @@ fn push_args(
     if no_verify {
         args.push("--no-verify".to_string());
     }
+    // Every option is emitted above, so the separator can go here and the two
+    // user-supplied values after it.
+    args.push("--".to_string());
+    args.push(remote.to_string());
+    args.push(branch.to_string());
     args
 }
 
@@ -511,16 +557,21 @@ fn push_args(
 ///
 /// No `-u`: this does not establish tracking. The branch's upstream is what
 /// decided where this push goes, so re-pointing it here would be circular.
+///
+/// `--` before the remote and the refspec, for the reason `push_args` gives.
+/// The oid and the branch are validated by the caller, but the remote name is
+/// not, and it is the value `--receive-pack=<program>` would ride in on.
 fn push_commit_args(remote: &str, oid: &str, branch: &str, no_verify: bool) -> Vec<String> {
     let mut args: Vec<String> = vec!["push".to_string(), "--progress".to_string()];
+    if no_verify {
+        args.push("--no-verify".to_string());
+    }
+    args.push("--".to_string());
     args.push(remote.to_string());
     // The FULL destination ref, not a bare branch name: `<oid>:main` would make
     // git guess, and it guesses differently depending on whether `main` already
     // exists on the remote.
     args.push(format!("{oid}:refs/heads/{branch}"));
-    if no_verify {
-        args.push("--no-verify".to_string());
-    }
     args
 }
 
@@ -615,11 +666,11 @@ mod push_args_tests {
     fn no_verify_is_added_only_when_asked() {
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, false),
-            vec!["push", "--progress", "origin", "main"]
+            vec!["push", "--progress", "--", "origin", "main"]
         );
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, true),
-            vec!["push", "--progress", "origin", "main", "--no-verify"]
+            vec!["push", "--progress", "--no-verify", "--", "origin", "main"]
         );
     }
 
@@ -631,10 +682,11 @@ mod push_args_tests {
                 "push",
                 "--progress",
                 "-u",
-                "origin",
-                "feat/x",
                 "--force-with-lease",
-                "--no-verify"
+                "--no-verify",
+                "--",
+                "origin",
+                "feat/x"
             ]
         );
     }
@@ -647,7 +699,13 @@ mod push_args_tests {
         // guesses differently depending on whether `main` exists on the remote.
         assert_eq!(
             push_commit_args("origin", "abc1234", "main", false),
-            vec!["push", "--progress", "origin", "abc1234:refs/heads/main"]
+            vec![
+                "push",
+                "--progress",
+                "--",
+                "origin",
+                "abc1234:refs/heads/main"
+            ]
         );
     }
 
@@ -668,9 +726,10 @@ mod push_args_tests {
             vec![
                 "push",
                 "--progress",
+                "--no-verify",
+                "--",
                 "origin",
-                "abc1234:refs/heads/feat/x",
-                "--no-verify"
+                "abc1234:refs/heads/feat/x"
             ]
         );
     }
@@ -680,8 +739,8 @@ mod push_args_tests {
     #[test]
     fn a_slashed_branch_name_stays_one_refspec() {
         let args = push_commit_args("origin", "abc1234", "release/2026/09", false);
-        assert_eq!(args[3], "abc1234:refs/heads/release/2026/09");
-        assert_eq!(args.len(), 4, "no extra argument may appear: {args:?}");
+        assert_eq!(args[4], "abc1234:refs/heads/release/2026/09");
+        assert_eq!(args.len(), 5, "no extra argument may appear: {args:?}");
     }
 
     use super::*;
@@ -690,24 +749,111 @@ mod push_args_tests {
     fn adds_u_only_when_requested() {
         assert_eq!(
             push_args("origin", "main", PushForce::None, true, false),
-            vec!["push", "--progress", "-u", "origin", "main"]
+            vec!["push", "--progress", "-u", "--", "origin", "main"]
         );
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, false),
-            vec!["push", "--progress", "origin", "main"]
+            vec!["push", "--progress", "--", "origin", "main"]
         );
     }
 
+    /// The force flag is an option, so it belongs BEFORE the separator. After
+    /// it, git reads `--force-with-lease` as a refspec and the push is neither
+    /// forced nor refused.
     #[test]
-    fn force_flag_comes_last() {
+    fn force_flag_comes_before_the_separator() {
         assert_eq!(
             push_args("origin", "main", PushForce::WithLease, false, false),
-            vec!["push", "--progress", "origin", "main", "--force-with-lease"]
+            vec![
+                "push",
+                "--progress",
+                "--force-with-lease",
+                "--",
+                "origin",
+                "main"
+            ]
         );
         assert_eq!(
             push_args("origin", "feat/x", PushForce::Force, true, false),
-            vec!["push", "--progress", "-u", "origin", "feat/x", "--force"]
+            vec![
+                "push",
+                "--progress",
+                "-u",
+                "--force",
+                "--",
+                "origin",
+                "feat/x"
+            ]
         );
+    }
+
+    /// #212, audit finding 4: these were the two push builders without an
+    /// end-of-options separator, while `push_tag_args`/`push_delete_args` had
+    /// one. `--receive-pack=<program>` names a program git runs for the
+    /// transport, so a value read as an option is argument injection.
+    #[test]
+    fn every_user_value_lands_after_the_separator() {
+        let hostile = "--receive-pack=/bin/false";
+        let sets: Vec<Vec<String>> = vec![
+            push_args(hostile, "main", PushForce::None, false, false),
+            push_args("origin", hostile, PushForce::WithLease, true, true),
+            push_commit_args(hostile, "abc1234", "main", false),
+            push_commit_args("origin", "abc1234", "main", true),
+        ];
+        for args in sets {
+            let sep = args
+                .iter()
+                .position(|a| a == "--")
+                .unwrap_or_else(|| panic!("no end-of-options separator: {args:?}"));
+            for (i, a) in args.iter().enumerate() {
+                if a.starts_with("--receive-pack") {
+                    assert!(i > sep, "user value read as an option: {args:?}");
+                }
+            }
+            // Every one of ours stays an option: after the separator it would
+            // be a refspec instead.
+            for flag in ["--progress", "-u", "--force-with-lease", "--no-verify"] {
+                if let Some(i) = args.iter().position(|a| a == flag) {
+                    assert!(i < sep, "{flag} must precede the separator: {args:?}");
+                }
+            }
+        }
+    }
+
+    // ─── pull_args ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn pull_args_carry_the_mode_flag_and_the_separator() {
+        for mode_flag in ["--ff-only", "--no-rebase", "--rebase"] {
+            assert_eq!(
+                pull_args(mode_flag, "origin", "main").unwrap(),
+                vec!["pull", "--progress", mode_flag, "--", "origin", "main"]
+            );
+        }
+    }
+
+    /// The separator cannot carry this one: `git pull` consumes it and then
+    /// re-runs `git fetch <remote> <refspec>` without one, so a dash-leading
+    /// value reaches that fetch as an option (verified against git 2.54).
+    /// Refusing it is the guard.
+    #[test]
+    fn pull_args_refuse_a_value_git_would_read_as_an_option() {
+        let hostile = "--upload-pack=/bin/false";
+        for (remote, branch) in [(hostile, "main"), ("origin", hostile), (hostile, hostile)] {
+            let err = pull_args("--ff-only", remote, branch)
+                .expect_err("a dash-leading value must be refused");
+            assert!(
+                matches!(err, AppError::InvalidArgument(_)),
+                "wrong variant: {err:?}"
+            );
+        }
+    }
+
+    /// Only a LEADING dash is an option. A branch named `feat/-x` or a remote
+    /// with a dash inside it is ordinary and must still pull.
+    #[test]
+    fn pull_args_accept_a_dash_that_is_not_leading() {
+        assert!(pull_args("--rebase", "my-remote", "feat/-x").is_ok());
     }
 }
 
