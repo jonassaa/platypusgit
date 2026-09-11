@@ -1529,12 +1529,13 @@ a result is the actual control, never a copy of it that could drift — see
   takes `gates: Record<SettingRowGate, boolean>` for this reason: widening
   `SettingRowGate` is a compile error until `useSettingsIndex` answers the new
   member, where a per-gate equality test would have made it silently "always".
-- **Both settings row helpers read `--row-step`, and they move together.**
-  `SettingsRow` and `ForgeSettings`' local `ForgeRow` are separate components
-  by design (one is a fixed setting with a `data-setting-id`, the other a row
-  over account data), but they sit in the same panel, so density has to reach
-  both or neither: giving it to one leaves a forge account row a different
-  height from the setting directly above it. They share ONE value —
+- **Both settings row helpers read `--row-step` AND `--row-scale`, and they
+  move together.** `SettingsRow` and `ForgeSettings`' local `ForgeRow` are
+  separate components by design (one is a fixed setting with a
+  `data-setting-id`, the other a row over account data), but they sit in the
+  same panel, so both UI scales have to reach both or neither: giving it to
+  one leaves a forge account row a different height from the setting directly
+  above it. They share ONE value —
   `SETTINGS_ROW_PADDING`, built by `densityPadding(12)` — because being equal
   is the requirement, and two copied literals cannot fail a test when only one
   is edited. Anything else in a card BODY takes the same step from
@@ -2192,15 +2193,32 @@ update checks back on for someone who turned them off.
   string inside a click-outside-to-close popover is gone by the second drag.
   The update panel's package-manager command shipped as a bare `<code>`: the
   notify path's only actionable content, unselectable and uncopyable.
-- **New list-row surfaces must opt into UI density** (issue #70):
-  `height: "calc(<base>px + var(--row-step))"` (or `/ 2` for padding-sized
-  rows); `--row-h` for plain 24px rows. `--row-step` is 0 in compact, so each
-  surface keeps its base. Chrome and code-line geometry (`--lh-code`) stay
-  fixed. `grep -rn 'var(--row-step)' src/` lists participants — but NOT the
-  Settings panel, whose surfaces take the step from one shared helper rather
-  than a literal, so add `-e densityPadding -e SETTINGS_ROW_PADDING` or they
-  read as non-participants. `PGGraphRow` draws in SVG units — `PGCommitRow`
-  feeds it `useDensityStep()`.
+- **New list-row surfaces must opt into BOTH UI scales — Spacing and Text
+  size** (issue #70; the row-geometry tables both live in
+  `features/settings/useSettingsStore.ts`):
+  `SPACING_STEP_PX` (compact 0 / cozy 2 / comfortable 4 / spacious 8,
+  default cozy) is written to `--row-step` by `applySpacing`; `TEXT_SCALE`
+  (small 0.92 / default 1 / large 1.15 / larger 1.3, default `"default"`) is
+  written to `--row-scale`, plus all ten `--fs-*` tokens as resolved px, by
+  `applyTextScale`. A row's call-site form is
+  `height: "calc(<base>px * var(--row-scale) + var(--row-step))"` (`/ 2` for
+  padding-sized rows, since top and bottom each take half); `--row-h` for
+  plain 24px rows. The base is MULTIPLIED and the step is ADDED — the step is
+  already the user's own number of pixels, while the base has to HOLD the
+  text, since every row surface sets `height`, not `min-height`, and a base
+  that does not grow with the type clips it. Compact + default renders
+  pixel-identically to the pre-scale layout. Chrome stays fixed regardless of
+  either scale — neither reaches the app frame. `--lh-code` itself (the code
+  line-height RATIO) is likewise unchanged by either; what does move is the
+  diff row pitch built from it, since that pitch multiplies the ratio by
+  `--fs-12` — see Diff row pitch below.
+  `grep -rn 'var(--row-step)' src/` (or `-e 'var(--row-scale)'`) lists
+  participants — but NOT the Settings panel, whose surfaces take both from
+  one shared helper rather than a literal, so add
+  `-e densityPadding -e SETTINGS_ROW_PADDING` or they read as
+  non-participants. `test/uiScale.test.ts` is the guard: a surface that takes
+  one var without the other, or that multiplies `--row-scale` more than once
+  (a doubled call site from sweeping an already-scaled line), fails the build.
   **"Chrome" means the app frame** — the tab strip, the operation bar — and a
   settings card's HEADER, which is the one named exemption inside a content
   pane. It does NOT mean "anything that is not a row": a band sitting between
@@ -2208,6 +2226,40 @@ update checks back on for someone who turned them off.
   content, and a fixed height there gives one card two row pitches. Settings
   surfaces take the step through `densityPadding()` / `SETTINGS_ROW_PADDING`
   rather than their own literal — see the Settings section.
+  **`useRowH(basePx)` is the JS twin of that `calc()`** — one owner for "a
+  row's height in px" rather than the expression re-derived at every windowed
+  list, because six copies is six chances for one to disagree (#70). It reads
+  `useSpacingStep()` (the active step as a number) and `useTextScale()` (the
+  active factor), multiplies the base by the factor and adds the step,
+  rounded to one decimal to match `applyTextScale`'s own ramp precision.
+  Three JS geometries build on it because CSS alone can't reach them:
+  - **Diff row pitch** — `useDiffRowHeight()` (`lib/useDiffRowHeight.ts`)
+    re-reads the CSS-computed `--diff-row-h` (`calc(var(--fs-12) *
+    var(--lh-code))`) whenever `useSpacingStep()`/`useTextScale()` change;
+    those two are only a re-read TRIGGER here, since the value itself is
+    computed in CSS, with `DIFF_ROW_H_FALLBACK` standing in wherever jsdom
+    (or any non-resolving engine) hands back garbage. Fold/gap rows in the
+    same views use `useRowH(22)` directly instead.
+  - **Commit-row columns** (`design/graph-geometry.ts`) — `shaColW`,
+    `colPad`, `subjectMinW`, `authorColW`, `authorMinW`, `dateColW` and
+    `commitListMinW` all take the TEXT scale only, never the spacing step:
+    they are column widths sized to hold text, not row heights. Each
+    defaults `scale = 1`, so a caller with no notion of the setting — tests
+    included — gets the pre-scale numbers unchanged; `commitRowGrid` threads
+    the same `scale` through to build the shared grid template.
+  - **The SVG graph gutter** (`PGGraphRow`, fed by `PGCommitRow`) — its
+    `height` prop must be `useRowH(COMMIT_ROW_BASE_H)` (both axes: it draws
+    lanes in SVG user units and cannot read a CSS var), but its `width`
+    (`graphWidth(maxCol)`) is NOT part of either scale — lane spacing
+    (`GRAPH_PAD`, `LANE_W`) is fixed regardless of text size, so the gutter
+    only widens when a repo's graph needs more lanes, never when type grows.
+  **The boundary against Zoom**: Text size moves TYPE — the `--fs-*` ramp,
+  the row bases that hold it, and the text-sized columns above. Zoom (the
+  existing "Zoom" row, same Appearance card) moves everything else, through
+  the webview's own zoom factor — icons, borders, gaps, the titlebar — and
+  answers "the whole app is too small on my display", not "the type is too
+  small". The two compose; a new setting that scales pixels picks one side
+  rather than reopening both.
 
 ## Design system
 
