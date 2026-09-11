@@ -11,8 +11,8 @@
 ## Checklist
 
 - [ ] One logical change, focused PR
-- [ ] Branched off `main`; no merge commits on the branch (we **rebase and merge**, and `main` requires linear history)
-- [ ] PR title + every commit message follow Conventional Commits (`feat(scope): …`) — each commit is replayed onto `main` as written, so `git rebase -i main` first to fold fixups and drop `wip`
+- [ ] Branched off `main`; no merge commits on the branch (we **squash and merge**, and `main` requires linear history)
+- [ ] PR title + every commit message follow Conventional Commits (`feat(scope): …`) — the branch squashes to one commit whose body quotes every commit message, so `git rebase -i main` first to fold fixups and drop `wip`
 - [ ] `pnpm tsc --noEmit` passes
 - [ ] `cargo test --manifest-path src-tauri/Cargo.toml` passes
 - [ ] `pnpm test` passes
