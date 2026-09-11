@@ -241,20 +241,20 @@ chore: bump tauri to 2.x
 
 - Short imperative subject, under 72 chars.
 - Optional body with a `Why:` line for non-obvious decisions.
-- Do not create empty or merge commits — a rebase merge can replay neither. Do not amend published commits.
+- Do not create empty or merge commits — neither says anything, and the squash quotes both into the body. Do not amend published commits.
 
 ## Branching & merge workflow
 
-We use **feature branches + rebase and merge**. The `main` ruleset requires
-linear history and allows rebase merges only, so every commit on your branch is
-replayed onto `main` — `main` is N commits per PR, with no merge commits.
+We use **feature branches + squash and merge**. The `main` ruleset requires
+linear history and allows squash merges only, so your branch arrives as **one
+commit per PR**, with no merge commits.
 
 1. Branch off `main` — `feat/...`, `fix/...`, `chore/...`, `docs/...`. Never commit to `main` directly.
-2. Build the change as a series of small, focused commits (Conventional Commits throughout). **Nothing collapses them**, so each commit lands in `main`'s history as you wrote it — keep each one self-contained and buildable, so `git bisect` and `git log` stay useful.
-3. If the branch needs updating, **rebase onto `main`** (`git rebase main`), never merge `main` in. Force-push with `--force-with-lease` after a rebase. A branch carrying a merge commit cannot be rebase-merged at all.
-4. Before marking the PR ready, tidy the branch's history with `git rebase -i main` — fold fixups, drop `wip` commits, reword subjects. That list is exactly what reviewers read and what `main` keeps; a rebase merge writes no merge commit, so the PR title never becomes a commit message and GitHub appends no `(#N)`.
-5. PRs are integrated with GitHub's **Rebase and merge**. Squash and merge-commit are blocked.
-6. A branch that is only *behind* `main` still merges — GitHub replays your commits onto the current tip, which keeps history linear on its own. No rebase-before-merge dance: merge once GitHub reports the PR mergeable. Rebase locally only if GitHub reports conflicts, or you want CI to run against something that just landed on `main`.
+2. Build the change as a series of small, focused commits (Conventional Commits throughout). They are collapsed on merge, but **every commit message is quoted into the squash commit's body**, so write each one as prose someone will read in `git log`.
+3. If the branch needs updating, **rebase onto `main`** (`git rebase main`), never merge `main` in. Force-push with `--force-with-lease` after a rebase. A squash would collapse a merge commit harmlessly, but its message still lands in the body saying nothing.
+4. Before marking the PR ready, tidy the branch's history with `git rebase -i main` — fold fixups, drop `wip` commits, reword subjects. That list is exactly what reviewers read and what the squash commit's body will quote.
+5. PRs are integrated with GitHub's **Squash and merge**. Rebase and merge-commit are blocked. The squash title is the lone commit's subject for a one-commit PR and the PR title otherwise, with `(#N)` appended automatically — so let GitHub write it rather than overriding with `gh pr merge --subject`, which drops that backlink.
+6. A branch that is only *behind* `main` still merges — GitHub squashes onto the current tip, which keeps history linear on its own. No rebase-before-merge dance: merge once GitHub reports the PR mergeable. Rebase locally only if GitHub reports conflicts, or you want CI to run against something that just landed on `main`.
 
 ## Pull requests
 
