@@ -145,6 +145,90 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.10.0',
+    date: '2026-09-11',
+    status: 'feature',
+    summary:
+      'The theme editor stops being a column of eighteen colour fields and becomes somewhere you can actually design. The colour picker belongs to the app now rather than to the operating system — a hue wheel, a brightness slider and four colour models, instead of whatever panel the host happened to supply. Above it, four traits generate the whole palette: a base ramp, an accent, a harmony and how far the hue reaches the surfaces, each with a lock and a dice that re-rolls the rest. And creating a theme is a button rather than a copy of somebody else\'s. Away from Settings, the release carries a fix worth reading: a branch or tag whose name begins with a plus sign was handed to git as a force refspec, so pushing it force-updated a different ref and destroyed history on the remote with none of the app\'s rewrite warnings.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'A colour picker that belongs to the app',
+            detail:
+              'All nineteen colour fields in the theme editor were native `<input type="color">` controls, which is less a picker than a hand-off to whatever dialog the host supplies: an unstyled system panel, so a dark theme\'s greys are chosen in a bright window, offering hex plus the host\'s own colour model and nothing that helps build the ramp a theme actually is. They are a hue and saturation wheel now, with a brightness slider, a hex field, and a numeric row that switches between HSV, HSL, RGB and OKLCH. The popover also carries the draft\'s own palette as swatches, a row of recent colours, a live contrast ratio for a slot that is paired with another, and copy and paste on the swatch\'s right-click menu. Looks were not the only reason to replace it: a host dialog is untestable by construction — it could stop working entirely with the whole suite green — and it belongs to the same class of native control that turned out to be silently inert on Linux in 0.9.0. Four things in it are load-bearing, and each is a bug the obvious version ships. The state is HSV rather than the colour, because a grey has no hue and black has neither hue nor saturation, so reading the state back out of the colour teleports the wheel cursor to red the instant saturation reaches zero. The selected model\'s channel values are held rather than re-derived per render, because re-deriving quantizes them and the error accumulates — ten presses of a one-degree step moved the hue by 10.14° and the readout crept away from the number it had just shown. The gamut epsilon absorbs floating-point noise and nothing more, because a looser one reads a visible chroma as representable at pure black, which is exactly where a theme keeps its greys. And the outside-press handler knows the right-click menu is portalled, or that menu\'s own press closes the popover and lands its click on a detached node.',
+          },
+          {
+            title: 'A palette built from four traits, and a dice',
+            detail:
+              'Eighteen colour slots are a lot to choose one at a time, so they are generated from four traits you can reason about: a base ramp, which supplies every slot\'s lightness and its baseline chroma; an accent, the one colour you pick, which becomes the accent verbatim; a harmony — Mono, Analogous, Triadic, Split or Complementary — deciding where the surfaces and the logo pair sit relative to that accent; and a tint from 0 to 1, how far the palette\'s hue reaches the surfaces. Each trait has a lock, and one dice re-rolls everything unlocked. The eighteen slots stay hand-editable underneath; a hand edit just flips the readout to Custom. This reverses a non-goal that was written down twice, and deliberately: the objection was to a generator in HSL, where hue and lightness are one knob so a generated ramp\'s contrast lands wherever it lands. Holding lightness and rewriting only hue and chroma in OKLCh makes a generated palette both predictable and correctable, and that is measured rather than asserted — across all nine built-in themes and all five rules, a tint of 0 reproduces the original palette byte for byte, and across 3240 checks of nine themes against twenty-four hues, five strengths and the three pairs that decide readability, tinting never once moved a contrast verdict into a different band. The dice cannot roll an unusable theme either, because those four traits are its only inputs and each rolls inside a band measured off the built-ins. Nothing about the saved format changes: the traits are inferred from the palette when you open it and never stored. Diff and syntax colours are deliberately out of scope — diff green carries meaning, and a palette choice must not change what a diff says.',
+          },
+          {
+            title: 'Add a theme without duplicating one first',
+            detail:
+              'Creating a custom theme was reachable only as find a card, press Duplicate — which spells a create as a copy, and makes the starting palette a decision you have to take before you have a draft to look at. There is an Add theme button under the gallery now, beside Import. It opens the editor on the theme you are using, and the editor\'s own Start from picker is where you change what the draft begins from, so that choice happens inside the dialog with a live preview already in front of you. The draft\'s name follows the base while it is still the automatic one, which closes a quiet way to mislabel a theme: switching the base used to swap the whole palette and leave the name behind, so a draft could save as Dracula (custom) while being built entirely out of Solarized. Nothing overwrites a name you typed yourself, and editing an existing theme never renames it.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'A branch whose name began with a plus sign force-pushed a different branch',
+            detail:
+              'The most serious fix in this release, and it destroyed history rather than merely refusing to work. A ref is sent to git in refspec position, and a leading plus sign there means force-update — so selecting a branch or tag called +main and pressing Push made git force-update main, discarding whatever the remote had, and never touched the ref actually selected. Nothing warned, because as far as the app was concerned this was an ordinary push: the rewrite confirmation that every history-rewriting entry shares never ran. Measured against git 2.50.1 on a diverged remote, the push reported a forced update of main and created no +main at all. The end-of-options separator added elsewhere in this release does not help — it ends option parsing, while this is the refspec grammar underneath it — and validating the name cannot help either, since a plus sign is legal in a ref name and git will happily create the branch. The fix names the ref in full on both sides of the refspec, so no character of a user\'s name is ever the first character of the refspec and the ambiguity is removed rather than detected. Pull was in the same class and had not been reported: the branch is a refspec there too, so pulling +main fetched and merged main instead. Naming the ref in full was checked to be equivalent to the bare name for setting upstream, force-with-lease, force, branch creation, slashed names and all three pull modes, down to the auto-generated merge subject; it also settles two cases the bare name got wrong, since a +main branch now reaches its real ref and a repository holding both a branch and a tag of the same name pushes the branch instead of failing.',
+          },
+          {
+            title: 'Checking out a remote branch now actually tracks the remote',
+            detail:
+              'Checking out `origin/x` as a new local branch produced a branch that tracked nothing — no ahead or behind, no pull, and nothing to say it had fallen behind — while the prompt said Tracking origin/x. Worse, when the name was already taken the create failed, the failure was reported by a banner, and the checkout then ran anyway on whatever unrelated local branch already held that name, its refresh wiping the banner on the way past: you asked for the remote branch and landed on a stale local one with nothing on screen to say so. Creating a branch now sets the upstream when the start point resolves to a remote-tracking branch and only then, which is git\'s own `branch.autoSetupMerge` default, measured against real git rather than assumed — and doing it in the backend means every route that branches off a remote gets tracking, not just this one. A taken name is a question now rather than a silent substitution, offering to check the existing branch out and update it to the remote, to check it out as it is, or to pick a different name; the update is offered only when the branch is strictly behind and the ref it would advance along is the one you named, because a branch tracking something else would move along a ref the dialog never mentioned. Two adjacent surfaces in the same story were broken too: the Branches detail pane\'s Check out button answered a remote ref with an invalid-ref error, and Enter on a remote row did nothing at all.',
+          },
+          {
+            title: 'Every remote and branch name now ends git\'s option parsing',
+            detail:
+              'Push and pull were the last argv sites handing a user-supplied remote or branch to git without the `--` separator that the fetch, tag-push and delete-push builders had always carried, so a remote named like an option could be read as one. Both push builders emit it now, with every flag of ours moved ahead of it — which is why they lacked it before, since a force flag appended after the separator would be read as a refspec rather than an option. Pull is not the same problem and the separator alone does not fix it: git pull parses its own options, consumes the separator, then re-runs fetch with no separator of its own, so the value arrives as an option after all and a crafted remote can run a program of its own choosing. Pull therefore refuses a remote or branch that begins with a dash outright, and still emits the separator, which does end its own option parsing. The same refusal covers git-LFS fetch and pull, where a separate binary\'s flag parser is its behaviour to confirm rather than ours to assume. One consequence was followed up: a pull refused on those grounds never reaches git, so the working tree that was stashed before the call is now popped back — a refused argument must not cost you your uncommitted work, parked in a stash you were never told about.',
+          },
+          {
+            title: 'Settings rows follow the UI density setting',
+            detail:
+              'Every other list surface in the app scales with the UI density setting; the rows inside Settings did not, so the side menu grew and the panel it navigates stayed put. Settings rows, the forge account rows beside them and the theme gallery\'s Add and Import strip all scale now, from one shared value rather than three copies of the same expression — copies being how a forge account row ends up a few pixels off from the setting above it while every test still passes. A card\'s header keeps its fixed padding, since chrome is exempt from the density rule, and that exemption is now pinned by a test rather than left as a comment. The step is also measured in a real webview, because the layout arithmetic involved is not something the unit test environment computes: it could only check that the expression was present, and dropping half of it grows a row by twice the intended amount while staying green.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'A dependency advisory closed by removing the package',
+            detail:
+              'A high-severity path-traversal advisory against `extract-zip` had no patched version to move to: 2.0.1 is the latest release, from 2023, and the upstream fix was never published. It is closed by deleting the package from the tree instead — a newer major of the browser downloader that pulled it in dropped the dependency, and an override forces that major across the one remaining request for the old one. This is test tooling rather than anything the app ships, and the guard is written as absence rather than as a version floor, since floors are keyed by major and a dropped override letting the old version back in would satisfy a 3.x floor vacuously and re-open the advisory in silence.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Two windows on one repository do not share a lock',
+            detail:
+              'Unchanged from 0.7.0. Each window opens its own handles for a repository, and that is what keeps windows independent — closing a tab in one evicts nothing the other is using. The read/write gate orders one window\'s work against itself, not one window\'s against another\'s, so work you start on the same repository from two windows is still arbitrated by git\'s own `index.lock`, exactly as it is between any two git processes.',
+          },
+          {
+            title: 'A Store update lands hours after the release, not with it',
+            detail:
+              'Unchanged from 0.6.0. Submission is automatic; certification is not instant. Microsoft reviews each update before it reaches the Store, so a Store install trails the `.msi`, Scoop and winget by however long that takes — usually hours. Nothing is wrong when the Store still offers the previous version shortly after a release.',
+          },
+          {
+            title: 'Timestamps are shown in your timezone, not the author\'s',
+            detail:
+              'Unchanged from 0.5.0. Where `git log` prints the offset a commit was authored under, PlatypusGit shows that same instant on your own clock — a commit reaches the interface as unix seconds and nothing else, so matching git here is a change to what the backend sends rather than to how a date is written. The hover names the zone it used, so no stamp is ambiguous about which clock that was.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.9.0',
     date: '2026-09-10',
     status: 'feature',
