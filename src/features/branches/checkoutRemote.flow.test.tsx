@@ -273,6 +273,38 @@ describe("the name is already taken — the silent-fallback regression", () => {
     );
   });
 
+  it("spends no stash cycle when the collision is the branch under HEAD", async () => {
+    // You are on `feature`, someone pushes, you right-click `origin/feature`.
+    // checkoutBranch there is a no-op that still stashes and pops the user's
+    // working tree.
+    setBranches([
+      branch({ name: "feature", isHead: true }),
+      branch({ name: "origin/feature", isRemote: true }),
+    ]);
+    render(
+      <WithDialogs>
+        <div />
+      </WithDialogs>,
+    );
+
+    const done = checkoutRemoteAsLocalBranch("origin/feature");
+    await screen.findByTestId("dialog-input");
+    await acceptDialog("feature");
+    expect(await screen.findByTestId("dialog-title")).toHaveTextContent(
+      "Stay on feature?",
+    );
+    await choose("checkout");
+    await done;
+
+    // The tracking it was missing is still set — that IS the ask.
+    expect(callsTo("set_upstream")[0].args).toMatchObject({
+      branch: "feature",
+      upstream: "origin/feature",
+    });
+    expect(cmds()).not.toContain("checkout_branch");
+    expect(cmds()).not.toContain("stash_save");
+  });
+
   it("'use a different name' re-opens the prompt and takes the new name", async () => {
     takenByStale();
     render(

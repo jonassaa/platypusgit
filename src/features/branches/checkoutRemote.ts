@@ -55,6 +55,12 @@ function trackingSentence(remote: string, upstream: string | null): string {
   return "It tracks nothing.";
 }
 
+/** The half of the existing branch this dialog reads. */
+export interface ExistingBranch {
+  upstream: string | null;
+  isHead: boolean;
+}
+
 /**
  * The dialog for "you asked for `origin/x`, but a local `x` already exists".
  *
@@ -67,13 +73,19 @@ function trackingSentence(remote: string, upstream: string | null): string {
  * move it along a ref this dialog never mentioned, and a branch with commits
  * of its own cannot be fast-forwarded at all. Everything else gets the plain
  * checkout and keeps its commits.
+ *
+ * The collision can be the branch you are STANDING ON — you are on `feat`,
+ * someone pushes, you right-click `origin/feat`. Offering to "check out feat"
+ * there says nothing true, so the wording changes: the useful action on a
+ * branch you are already on is to make it track the remote, or to catch it up.
  */
 export function existingBranchPrompt(
   local: string,
   remote: string,
-  upstream: string | null,
+  existing: ExistingBranch,
   rel: RemoteRelation,
 ): ExistingBranchPrompt {
+  const { upstream, isHead } = existing;
   const canUpdate =
     !rel.unrelated &&
     rel.behind > 0 &&
@@ -84,19 +96,28 @@ export function existingBranchPrompt(
   if (canUpdate)
     choices.push({
       id: "update",
-      label: `Check out and update to ${remote}`,
+      label: isHead
+        ? `Update ${local} to ${remote}`
+        : `Check out and update to ${remote}`,
       primary: true,
     });
   choices.push({
     id: "checkout",
-    label: canUpdate ? `Check out ${local} as it is` : `Check out ${local}`,
+    label: isHead
+      ? upstream === null
+        ? `Track ${remote}`
+        : `Stay on ${local}`
+      : canUpdate
+        ? `Check out ${local} as it is`
+        : `Check out ${local}`,
     primary: !canUpdate,
   });
   choices.push({ id: "rename", label: "Use a different name…" });
 
+  const where = isHead ? " You are on it." : "";
   return {
-    title: `Check out the existing ${local}?`,
-    body: `A local branch named ${local} already exists. ${relationSentence(
+    title: isHead ? `Stay on ${local}?` : `Check out the existing ${local}?`,
+    body: `A local branch named ${local} already exists.${where} ${relationSentence(
       local,
       remote,
       rel,
@@ -151,6 +172,9 @@ async function useExistingBranch(
     await useRepoStore.getState().fastForwardBranch(local);
     if (useRepoStore.getState().error) return;
   }
+  // Already standing on it: `checkoutBranch` would be a no-op that still spends
+  // a stash → checkout → pop cycle on the user's working tree.
+  if (existing.isHead) return;
   await useRepoStore.getState().checkoutBranch(local);
 }
 
@@ -201,7 +225,7 @@ export async function checkoutRemoteAsLocalBranch(remote: string): Promise<void>
       ? await relationTo(repoId, remote, local)
       : { ahead: 0, behind: 0, unrelated: true };
     const answer = await pgChoose(
-      existingBranchPrompt(local, remote, existing.upstream, rel),
+      existingBranchPrompt(local, remote, existing, rel),
     );
     if (answer === "rename") {
       // Re-open on what they typed, not on the original suggestion — the name
