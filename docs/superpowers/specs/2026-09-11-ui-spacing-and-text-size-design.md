@@ -262,10 +262,14 @@ spec does not start it.
 and immediately above `appearance.zoom` so the three size controls read as a
 group:
 
-- **Text size** — `PGSelect`, four options. Hint names what it does *not* do,
+- **Text size** — `PGButtonGroup`, four options — the control every other small
+  enum in this card uses (follow-mode, the retired density row, Date format);
+  `stacked` is the fallback if four options overflow, never a native select.
+  Hint names what it does *not* do,
   so the difference from Zoom is on screen rather than inferred: text only,
   chrome unchanged.
-- **Spacing** — `PGSelect`, four options. Hint states the per-row pixel delta,
+- **Spacing** — `PGButtonGroup`, four options. Hint states the per-row pixel
+  delta,
   read from `SPACING_STEP_PX` rather than written as a literal, the way the
   current hint reads `DENSITY_STEP_PX.comfortable`.
 
