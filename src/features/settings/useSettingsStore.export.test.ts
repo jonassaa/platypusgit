@@ -95,6 +95,10 @@ const PORTABLE = [
   // "no systemAppearance" assertions below pin that.
   "themePreference",
   "uiSpacing",
+  // The type-ramp preset (`--fs-*`, `--row-scale`). Portable for the same
+  // reason uiSpacing is: it says how large the person likes their text, not
+  // anything about this machine's display.
+  "uiTextScale",
   "uiZoom",
   // The release channel (#237). Portable: "we track the prereleases" is a
   // team decision, not a fact about one machine — the same call

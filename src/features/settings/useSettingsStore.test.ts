@@ -13,7 +13,18 @@ async function freshStore() {
 
 beforeEach(() => {
   localStorage.clear();
-  document.documentElement.style.removeProperty("--row-step");
+  const rootStyle = document.documentElement.style;
+  rootStyle.removeProperty("--row-step");
+  rootStyle.removeProperty("--row-scale");
+  // applyTextScale overwrites all ten on every call, so nothing can leak
+  // between tests today — but a future test asserting an UNSET --fs-* var
+  // would otherwise silently inherit whatever ramp the previous test applied.
+  // Literal token list, not FS_TOKENS: this file has no static top-level
+  // import of the store module (see freshStore below), so there is nothing to
+  // import it from.
+  for (const n of [10, 11, 12, 13, 14, 15, 17, 20, 28, 40]) {
+    rootStyle.removeProperty(`--fs-${n}`);
+  }
 });
 
 describe("useSettingsStore persistence", () => {
@@ -622,5 +633,74 @@ describe("recentColors", () => {
     useSettingsStore.getState().pushRecentColor("#ff8800");
     const bag = JSON.parse(useSettingsStore.getState().exportSettings());
     expect(JSON.stringify(bag)).not.toContain("ff8800");
+  });
+});
+
+const fsVar = (n: number) =>
+  document.documentElement.style.getPropertyValue(`--fs-${n}`);
+const rowScale = () =>
+  document.documentElement.style.getPropertyValue("--row-scale");
+
+describe("uiTextScale CSS hook", () => {
+  it("applies the resolved ramp from the persisted scale at load", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiTextScale: "larger" }));
+    await freshStore();
+    expect(fsVar(13)).toBe("16.9px");
+    expect(fsVar(40)).toBe("52px");
+    expect(rowScale()).toBe("1.3");
+  });
+
+  it("re-applies the ramp when the setting changes", async () => {
+    // No static top-level import of useSettingsStore exists in this file (see
+    // freshStore above) — a bare `useSettingsStore.getState()` here throws
+    // ReferenceError, so the instance freshStore() just loaded is used instead.
+    const { useSettingsStore } = await freshStore();
+    expect(fsVar(13)).toBe("13px");
+    useSettingsStore.getState().set("uiTextScale", "large");
+    expect(fsVar(13)).toBe("15px");
+    expect(rowScale()).toBe("1.15");
+  });
+
+  // Rounding is what could break this, and a collapsed or reordered pair would
+  // render two different type roles identically with nothing on screen saying
+  // why. Four presets is a finite set, so assert it rather than sample it.
+  it("keeps the ramp strictly ascending at every preset", async () => {
+    const { TEXT_SCALE, FS_TOKENS, applyTextScale } = await freshStore();
+    for (const key of Object.keys(TEXT_SCALE) as (keyof typeof TEXT_SCALE)[]) {
+      applyTextScale(key);
+      const sizes = FS_TOKENS.map((n) => Number.parseFloat(fsVar(n)));
+      for (let i = 1; i < sizes.length; i++) {
+        expect(sizes[i], `${key}: --fs-${FS_TOKENS[i]}`).toBeGreaterThan(sizes[i - 1]);
+      }
+    }
+  });
+
+  // The clipping guard. Rows set `height`, not `min-height`, so a base that
+  // does not grow with the type clips it -- and no test that only reads the
+  // ramp can see that. --fs-13 x --lh-body must fit the SMALLEST row base in
+  // use (22px, PGBranchRow and the Compare header).
+  it("keeps the smallest row base clear of its own line box at every preset", async () => {
+    const { TEXT_SCALE, applyTextScale } = await freshStore();
+    const SMALLEST_ROW_BASE = 22;
+    const LH_BODY = 1.45;
+    for (const key of Object.keys(TEXT_SCALE) as (keyof typeof TEXT_SCALE)[]) {
+      applyTextScale(key);
+      const lineBox = Number.parseFloat(fsVar(13)) * LH_BODY;
+      const rowH = SMALLEST_ROW_BASE * Number.parseFloat(rowScale());
+      expect(rowH, `${key}`).toBeGreaterThanOrEqual(lineBox);
+    }
+  });
+
+  it("falls back to the default for an unknown stored text scale", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiTextScale: "huge" }));
+    await freshStore();
+    expect(fsVar(13)).toBe("13px");
+    expect(rowScale()).toBe("1");
+  });
+
+  it("rejects an inherited Object property as a text scale", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiTextScale: "toString" }));
+    await freshStore();
+    expect(rowScale()).toBe("1");
   });
 });

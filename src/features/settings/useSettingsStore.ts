@@ -737,6 +737,68 @@ export function applySpacing(spacing: UiSpacing) {
   root.dataset.spacing = s;
 }
 
+/**
+ * Every step of the type ramp, as the NUMBER in its token name.
+ *
+ * `index.css` declares `--fs-10` … `--fs-40` at these exact px values as the
+ * pre-hydration default; `applyTextScale` overwrites all ten from this list,
+ * so the two cannot drift and a new step is added in one place.
+ */
+export const FS_TOKENS = [10, 11, 12, 13, 14, 15, 17, 20, 28, 40] as const;
+
+/**
+ * How far the type ramp moves, per text-size preset.
+ *
+ * Text size is NOT zoom. Zoom scales the whole UI through the webview —
+ * borders, icons, the titlebar, whitespace — and is the answer to "this app is
+ * too small on my display". This scales type, the row bases that have to hold
+ * it, and the column widths that are sized to text; icons and gaps stay put.
+ * The two compose, which is why both exist.
+ */
+export const TEXT_SCALE = {
+  small: 0.92,
+  default: 1,
+  large: 1.15,
+  larger: 1.3,
+} as const;
+
+export type UiTextScale = keyof typeof TEXT_SCALE;
+
+/** Same contract as `normalizeSpacing`, one setting over — see its comment. */
+function normalizeTextScale(scale: unknown): UiTextScale {
+  return typeof scale === "string" && Object.hasOwn(TEXT_SCALE, scale)
+    ? (scale as UiTextScale)
+    : DEFAULTS.uiTextScale;
+}
+
+/**
+ * Apply the text-size preset by writing the RESOLVED ramp to :root.
+ *
+ * Resolved px rather than `--fs-13: calc(13px * var(--ui-text-scale))`, which
+ * reads better but would make `--diff-row-h: calc(var(--fs-12) *
+ * var(--lh-code))` a nested calc() inside an unregistered custom property —
+ * and `readDiffRowHeight` already carries a fallback for the case where that
+ * value does not resolve to px. Writing px keeps `--diff-row-h` a one-level
+ * calc, unchanged, and keeps the question from arising in the webview at all.
+ *
+ * One decimal, not whole pixels: two steps of the ramp are 1px apart at the
+ * small end, and integer rounding can collapse or reorder them.
+ *
+ * `--row-scale` is the same factor, unitless, for the row bases — every row
+ * surface sets `height`, not `min-height`, so a base that does not grow with
+ * the type clips it.
+ */
+export function applyTextScale(scale: UiTextScale) {
+  const root = document.documentElement;
+  const key = normalizeTextScale(scale);
+  const f = TEXT_SCALE[key];
+  for (const base of FS_TOKENS) {
+    root.style.setProperty(`--fs-${base}`, `${Math.round(base * f * 10) / 10}px`);
+  }
+  root.style.setProperty("--row-scale", String(f));
+  root.dataset.textScale = key;
+}
+
 // ─── HEAD ("you are here") indicator ─────────────────────────────────────────
 //
 // The catalog, the weight table and the resolver live in `./headMarks` — pure
@@ -848,6 +910,11 @@ interface PersistedState {
    * binary `uiDensity`; `coerceSettings` migrates the old key.
    */
   uiSpacing: UiSpacing;
+  /**
+   * How large the type is (`--fs-*`) and, with it, the row bases and the
+   * text-sized columns. Independent of `uiZoom`, which scales everything.
+   */
+  uiTextScale: UiTextScale;
   /**
    * How a commit date is written wherever one is shown (#354) — relative
    * ("3w ago"), the absolute stamp, or both. The hover tooltip carries the
@@ -1107,6 +1174,7 @@ const DEFAULTS: PersistedState = {
   themePreference: { ...DEFAULT_THEME_PREFERENCE },
   customThemes: [],
   uiSpacing: "cozy",
+  uiTextScale: "default",
   dateFormat: "relative",
   uiZoom: 1,
   headMarks: ["bar", "tint", "ring"],
@@ -1539,6 +1607,7 @@ function coerceSettings(
           : DEFAULTS.uiSpacing;
   }
   out.uiSpacing = normalizeSpacing(out.uiSpacing);
+  out.uiTextScale = normalizeTextScale(out.uiTextScale);
   // Same failure one column over: the date format picks the Date column's
   // WIDTH as well as its text, so an unknown mode would emit `undefinedpx` in
   // the row grid and collapse the column on every row at once.
@@ -2032,6 +2101,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     // import lands in state and not on screen.
     applyTheme(findTheme(state, state.activeThemeId) ?? BUILTIN_THEMES[0]);
     applySpacing(state.uiSpacing);
+    applyTextScale(state.uiTextScale);
     applyZoom(state.uiZoom);
     return {
       changed,
@@ -2062,6 +2132,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (key === "uiSpacing") {
       applySpacing(get().uiSpacing);
     }
+    if (key === "uiTextScale") {
+      applyTextScale(get().uiTextScale);
+    }
     if (key === "uiZoom") {
       applyZoom(get().uiZoom);
     }
@@ -2076,17 +2149,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     persist(DEFAULTS);
     applyTheme(BUILTIN_THEMES[0]);
     applySpacing(DEFAULTS.uiSpacing);
+    applyTextScale(DEFAULTS.uiTextScale);
     applyZoom(DEFAULTS.uiZoom);
   },
 }));
 
-// Apply active theme + density on module load so there's no flash before
-// first render.
+// Apply active theme, spacing and text scale on module load so there's no
+// flash before first render.
 {
   const s = useSettingsStore.getState();
   const active = findTheme(s, s.activeThemeId) ?? BUILTIN_THEMES[0];
   applyTheme(active);
   applySpacing(s.uiSpacing);
+  applyTextScale(s.uiTextScale);
   applyZoom(s.uiZoom);
 }
 
@@ -2120,6 +2195,16 @@ export type { Appearance } from "./systemAppearance";
  */
 export function useSpacingStep(): number {
   return SPACING_STEP_PX[normalizeSpacing(useSettingsStore((s) => s.uiSpacing))];
+}
+
+/**
+ * The active text scale as a FACTOR (0.92 … 1.3), for surfaces that multiply a
+ * JS pixel constant by it — windowed row pitches, the SVG graph gutter, and
+ * the commit row's text-sized columns. Everything a `calc()` can reach should
+ * use `var(--row-scale)` instead.
+ */
+export function useTextScale(): number {
+  return TEXT_SCALE[normalizeTextScale(useSettingsStore((s) => s.uiTextScale))];
 }
 
 /**
