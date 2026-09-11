@@ -389,14 +389,17 @@ describe("uiSpacing CSS hook", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiSpacing: "spacious" }));
     await freshStore();
     expect(rowStep()).toBe("8px");
+    expect(document.documentElement.dataset.spacing).toBe("spacious");
   });
 
   it("re-applies --row-step when the spacing setting changes", async () => {
     const { useSettingsStore } = await freshStore();
     useSettingsStore.getState().set("uiSpacing", "comfortable");
     expect(rowStep()).toBe("4px");
+    expect(document.documentElement.dataset.spacing).toBe("comfortable");
     useSettingsStore.getState().set("uiSpacing", "compact");
     expect(rowStep()).toBe("0px");
+    expect(document.documentElement.dataset.spacing).toBe("compact");
   });
 
   // Compact must stay exactly 0: it is the value that reproduces the

@@ -182,7 +182,7 @@ export function AppearancePage() {
       <SettingsRow
         id="appearance.density"
         label="UI density"
-        hint={`Compact matches the dense IDE feel; Spacious gives every list row ${SPACING_STEP_PX.spacious}px more breathing room.`}
+        hint={`Compact matches the dense IDE feel; spacious gives every list row ${SPACING_STEP_PX.spacious}px more breathing room.`}
         control={
           <PGButtonGroup
             size="sm"
