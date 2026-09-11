@@ -24,9 +24,13 @@ export function readDiffRowHeight(): number {
  * the rows it is measuring (the #70 lesson).
  *
  * Re-read when either UI scale changes. The TEXT scale is the one that
- * actually moves this value — `--diff-row-h` is derived from `--fs-12` — and
- * spacing is kept as a dependency because that is when the theme layer
- * rewrites geometry-adjacent tokens.
+ * actually moves this value — `--diff-row-h` is derived from `--fs-12` —
+ * spacing never touches it. The spacing dependency is kept anyway as cheap
+ * insurance: re-reading a CSS var costs nothing next to the render it is
+ * already part of, and it means this hook does not need to be revisited if
+ * `--diff-row-h`'s formula ever grows a `--row-step` term. (It is NOT because
+ * `applyTheme` rewrites geometry tokens — it writes colour only, per
+ * `useSettingsStore.ts`'s `applyTheme`.)
  */
 export function useDiffRowHeight(): number {
   const step = useSpacingStep();

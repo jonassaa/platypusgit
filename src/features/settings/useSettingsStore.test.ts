@@ -649,6 +649,7 @@ describe("uiTextScale CSS hook", () => {
     expect(fsVar(13)).toBe("16.9px");
     expect(fsVar(40)).toBe("52px");
     expect(rowScale()).toBe("1.3");
+    expect(document.documentElement.dataset.textScale).toBe("larger");
   });
 
   it("re-applies the ramp when the setting changes", async () => {
@@ -660,6 +661,7 @@ describe("uiTextScale CSS hook", () => {
     useSettingsStore.getState().set("uiTextScale", "large");
     expect(fsVar(13)).toBe("15px");
     expect(rowScale()).toBe("1.15");
+    expect(document.documentElement.dataset.textScale).toBe("large");
   });
 
   // Rounding is what could break this, and a collapsed or reordered pair would
@@ -702,6 +704,31 @@ describe("uiTextScale CSS hook", () => {
   it("rejects an inherited Object property as a text scale", async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiTextScale: "toString" }));
     await freshStore();
+    expect(rowScale()).toBe("1");
+  });
+});
+
+// The deleted "reset() restores compact density" case was never replaced when
+// the binary density toggle split into these two independent presets, so
+// nothing asserted that reset() re-applies EITHER one to the DOM. reset()
+// writes DEFAULTS to the store either way -- the bug this guards is
+// `applySpacing`/`applyTextScale` not being called alongside it, which would
+// leave every CSS var at whatever the user had picked while the store itself
+// (and any UI reading it) reported the defaults.
+describe("reset() re-applies both UI scales", () => {
+  it("restores --row-step and the text ramp on the DOM, not just the store fields", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().set("uiSpacing", "spacious");
+    useSettingsStore.getState().set("uiTextScale", "larger");
+    expect(rowStep()).toBe("8px");
+    expect(fsVar(13)).toBe("16.9px");
+
+    useSettingsStore.getState().reset();
+
+    expect(useSettingsStore.getState().uiSpacing).toBe("cozy");
+    expect(useSettingsStore.getState().uiTextScale).toBe("default");
+    expect(rowStep()).toBe("2px");
+    expect(fsVar(13)).toBe("13px");
     expect(rowScale()).toBe("1");
   });
 });

@@ -589,6 +589,19 @@ describe("import validates like load() does", () => {
     expect(s.lastCreateDir).toBe("/Users/someone/dev");
     expect(s.diffViewMode).toBe("split");
   });
+
+  // The uiDensity -> uiSpacing migration's `else` arm used to fire whenever
+  // `uiSpacing` was absent from the payload, with no check for whether the
+  // payload mentioned `uiDensity` either -- so a file that spoke to neither
+  // key still overwrote a Spacious machine's preference with "cozy". This is
+  // the case the review found undercovered: the ternary's own default branch
+  // had no test of its own, and it was the one that was wrong.
+  it("keeps a non-default uiSpacing when the payload mentions neither uiSpacing nor uiDensity", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().set("uiSpacing", "spacious");
+    store.useSettingsStore.getState().importSettings(payloadOf({ addSignoff: true }));
+    expect(store.useSettingsStore.getState().uiSpacing).toBe("spacious");
+  });
 });
 
 describe("import reports rather than applying silently", () => {

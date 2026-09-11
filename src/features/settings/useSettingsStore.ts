@@ -671,7 +671,8 @@ function activationPatch(
  * (`--row-h: calc(24px * var(--row-scale) + var(--row-step))`, …);
  * `applySpacing` overwrites the var from this table, so CSS never hardcodes a
  * step and cannot drift from the JS one. Compact is 0 by definition — it is
- * the value that reproduces the pre-density layout exactly.
+ * the value that reproduces the original fixed layout exactly, from before
+ * either a density toggle or this Spacing preset existed.
  */
 export const SPACING_STEP_PX = {
   compact: 0,
@@ -787,6 +788,11 @@ function normalizeTextScale(scale: unknown): UiTextScale {
  * `--row-scale` is the same factor, unitless, for the row bases — every row
  * surface sets `height`, not `min-height`, so a base that does not grow with
  * the type clips it.
+ *
+ * `data-text-scale` is also set — a reserved hook for any future rule that
+ * isn't a simple ramp substitution, the same reasoning as `applySpacing`'s
+ * `data-spacing` one setting over. Nothing reads it today (it's asserted only
+ * in useSettingsStore.test.ts); drop it if that stays true.
  */
 export function applyTextScale(scale: UiTextScale) {
   const root = document.documentElement;
@@ -1587,10 +1593,18 @@ function coerceSettings(
   // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
   // factor is rejected by the webview and would leave the UI unzoomable.
   out.uiZoom = normalizeZoom(Number(out.uiZoom));
-  // Spacing (#457-era rename). A stored `uiSpacing` wins; otherwise the
-  // pre-rename `uiDensity` is carried over, reading `parsed` rather than `out`
-  // because the old key is gone from the schema and the copy loop above never
-  // picked it up.
+  // Spacing (#457-era rename). A stored `uiSpacing` wins; otherwise, only if
+  // the payload MENTIONS the pre-rename `uiDensity` key at all, that value is
+  // migrated over (reading `parsed` rather than `out` because the old key is
+  // gone from the schema and the copy loop above never picked it up). The
+  // `"uiDensity" in parsed` half of the guard matters as much as the first:
+  // without it, a payload mentioning NEITHER key still fell through to this
+  // branch and replaced `out.uiSpacing` (already `base`'s value, from the copy
+  // loop above) with the migration's fallback — so importing a file as small
+  // as `{"activeThemeId":"dracula"}` silently reset a Spacious user to Cozy.
+  // Same shape as `mentionsMarks` in the headIndicator -> headMarks migration
+  // below: a migration only fires when the payload speaks to the setting it
+  // migrates, never on a payload that is merely silent about it.
   //
   // `compact` deliberately lands on `cozy` rather than on `compact`: a stored
   // "compact" cannot be distinguished from "never touched it" — `load()` fills
@@ -1598,7 +1612,7 @@ function coerceSettings(
   // would ship the roomier default to new installs only. Two pixels per row is
   // mild and one click reversible, and it is the same call the headIndicator
   // migration below makes one setting over.
-  if (!("uiSpacing" in parsed)) {
+  if (!("uiSpacing" in parsed) && "uiDensity" in parsed) {
     out.uiSpacing =
       parsed.uiDensity === "comfortable"
         ? "comfortable"
@@ -2238,7 +2252,7 @@ export function useRowH(basePx: number): number {
  * The user's date format (#354), for the surfaces that render a commit date.
  *
  * A hook rather than a `getState()` read so switching the format in Settings
- * re-renders the log behind it, the same way density does.
+ * re-renders the log behind it, the same way Spacing and Text size do.
  */
 export function useDateFormat(): DateFormat {
   const mode = useSettingsStore((s) => s.dateFormat);

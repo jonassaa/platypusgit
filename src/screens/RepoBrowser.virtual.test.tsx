@@ -28,11 +28,15 @@ const MANY: FileStatus[] = Array.from({ length: 300 }, (_, i) => ({
 }));
 
 beforeEach(() => {
-  // Pin the axis this file's math assumes: the default preset moved off
-  // compact (#457-era spacing rename), and this suite would otherwise measure
-  // whatever DEFAULTS.uiSpacing happens to be rather than the step-0 case it
-  // documents.
+  // Pin BOTH scale axes this file's math assumes: the default spacing preset
+  // moved off compact (#457-era spacing rename), and this suite would
+  // otherwise measure whatever DEFAULTS.uiSpacing happens to be rather than
+  // the step-0 case it documents. Text scale gets the same pin, one axis
+  // over — the same fragility the spacing pin was added to close, and a
+  // DEFAULTS.uiTextScale change would silently move this suite's row-height
+  // math otherwise.
   useSettingsStore.getState().set("uiSpacing", "compact");
+  useSettingsStore.getState().set("uiTextScale", "default");
   mockInvoke("list_all_files", () => MANY);
   mockInvoke("get_diff", (args) => ({
     path: args.path as string,

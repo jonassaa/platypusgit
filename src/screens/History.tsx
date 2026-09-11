@@ -12,7 +12,6 @@ import {
   PGSelect,
   PGSkeleton,
   PGToolbar,
-  COL_PAD,
   colPad,
   commitListMinW,
   commitMenuItems,
@@ -125,19 +124,22 @@ const DETAIL_DIFF_MIN_W = 320;
  * the padding is what a caption truncates to clear, exactly as a long author
  * name does one row below.
  *
- * `paddingRight` here is the ×1 default only — this is a MODULE-LEVEL constant
- * and cannot call `useTextScale()`, so every usage site below spreads it and
- * overrides `paddingRight` with `colPad(textScale)`. A spread that skips the
- * override is how "AUTHORDATE" comes back: the row's own padding scales, the
- * header's does not, and the caption runs into the one beside it exactly as
- * before `COL_PAD` existed.
+ * A FACTORY, not a module-level constant, and deliberately so: this used to be
+ * a plain object with `paddingRight: COL_PAD` as an unscaled ×1 default, and
+ * every usage site spread it and overrode `paddingRight` with
+ * `colPad(textScale)` by hand — a spread that skipped the override was how
+ * "AUTHORDATE" came back, and nothing caught a call site that forgot it (the
+ * only guard, `History.graph.test.tsx`, asserts the ×1 case, which a forgotten
+ * override also satisfies). Folding the scale into the function makes the
+ * mistake impossible to make instead of merely documented, matching every
+ * other scaled value on this branch (`colPad(scale)`, `commitListMinW(scale)`).
  */
-const HEADER_LABEL: React.CSSProperties = {
+const headerLabel = (scale: number): React.CSSProperties => ({
   overflow: "hidden",
   whiteSpace: "nowrap",
   textOverflow: "ellipsis",
-  paddingRight: COL_PAD,
-};
+  paddingRight: colPad(scale),
+});
 
 export function HistoryScreen() {
   // Read once at the top: it feeds both the pane-size floor below
@@ -894,15 +896,13 @@ export function HistoryScreen() {
             with SHA. The count of lanes that did not fit still belongs here,
             in text: the gutter is a decorative graphic, and Phase 3 (G8)
             marks it aria-hidden, so a fade alone would state this nowhere. */}
-        <span
-          style={{ ...HEADER_LABEL, paddingLeft: 12, paddingRight: colPad(textScale) }}
-        >
+        <span style={{ ...headerLabel(textScale), paddingLeft: 12 }}>
           {hiddenLanes > 0 ? `+${hiddenLanes}` : ""}
         </span>
-        <span style={{ ...HEADER_LABEL, paddingRight: colPad(textScale) }}>SHA</span>
-        <span style={{ ...HEADER_LABEL, paddingRight: colPad(textScale) }}>SUBJECT</span>
-        <span style={{ ...HEADER_LABEL, paddingRight: colPad(textScale) }}>AUTHOR</span>
-        <span style={{ ...HEADER_LABEL, paddingRight: colPad(textScale) }}>DATE</span>
+        <span style={headerLabel(textScale)}>SHA</span>
+        <span style={headerLabel(textScale)}>SUBJECT</span>
+        <span style={headerLabel(textScale)}>AUTHOR</span>
+        <span style={headerLabel(textScale)}>DATE</span>
       </div>
       <FocusableScroll
         style={{ flex: 1 }}
