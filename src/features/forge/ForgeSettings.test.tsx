@@ -219,6 +219,17 @@ describe("ForgeSettings — several accounts on one host (#233)", () => {
     ).toBeInTheDocument();
   });
 
+  // An account row is a list row in the same panel as its `SettingsRow`
+  // siblings, so it reads `--row-step` like they do. Fixed padding here left
+  // it a different height from every row above it once density changed.
+  it("sizes an account row with UI density", () => {
+    useForgeStore.setState({ accounts: twoAccounts, detection: GH });
+    render(<ForgeSettings />);
+    expect(
+      screen.getByTestId("forge-account-github.com-acc-work").style.padding,
+    ).toContain("var(--row-step)");
+  });
+
   it("marks which account the host actually uses", () => {
     useForgeStore.setState({ accounts: twoAccounts, detection: GH });
     render(<ForgeSettings />);

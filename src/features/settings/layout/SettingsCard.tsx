@@ -106,7 +106,9 @@ export function SettingsRow({
         flexDirection: stacked ? "column" : "row",
         alignItems: stacked ? "stretch" : "flex-start",
         gap: stacked ? 10 : 16,
-        padding: "12px 16px",
+        // A list-row surface, so it opts into UI density (#70). The card's
+        // header above stays fixed: that is chrome, not a row.
+        padding: "calc(12px + var(--row-step) / 2) 16px",
         borderBottom: "1px solid var(--border-0)",
       }}
     >

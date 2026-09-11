@@ -22,6 +22,23 @@ describe("SettingsCard / SettingsRow", () => {
     expect(screen.getByText("Layout")).toBeTruthy();
   });
 
+  // Every settings row is a list-row surface, so it opts into UI density
+  // (#70) rather than keeping one fixed height while the rest of the app
+  // scales. The card header is deliberately excluded: it is chrome.
+  it("sizes a row with UI density, and leaves the header fixed", () => {
+    render(
+      <SettingsCard id="diff" title="Diff">
+        <SettingsRow id="diff.layout" label="Layout" control={<span>ctl</span>} />
+      </SettingsCard>,
+    );
+    const row = document.querySelector<HTMLElement>('[data-setting-id="diff.layout"]');
+    expect(row?.style.padding).toContain("var(--row-step)");
+    const header = document.querySelector<HTMLElement>(
+      '[data-settings-card="diff"] > header',
+    );
+    expect(header?.style.padding).not.toContain("var(--row-step)");
+  });
+
   it("renders everything when no filter is active", () => {
     render(
       <SettingsFilterProvider visibleRowIds={null}>
