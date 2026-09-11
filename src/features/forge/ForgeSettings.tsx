@@ -28,6 +28,7 @@ import {
 } from "@/design";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import {
+  SETTINGS_ROW_PADDING,
   SettingsCard,
   SettingsRow,
 } from "@/features/settings/layout/SettingsCard";
@@ -429,9 +430,9 @@ function ForgeRow({
         display: "flex",
         alignItems: "flex-start",
         gap: 16,
-        // Same density opt-in as `SettingsRow` (#70). These rows sit in the
-        // same panel as their siblings, so they have to scale with them.
-        padding: "calc(12px + var(--row-step) / 2) 16px",
+        // The SAME value as `SettingsRow`, not a copy of it (#70): these rows
+        // sit in the same panel as their siblings and must scale with them.
+        padding: SETTINGS_ROW_PADDING,
         borderBottom: "1px solid var(--border-0)",
       }}
     >

@@ -2058,6 +2058,26 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         await get().refreshAll();
       },
       async (e) => {
+        // A REFUSED ARGUMENT never reached git, so pop it after all. The
+        // policy above — a failed pull deliberately does not pop — exists
+        // because a real pull can stop halfway and leave conflicts the stash
+        // would collide with. `pull_args` rejects a dash-leading remote or
+        // branch before the repository path is even looked up, so none of that
+        // can have happened: the worktree is still exactly what stashSave left
+        // behind. Without this, the backend's "a refused argument must cost
+        // nothing" is false one layer up — the argument costs the user their
+        // uncommitted work, parked in a stash they were never told about.
+        if (stashed && isAppError(e) && e.kind === "InvalidArgument") {
+          setActivity(repo.id, "pull", "Restoring stashed changes…");
+          try {
+            await stashPop(repo.id, 0);
+            stashed = null;
+          } catch {
+            // The pop is the recovery, not the report. If it fails too, leave
+            // the stash where it is (the pre-existing policy) and still
+            // surface the original refusal rather than replacing it.
+          }
+        }
         // See mergeBranch's catch: refresh first, error last, so it isn't
         // batched away by refreshAll's own `error: null` reset.
         await get().refreshAll();

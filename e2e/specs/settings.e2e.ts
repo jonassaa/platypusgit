@@ -279,6 +279,64 @@ describe("settings", () => {
     expect(await measureRows()).toEqual(compact);
   });
 
+  /**
+   * The Settings panel's OWN rows resolve the density calc.
+   *
+   * `measureRows` above covers the four surfaces outside Settings. These two
+   * are the ones no unit test can reach: jsdom does not resolve `calc()`, so
+   * `SettingsCard.test.tsx` can only assert the token STRING — which stays
+   * green if the `/ 2` is dropped and a row grows 8px instead of 4.
+   *
+   * Asserted as a DELTA, not as pinned absolutes like the test above, because
+   * both heights depend on how their hint prose wraps at the container's width
+   * — a copy edit would redden a pinned number while the geometry is correct.
+   * The delta is the actual invariant: exactly one step, no double-count.
+   *
+   * `theme-actions` is the strip between two `SettingsRow`s in the same card.
+   * It is here because a fixed height there gives ONE card two row pitches,
+   * which is the same bug as a forge row that does not scale.
+   */
+  it("Settings rows resolve the density calc, by exactly one step", async () => {
+    const STEP = 4; // DENSITY_STEP_PX.comfortable
+
+    const measureSettings = async () => {
+      const row = $('[data-setting-id="appearance.density"]');
+      await row.waitForDisplayed({
+        timeout: 10_000, timeoutMsg: "density row never appeared for measurement",
+      });
+      const strip = $('[data-testid="theme-actions"]');
+      await strip.waitForDisplayed({
+        timeout: 10_000, timeoutMsg: "theme action strip never appeared for measurement",
+      });
+      return {
+        row: Math.round((await row.getSize("height")) as number),
+        strip: Math.round((await strip.getSize("height")) as number),
+      };
+    };
+
+    await openSettings("general.appearance");
+    const compact = await measureSettings();
+
+    await $("button*=Comfortable").click();
+    await browser.waitUntil(
+      async () => $('button[aria-pressed="true"]*=Comfortable').isExisting(),
+      { timeout: 10_000, timeoutMsg: "Comfortable never became active" },
+    );
+    const comfortable = await measureSettings();
+
+    // Exactly one step each. `+ var(--row-step)` without the `/ 2` would
+    // report 2 × STEP here, and `calc` resolving to nothing would report 0.
+    expect(comfortable.row - compact.row).toBe(STEP);
+    expect(comfortable.strip - compact.strip).toBe(STEP);
+
+    await $("button*=Compact").click();
+    await browser.waitUntil(
+      async () => $('button[aria-pressed="true"]*=Compact').isExisting(),
+      { timeout: 10_000, timeoutMsg: "Compact never became active" },
+    );
+    expect(await measureSettings()).toEqual(compact);
+  });
+
   it("confirmForcePush=off skips the confirm entirely", async () => {
     pair = remoteRepo();
     makeDiverged(pair);

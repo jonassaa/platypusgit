@@ -4,7 +4,13 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { registerCardRows, SettingsCard, SettingsRow } from "./SettingsCard";
+import {
+  densityPadding,
+  registerCardRows,
+  SETTINGS_ROW_PADDING,
+  SettingsCard,
+  SettingsRow,
+} from "./SettingsCard";
 import { SettingsFilterProvider } from "./filterContext";
 import { SettingsHighlightProvider } from "./highlightContext";
 
@@ -32,11 +38,29 @@ describe("SettingsCard / SettingsRow", () => {
       </SettingsCard>,
     );
     const row = document.querySelector<HTMLElement>('[data-setting-id="diff.layout"]');
-    expect(row?.style.padding).toContain("var(--row-step)");
+    expect(row?.style.padding).toBe(SETTINGS_ROW_PADDING);
+    // The header's EXACT padding, not merely "no --row-step in it": deleting
+    // the header's padding altogether satisfies a `not.toContain` while the
+    // card title sits flush against the border, and "the header keeps its
+    // fixed chrome padding" is the claim being pinned. Asserted non-null
+    // first, because a wrapped header makes the query null and chai then
+    // reports an argument-type error instead of "header not found".
     const header = document.querySelector<HTMLElement>(
       '[data-settings-card="diff"] > header',
     );
-    expect(header?.style.padding).not.toContain("var(--row-step)");
+    expect(header).not.toBeNull();
+    expect(header?.style.padding).toBe("12px 16px 10px");
+  });
+
+  // `--row-step` is the whole extra row height, so vertical padding takes HALF
+  // of it; spelling `var(--row-step)` without the `/ 2` double-counts, the trap
+  // src/index.css names. No `toContain("var(--row-step)")` can see that — jsdom
+  // does not resolve calc() — so the token math is pinned as a string here and
+  // as real geometry in e2e/specs/settings.e2e.ts.
+  it("takes half a step, so density is not double-counted", () => {
+    expect(densityPadding(12)).toBe("calc(12px + var(--row-step) / 2) 16px");
+    expect(densityPadding(10)).toBe("calc(10px + var(--row-step) / 2) 16px");
+    expect(SETTINGS_ROW_PADDING).toBe(densityPadding(12));
   });
 
   it("renders everything when no filter is active", () => {

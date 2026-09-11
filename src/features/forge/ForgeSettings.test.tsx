@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { SETTINGS_ROW_PADDING } from "@/features/settings/layout/SettingsCard";
 import { ForgeSettings } from "./ForgeSettings";
 import { useForgeStore } from "./useForgeStore";
 import type { ForgeAccount } from "./forgeAccounts";
@@ -222,12 +223,16 @@ describe("ForgeSettings — several accounts on one host (#233)", () => {
   // An account row is a list row in the same panel as its `SettingsRow`
   // siblings, so it reads `--row-step` like they do. Fixed padding here left
   // it a different height from every row above it once density changed.
-  it("sizes an account row with UI density", () => {
+  //
+  // Asserted EQUAL to the shared constant rather than "contains --row-step":
+  // the requirement is that the two row helpers agree, and a substring check
+  // still passes once one of them moves to a different base.
+  it("sizes an account row exactly like its SettingsRow siblings", () => {
     useForgeStore.setState({ accounts: twoAccounts, detection: GH });
     render(<ForgeSettings />);
     expect(
       screen.getByTestId("forge-account-github.com-acc-work").style.padding,
-    ).toContain("var(--row-step)");
+    ).toBe(SETTINGS_ROW_PADDING);
   });
 
   it("marks which account the host actually uses", () => {

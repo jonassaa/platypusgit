@@ -235,23 +235,47 @@ pub fn parse_ls_files(stdout: &str) -> Vec<LfsFile> {
         .collect()
 }
 
+/// Refuse a remote name `git lfs` would read as one of its own options.
+///
+/// **Why a refusal and not a `--` separator, unlike every builder in
+/// `commands/branches.rs`.** Those end option parsing with `--` because real
+/// git is what parses them and `git push -- <remote>` is verified to treat the
+/// value as a value. `git lfs` is a separate binary with its own flag parser,
+/// so whether it honours `--` in this position is its behaviour to confirm, not
+/// ours to assume — and the cost of assuming wrong is a silently broken LFS
+/// fetch on every repository. Refusing the one shape that is dangerous needs no
+/// assumption: a legal remote name is unaffected.
+///
+/// Reachable rather than only ours: `git remote add -- -evil <url>` succeeds,
+/// and a cloned repository's config can name a remote anything at all.
+fn checked_remote(remote: Option<&str>) -> AppResult<Option<&str>> {
+    if let Some(r) = remote {
+        if r.starts_with('-') {
+            return Err(AppError::InvalidArgument(format!(
+                "invalid remote name {r:?}: a leading dash would be read as a command-line option"
+            )));
+        }
+    }
+    Ok(remote)
+}
+
 /// `git lfs fetch [remote]` — downloads objects into `.git/lfs`, leaves the
 /// worktree alone.
-pub fn fetch_args(remote: Option<&str>) -> Vec<String> {
+pub fn fetch_args(remote: Option<&str>) -> AppResult<Vec<String>> {
     let mut args: Vec<String> = vec!["lfs".into(), "fetch".into()];
-    if let Some(r) = remote {
+    if let Some(r) = checked_remote(remote)? {
         args.push(r.to_string());
     }
-    args
+    Ok(args)
 }
 
 /// `git lfs pull [remote]` — fetch plus checkout, i.e. materialize as well.
-pub fn pull_args(remote: Option<&str>) -> Vec<String> {
+pub fn pull_args(remote: Option<&str>) -> AppResult<Vec<String>> {
     let mut args: Vec<String> = vec!["lfs".into(), "pull".into()];
-    if let Some(r) = remote {
+    if let Some(r) = checked_remote(remote)? {
         args.push(r.to_string());
     }
-    args
+    Ok(args)
 }
 
 #[cfg(test)]
@@ -277,6 +301,26 @@ mod tests {
         assert!(parse_pointer("see version https://git-lfs.github.com/spec/v1\n").is_none());
         // Version line present but no oid/size — not a pointer.
         assert!(parse_pointer("version https://git-lfs.github.com/spec/v1\nhello\n").is_none());
+    }
+
+    /// `git lfs` is its own binary with its own flag parser, so these two
+    /// builders refuse the dangerous shape rather than relying on a `--` whose
+    /// handling is git-lfs's to define. See `checked_remote`.
+    #[test]
+    fn lfs_args_refuse_a_remote_git_lfs_would_read_as_an_option() {
+        for hostile in ["--upload-pack=/bin/false", "-evil", "--help"] {
+            assert!(
+                matches!(
+                    fetch_args(Some(hostile)),
+                    Err(AppError::InvalidArgument(_))
+                ),
+                "fetch_args accepted {hostile:?}"
+            );
+            assert!(
+                matches!(pull_args(Some(hostile)), Err(AppError::InvalidArgument(_))),
+                "pull_args accepted {hostile:?}"
+            );
+        }
     }
 
     fn line(kind: DiffLineKind, content: &str) -> DiffLine {
@@ -381,8 +425,14 @@ mod tests {
 
     #[test]
     fn arg_builders() {
-        assert_eq!(fetch_args(None), ["lfs", "fetch"]);
-        assert_eq!(fetch_args(Some("origin")), ["lfs", "fetch", "origin"]);
-        assert_eq!(pull_args(Some("upstream")), ["lfs", "pull", "upstream"]);
+        assert_eq!(fetch_args(None).unwrap(), ["lfs", "fetch"]);
+        assert_eq!(pull_args(None).unwrap(), ["lfs", "pull"]);
+        assert_eq!(fetch_args(Some("origin")).unwrap(), ["lfs", "fetch", "origin"]);
+        assert_eq!(pull_args(Some("upstream")).unwrap(), ["lfs", "pull", "upstream"]);
+        // A dash INSIDE the name is ordinary and must still build.
+        assert_eq!(
+            pull_args(Some("my-remote")).unwrap(),
+            ["lfs", "pull", "my-remote"]
+        );
     }
 }

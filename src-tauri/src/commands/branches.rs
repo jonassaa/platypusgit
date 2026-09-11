@@ -663,7 +663,7 @@ mod push_args_tests {
     use super::*;
 
     #[test]
-    fn no_verify_is_added_only_when_asked() {
+    fn no_verify_is_added_only_when_asked_and_precedes_the_separator() {
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, false),
             vec!["push", "--progress", "--", "origin", "main"]
@@ -720,7 +720,7 @@ mod push_args_tests {
     }
 
     #[test]
-    fn no_verify_is_appended_when_asked() {
+    fn no_verify_precedes_the_separator_on_a_commit_push() {
         assert_eq!(
             push_commit_args("origin", "abc1234", "feat/x", true),
             vec![
@@ -794,26 +794,46 @@ mod push_args_tests {
     #[test]
     fn every_user_value_lands_after_the_separator() {
         let hostile = "--receive-pack=/bin/false";
-        let sets: Vec<Vec<String>> = vec![
-            push_args(hostile, "main", PushForce::None, false, false),
-            push_args("origin", hostile, PushForce::WithLease, true, true),
-            push_commit_args(hostile, "abc1234", "main", false),
-            push_commit_args("origin", "abc1234", "main", true),
+        // `PushForce::Force` gets its own set: it is a different match arm from
+        // `WithLease`, so a reorder could move one and leave the other. The
+        // flag says whether the set was built WITH a hostile value — the last
+        // one is the ordinary-path control, and counting it as hostile is what
+        // would make its half of this test vacuous.
+        let sets: Vec<(bool, Vec<String>)> = vec![
+            (true, push_args(hostile, "main", PushForce::None, false, false)),
+            (true, push_args("origin", hostile, PushForce::WithLease, true, true)),
+            (true, push_args("origin", hostile, PushForce::Force, true, true)),
+            (true, push_commit_args(hostile, "abc1234", "main", false)),
+            (false, push_commit_args("origin", "abc1234", "main", true)),
         ];
-        for args in sets {
+        for (has_hostile, args) in sets {
             let sep = args
                 .iter()
                 .position(|a| a == "--")
                 .unwrap_or_else(|| panic!("no end-of-options separator: {args:?}"));
-            for (i, a) in args.iter().enumerate() {
-                if a.starts_with("--receive-pack") {
-                    assert!(i > sep, "user value read as an option: {args:?}");
-                }
+            // PRESENT and after the separator. A bare `if` here would also pass
+            // for a builder that dropped the user's value altogether, which is
+            // a different bug but not a passing one.
+            let at: Vec<usize> = args
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| a.starts_with("--receive-pack"))
+                .map(|(i, _)| i)
+                .collect();
+            assert_eq!(
+                at.len(),
+                usize::from(has_hostile),
+                "user value must survive exactly once: {args:?}"
+            );
+            if let Some(&i) = at.first() {
+                assert!(i > sep, "user value read as an option: {args:?}");
             }
             // Every one of ours stays an option: after the separator it would
-            // be a refspec instead.
-            for flag in ["--progress", "-u", "--force-with-lease", "--no-verify"] {
-                if let Some(i) = args.iter().position(|a| a == flag) {
+            // be a refspec instead. EVERY occurrence is checked, not just the
+            // first — a second copy emitted after `--` is the regression a
+            // `position()` lookup cannot see.
+            for flag in ["--progress", "-u", "--force-with-lease", "--force", "--no-verify"] {
+                for (i, _) in args.iter().enumerate().filter(|(_, a)| *a == flag) {
                     assert!(i < sep, "{flag} must precede the separator: {args:?}");
                 }
             }

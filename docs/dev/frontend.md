@@ -1489,8 +1489,15 @@ a result is the actual control, never a copy of it that could drift — see
   by design (one is a fixed setting with a `data-setting-id`, the other a row
   over account data), but they sit in the same panel, so density has to reach
   both or neither: giving it to one leaves a forge account row a different
-  height from the setting directly above it. The card HEADER keeps its fixed
-  padding, per the density rule's chrome exemption.
+  height from the setting directly above it. They share ONE value —
+  `SETTINGS_ROW_PADDING`, built by `densityPadding(12)` — because being equal
+  is the requirement, and two copied literals cannot fail a test when only one
+  is edited. Anything else in a card BODY takes the same step from
+  `densityPadding(<its own base>)`: the Appearance page's theme action strip is
+  10px, and it scaling is what keeps one card from having two row pitches. The
+  card HEADER is the exemption, and it is the only one — `SettingsCard.test.tsx`
+  pins its exact padding, since asserting merely "no `--row-step`" also passes
+  for a header with no padding at all.
 - **`data-setting-id` is selected exactly, never with `*=`, in both specs and
   e2e.** These are dotted, two-part ids (`card.row`), and one is a genuine
   substring of another today — `commit.sign` is a literal prefix of
@@ -2114,8 +2121,18 @@ update checks back on for someone who turned them off.
   `height: "calc(<base>px + var(--row-step))"` (or `/ 2` for padding-sized
   rows); `--row-h` for plain 24px rows. `--row-step` is 0 in compact, so each
   surface keeps its base. Chrome and code-line geometry (`--lh-code`) stay
-  fixed. `grep -rn 'var(--row-step)' src/` lists participants. `PGGraphRow`
-  draws in SVG units — `PGCommitRow` feeds it `useDensityStep()`.
+  fixed. `grep -rn 'var(--row-step)' src/` lists participants — but NOT the
+  Settings panel, whose surfaces take the step from one shared helper rather
+  than a literal, so add `-e densityPadding -e SETTINGS_ROW_PADDING` or they
+  read as non-participants. `PGGraphRow` draws in SVG units — `PGCommitRow`
+  feeds it `useDensityStep()`.
+  **"Chrome" means the app frame** — the tab strip, the operation bar — and a
+  settings card's HEADER, which is the one named exemption inside a content
+  pane. It does NOT mean "anything that is not a row": a band sitting between
+  two rows in a card BODY (the Appearance page's theme action strip) is
+  content, and a fixed height there gives one card two row pitches. Settings
+  surfaces take the step through `densityPadding()` / `SETTINGS_ROW_PADDING`
+  rather than their own literal — see the Settings section.
 
 ## Design system
 
