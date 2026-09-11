@@ -122,10 +122,12 @@ export interface PGTabItem {
  * scrolling strip in there would eat `data-tauri-drag-region` on a narrow
  * window.
  *
- * Chrome, so a FIXED height — the UI-density token deliberately does not apply
- * (see CLAUDE.md's density rule). The strip owns its own `overflow-x`, and each
- * tab is `flexShrink: 0` with a max width, so a long tab list scrolls INSIDE
- * the strip and can never widen the window (the shell is a fixed frame).
+ * Chrome, so a FIXED height — it deliberately opts into neither UI scale (see
+ * CLAUDE.md's rule that list-row surfaces opt into both `--row-scale` and
+ * `--row-step`; this strip is chrome, not a list row, and sits that rule out).
+ * The strip owns its own `overflow-x`, and each tab is `flexShrink: 0` with a
+ * max width, so a long tab list scrolls INSIDE the strip and can never widen
+ * the window (the shell is a fixed frame).
  *
  * The `+` sits INSIDE that scroller, immediately after the last tab (issue 178),
  * where browsers and editors put it — not pinned to the far right, which is the

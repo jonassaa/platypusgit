@@ -315,7 +315,8 @@ export function CommitDiffPanel({
       // `isTextualDiff` also excludes an LFS pointer diff (#93).
       flattenDiffRows(isTextualDiff(current) && current ? current.hunks : [], {
         // This panel's rows are tighter than the other surfaces', so its fold
-        // separator is one code row tall rather than density-sized chrome.
+        // separator is one code row tall rather than the scaled chrome height
+        // the other surfaces use.
         foldH: rowH,
         rowH,
         syntax,

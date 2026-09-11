@@ -145,13 +145,14 @@ export function AppearancePage() {
           editor's own "Start from" picker, not a card you had to find first. */}
       <div
         // A geometry hook: only a real webview resolves the calc below, so e2e
-        // measures this strip's height under each density.
+        // measures this strip's height under each Spacing preset.
         data-testid="theme-actions"
         style={{
-          // Density-aware for the same reason its `SettingsRow` neighbours
-          // are: this strip is in the card BODY, between two rows that scale,
-          // so a fixed height here gives one card two row pitches. The chrome
-          // exemption covers a card's HEADER, not a band between its rows.
+          // Follows both UI scales for the same reason its `SettingsRow`
+          // neighbours do: this strip is in the card BODY, between two rows
+          // that scale, so a fixed height here gives one card two row
+          // pitches. The chrome exemption covers a card's HEADER, not a band
+          // between its rows.
           // Its own 10px base is kept — only the step is shared.
           padding: densityPadding(10),
           borderBottom: "1px solid var(--border-0)",
@@ -228,7 +229,7 @@ export function AppearancePage() {
       <SettingsRow
         id="appearance.textSize"
         label="Text size"
-        hint={`Scales the type everywhere, code and diffs included — ${Math.round(
+        hint={`Scales the type across the app, code and diffs included — except the integrated terminal, which keeps its own font. ${Math.round(
           TEXT_SCALE.larger * 100,
         )}% at the largest. Rows grow to fit it; icons and borders don’t — use Zoom below for those.`}
         control={

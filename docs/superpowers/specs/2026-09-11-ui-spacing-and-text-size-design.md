@@ -222,11 +222,17 @@ scale:
 shaColW(s)          = 70 * s
 dateColW(fmt, s)    = DATE_COL_W[fmt] * s
 subjectMinW(s)      = 140 * s
+authorColW(s)       = 150 * s                   // the author TRACK's width, sized to hold a name
 authorMinW(s)       = 16 + 6 + COL_PAD * s      // avatar and gap are not type
 colPad(s)           = 10 * s
 commitListMinW(s)   = ceil(graphWidth(4) + shaColW(s) + subjectMinW(s)
                            + authorMinW(s) + dateColW("relative", s))
 ```
+
+`authorColW` follows the same principle as `shaColW`/`dateColW`/`subjectMinW`: it
+is a width sized to hold TEXT — the author name, at its non-yielded track
+width — so it scales too. `authorMinW`, just below it, is the separate and
+smaller floor the author track yields DOWN to when the pane narrows.
 
 `graphWidth` is not scaled: lanes are dots and strokes in SVG user units, and
 under §4 they belong to row height, not to type. The avatar's 16px and the 6px

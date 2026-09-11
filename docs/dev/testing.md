@@ -424,6 +424,14 @@ change here is not proven by `pnpm test`. It needs a real Docker e2e run.
 - **`test/nativeSelect.test.ts`** is a SOURCE invariant: no `<select>`/`<option>`
   in shipped `src/` (issue 146) — the failure is invisible on macOS/Windows.
   Comments stripped first; test files out of scope.
+- **`test/uiScale.test.ts`** copies that shape (source invariant, comments
+  stripped first, test files out of scope) for the OTHER row-geometry trap: a
+  row that opts into Spacing (`var(--row-step)`) without Text size
+  (`var(--row-scale)`), or the reverse, either way a row that grows roomier
+  under one preset but keeps clipping — or ignoring — the other. It is not
+  exhaustive: `densityPadding()` builds its calc from a template literal, so
+  its only safety net is the `-e densityPadding -e SETTINGS_ROW_PADDING` grep
+  addendum named in `index.css`'s row-geometry comment.
 - **`test/depOverrides.test.ts`** guards the `pnpm.overrides` security block
   (#346) against the one thing that routinely kills it: a Dependabot npm PR
   regenerates the lockfile, drops the whole block, and 20 advisories come back

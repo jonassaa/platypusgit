@@ -182,8 +182,9 @@ function FileRow({
         alignItems: "center",
         gap: 6,
         padding: "0 10px",
-        // Density-aware like every other list row (#70): `--row-h` already
-        // folds in `--row-step`, so it must not be added again here.
+        // Follows both UI scales like every other list row (#70): `--row-h`
+        // already folds in `--row-scale` and `--row-step`, so neither is
+        // added again here.
         height: "var(--row-h)",
         cursor: "pointer",
         background: selected ? "var(--bg-selection)" : "transparent",

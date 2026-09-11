@@ -1077,9 +1077,9 @@ export function PGHunkActions({
  * regions, named rather than labelled with a `@@` range (#157).
  *
  * Says how much is hidden, where it resumes, and offers to show it. Chrome, not
- * code, so it is density-aware (`--row-step`) — code geometry stays on
- * `--lh-code`. `onExpand` omitted leaves it informational, which is what happens
- * when the file text is not available to expand from.
+ * code, so it follows both UI scales (`--row-scale` and `--row-step`) — code
+ * geometry stays on `--lh-code`. `onExpand` omitted leaves it informational,
+ * which is what happens when the file text is not available to expand from.
  */
 export function PGFoldSeparator({
   hiddenLines,
@@ -1573,7 +1573,7 @@ export interface PGCommitRowProps {
   onRowContext?: (oid: string, e: MouseEvent) => void;
   tagged?: string;
   /**
-   * Row height in px. Defaults to the density-derived height. Unlike every
+   * Row height in px. Defaults to `useRowH`'s scaled height. Unlike every
    * other row surface this can't be a `--row-h` calc: PGGraphRow draws lanes
    * in SVG user units, so the row box and the gutter must share one NUMBER.
    */
@@ -2338,7 +2338,7 @@ export function PGSubmoduleRow({
       onContextMenu={onContextMenu}
       title={state.hint}
       style={{
-        // Density-aware (issue #70): padding-sized row, so half the step per side.
+        // Follows both UI scales (issue #70): padding-sized row, so half the step per side.
         padding: "calc(10px * var(--row-scale) + var(--row-step) / 2) 10px",
         background: "var(--bg-1)",
         border: "1px solid var(--border-0)",

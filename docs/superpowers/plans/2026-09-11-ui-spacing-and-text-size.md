@@ -1299,7 +1299,7 @@ Expected: FAIL — `appearance.textSize` is not in the index.
 
 - [ ] **Step 3: Replace the meta row**
 
-`src/features/settings/pages/appearance.tsx:43` — replace the single `appearance.density` entry with two. Keep them adjacent and directly before `appearance.dateFormat` so the three size controls read as a group with `appearance.zoom`:
+`src/features/settings/pages/appearance.tsx:43` — replace the single `appearance.density` entry with two. Keep them adjacent and directly above `appearance.zoom` so the three size controls read as a group:
 
 ```ts
         { id: "appearance.textSize", label: "Text size", keywords: "font size text type bigger smaller larger readable accessibility scale" },

@@ -986,8 +986,8 @@ export function PGSelect({
                   alignItems: "center",
                   gap: 8,
                   padding: "0 10px",
-                  // A list-row surface opts into UI density or the Settings
-                  // toggle silently skips it.
+                  // A list-row surface opts into both UI scales or the
+                  // Settings controls silently skip it.
                   height: "calc(24px * var(--row-scale) + var(--row-step))",
                   cursor: "pointer",
                   background: i === active ? "var(--bg-selection)" : "transparent",

@@ -1,8 +1,9 @@
 // One row of the pull/merge request list (#92).
 //
-// Row geometry uses `calc(48px * var(--row-scale) + var(--row-step))` so the Settings density
-// toggle reaches it — a new list surface that hardcodes a height is exactly how
-// density rotted the first time (issue #70).
+// Row geometry uses `calc(48px * var(--row-scale) + var(--row-step))` so both
+// Settings scale controls — Spacing and Text size — reach it: a new list
+// surface that hardcodes a height is exactly how row geometry rotted the
+// first time (issue #70).
 
 import { PGBadge, PGIcon } from "@/design";
 import type { ChecksSummary, ForgeKind, PullRequest } from "@/lib/types";
@@ -40,7 +41,7 @@ export function PullRequestRow({
         alignItems: "center",
         gap: 10,
         padding: "0 12px",
-        // Density: --row-step is 0 in compact, so the default layout is unchanged.
+        // Spacing: --row-step is 0 at the compact preset, so the default layout is unchanged.
         height: "calc(48px * var(--row-scale) + var(--row-step))",
         cursor: "pointer",
         borderBottom: "1px solid var(--border-0)",
