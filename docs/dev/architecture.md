@@ -675,7 +675,10 @@ features/            Components + Zustand store colocated per feature:
 │                    parentFolderPath, branchesInFolder), useBranchFolders
 │                    (per-repo collapsed set in localStorage), deleteMerged
 │                    (candidates + `ahead_behind` merge check + summary),
-│                    fastForward (#246)
+│                    fastForward (#246), checkoutRemote — THE way a remote ref
+│                    becomes a local branch (menu, commit menu, Branches pane
+│                    all call it; a bare checkoutRef would DETACH), with the
+│                    name-collision dialog pure beside it
 ├── commits/         Pure log logic, all tested: graphLayout, laneColors,
 │                    graphAncestry, rowIdentity, buildRebasePlan /
 │                    buildPreservePlan / withPlanBase / runRebasePlan /

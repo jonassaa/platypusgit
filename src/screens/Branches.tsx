@@ -26,6 +26,7 @@ import {
 } from "@/design";
 import { useElementSize } from "@/lib/useElementSize";
 import { useRepoStore } from "@/features/repo/useRepoStore";
+import { checkoutRemoteAsLocalBranch } from "@/features/branches/checkoutRemote";
 import { orderBranches } from "@/features/branches/orderBranches";
 import {
   branchFolderPaths,
@@ -482,9 +483,11 @@ export function BranchesScreen() {
       }
       if (r?.kind !== "branch") return;
       const b = branches.find((x) => x.name === r.name);
-      if (b && !b.isHead && !b.isRemote) {
-        void useRepoStore.getState().checkoutBranch(b.name);
-      }
+      if (!b || b.isHead) return;
+      // Enter on a remote row used to do NOTHING — the row the user most often
+      // wants to act on was the one row with no keyboard answer.
+      if (b.isRemote) void checkoutRemoteAsLocalBranch(b.name);
+      else void useRepoStore.getState().checkoutBranch(b.name);
     },
     onExpand: (i) => {
       const r = flatRefs[i];
@@ -1373,9 +1376,17 @@ function BranchActions({ branch }: { branch: BranchInfo }) {
         variant="primary"
         icon="check"
         disabled={branch.isHead}
-        onClick={() => useRepoStore.getState().checkoutBranch(branch.name)}
+        // A remote-tracking ref is not a local branch: `checkoutBranch` looks
+        // under `refs/heads/`, so this button used to answer `origin/x` with
+        // InvalidRef. It goes through the same create-a-tracking-branch flow
+        // the context menu uses — the one checkout path for a remote ref.
+        onClick={() =>
+          branch.isRemote
+            ? void checkoutRemoteAsLocalBranch(branch.name)
+            : void useRepoStore.getState().checkoutBranch(branch.name)
+        }
       >
-        Check out
+        {branch.isRemote ? "Check out as local branch…" : "Check out"}
       </PGButton>
       <PGButton
         variant="outline"

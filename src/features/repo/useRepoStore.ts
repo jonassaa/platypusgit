@@ -1706,9 +1706,13 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     try {
       await createBranch(repo.id, name, opts?.from);
     } catch (e) {
-      setErrorFor(repo.id, e);
       setActivity(repo.id, "branch", null);
+      // Refresh first, error last — refreshAll clears `error` as its first act,
+      // so the other order loses the banner (see mergeBranch). This arm is the
+      // ONLY thing a caller can see when a name is already taken, and it used
+      // to wipe itself.
       await get().refreshAll();
+      setErrorFor(repo.id, e);
       return false;
     }
     setActivity(repo.id, "branch", null);
