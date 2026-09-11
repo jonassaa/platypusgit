@@ -7,6 +7,7 @@ import {
   PGInput,
   PGModal,
   PGSelect,
+  PGSlider,
   pgConfirm,
   pgFlash,
 } from "@/design";
@@ -23,6 +24,12 @@ import { appErrorMessage } from "@/lib/errors";
 
 import { ColorEditor, ColorField } from "./ColorEditor";
 import { CONTRAST_PAIRS, contrastRatio, contrastReport } from "./contrast";
+import {
+  HARMONY_RULES,
+  isGenerated,
+  type HarmonyRule,
+  type TraitLocks,
+} from "./palette";
 import { ThemePreview } from "./ThemePreview";
 import { useThemeEditorStore } from "./useThemeEditorStore";
 
@@ -56,6 +63,17 @@ export function ThemeEditorDialog() {
     ...BUILTIN_THEMES.map((t) => ({ value: t.id, label: t.name })),
     ...customThemes.map((t) => ({ value: t.id, label: `★ ${t.name}` })),
   ];
+
+  /**
+   * Whether the palette is still exactly what the four traits produce.
+   *
+   * False is not an error state — it is the normal consequence of editing one
+   * of the eighteen by hand, and all it does is say so.
+   */
+  const baseTheme = [...BUILTIN_THEMES, ...customThemes].find(
+    (t) => t.id === ed.traits.baseId,
+  );
+  const generated = baseTheme ? isGenerated(ed.colors, baseTheme, ed.traits) : true;
 
   /** True while the draft still holds exactly the colours it opened with. */
   const untouched = (Object.keys(ed.colors) as (keyof ThemeColors)[]).every(
@@ -180,43 +198,130 @@ export function ThemeEditorDialog() {
               />
             </Field>
 
-            <Field label="Start from">
-              <PGSelect
-                data-testid="theme-editor-base"
-                title="Take the palette from another theme"
-                value={ed.baseId}
-                onChange={(v) => ed.applyBase(v, ed.colors.accent)}
-                options={baseOptions}
-                size="sm"
-                style={{ flex: 1 }}
-              />
-            </Field>
-
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-              <span style={{ width: 76, flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <ColorField
-                  label="Accent"
-                  hint="Primary actions, active tabs, focus rings. Everything else comes from the base."
-                  value={ed.colors.accent}
-                  onChange={(v) => ed.applyBase(ed.baseId, v)}
-                  badge={<RatioBadge a="accentInk" b="accent" colors={ed.colors} />}
-                  // The guided start's one field gets the same picker as the
-                  // eighteen behind the disclosure — a wheel that appeared on
-                  // the collapsed rows but not on the field everybody edits
-                  // would be missing from where it matters most.
-                  palette={ed.colors}
-                  slot="accent"
-                />
+            {/* ── Palette ─────────────────────────────────────────────────
+                Four traits, each lockable, that generate all eighteen slots.
+                This IS the guided start — base ramp is "Start from" and the
+                accent is the seed — grown a harmony rule, a tint and a dice.
+                The eighteen stay editable below; a hand edit there simply
+                flips the readout to "Custom". */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                padding: "10px 12px",
+                border: "1px solid var(--border-0)",
+                borderRadius: "var(--r-3)",
+                background: "var(--bg-1)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <PGIcon name="palette" size={12} style={{ color: "var(--accent)" }} />
                 <div
                   style={{
-                    marginTop: 4,
-                    fontSize: "var(--fs-11)",
-                    color: "var(--fg-3)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "var(--fs-10)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                    color: "var(--fg-2)",
+                    fontWeight: 600,
                   }}
                 >
-                  Takes the palette from another theme and keeps your accent — the
-                  button text is recalculated so it stays readable.
+                  Palette
+                </div>
+                <div style={{ flex: 1 }} />
+                {!generated && (
+                  <span
+                    title="A colour has been edited by hand, so the palette is no longer exactly what these four traits produce."
+                    style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)" }}
+                  >
+                    Custom
+                  </span>
+                )}
+              </div>
+
+              <TraitRow
+                label="Base ramp"
+                trait="base"
+                locks={ed.locks}
+                onLock={ed.toggleLock}
+              >
+                <PGSelect
+                  data-testid="theme-editor-base"
+                  title="Which theme supplies the lightness ramp"
+                  value={ed.baseId}
+                  onChange={(v) => ed.applyBase(v, ed.traits.seed)}
+                  options={baseOptions}
+                  size="sm"
+                  style={{ flex: 1 }}
+                />
+              </TraitRow>
+
+              <TraitRow label="Accent" trait="seed" locks={ed.locks} onLock={ed.toggleLock}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <ColorField
+                    label="Accent"
+                    hint="The one colour you pick. It becomes the accent, and the rest of the palette is placed around it."
+                    value={ed.colors.accent}
+                    onChange={(v) => ed.setTrait("seed", v)}
+                    badge={<RatioBadge a="accentInk" b="accent" colors={ed.colors} />}
+                    // The guided start's one field gets the same picker as the
+                    // eighteen behind the disclosure — a wheel that appeared on
+                    // the collapsed rows but not on the field everybody edits
+                    // would be missing from where it matters most.
+                    palette={ed.colors}
+                    slot="accent"
+                  />
+                </div>
+              </TraitRow>
+
+              <TraitRow label="Harmony" trait="rule" locks={ed.locks} onLock={ed.toggleLock}>
+                <PGSelect
+                  data-testid="theme-trait-rule"
+                  title="Where the surfaces and the logo colours sit, relative to the accent"
+                  value={ed.traits.rule}
+                  onChange={(v) => ed.setTrait("rule", v as HarmonyRule)}
+                  options={HARMONY_RULES.map((r) => ({ value: r.id, label: r.label }))}
+                  size="sm"
+                  style={{ flex: 1 }}
+                />
+              </TraitRow>
+
+              <TraitRow label="Tint" trait="strength" locks={ed.locks} onLock={ed.toggleLock}>
+                <div style={{ flex: 1, minWidth: 0 }} data-testid="theme-trait-tint">
+                  <PGSlider
+                    name="Tint"
+                    valueText={`${Math.round(ed.traits.strength * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={ed.traits.strength}
+                    trackCss={`linear-gradient(90deg, ${ed.colors.bg1}, ${ed.colors.accent})`}
+                    onChange={(v) => ed.setTrait("strength", v)}
+                  />
+                </div>
+              </TraitRow>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <PGButton
+                  data-testid="theme-shuffle"
+                  size="sm"
+                  icon="dice"
+                  onClick={ed.shuffle}
+                  title="Re-roll every unlocked trait"
+                >
+                  Shuffle
+                </PGButton>
+                <div
+                  style={{
+                    fontSize: "var(--fs-11)",
+                    color: "var(--fg-3)",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  Lock what you want to keep. At 0% tint the surfaces stay exactly
+                  as the base theme drew them.
                 </div>
               </div>
             </div>
@@ -353,6 +458,66 @@ function Field({
         {label}
       </label>
       {children}
+    </div>
+  );
+}
+
+/**
+ * One trait, with the lock that decides whether a shuffle may touch it.
+ *
+ * The lock is a button and not a checkbox because its state IS the icon: a
+ * closed padlock reads as "keep this" at a glance down a column of four, where
+ * a ticked box reads as "this is on" and leaves you working out what on meant.
+ */
+function TraitRow({
+  label,
+  trait,
+  locks,
+  onLock,
+  children,
+}: {
+  label: string;
+  trait: keyof TraitLocks;
+  locks: TraitLocks;
+  onLock: (key: keyof TraitLocks) => void;
+  children: React.ReactNode;
+}) {
+  const locked = locks[trait];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <label
+        style={{
+          fontSize: "var(--fs-12)",
+          color: "var(--fg-2)",
+          width: 76,
+          flexShrink: 0,
+        }}
+      >
+        {label}
+      </label>
+      {children}
+      <button
+        type="button"
+        data-testid={`theme-lock-${trait}`}
+        onClick={() => onLock(trait)}
+        aria-pressed={locked}
+        aria-label={locked ? `Unlock ${label}` : `Lock ${label}`}
+        title={
+          locked ? `${label} is locked — Shuffle will keep it` : `Lock ${label}`
+        }
+        style={{
+          display: "flex",
+          alignItems: "center",
+          background: "transparent",
+          border: "none",
+          padding: 2,
+          cursor: "pointer",
+          color: locked ? "var(--accent)" : "var(--fg-3)",
+          flexShrink: 0,
+        }}
+      >
+        <PGIcon name={locked ? "lock" : "lockOpen"} size={12} />
+      </button>
     </div>
   );
 }
