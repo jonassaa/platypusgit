@@ -23,6 +23,8 @@ import { PGCommitRow } from "./git-components";
 import {
   AUTHOR_COL_W,
   AUTHOR_MIN_W,
+  COL_PAD,
+  COMMIT_LIST_MIN_W,
   DATE_COL_W,
   SHA_COL_W,
   SUBJECT_MIN_W,
@@ -70,14 +72,27 @@ describe("commitRowGrid yield order", () => {
       const template = commitRowGrid(graphWidth(4), dateColW("relative", scale), scale);
       const tracks = template.split(" ");
       const sum = tracks.reduce((acc, t) => {
-        const px = /^(\d+(?:\.\d+)?)px$/.exec(t);
-        if (px) return acc + Number.parseFloat(px[1]);
+        const pxMatch = /^(\d+(?:\.\d+)?)px$/.exec(t);
+        if (pxMatch) return acc + Number.parseFloat(pxMatch[1]);
         const mm = /^minmax\((\d+(?:\.\d+)?)px,/.exec(t);
         if (mm) return acc + Number.parseFloat(mm[1]);
         return acc;
       }, 0);
       expect(sum, `scale ${scale}`).toBeLessThanOrEqual(commitListMinW(scale));
     }
+  });
+
+  // COL_PAD and COMMIT_LIST_MIN_W are the only two ×1 constants no production
+  // code calls by their bare name any more (git-components.tsx and
+  // History.tsx now call colPad()/commitListMinW() instead), so without an
+  // explicit pin here nothing in the suite would notice if the functions ever
+  // drifted from the literals: COMMIT_LIST_MIN_W's own doc comment claims it
+  // is EXACTLY graphWidth(4) + SHA + SUBJECT_MIN + AUTHOR_MIN + DATE, and a
+  // silent drift would mean History's pane-drag floor stopped matching the
+  // width the yield order above was tuned against.
+  it("keeps the ×1 scale functions equal to the constants they replaced", () => {
+    expect(colPad(1)).toBe(COL_PAD);
+    expect(commitListMinW(1)).toBe(COMMIT_LIST_MIN_W);
   });
 
   // The avatar and the flex gap after it are not type, so they do not scale --

@@ -115,8 +115,15 @@ export const shaColW = (scale = 1): number => px(SHA_COL_W * scale);
 export const colPad = (scale = 1): number => px(COL_PAD * scale);
 export const subjectMinW = (scale = 1): number => px(SUBJECT_MIN_W * scale);
 export const authorColW = (scale = 1): number => px(AUTHOR_COL_W * scale);
-/** Avatar and gap are fixed; only the truncation gutter is type-sized. */
-export const authorMinW = (scale = 1): number => px(16 + 6 + COL_PAD * scale);
+/**
+ * Avatar and gap are fixed; only the truncation gutter is type-sized. Reuses
+ * `colPad(scale)` rather than re-deriving `COL_PAD * scale` inline, so the two
+ * agree BY CONSTRUCTION — two expressions of the same scaled pad were only
+ * numerically equal by coincidence of `COL_PAD`'s current value, not by any
+ * guarantee, and a future change to `colPad` (a different rounding rule, a
+ * different pad) would otherwise have to be remembered in a second place.
+ */
+export const authorMinW = (scale = 1): number => px(16 + 6 + colPad(scale));
 export const dateColW = (fmt: DateFormat, scale = 1): number =>
   px(DATE_COL_W[fmt] * scale);
 
