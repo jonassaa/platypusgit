@@ -365,6 +365,128 @@ fn set_upstream_unknown_local_branch_is_invalid_ref() {
     );
 }
 
+/// Branching off a remote-tracking ref sets it as the upstream — git's own
+/// `branch.autoSetupMerge` default, and the whole point of "check out
+/// `origin/x` as a new local branch".
+///
+/// Without it the new branch tracked NOTHING: no ahead/behind, no pull, and a
+/// second attempt at the same remote branch hit the name collision instead,
+/// leaving the user on a local branch that had never seen the remote.
+#[test]
+fn create_branch_from_a_remote_ref_sets_it_as_the_upstream() {
+    let (tr, _up) = with_origin();
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .create_branch(&handle.id, "mirror", Some("origin/main"))
+        .expect("create branch");
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let made = branches
+        .iter()
+        .find(|b| b.name == "mirror" && !b.is_remote)
+        .expect("mirror branch");
+    assert_eq!(made.upstream.as_deref(), Some("origin/main"));
+
+    // ...and it sits at the remote tip the UI is showing, not at local HEAD.
+    let remote_tip = branches
+        .iter()
+        .find(|b| b.name == "origin/main" && b.is_remote)
+        .and_then(|b| b.tip.clone())
+        .expect("origin/main tip");
+    assert_eq!(made.tip.as_deref(), Some(remote_tip.as_str()));
+    assert_eq!(made.behind, 0, "a fresh mirror is not behind its upstream");
+}
+
+/// The same via the fully qualified spelling — `refs/remotes/origin/main` is
+/// what a ref picker hands over, and it must not read as "not a branch".
+#[test]
+fn create_branch_from_a_fully_qualified_remote_ref_also_tracks() {
+    let (tr, _up) = with_origin();
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .create_branch(&handle.id, "mirror", Some("refs/remotes/origin/main"))
+        .expect("create branch");
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let made = branches
+        .iter()
+        .find(|b| b.name == "mirror" && !b.is_remote)
+        .expect("mirror branch");
+    assert_eq!(made.upstream.as_deref(), Some("origin/main"));
+}
+
+/// Branching off a COMMIT tracks nothing — the same rule git applies. Only a
+/// remote-tracking start point sets up tracking, or every "branch from here"
+/// on a commit would silently adopt an upstream.
+#[test]
+fn create_branch_from_a_commit_sets_no_upstream() {
+    let (tr, _up) = with_origin();
+    let (backend, handle) = tr.open_with_backend();
+    let head_oid = tr.repo.head().unwrap().target().unwrap().to_string();
+
+    backend
+        .create_branch(&handle.id, "pinned", Some(&head_oid))
+        .expect("create branch");
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let made = branches
+        .iter()
+        .find(|b| b.name == "pinned" && !b.is_remote)
+        .expect("pinned branch");
+    assert!(made.upstream.is_none(), "a commit is not an upstream");
+}
+
+/// A local branch is not an upstream either — `create_branch("x", "main")`
+/// branches off `main` and tracks nothing, as `git branch x main` does.
+#[test]
+fn create_branch_from_a_local_branch_sets_no_upstream() {
+    let (tr, _up) = with_origin();
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .create_branch(&handle.id, "side", Some("main"))
+        .expect("create branch");
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let made = branches
+        .iter()
+        .find(|b| b.name == "side" && !b.is_remote)
+        .expect("side branch");
+    assert!(made.upstream.is_none());
+}
+
+/// `origin/HEAD` is a SYMBOLIC ref, and the upstream written is the branch it
+/// RESOLVES to — `origin/main`, never a literal `origin/HEAD` whose
+/// `branch.<name>.merge = refs/heads/HEAD` no fetch refspec would ever match.
+/// Measured against git: `git branch foo origin/HEAD` prints "set up to track
+/// 'origin/main'".
+#[test]
+fn create_branch_from_origin_head_tracks_what_it_resolves_to() {
+    let (tr, _up) = with_origin();
+    tr.repo
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+            true,
+            "test fixture",
+        )
+        .unwrap();
+    let (backend, handle) = tr.open_with_backend();
+
+    backend
+        .create_branch(&handle.id, "fromhead", Some("origin/HEAD"))
+        .expect("create branch");
+
+    let branches = backend.branches(&handle.id).unwrap();
+    let made = branches
+        .iter()
+        .find(|b| b.name == "fromhead" && !b.is_remote)
+        .expect("fromhead branch");
+    assert_eq!(made.upstream.as_deref(), Some("origin/main"));
+}
+
 /// `tip` is the FULL oid. It used to be truncated to 7 chars, which made every
 /// frontend comparison against `CommitInfo.oid` fail silently — History's HEAD
 /// marker never drew, and the HEAD-ancestry filter that rebase plans are built

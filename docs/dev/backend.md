@@ -730,6 +730,41 @@ escape hatch from becoming the uncapped path #385 removed.
   other copy anywhere. Crash-safety needs a journal and its own spec; do not
   stub an affordance meanwhile.
 
+## A branch off a remote ref TRACKS it — `create_branch`'s quiet half
+
+`create_branch(name, from)` sets the new branch's upstream when `from` names a
+remote-tracking branch, and only then. This is git's `branch.autoSetupMerge`
+default, measured rather than assumed: `git branch x origin/main` prints
+"branch 'x' set up to track 'origin/main'", while `git branch x main` and
+`git branch x <oid>` set up nothing.
+
+It used to set up nothing at all, and "check out `origin/x` as a new local
+branch" — whose whole prompt says *Tracking origin/x* — produced a branch that
+tracked NOTHING. No ahead/behind, no pull, no fast-forward, and the second
+attempt at the same remote branch hit the name collision instead, so the user
+sat on a local branch that had never seen the remote and had no way to say so.
+
+- **The question is "does this revspec RESOLVE to a ref under
+  `refs/remotes/`"** — answered by `upstream_for_start_point` resolving it, not
+  by looking for a slash. A local branch may perfectly well be called
+  `origin/main`, and `refs/remotes/origin/main` is the spelling a ref picker
+  hands over. `resolve_reference_from_short_name` is libgit2's
+  `git_reference_dwim` *plus* symref resolution, which is exactly the pair
+  wanted: an oid or `HEAD~3` is not a ref and comes back `Err`.
+- **`origin/HEAD` yields what it points AT.** It is symbolic, so it resolves to
+  `origin/main` — again what git does (`git branch foo origin/HEAD` prints "set
+  up to track 'origin/main'"). The literal name is never written: a
+  `branch.<name>.merge = refs/heads/HEAD` matches no fetch refspec that has ever
+  existed, so a `…/HEAD` that survives resolution (an older tool may leave a
+  direct ref there) tracks nothing.
+- **A failed `set_upstream` un-creates the branch.** Shipping the half is the
+  exact bug above, so the arm deletes the ref and propagates — the same rule as
+  the signing chain.
+
+`src-tauri/tests/branches_tags.rs` pins all five cases, the negative ones
+included: a commit and a local branch start point must still track nothing, or
+every "branch from here" on a commit silently adopts an upstream.
+
 ## Fast-forwarding a branch you are not on (#246)
 
 `pull <remote> <branch>` never could do this: the branch argument is a

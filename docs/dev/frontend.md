@@ -1180,6 +1180,51 @@ that is only partly here — which is the whole reason the notice exists.
   included, resets on a closed→open transition — a `--depth 1` chosen for one
   enormous repository must not quietly truncate the next.
 
+## Checking out a remote branch — `features/branches/checkoutRemote.ts`
+
+A remote-tracking ref is not a branch you can be ON. `checkoutRef("origin/x")`
+detaches HEAD, so every surface that offers a remote ref goes through
+`checkoutRemoteAsLocalBranch` instead: the remote-branch context menu, the
+commit menu's remote entry (#179), the Branches detail pane's Check out button
+and Enter on a remote row. A second copy of that flow is how one of those four
+comes to detach — which is why it moved out of `design/context-menu.tsx`, where
+two of the four could not reach it.
+
+- **The create and the checkout are ONE store action
+  (`createAndSwitchBranch`), never two calls.** As two they were not atomic in
+  the way that mattered: the store's `createBranch` reports failure by setting
+  the banner and returning, so the `checkoutBranch` that unconditionally
+  followed it SUCCEEDED — on whatever unrelated local branch already held that
+  name — and its own `refreshAll` cleared the banner on the way past. The user
+  asked for `origin/x` and silently landed on a stale `x` that had never seen
+  the remote, with nothing on screen to say so.
+- **`createAndSwitchBranch`'s catch arm refreshes FIRST and sets the error
+  LAST.** It had them the other way round, and since `refreshAll` clears `error`
+  as its first act, the one thing a caller could see when a name was taken wiped
+  itself. This is the house order for every danger-op catch arm.
+- **`from` is the REMOTE ref, not the commit it points at.** That string is what
+  the backend reads to decide the upstream (see backend.md) — an oid tracks
+  nothing, and the tracking is the whole point.
+- **A taken name is a QUESTION, not an accident** (`existingBranchPrompt`, pure
+  and tested without a repository). It names the collision, says where the
+  existing branch sits relative to the remote ref — asked explicitly via
+  `ahead_behind`, because `BranchInfo.ahead/behind` is measured against its OWN
+  upstream, which in this case is typically nothing — and says what it tracks.
+- **The update offer is deliberately narrow.** "Check out and update to
+  `origin/x`" appears only when the existing branch is STRICTLY behind *and* the
+  ref it would be advanced along is the one the user named: a branch tracking
+  something else would move along a ref the dialog never mentioned, and a branch
+  with commits of its own cannot be fast-forwarded at all. Everything else gets
+  the plain checkout and keeps its commits.
+- **The ref moves BEFORE the branch becomes HEAD.** A fast-forward of the
+  checked-out branch needs a working-tree update, which is `pull`'s job under
+  the user's own pull mode — `fastForwardBranch` reroutes it there, which is not
+  what the dialog offered. So: set upstream → fast-forward → check out.
+- **An upstream that is already right is left alone,** and so is one pointing
+  somewhere else: re-pointing a branch's tracking is a different decision from
+  the one this dialog asked. Only a branch tracking NOTHING is given the
+  upstream, because that is precisely what the user came here for.
+
 ## Branch pins (#238)
 
 - **A pin is a TIER in `orderBranches`, and it outranks the default branch.**

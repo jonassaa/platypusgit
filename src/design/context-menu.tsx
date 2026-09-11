@@ -36,6 +36,10 @@ import {
   hasCopyableDiffText,
   selectedLinesToText,
 } from "@/lib/diffCopy";
+import {
+  checkoutRemoteAsLocalBranch,
+  withoutRemotePrefix,
+} from "@/features/branches/checkoutRemote";
 import { orderBranchesGrouped } from "@/features/branches/orderBranches";
 import { branchFolderPaths } from "@/features/branches/branchTree";
 // The MODULE, not the `features/dnd` barrel: the barrel re-exports
@@ -1815,35 +1819,6 @@ export function branchMenuItems(
       },
     },
   ];
-}
-
-/** `origin/feat/x` → `feat/x`. The remote prefix is the FIRST segment only. */
-function withoutRemotePrefix(name: string): string {
-  const i = name.indexOf("/");
-  return i >= 0 ? name.slice(i + 1) : name;
-}
-
-/**
- * Check a remote-tracking ref out by creating a local branch that tracks it.
- *
- * ONE definition, shared by the remote-branch menu and the commit menu's remote
- * entry (#179): a bare `checkoutRef("origin/foo")` would silently DETACH, which
- * is the whole reason this flow exists, so a second copy is how one of the two
- * call sites would come to detach.
- */
-async function checkoutRemoteAsLocalBranch(name: string) {
-  if (!name) return;
-  const localName = await pgPrompt({
-    title: "Check out as new local branch",
-    body: `Tracking ${name}.`,
-    initialValue: withoutRemotePrefix(name),
-    confirmLabel: "Check out",
-    requireValue: true,
-    mono: true,
-  });
-  if (!localName) return;
-  await useRepoStore.getState().createBranch(localName, name);
-  await useRepoStore.getState().checkoutBranch(localName);
 }
 
 export function remoteBranchMenuItems(branch: { name?: string } | null): ContextMenuItem[] {

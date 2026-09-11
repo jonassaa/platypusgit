@@ -2987,6 +2987,41 @@ fn is_default_branch_name(name: &str, is_remote: bool, default: Option<&str>) ->
     }
 }
 
+/// The remote-tracking branch a start point names, if it names one — the
+/// upstream a new branch off it should be given.
+///
+/// This is git's `branch.autoSetupMerge` default, measured rather than assumed:
+/// `git branch x origin/main` prints "set up to track 'origin/main'", while
+/// `git branch x main` and `git branch x <oid>` set up nothing. Without it,
+/// "check out `origin/x` as a new local branch" produced a branch that tracked
+/// NOTHING — no ahead/behind, no pull, and a second attempt at the same remote
+/// branch ran into the name collision instead.
+///
+/// The question is "does this revspec RESOLVE to a ref under `refs/remotes/`",
+/// answered by resolving it, not by looking for a slash: a local branch may
+/// perfectly well be called `origin/main`, and `refs/remotes/origin/main` is
+/// the spelling a ref picker hands over.
+///
+/// `origin/HEAD` is a symbolic ref and resolves through to the branch it points
+/// at, so it yields `origin/main` — again what git does. The literal name is
+/// never used: `branch.<name>.merge = refs/heads/HEAD` matches no fetch
+/// refspec that has ever existed.
+fn upstream_for_start_point(repo: &Repository, rev: &str) -> Option<String> {
+    // `resolve_reference_from_short_name` is libgit2's `git_reference_dwim`
+    // plus symref resolution, which is the pair of behaviours wanted here. An
+    // oid or a revspec like `HEAD~3` is simply not a ref and comes back Err.
+    let reference = repo.resolve_reference_from_short_name(rev).ok()?;
+    let full = reference.name().ok()?;
+    let short = full.strip_prefix("refs/remotes/")?;
+    // A resolved symref cannot still BE `…/HEAD`, but a repository may carry a
+    // literal `refs/remotes/origin/HEAD` written as a direct ref by an older
+    // tool. Tracking that would write the unmatchable refspec above.
+    if short == "HEAD" || short.ends_with("/HEAD") {
+        return None;
+    }
+    Some(short.to_string())
+}
+
 // ─── Fast-forwarding a branch that is not checked out (#246) ─────────────────
 //
 // Every function here takes an ALREADY-BORROWED `&Repository`, exactly like the
@@ -5695,7 +5730,20 @@ impl GitBackend for Libgit2Backend {
                     Err(e) => return Err(e.into()),
                 },
             };
-            repo.branch(name, &target_commit, false)?;
+            // Resolved BEFORE the ref is written, so a start point that is not a
+            // remote-tracking branch costs the same lookup either way and the
+            // only work left after `branch()` is config.
+            let upstream = from.and_then(|rev| upstream_for_start_point(repo, rev));
+            let mut created = repo.branch(name, &target_commit, false)?;
+            if let Some(up) = upstream {
+                // A branch that exists but tracks nothing is the bug this whole
+                // change is about, so a failure here un-creates it rather than
+                // shipping the half — same rule as the signing chain.
+                if let Err(e) = created.set_upstream(Some(&up)) {
+                    let _ = created.delete();
+                    return Err(e.into());
+                }
+            }
             Ok(())
         })
     }
