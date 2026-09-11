@@ -712,7 +712,26 @@ describe("useRowH", () => {
     store.getState().set("uiTextScale", "larger");
     store.getState().set("uiSpacing", "comfortable");
     const { result } = renderHook(() => useRowH(24));
-    // 24 x 1.3 = 31.2, + comfortable step 4
-    expect(result.current).toBeCloseTo(35.2, 5);
+    // 24 x 1.3 = 31.2, + comfortable step 4 = 35.2 exactly, even as a raw
+    // double -- this case alone would pass identically with the rounding
+    // deleted, so it pins the ADD-then-SCALE arithmetic, not the rounding.
+    // The case below is the one that pins rounding specifically.
+    expect(result.current).toBe(35.2);
+  });
+
+  // 26 x 1.3 is where the rounding earns its keep: verified with
+  // `node -e "console.log(26*1.3+0)"`, the raw double is
+  // 33.800000000000004, not 33.8 -- unlike the case above, whose inputs
+  // happen to land on an exact double either way. Deleting Math.round from
+  // useRowH turns this assertion red (confirmed by hand before landing it);
+  // that is what makes it a real pin on the hook's rounding contract rather
+  // than a restatement of whatever the implementation currently emits.
+  it("rounds away the float remainder from a base x scale that lands off-grid", async () => {
+    const { useRowH, useSettingsStore: store } = await freshStore();
+    store.getState().set("uiTextScale", "larger");
+    store.getState().set("uiSpacing", "compact");
+    const { result } = renderHook(() => useRowH(26));
+    // 26 x 1.3 = 33.800000000000004 as a raw double, + compact step 0
+    expect(result.current).toBe(33.8);
   });
 });

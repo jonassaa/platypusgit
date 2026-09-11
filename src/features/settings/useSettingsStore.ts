@@ -2189,9 +2189,14 @@ export type { Appearance } from "./systemAppearance";
 /**
  * The active spacing preset's pixel step, for surfaces that need the NUMBER
  * rather than the `--row-step` CSS var — i.e. anything doing geometry math in
- * JS. Prefer the CSS token everywhere it works; this exists for SVG user-unit
- * drawing (see `PGGraphRow`) and for windowed lists, neither of which a
- * `calc()` can reach.
+ * JS. Prefer the CSS token everywhere it works.
+ *
+ * `useRowH` is the arithmetic owner for a windowed row's pitch (SVG user-unit
+ * drawing, windowed lists) — do not call this directly for that; it would
+ * recreate the six-copies problem `useRowH` exists to close. This hook's only
+ * two remaining callers are `useRowH` itself (this is half its input) and
+ * `useDiffRowHeight`, which uses it only as a re-read trigger for a value
+ * `--diff-row-h` computes in CSS.
  */
 export function useSpacingStep(): number {
   return SPACING_STEP_PX[normalizeSpacing(useSettingsStore((s) => s.uiSpacing))];
@@ -2199,9 +2204,11 @@ export function useSpacingStep(): number {
 
 /**
  * The active text scale as a FACTOR (0.92 … 1.3), for surfaces that multiply a
- * JS pixel constant by it — windowed row pitches, the SVG graph gutter, and
- * the commit row's text-sized columns. Everything a `calc()` can reach should
- * use `var(--row-scale)` instead.
+ * JS pixel constant by it. Prefer the CSS token (`var(--row-scale)`)
+ * everywhere it works — this hook's own two remaining callers are `useRowH`
+ * (the row-pitch arithmetic owner; do not call this directly to recompute a
+ * row height) and `useDiffRowHeight`, which uses it only as a re-read trigger
+ * for a value `--diff-row-h` computes in CSS.
  */
 export function useTextScale(): number {
   return TEXT_SCALE[normalizeTextScale(useSettingsStore((s) => s.uiTextScale))];
