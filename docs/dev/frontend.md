@@ -2039,10 +2039,40 @@ update checks back on for someone who turned them off.
   combination, because a report with twenty findings is one nobody reads. Save
   is never disabled by a finding: a deliberately low-contrast theme is the
   user's own call. A user never reads a colour-slot key; each finding carries
-  prose. `deriveTheme` is the guided start (base + accent) and recalculates
-  `accentInk` alone, preferring the base theme's own inks so derived themes stay
-  in the family — it is deliberately not a palette generator, because shifting
-  the greys too produces palettes nobody can predict or correct.
+  prose. `deriveTheme` is the accent swap the eighteen-slot path uses and
+  recalculates `accentInk` alone, preferring the base theme's own inks so
+  derived themes stay in the family.
+- **The palette generator holds LIGHTNESS and rewrites hue and chroma**
+  (`theme/palette.ts`). The editor's four traits — base ramp, seed colour,
+  harmony rule, tint strength — are its only inputs, each one lockable so the
+  dice re-rolls the rest. The earlier "deliberately not a palette generator"
+  rule was about HSL, where hue and lightness are one knob; OKLCh separates
+  them, and holding `l` is what keeps the base's hand-tuned ramp and its
+  contrast intact. Three properties are pinned by `palette.test.ts` and are why
+  the reversal is defensible rather than a change of mind: **tint 0 reproduces
+  the base byte-for-byte under EVERY rule** (so opening the editor moves
+  nothing), **no hue at any strength changes an AA verdict** (measured 0 in
+  3240 checks), and every output lands in sRGB via `srgbChromaCeiling`. Three
+  traps, each one a bug that shipped and was caught by a test written the strong
+  way:
+  - **The hue is a ROTATION, not an assignment.** dracula, solarized-dark and
+    gruvbox-dark put their text at a different hue from their surfaces on
+    purpose (dracula's split is 171°), and assigning one hue flattens all three.
+  - **The chroma is ADDITIVE over the base's own,** because a multiplier cannot
+    tint `dark-neutral`, which is chroma 0 in all fourteen slots. The cost is
+    that the same tint value bites harder on a base that already carries colour.
+  - **Tint 0 short-circuits the whole ramp AND the logo pair,** so `generate`
+    degenerates at 0 to exactly `deriveTheme`. Without it the ground is
+    `seed + the rule's quantised angle` while a base's real offset is whatever
+    it is — dark-cool sits at 18.6°, which no rule has — so merely opening a
+    theme rotated every slot and moved `bg0` from `#1a1d24` to `#1b1d24`.
+  `isGenerated` is what flips the readout to "Custom", and it skips `accentInk`:
+  the built-ins ship hand-authored inks that `inkFor` would not pick off their
+  own ramps, so comparing it made every theme read as Custom the moment it
+  opened. Traits are INFERRED from the palette on open and never persisted, so
+  the theme file format is unchanged. `SEMANTIC_TOKENS` and `SYNTAX_TOKENS` stay
+  out of it: diff green carries meaning, and a palette choice must not change
+  what a diff says.
 - **One theme format.** `themePayload()` is the per-theme serialiser behind both
   `exportTheme` and the settings bundle; the bundle adds only `id`, because
   `activeThemeId` has to stay resolvable. `normalizeCustomThemes` is lenient in

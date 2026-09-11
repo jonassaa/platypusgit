@@ -30,7 +30,7 @@ const READABLE = 4.5;
  * The pure extremes are the fallback for a mid-tone accent, where neither of
  * the base's own inks clears the bar.
  */
-function inkFor(base: ThemeColors, accent: string): string {
+export function inkFor(base: ThemeColors, accent: string): string {
   const candidates = [base.fg0, base.bg0, "#ffffff", "#000000"];
   const readable = candidates.find((ink) => contrastRatio(ink, accent) >= READABLE);
   if (readable) return readable;

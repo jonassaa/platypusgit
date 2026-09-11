@@ -18,7 +18,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import { PGColorSwatch } from "./color-picker";
+import { PGColorSwatch, PGSlider } from "./color-picker";
 import { PGModal } from "./modal";
 import { useFocusStore } from "@/features/keymap/useFocusStore";
 import { useKeymapStore } from "@/features/keymap/useKeymapStore";
@@ -443,5 +443,30 @@ describe("PGColorSwatch — dismissal", () => {
     fireEvent.keyDown(slider(/hsv hue/i), { key: "ArrowRight" });
     fireEvent.keyDown(popover()!, { key: "Escape" });
     expect(onCommit).not.toHaveBeenCalled();
+  });
+});
+
+describe("PGSlider", () => {
+  it("is exported for reuse and reports the full slider value trio", () => {
+    // The theme editor's tint control is this slider, not a second one: a
+    // design system with two sliders is a design system where one of them is
+    // subtly wrong.
+    render(
+      <PGSlider
+        name="Tint"
+        valueText="35%"
+        min={0}
+        max={1}
+        step={0.01}
+        value={0.35}
+        trackCss="linear-gradient(90deg, #000, #fff)"
+        onChange={() => {}}
+      />,
+    );
+    const slider = screen.getByRole("slider", { name: "Tint" });
+    expect(slider).toHaveAttribute("aria-valuemin", "0");
+    expect(slider).toHaveAttribute("aria-valuemax", "1");
+    expect(slider).toHaveAttribute("aria-valuenow", "0.35");
+    expect(slider).toHaveAttribute("aria-valuetext", "35%");
   });
 });

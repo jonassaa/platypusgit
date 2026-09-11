@@ -335,9 +335,13 @@ Import:  openTextFile ──open()──> read_user_file ──json──> impor
 ## What this deliberately does not do
 
 - No new built-in themes. Nine is enough to fork from.
-- No hue-shifting palette generator. `deriveTheme` swaps the accent and fixes
-  the ink; anything cleverer produces palettes the user cannot predict or
-  correct.
+- ~~No hue-shifting palette generator.~~ **Superseded 2026-09-11** by
+  `2026-09-11-theme-palette-harmony-design.md`. The objection was about HSL,
+  where hue and lightness are one knob; OKLCh landed since, for the colour
+  picker, and separates them. Holding lightness makes a generator both
+  predictable (tint 0 reproduces the base byte-for-byte) and correctable (it
+  writes plain hex into the same eighteen slots). Both were measured across all
+  nine built-ins before the reversal.
 - No blocking on contrast. Warn, never refuse.
 - No `tauri-plugin-fs`. Two thin commands match how every other backend
   capability in this app is exposed, and the plugin's scope config would be a

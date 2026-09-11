@@ -320,4 +320,53 @@ describe("ThemeEditorDialog — the colour picker", () => {
       screen.getByRole("button", { name: /^Background · panel \(#1e222a\)$/ }),
     ).toBeTruthy();
   });
+
+  it("shuffles the palette and leaves a locked accent alone", () => {
+    ed().openEdit(dark);
+    mount();
+
+    fireEvent.click(screen.getByTestId("theme-lock-seed"));
+    const seed = ed().traits.seed;
+    fireEvent.click(screen.getByTestId("theme-shuffle"));
+
+    expect(ed().traits.seed).toBe(seed);
+    expect(ed().colors.accent).toBe(seed);
+    // Something has to actually move, or the dice reads as a broken button.
+    expect(ed().colors.bg0).not.toBe(dark.colors.bg0);
+  });
+
+  it("says Custom once a slot is hand-edited, and not before", () => {
+    ed().openEdit(dark);
+    mount();
+    expect(screen.queryByText("Custom")).toBeNull();
+
+    // act() because this drives the store directly rather than through an
+    // event — without it React has not flushed the re-render when the
+    // assertion runs, and the test fails for a reason that is not the feature.
+    act(() => {
+      ed().patchColors({ border1: "#ff00ff" });
+    });
+    expect(screen.getByText("Custom")).toBeInTheDocument();
+  });
+
+  it("has no native select and no native colour input in the palette section", () => {
+    // Both are guard-tested repo-wide, but this section is where a new one
+    // would land, so assert it here rather than finding out from a guard.
+    ed().openEdit(dark);
+    const { container } = mount();
+    expect(container.querySelector("select")).toBeNull();
+    expect(container.querySelector('input[type="color"]')).toBeNull();
+  });
+
+  it("moves the whole ramp when the tint is raised", () => {
+    ed().openEdit(dark);
+    mount();
+    act(() => {
+      ed().setTrait("strength", 0.7);
+    });
+    expect(ed().colors.bg0).not.toBe(dark.colors.bg0);
+    expect(ed().colors.fg0).not.toBe(dark.colors.fg0);
+    // The accent is the seed, and a seed is never tinted.
+    expect(ed().colors.accent).toBe(dark.colors.accent);
+  });
 });

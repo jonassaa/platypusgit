@@ -619,7 +619,7 @@ function ColorWheel({
  * `role="slider"` with the full value trio, so what a screen reader gets is a
  * named channel with a range — not an unlabelled div.
  */
-function Slider({
+export function PGSlider({
   name,
   valueText,
   min,
@@ -753,7 +753,7 @@ function gradient(stops: string[], vertical = false): string {
 function ValueSlider({ hsv, onChange }: { hsv: Hsv; onChange: (v: number) => void }) {
   const top = hsvToHex({ ...hsv, v: 1 });
   return (
-    <Slider
+    <PGSlider
       name="Brightness"
       valueText={`${Math.round(hsv.v * 100)}%`}
       min={0}
@@ -798,7 +798,7 @@ function ChannelSlider({
       >
         {channel.label}
       </span>
-      <Slider
+      <PGSlider
         // Prefixed with the model, because four models are one click apart and
         // "Hue" alone does not say whether you are moving HSV's or OKLCh's —
         // which are different angles on the same colour.
