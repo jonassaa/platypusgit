@@ -4,6 +4,34 @@ import { useSettingsFilter } from "./filterContext";
 import { useSettingsHighlight } from "./highlightContext";
 
 /**
+ * The UI-density opt-in for a settings surface, as vertical padding.
+ *
+ * `--row-step` is the WHOLE extra height a row spends, so padding — applied
+ * top AND bottom — takes half of it. Writing `var(--row-step)` here instead
+ * double-counts, the trap `src/index.css` names where it defines the token.
+ *
+ * A function rather than one bare string because the bases differ (a row is
+ * 12px, the theme action strip 10px) while the STEP must not: two surfaces in
+ * one card that grow by different amounts is the same bug as one that does not
+ * grow at all.
+ */
+export function densityPadding(basePx: number): string {
+  return `calc(${basePx}px + var(--row-step) / 2) 16px`;
+}
+
+/**
+ * The padding EVERY settings row uses — `SettingsRow` here and `ForgeRow` in
+ * `features/forge/ForgeSettings.tsx`, a separate component by design that
+ * nonetheless sits in the same panel.
+ *
+ * Shared as one value rather than copied as one string, because the two being
+ * EQUAL is the actual requirement: a forge account row a few pixels off from
+ * the setting directly above it is the bug this closes, and two literals
+ * cannot fail a test when only one of them is edited.
+ */
+export const SETTINGS_ROW_PADDING = densityPadding(12);
+
+/**
  * The one card/row layout pair for the Settings screen.
  *
  * Was defined twice — `screens/Settings.tsx` and `features/forge/
@@ -108,7 +136,7 @@ export function SettingsRow({
         gap: stacked ? 10 : 16,
         // A list-row surface, so it opts into UI density (#70). The card's
         // header above stays fixed: that is chrome, not a row.
-        padding: "calc(12px + var(--row-step) / 2) 16px",
+        padding: SETTINGS_ROW_PADDING,
         borderBottom: "1px solid var(--border-0)",
       }}
     >

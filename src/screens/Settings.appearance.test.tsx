@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { WithDialogs, resetDialogs } from "@/test/dialog";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { AppearancePage } from "@/features/settings/pages/appearance";
+import { densityPadding } from "@/features/settings/layout/SettingsCard";
 
 /**
  * The Row whose label is `label`, so a control can be found by what it is FOR
@@ -40,6 +41,23 @@ function renderSettings() {
     </WithDialogs>,
   );
 }
+
+// The Add/Import strip sits INSIDE the appearance card, between the theme row
+// above it and "UI density" below — both of which scale with `--row-step`. A
+// fixed height here gives one card two row pitches, which is the same bug as a
+// forge account row that does not scale (#70): the chrome exemption is for a
+// card's header, not for a band between its rows.
+describe("the theme action strip", () => {
+  it("scales with UI density, by the same step as the rows around it", () => {
+    renderSettings();
+    const strip = screen.getByRole("button", { name: /Import theme/ }).parentElement;
+    expect(strip).not.toBeNull();
+    expect(strip?.style.padding).toBe(densityPadding(10));
+    // The SAME step as its neighbours — a different one would be a second
+    // pitch again, just a subtler one.
+    expect(strip?.style.padding).toContain("var(--row-step) / 2");
+  });
+});
 
 describe("the Appearance control", () => {
   it("shows one theme picker while fixed, and the pair while following", () => {

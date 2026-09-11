@@ -7,7 +7,11 @@ import {
   type ThemeFollowMode,
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
-import { SettingsCard, SettingsRow } from "@/features/settings/layout/SettingsCard";
+import {
+  densityPadding,
+  SettingsCard,
+  SettingsRow,
+} from "@/features/settings/layout/SettingsCard";
 import { ThemeEditorDialog } from "@/features/settings/theme/ThemeEditorDialog";
 import { ThemeGallery } from "@/features/settings/theme/ThemeGallery";
 import { useThemeEditorStore } from "@/features/settings/theme/useThemeEditorStore";
@@ -132,8 +136,16 @@ export function AppearancePage() {
           the editor on the active theme; which theme it starts from is the
           editor's own "Start from" picker, not a card you had to find first. */}
       <div
+        // A geometry hook: only a real webview resolves the calc below, so e2e
+        // measures this strip's height under each density.
+        data-testid="theme-actions"
         style={{
-          padding: "10px 16px",
+          // Density-aware for the same reason its `SettingsRow` neighbours
+          // are: this strip is in the card BODY, between two rows that scale,
+          // so a fixed height here gives one card two row pitches. The chrome
+          // exemption covers a card's HEADER, not a band between its rows.
+          // Its own 10px base is kept — only the step is shared.
+          padding: densityPadding(10),
           borderBottom: "1px solid var(--border-0)",
           display: "flex",
           flexWrap: "wrap",
