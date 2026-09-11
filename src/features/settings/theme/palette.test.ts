@@ -17,7 +17,14 @@ import { hexToRgb } from "@/lib/color";
 import { rgbToOklch } from "@/lib/cssColor";
 
 import { contrastRatio } from "./contrast";
-import { RAMP_SLOTS, familyHue, tintRamp } from "./palette";
+import {
+  HARMONY_RULES,
+  RAMP_SLOTS,
+  familyHue,
+  generate,
+  harmonyOffsets,
+  tintRamp,
+} from "./palette";
 
 const oklch = (hex: string) => rgbToOklch(hexToRgb(hex)!);
 
@@ -161,5 +168,78 @@ describe("tintRamp", () => {
         -0.5,
       );
     }
+  });
+});
+
+describe("harmony", () => {
+  it("never gives the two logo slots the same hue", () => {
+    // A literal mirror collapses at 0 and at 180, which is why Monochrome and
+    // Complementary are nudged. Without the nudge the mark loses one of its two
+    // colours on exactly those rules.
+    for (const rule of HARMONY_RULES) {
+      expect(hueApart(rule.logo, rule.logo2), rule.id).toBeGreaterThan(1);
+    }
+  });
+
+  it("keeps Monochrome's ground on the seed and defaults to Analogous", () => {
+    expect(harmonyOffsets("mono").ground).toBe(0);
+    expect(HARMONY_RULES[1].id).toBe("analogous");
+  });
+});
+
+describe("generate", () => {
+  const base = BUILTIN_THEMES.find((t) => t.id === "dark-cool")!;
+  const traits = {
+    baseId: base.id,
+    seed: "#5aa8e8",
+    rule: "analogous" as const,
+    strength: 0.35,
+  };
+
+  it("puts the seed in the accent slot untouched", () => {
+    expect(generate(base, traits).accent).toBe("#5aa8e8");
+  });
+
+  it("reproduces every base's ramp exactly at strength 0, under every rule", () => {
+    // What makes opening the editor safe: the generator's neutral position IS
+    // the theme you started from, whatever rule happens to be selected.
+    //
+    // This has to hold for EVERY rule, not just the nearest one. A rule's ground
+    // offset is a quantised angle while a base's own offset is whatever it is —
+    // dark-cool sits at 18.6 degrees and no rule has that — so a version that
+    // rotated the ramp at strength 0 moved bg0 from #1a1d24 to #1b1d24 before
+    // the user touched anything. Caught by this test being written the strong way.
+    for (const t of BUILTIN_THEMES) {
+      for (const rule of HARMONY_RULES) {
+        const out = generate(t, {
+          baseId: t.id,
+          seed: t.colors.accent,
+          rule: rule.id,
+          strength: 0,
+        });
+        for (const key of RAMP_SLOTS) {
+          expect(out[key], `${t.id} under ${rule.id}: ${key}`).toBe(t.colors[key]);
+        }
+      }
+    }
+  });
+
+  it("moves the ground with the rule but never the accent", () => {
+    const mono = generate(base, { ...traits, rule: "mono" });
+    const comp = generate(base, { ...traits, rule: "complementary" });
+    expect(mono.accent).toBe(comp.accent);
+    expect(hueApart(familyHue(comp)!, familyHue(mono)!)).toBeGreaterThan(150);
+  });
+
+  it("keeps the button label readable on every generated accent", () => {
+    for (const seed of ["#ffee00", "#0b1020", "#5aa8e8", "#7a7a7a", "#808080"]) {
+      const out = generate(base, { ...traits, seed });
+      expect(contrastRatio(out.accentInk, out.accent), seed).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("returns the base untouched for a seed that is not a colour", () => {
+    // A half-typed hex is not a palette. The editor's own field keeps the text.
+    expect(generate(base, { ...traits, seed: "not a colour" })).toEqual(base.colors);
   });
 });

@@ -1,7 +1,9 @@
-import type { ThemeColors } from "@/features/settings/useSettingsStore";
+import type { ThemeColors, ThemeDef } from "@/features/settings/useSettingsStore";
 
-import { hexToRgb, rgbToHex } from "@/lib/color";
+import { hexToRgb, normalizeHex, rgbToHex } from "@/lib/color";
 import { oklchToRgb, rgbToOklch, srgbChromaCeiling } from "@/lib/cssColor";
+
+import { inkFor } from "./deriveTheme";
 
 /**
  * Palette generation, in OKLCh, as pure arithmetic.
@@ -114,9 +116,20 @@ export function tintRamp(
   groundHue: number,
   strength: number,
 ): ThemeColors {
+  const amount = clamp01(strength);
+  // Tint 0 means the surfaces are left alone — not "rotated to the ground hue
+  // but no extra chroma". Without this the identity holds only when the ground
+  // hue happens to equal the base's own family hue, which it almost never does:
+  // the ground is `seed + rule.ground`, a quantised angle, while a base's real
+  // offset is whatever it is (dark-cool's is 18.6 degrees, and no rule has
+  // that). Rotating a ramp that still carries its own chroma changes every
+  // slot, so opening the editor would silently move `bg0` from #1a1d24 to
+  // #1b1d24 before the user touched anything. The cost is a step at the very
+  // bottom of the slider, which defaults to 0.35 and is never sat on.
+  if (amount === 0) return { ...colors };
+
   const family = familyHue(colors);
   const delta = family === null ? 0 : groundHue - family;
-  const amount = clamp01(strength);
   const out = { ...colors };
   for (const key of RAMP_SLOTS) {
     const o = oklchOf(colors[key]);
@@ -126,4 +139,90 @@ export function tintRamp(
     out[key] = rgbToHex(oklchToRgb(o.l, c, h));
   }
   return out;
+}
+
+export type HarmonyRule =
+  | "mono"
+  | "analogous"
+  | "triadic"
+  | "split"
+  | "complementary";
+
+/**
+ * How far the ground and the two logo colours sit from the seed.
+ *
+ * The ground takes the rule's angle. `logo` and `logo2` sit on opposite sides of
+ * the seed wherever the rule allows, so the mark always carries two
+ * distinguishable colours — Monochrome and Complementary are nudged off the
+ * literal mirror, because the mirror of 0 is 0 and the mirror of 180 is 180, and
+ * either would collapse the pair.
+ *
+ * Analogous is the default because it is what the built-ins do. Measured, every
+ * one of the nine places its surface hue within 46 degrees of its accent — five
+ * within 20 — and not one is complementary or triadic. The wide angles stay on
+ * offer because exploring past the built-ins is the point of the feature, but
+ * they are the adventurous setting rather than the one you get for free.
+ */
+export const HARMONY_RULES = [
+  { id: "mono", label: "Monochrome", ground: 0, logo: -30, logo2: 30 },
+  { id: "analogous", label: "Analogous", ground: 30, logo: -30, logo2: 60 },
+  { id: "triadic", label: "Triadic", ground: 120, logo: 120, logo2: -120 },
+  { id: "split", label: "Split-complement", ground: 150, logo: 150, logo2: -150 },
+  { id: "complementary", label: "Complementary", ground: 180, logo: 180, logo2: -60 },
+] as const satisfies readonly {
+  id: HarmonyRule;
+  label: string;
+  ground: number;
+  logo: number;
+  logo2: number;
+}[];
+
+export const DEFAULT_TRAIT_RULE: HarmonyRule = "analogous";
+export const DEFAULT_TRAIT_STRENGTH = 0.35;
+
+export function harmonyOffsets(rule: HarmonyRule) {
+  return HARMONY_RULES.find((r) => r.id === rule) ?? HARMONY_RULES[1];
+}
+
+/** The four values a generated palette is a pure function of. */
+export type PaletteTraits = {
+  /** Which theme supplies the lightness ramp and its baseline chroma. */
+  baseId: string;
+  /** One colour. Becomes `accent` verbatim. */
+  seed: string;
+  rule: HarmonyRule;
+  /** 0 to 1. 0 is the identity. */
+  strength: number;
+};
+
+/** Keep a slot's lightness and chroma, move it to `hue`. */
+function rotateTo(hex: string, hue: number): string {
+  const o = oklchOf(hex);
+  if (!o) return hex;
+  const h = norm360(hue);
+  return rgbToHex(oklchToRgb(o.l, Math.min(o.c, srgbChromaCeiling(o.l, h)), h));
+}
+
+/**
+ * The whole palette, from four values.
+ *
+ * `accent` is the seed verbatim and is never tinted — it is the one colour the
+ * user chose outright, and rewriting it would make the swatch lie. `accentInk`
+ * goes through `deriveTheme`'s `inkFor`, so there is still exactly one rule in
+ * this tree about what can be read on a button.
+ */
+export function generate(base: ThemeDef, traits: PaletteTraits): ThemeColors {
+  const seed = normalizeHex(traits.seed);
+  const o = seed ? oklchOf(seed) : null;
+  // A half-typed hex is not a palette. Hand back the base rather than
+  // generating from noise — the editor's own field keeps the user's text.
+  if (!seed || !o) return { ...base.colors };
+
+  const off = harmonyOffsets(traits.rule);
+  const colors = tintRamp(base.colors, norm360(o.h + off.ground), traits.strength);
+  colors.accent = seed;
+  colors.accentInk = inkFor(colors, seed);
+  colors.logo = rotateTo(base.colors.logo, o.h + off.logo);
+  colors.logo2 = rotateTo(base.colors.logo2, o.h + off.logo2);
+  return colors;
 }
