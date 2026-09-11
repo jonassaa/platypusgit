@@ -265,7 +265,7 @@ export function flattenFileTree(
 }
 
 /**
- * Base row height in px, matching `--row-h: calc(24px + var(--row-step))`
+ * Base row height in px, matching `--row-h: calc(24px * var(--row-scale) + var(--row-step))`
  * (`index.css`). A windowing caller needs the pitch as a NUMBER and must add
  * `useSpacingStep()`; a literal would desync the window from the rows in
  * comfortable density (#70). Keep in sync with the token.
@@ -1083,7 +1083,7 @@ export function PGHunkActions({
 export function PGFoldSeparator({
   hiddenLines,
   fromR,
-  height = "calc(22px + var(--row-step))",
+  height = "calc(22px * var(--row-scale) + var(--row-step))",
   onExpand,
 }: {
   hiddenLines: number;
@@ -2053,7 +2053,7 @@ export function PGRebaseRow({
         display: "flex",
         alignItems: "center",
         gap: 8,
-        padding: "calc(6px + var(--row-step) / 2) 10px",
+        padding: "calc(6px * var(--row-scale) + var(--row-step) / 2) 10px",
         // Selection comes from the focus-aware [data-pg-row] CSS, so it must not
         // be overpainted here — only the un-selected row states set a background.
         background: selected ? undefined : dragging ? "var(--bg-3)" : "var(--bg-1)",
@@ -2220,7 +2220,7 @@ export function PGRemoteRow({
       onContextMenu={onContextMenu}
       data-remote={dataRemote}
       style={{
-        padding: "calc(10px + var(--row-step) / 2) 10px",
+        padding: "calc(10px * var(--row-scale) + var(--row-step) / 2) 10px",
         background: "var(--bg-1)",
         border: "1px solid var(--border-0)",
         borderRadius: "var(--r-3)",
@@ -2337,7 +2337,7 @@ export function PGSubmoduleRow({
       title={state.hint}
       style={{
         // Density-aware (issue #70): padding-sized row, so half the step per side.
-        padding: "calc(10px + var(--row-step) / 2) 10px",
+        padding: "calc(10px * var(--row-scale) + var(--row-step) / 2) 10px",
         background: "var(--bg-1)",
         border: "1px solid var(--border-0)",
         borderRadius: "var(--r-3)",
@@ -2485,7 +2485,7 @@ export function PGWorktreeRow({
       data-current={worktree.isCurrent ? "1" : undefined}
       onContextMenu={onContextMenu}
       style={{
-        padding: "calc(10px + var(--row-step) / 2) 10px",
+        padding: "calc(10px * var(--row-scale) + var(--row-step) / 2) 10px",
         background: "var(--bg-1)",
         // The worktree you are standing in gets the accent edge — without it the
         // list is several near-identical paths and "which one am I in" is a guess.

@@ -14,9 +14,12 @@ import { useSettingsHighlight } from "./highlightContext";
  * 12px, the theme action strip 10px) while the STEP must not: two surfaces in
  * one card that grow by different amounts is the same bug as one that does not
  * grow at all.
+ *
+ * `--row-scale` multiplies the BASE and not the step: the step is already the
+ * user's own number in pixels, while the base is what has to hold the text.
  */
 export function densityPadding(basePx: number): string {
-  return `calc(${basePx}px + var(--row-step) / 2) 16px`;
+  return `calc(${basePx}px * var(--row-scale) + var(--row-step) / 2) 16px`;
 }
 
 /**

@@ -15,7 +15,7 @@ export interface PGSkeletonProps {
    * Size each placeholder as a plain list row honouring the UI-density
    * setting. A skeleton row that ignores density is a different height from
    * the real row it stands in for, so the list visibly jumps when data
-   * arrives. `--row-h` is already `calc(24px + var(--row-step))`, so it is
+   * arrives. `--row-h` is already `calc(24px * var(--row-scale) + var(--row-step))`, so it is
    * used directly — adding `var(--row-step)` on top would double-count.
    */
   rowStep?: boolean;

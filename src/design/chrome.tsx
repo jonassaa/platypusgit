@@ -741,7 +741,7 @@ export function PGSidebarRow({
         display: "flex",
         alignItems: "center",
         gap: 6,
-        height: "calc(22px + var(--row-step))",
+        height: "calc(22px * var(--row-scale) + var(--row-step))",
         padding: `0 8px 0 ${8 + indent * 12}px`,
         background: selected
           ? "var(--bg-selection)"

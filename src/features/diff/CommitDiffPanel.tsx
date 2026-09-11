@@ -536,7 +536,7 @@ export function CommitDiffPanel({
                 alignItems: "center",
                 justifyContent: "space-between",
                 gap: 8,
-                padding: "calc(4px + var(--row-step) / 2) 12px",
+                padding: "calc(4px * var(--row-scale) + var(--row-step) / 2) 12px",
                 cursor: "pointer",
               }}
             >

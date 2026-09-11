@@ -1,6 +1,6 @@
 // One row of the pull/merge request list (#92).
 //
-// Row geometry uses `calc(48px + var(--row-step))` so the Settings density
+// Row geometry uses `calc(48px * var(--row-scale) + var(--row-step))` so the Settings density
 // toggle reaches it — a new list surface that hardcodes a height is exactly how
 // density rotted the first time (issue #70).
 
@@ -41,7 +41,7 @@ export function PullRequestRow({
         gap: 10,
         padding: "0 12px",
         // Density: --row-step is 0 in compact, so the default layout is unchanged.
-        height: "calc(48px + var(--row-step))",
+        height: "calc(48px * var(--row-scale) + var(--row-step))",
         cursor: "pointer",
         borderBottom: "1px solid var(--border-0)",
         background: selected ? "var(--bg-selection)" : "transparent",

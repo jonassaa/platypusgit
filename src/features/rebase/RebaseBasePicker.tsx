@@ -184,7 +184,7 @@ export function RebaseBasePicker({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          height: "calc(26px + var(--row-step))",
+          height: "calc(26px * var(--row-scale) + var(--row-step))",
           padding: "0 10px",
           background: active ? "var(--bg-selection)" : "transparent",
           cursor: "pointer",

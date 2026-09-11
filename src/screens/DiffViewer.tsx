@@ -568,7 +568,7 @@ export function DiffViewerScreen() {
                 alignItems: "center",
                 gap: 6,
                 padding: "0 10px",
-                height: "calc(24px + var(--row-step))",
+                height: "calc(24px * var(--row-scale) + var(--row-step))",
                 fontFamily: "var(--font-mono)",
                 fontSize: "var(--fs-12)",
                 cursor: "pointer",

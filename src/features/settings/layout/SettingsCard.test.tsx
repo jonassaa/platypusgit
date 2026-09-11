@@ -58,8 +58,12 @@ describe("SettingsCard / SettingsRow", () => {
   // does not resolve calc() — so the token math is pinned as a string here and
   // as real geometry in e2e/specs/settings.e2e.ts.
   it("takes half a step, so density is not double-counted", () => {
-    expect(densityPadding(12)).toBe("calc(12px + var(--row-step) / 2) 16px");
-    expect(densityPadding(10)).toBe("calc(10px + var(--row-step) / 2) 16px");
+    expect(densityPadding(12)).toBe(
+      "calc(12px * var(--row-scale) + var(--row-step) / 2) 16px",
+    );
+    expect(densityPadding(10)).toBe(
+      "calc(10px * var(--row-scale) + var(--row-step) / 2) 16px",
+    );
     expect(SETTINGS_ROW_PADDING).toBe(densityPadding(12));
   });
 

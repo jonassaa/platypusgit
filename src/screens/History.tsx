@@ -865,7 +865,7 @@ export function HistoryScreen() {
         style={{
           display: "grid",
           gridTemplateColumns: commitRowGrid(graphW, dateW),
-          height: "calc(24px + var(--row-step))",
+          height: "calc(24px * var(--row-scale) + var(--row-step))",
           background: "var(--bg-2)",
           borderBottom: "1px solid var(--border-0)",
           fontFamily: "var(--font-mono)",

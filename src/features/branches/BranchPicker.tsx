@@ -412,7 +412,7 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
           display: "flex",
           alignItems: "center",
           gap: 6,
-          height: "calc(26px + var(--row-step))",
+          height: "calc(26px * var(--row-scale) + var(--row-step))",
           padding: "0 10px",
           paddingLeft: 10 + row.depth * INDENT,
           background: active ? "var(--bg-selection)" : "transparent",
@@ -484,7 +484,7 @@ export function BranchPicker({ anchor, open, onClose }: BranchPickerProps) {
           display: "flex",
           alignItems: "center",
           gap: 6,
-          height: "calc(26px + var(--row-step))",
+          height: "calc(26px * var(--row-scale) + var(--row-step))",
           padding: "0 10px",
           // Indented like the screen's tree, plus the width of the chevron a
           // folder row spends there, so nested names line up under the label.
