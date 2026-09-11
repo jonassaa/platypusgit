@@ -17,12 +17,17 @@ import { hexToRgb } from "@/lib/color";
 import { rgbToOklch } from "@/lib/cssColor";
 
 import { contrastRatio } from "./contrast";
+import { deriveTheme } from "./deriveTheme";
 import {
   HARMONY_RULES,
+  NO_LOCKS,
   RAMP_SLOTS,
   familyHue,
   generate,
   harmonyOffsets,
+  inferTraits,
+  isGenerated,
+  rollTraits,
   tintRamp,
 } from "./palette";
 
@@ -241,5 +246,127 @@ describe("generate", () => {
   it("returns the base untouched for a seed that is not a colour", () => {
     // A half-typed hex is not a palette. The editor's own field keeps the text.
     expect(generate(base, { ...traits, seed: "not a colour" })).toEqual(base.colors);
+  });
+
+  it("degenerates to deriveTheme at tint 0", () => {
+    // Tint is the one master control: at 0 this is exactly the accent swap that
+    // shipped before it, at 1 a fully generated palette. Asserting it against
+    // `deriveTheme` itself is what stops the two drifting into two answers.
+    for (const t of BUILTIN_THEMES) {
+      for (const rule of HARMONY_RULES) {
+        for (const seed of ["#5aa8e8", "#ffee00", "#7a7a7a"]) {
+          expect(
+            generate(t, { baseId: t.id, seed, rule: rule.id, strength: 0 }),
+            `${t.id} / ${rule.id} / ${seed}`,
+          ).toEqual(deriveTheme(t, seed));
+        }
+      }
+    }
+  });
+});
+
+describe("inferTraits", () => {
+  it("round-trips every built-in's ramp to itself", () => {
+    // No new file format: the traits are read back out of the palette, and
+    // because strength 0 leaves the ramp alone, opening any theme regenerates
+    // its surfaces exactly. This is what lets themePayload stay untouched.
+    for (const t of BUILTIN_THEMES) {
+      const traits = inferTraits(t);
+      expect(traits.seed, t.id).toBe(t.colors.accent);
+      expect(traits.strength, t.id).toBe(0);
+      expect(traits.baseId, t.id).toBe(t.id);
+      const out = generate(t, traits);
+      for (const key of RAMP_SLOTS) expect(out[key], `${t.id}.${key}`).toBe(t.colors[key]);
+    }
+  });
+
+  it("names the rule the theme actually uses", () => {
+    // Measured surface-to-accent angles: dark-warm 1.1, dark-cool 18.6,
+    // dracula -29.0, solarized-dark -30.1. The last two are what pin the
+    // MAGNITUDE match — signed matching would call both of them Custom.
+    const rule = (id: string) => inferTraits(BUILTIN_THEMES.find((t) => t.id === id)!).rule;
+    expect(rule("dark-warm")).toBe("mono");
+    expect(rule("dark-cool")).toBe("analogous");
+    expect(rule("dracula")).toBe("analogous");
+    expect(rule("solarized-dark")).toBe("analogous");
+  });
+
+  it("falls back to the default rule when the ramp has no hue", () => {
+    const neutral = BUILTIN_THEMES.find((t) => t.id === "dark-neutral")!;
+    expect(inferTraits(neutral).rule).toBe("analogous");
+  });
+});
+
+describe("isGenerated", () => {
+  it("is true for every built-in as it opens", () => {
+    // All nine, not one: the bug this caught was theme-specific. A built-in's
+    // hand-authored `accentInk` is not what `inkFor` would pick off its ramp,
+    // so comparing that slot made every theme read as "Custom" on open.
+    for (const t of BUILTIN_THEMES) {
+      expect(isGenerated(t.colors, t, inferTraits(t)), t.id).toBe(true);
+    }
+  });
+
+  it("goes false as soon as a slot is hand-edited", () => {
+    const base = BUILTIN_THEMES.find((t) => t.id === "dark-cool")!;
+    const traits = inferTraits(base);
+    expect(isGenerated({ ...base.colors, border1: "#ff00ff" }, base, traits)).toBe(false);
+    expect(isGenerated({ ...base.colors, bg0: "#ff00ff" }, base, traits)).toBe(false);
+    expect(isGenerated({ ...base.colors, accent: "#ff00ff" }, base, traits)).toBe(false);
+  });
+});
+
+describe("rollTraits", () => {
+  const base = BUILTIN_THEMES.find((t) => t.id === "dark-cool")!;
+  const traits = inferTraits(base);
+  /** A scripted source, so a roll is a fixture rather than a coin toss. */
+  const scripted = (...xs: number[]) => {
+    let i = 0;
+    return () => xs[i++ % xs.length];
+  };
+
+  it("respects every lock", () => {
+    const locked = { base: true, seed: true, rule: true, strength: true };
+    expect(rollTraits(traits, locked, "dark", BUILTIN_THEMES, scripted(0.5))).toEqual(
+      traits,
+    );
+  });
+
+  it("changes what is not locked", () => {
+    const locks = { ...NO_LOCKS, seed: true };
+    const out = rollTraits(traits, locks, "dark", BUILTIN_THEMES, scripted(0.1, 0.9, 0.4, 0.7));
+    expect(out.seed).toBe(traits.seed);
+    expect(out.strength).not.toBe(traits.strength);
+  });
+
+  it("keeps the seed inside the band the built-in accents occupy", () => {
+    // L 0.52-0.78 and C 0.06-0.19 are the measured span of the nine built-in
+    // accents, which is why a rolled theme never lands somewhere unusable.
+    for (let i = 0; i < 200; i++) {
+      const out = rollTraits(traits, NO_LOCKS, "dark", BUILTIN_THEMES);
+      const o = oklch(out.seed);
+      expect(o.l).toBeGreaterThanOrEqual(0.51);
+      expect(o.l).toBeLessThanOrEqual(0.79);
+      expect(out.strength).toBeGreaterThanOrEqual(0.15);
+      expect(out.strength).toBeLessThanOrEqual(0.7);
+    }
+  });
+
+  it("only rolls built-in bases of the draft's own mode", () => {
+    for (let i = 0; i < 100; i++) {
+      const out = rollTraits(traits, NO_LOCKS, "light", BUILTIN_THEMES);
+      const picked = BUILTIN_THEMES.find((t) => t.id === out.baseId)!;
+      expect(picked.mode).toBe("light");
+      expect(picked.builtin).toBe(true);
+    }
+  });
+
+  it("never rolls a strength of zero", () => {
+    // A dice press that changes nothing visible reads as a broken button.
+    for (let i = 0; i < 100; i++) {
+      expect(
+        rollTraits(traits, NO_LOCKS, "dark", BUILTIN_THEMES).strength,
+      ).toBeGreaterThan(0);
+    }
   });
 });

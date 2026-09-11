@@ -219,10 +219,152 @@ export function generate(base: ThemeDef, traits: PaletteTraits): ThemeColors {
   if (!seed || !o) return { ...base.colors };
 
   const off = harmonyOffsets(traits.rule);
-  const colors = tintRamp(base.colors, norm360(o.h + off.ground), traits.strength);
+  const amount = clamp01(traits.strength);
+  const colors = tintRamp(base.colors, norm360(o.h + off.ground), amount);
   colors.accent = seed;
   colors.accentInk = inkFor(colors, seed);
-  colors.logo = rotateTo(base.colors.logo, o.h + off.logo);
-  colors.logo2 = rotateTo(base.colors.logo2, o.h + off.logo2);
+  // The logo pair is a surface like the ramp, so tint 0 leaves it alone too.
+  // That makes tint the one master control — at 0 this function degenerates
+  // EXACTLY to `deriveTheme`, the accent swap that shipped before it, and at 1
+  // it is a fully generated palette. Without the gate, opening any built-in
+  // read as "Custom" immediately, because a rule places the logo pair at
+  // angles the theme's own mark was never drawn at.
+  if (amount > 0) {
+    colors.logo = rotateTo(base.colors.logo, o.h + off.logo);
+    colors.logo2 = rotateTo(base.colors.logo2, o.h + off.logo2);
+  }
   return colors;
+}
+
+export type TraitLocks = {
+  base: boolean;
+  seed: boolean;
+  rule: boolean;
+  strength: boolean;
+};
+
+export const NO_LOCKS: TraitLocks = {
+  base: false,
+  seed: false,
+  rule: false,
+  strength: false,
+};
+
+/** An angle folded into [-180, 180), so 350 and -10 are the same distance. */
+function signed180(deg: number): number {
+  return (((deg % 360) + 540) % 360) - 180;
+}
+
+/** How near a measured angle has to be before a rule claims it. */
+const RULE_TOLERANCE = 15;
+
+/**
+ * The traits that regenerate this theme, read back out of its own palette.
+ *
+ * There is no persisted trait format on purpose: the moment traits are stored, a
+ * theme has two sources of truth and every importer has to decide which wins.
+ * Reading them back works because strength 0 leaves the ramp alone — base is the
+ * theme itself, so opening any theme for edit regenerates its surfaces
+ * byte-for-byte and nothing moves until the user moves something.
+ */
+export function inferTraits(theme: ThemeDef): PaletteTraits {
+  const family = familyHue(theme.colors);
+  const accent = oklchOf(theme.colors.accent);
+  let rule: HarmonyRule = DEFAULT_TRAIT_RULE;
+  if (family !== null && accent) {
+    // MAGNITUDE, not the signed angle: a rule's offsets are written one way
+    // round (+30) but a theme is equally analogous 30 degrees the other way.
+    // Measured, dracula sits at -29.0 and solarized-dark at -30.1, and matching
+    // on the signed value would name neither.
+    const delta = Math.abs(signed180(family - accent.h));
+    const near = HARMONY_RULES.find((r) => Math.abs(delta - r.ground) <= RULE_TOLERANCE);
+    if (near) rule = near.id;
+  }
+  return { baseId: theme.id, seed: theme.colors.accent, rule, strength: 0 };
+}
+
+/**
+ * Whether this palette is still exactly what the traits produce.
+ *
+ * False the moment a slot is hand-edited, which is what flips the editor's
+ * harmony readout to "Custom". Hand editing is never blocked — a generated slot
+ * is a plain hex string like every other, and the next trait change regenerates
+ * over it, which is what Revert is for.
+ */
+export function isGenerated(
+  colors: ThemeColors,
+  base: ThemeDef,
+  traits: PaletteTraits,
+): boolean {
+  const want = generate(base, traits);
+  return (Object.keys(want) as (keyof ThemeColors)[]).every(
+    // `accentInk` is excluded because it is a CONSEQUENCE, not a choice. The
+    // built-ins ship hand-authored inks that predate the generator — dark-cool
+    // carries #0e1a26 where `inkFor` picks #1a1d24 off its own ramp — so
+    // comparing it would make every built-in read as "Custom" the moment it was
+    // opened, which is the opposite of what the readout is for.
+    (key) => key === "accentInk" || want[key] === colors[key],
+  );
+}
+
+/** The measured span of the nine built-in accents: L 0.518-0.775, C 0.062-0.191. */
+const SEED_L: [number, number] = [0.52, 0.78];
+const SEED_C: [number, number] = [0.06, 0.19];
+/** Never 0: a dice press that changes nothing visible reads as a broken button. */
+const ROLL_STRENGTH: [number, number] = [0.15, 0.7];
+
+/**
+ * Monochrome and Analogous at twice the weight of the rest.
+ *
+ * Not arbitrary: all nine built-ins sit in those two bands, so the near angles
+ * are what reads as a designed theme and the dice should land there more often.
+ */
+const ROLL_RULES: readonly HarmonyRule[] = [
+  "mono",
+  "mono",
+  "analogous",
+  "analogous",
+  "triadic",
+  "split",
+  "complementary",
+];
+
+/**
+ * Re-roll every unlocked trait.
+ *
+ * It cannot produce an unusable theme, because the four traits are the only
+ * inputs and each rolls inside a measured band — the ramp still comes from a
+ * calibrated built-in, and `tintRamp` cannot move a contrast verdict.
+ *
+ * `rand` is injected so a test can script a roll. Every trait draws in a fixed
+ * order whether or not it is locked, so a scripted sequence lines up the same
+ * way regardless of which locks are set.
+ */
+export function rollTraits(
+  current: PaletteTraits,
+  locks: TraitLocks,
+  mode: "dark" | "light",
+  pool: readonly ThemeDef[],
+  rand: () => number = Math.random,
+): PaletteTraits {
+  const between = ([lo, hi]: [number, number]) => lo + rand() * (hi - lo);
+
+  const bases = pool.filter((t) => t.builtin && t.mode === mode);
+  const baseRoll = rand();
+  const seedH = rand() * 360;
+  const seedL = between(SEED_L);
+  const seedC = Math.min(between(SEED_C), srgbChromaCeiling(seedL, seedH));
+  const ruleRoll = rand();
+  const strength = between(ROLL_STRENGTH);
+
+  const pick = <T,>(xs: readonly T[], roll: number) =>
+    xs[Math.min(xs.length - 1, Math.floor(roll * xs.length))];
+
+  return {
+    baseId:
+      locks.base || bases.length === 0 ? current.baseId : pick(bases, baseRoll).id,
+    seed: locks.seed ? current.seed : rgbToHex(oklchToRgb(seedL, seedC, seedH)),
+    rule: locks.rule ? current.rule : pick(ROLL_RULES, ruleRoll),
+    strength: locks.strength ? current.strength : strength,
+  };
 }
