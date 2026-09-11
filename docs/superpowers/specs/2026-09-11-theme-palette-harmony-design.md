@@ -261,9 +261,17 @@ there, which works out exactly because of guarantee 1:
   tracks as `baseId`.
 - **Seed** — `colors.accent`.
 - **Tint** — 0.
-- **Harmony** — the rule whose ground offset is nearest to
-  `familyHue(colors) − hue(accent)`, within ±15°; `"Custom"` when nothing is
-  within that, or when `familyHue` is `null`.
+- **Harmony** — the rule whose ground offset is nearest the **magnitude** of
+  `familyHue(colors) − hue(accent)`, within ±15°, falling back to the default
+  rule when nothing is that near or when `familyHue` is `null`. Magnitude and
+  not the signed angle, because a rule's offsets are written one way round
+  (+30°) while a theme is equally analogous 30° the other way — measured,
+  `dracula` sits at −29.0° and `solarized-dark` at −30.1°, and signed matching
+  would fail to name either.
+
+The `"Custom"` readout is **not** a sixth rule and does not come from inference.
+It is `isGenerated(colors, base, traits)` going false — the palette is no longer
+exactly what the traits produce, because a slot was hand-edited.
 
 Base = the theme itself and tint = 0 means the generator is the identity on
 open. Nothing moves until the user moves something. `themePayload`,
