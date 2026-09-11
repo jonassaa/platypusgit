@@ -164,10 +164,11 @@ async function useExistingBranch(
     await useRepoStore.getState().setUpstream(local, remote);
     if (useRepoStore.getState().error) return;
   }
-  // Advance the ref BEFORE it becomes HEAD. A fast-forward of the checked-out
-  // branch needs a working-tree update, which is `pull`'s job and the user's
-  // own pull mode — `fastForwardBranch` reroutes it there, which is not what
-  // was offered here.
+  // Advance the ref BEFORE anything stands on it — for a branch that is not
+  // HEAD this is a pure ref move. For the one you ARE on, `fastForwardBranch`
+  // reroutes to `pull` under the user's own pull mode, which is the only
+  // correct way to advance a checked-out branch: its index and worktree have
+  // to move too.
   if (update) {
     await useRepoStore.getState().fastForwardBranch(local);
     if (useRepoStore.getState().error) return;
