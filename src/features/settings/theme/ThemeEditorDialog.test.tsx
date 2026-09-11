@@ -164,6 +164,46 @@ describe("ThemeEditorDialog", () => {
     expect(screen.getByLabelText(/^logo · bill$/i)).toBeInTheDocument();
   });
 
+  it("lets nothing bleed sideways out of the scrolling controls column", () => {
+    ed().openNew(dark);
+    const { container } = mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+
+    // The controls column is `overflow: auto`, so a negative horizontal margin
+    // on an in-flow child makes the block wider than its own scroll port and
+    // the colour section grows a horizontal scrollbar — which is exactly what
+    // `margin: 0 -16px` around the ColorEditor did. jsdom has no layout, so the
+    // mechanism is what gets pinned, not the measurement.
+    //
+    // Positioned elements are exempt: the Tint slider centres its thumb on the
+    // track with `marginLeft: -6` under a `position: relative` parent, which
+    // widens nothing.
+    const bleeding = [...container.querySelectorAll<HTMLElement>("*")]
+      .filter((el) => !["absolute", "fixed"].includes(el.style.position))
+      .filter(
+        (el) =>
+          parseFloat(el.style.marginLeft || "0") < 0 ||
+          parseFloat(el.style.marginRight || "0") < 0,
+      )
+      .map((el) => `${el.tagName}: ${el.style.marginLeft} / ${el.style.marginRight}`);
+    expect(bleeding).toEqual([]);
+  });
+
+  it("never floors a colour column wider than the column holding it", () => {
+    ed().openNew(dark);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /all colours/i }));
+
+    // An auto-fill track keeps its floor even when the container is narrower
+    // than it, so a bare `minmax(190px, 1fr)` sidescrolls the section once the
+    // editor's column drops under 190px. `min(190px, 100%)` is what stops it.
+    const grid = screen
+      .getByLabelText(/^background · base$/i)
+      .closest("div[style*='grid-template-columns']") as HTMLElement | null;
+    expect(grid).not.toBeNull();
+    expect(grid!.style.gridTemplateColumns).toContain("min(190px, 100%)");
+  });
+
   it("applies the guided start from a base theme", () => {
     ed().openNew(dark);
     mount();
