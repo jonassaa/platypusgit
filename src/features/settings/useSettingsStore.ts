@@ -2208,6 +2208,26 @@ export function useTextScale(): number {
 }
 
 /**
+ * A row's height in px — the JS twin of
+ * `calc(<base>px * var(--row-scale) + var(--row-step))`.
+ *
+ * One owner rather than the expression repeated at each windowed list, because
+ * a window that computes its pitch differently from the rows it measures is
+ * the #70 desync, and six copies is six chances to write it differently. The
+ * base is MULTIPLIED and the step ADDED, for the reason `index.css` gives:
+ * the step is already the user's own number of pixels, the base is what has to
+ * hold the text.
+ *
+ * Rounded to one decimal, matching `applyTextScale`'s own ramp precision:
+ * `basePx * scale` lands on an IEEE754 repeater for ordinary inputs (26 * 1.3
+ * = 33.800000000000004), and an unrounded value would disagree with the CSS
+ * pitch by that same sub-pixel remainder instead of matching it exactly.
+ */
+export function useRowH(basePx: number): number {
+  return Math.round((basePx * useTextScale() + useSpacingStep()) * 10) / 10;
+}
+
+/**
  * The user's date format (#354), for the surfaces that render a commit date.
  *
  * A hook rather than a `getState()` read so switching the format in Settings

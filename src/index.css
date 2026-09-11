@@ -206,7 +206,8 @@
    * without the other.
    *
    * One surface can't use either token: PGGraphRow draws in SVG user units, so
-   * PGCommitRow feeds it the numbers via useSpacingStep() + useTextScale(). */
+   * PGCommitRow feeds it the number from useRowH() — the JS twin of this
+   * calc(), so the two cannot drift apart. */
   --row-step: 0px;
   --row-scale: 1;
   --row-h: calc(24px * var(--row-scale) + var(--row-step));

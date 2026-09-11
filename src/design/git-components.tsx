@@ -15,7 +15,7 @@ import {
 } from "./primitives";
 import {
   useDateColumnWidth,
-  useSpacingStep,
+  useRowH,
 } from "@/features/settings/useSettingsStore";
 import {
   NO_HEAD_DECOR,
@@ -266,9 +266,9 @@ export function flattenFileTree(
 
 /**
  * Base row height in px, matching `--row-h: calc(24px * var(--row-scale) + var(--row-step))`
- * (`index.css`). A windowing caller needs the pitch as a NUMBER and must add
- * `useSpacingStep()`; a literal would desync the window from the rows in
- * comfortable density (#70). Keep in sync with the token.
+ * (`index.css`). A windowing caller needs the pitch as a NUMBER and must get
+ * it from `useRowH()`; a literal would desync the window from the rows at
+ * any preset but the default (#70). Keep in sync with the token.
  */
 export const FILE_TREE_ROW_BASE_H = 24;
 
@@ -1338,10 +1338,10 @@ const HEAD_RING_R = 6.5;
  * `height` is REQUIRED and must be the caller's actual row pitch in px.
  *
  * The lane geometry below is in SVG user units (`y2={height}`, bezier control
- * points at `height / 2`), so it cannot read `--row-step` — a default here
- * would silently draw at one pitch while density moved the rows to another,
- * leaving lanes that don't meet between rows. Callers derive the number from
- * `useSpacingStep()`; see `PGCommitRow`.
+ * points at `height / 2`), so it cannot read `--row-step` or `--row-scale` —
+ * a default here would silently draw at one pitch while spacing or text size
+ * moved the rows to another, leaving lanes that don't meet between rows.
+ * Callers derive the number from `useRowH()`; see `PGCommitRow`.
  *
  * `width` is REQUIRED for the same reason of principle: it must come from
  * `graphWidth(maxCol)`. The old `width = 140` default is exactly what let lanes
@@ -1627,12 +1627,12 @@ export const PGCommitRow = React.memo(function PGCommitRow({
   headDecor = NO_HEAD_DECOR,
 }: PGCommitRowProps) {
   const [hover, setHover] = React.useState(false);
-  const step = useSpacingStep();
-  // Read here rather than passed in, for the same reason as the density step:
+  const derivedH = useRowH(COMMIT_ROW_BASE_H);
+  // Read here rather than passed in, for the same reason as the row scale:
   // every commit row in the app must agree with History's column header, and a
   // prop threaded through two screens is a prop one of them forgets.
   const dateW = useDateColumnWidth();
-  const h = rowHeight ?? COMMIT_ROW_BASE_H + step;
+  const h = rowHeight ?? derivedH;
   // One gate for every mark, so "this row is not HEAD" is checked once.
   const d = isHead && !headDecor.bare ? headDecor : NO_HEAD_DECOR;
   // Selection outranks the HEAD wash — the selected row must stay obvious even

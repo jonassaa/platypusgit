@@ -1,6 +1,7 @@
 // Store-logic tests for the settings store: persistence shape (including the
 // removal migration for dead settings) and the uiSpacing CSS-var hook.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderHook } from "@testing-library/react";
 
 const STORAGE_KEY = "pg-settings-v2";
 
@@ -702,5 +703,16 @@ describe("uiTextScale CSS hook", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiTextScale: "toString" }));
     await freshStore();
     expect(rowScale()).toBe("1");
+  });
+});
+
+describe("useRowH", () => {
+  it("multiplies the base by the text scale and adds the spacing step", async () => {
+    const { useRowH, useSettingsStore: store } = await freshStore();
+    store.getState().set("uiTextScale", "larger");
+    store.getState().set("uiSpacing", "comfortable");
+    const { result } = renderHook(() => useRowH(24));
+    // 24 x 1.3 = 31.2, + comfortable step 4
+    expect(result.current).toBeCloseTo(35.2, 5);
   });
 });

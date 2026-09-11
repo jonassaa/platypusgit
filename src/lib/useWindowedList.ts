@@ -4,8 +4,8 @@
 // the same helper rather than growing a second implementation.
 //
 // Row pitch is always passed in by the caller — History derives it from
-// COMMIT_ROW_BASE_H + useSpacingStep(). A literal here would silently desync
-// the window from the rows at any non-compact density (#70).
+// useRowH(COMMIT_ROW_BASE_H). A literal here would silently desync the window
+// from the rows at any preset but the defaults (#70).
 import React from "react";
 
 export interface WindowRange {

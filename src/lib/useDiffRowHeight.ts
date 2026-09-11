@@ -1,5 +1,5 @@
 import React from "react";
-import { useSpacingStep } from "@/features/settings/useSettingsStore";
+import { useSpacingStep, useTextScale } from "@/features/settings/useSettingsStore";
 
 /**
  * Used when --diff-row-h cannot be resolved to px — notably jsdom, which does not
@@ -23,14 +23,17 @@ export function readDiffRowHeight(): number {
  * literal in TypeScript would already be wrong and would desync the window from
  * the rows it is measuring (the #70 lesson).
  *
- * Re-read when density changes, because that is when the theme layer rewrites
- * geometry-adjacent tokens.
+ * Re-read when either UI scale changes. The TEXT scale is the one that
+ * actually moves this value — `--diff-row-h` is derived from `--fs-12` — and
+ * spacing is kept as a dependency because that is when the theme layer
+ * rewrites geometry-adjacent tokens.
  */
 export function useDiffRowHeight(): number {
   const step = useSpacingStep();
+  const scale = useTextScale();
   const [h, setH] = React.useState(() => readDiffRowHeight());
   React.useEffect(() => {
     setH(readDiffRowHeight());
-  }, [step]);
+  }, [step, scale]);
   return h;
 }
