@@ -13,7 +13,8 @@ import {
   PGSkeleton,
   PGToolbar,
   COL_PAD,
-  COMMIT_LIST_MIN_W,
+  colPad,
+  commitListMinW,
   commitMenuItems,
   commitMultiMenuItems,
   COMMIT_ROW_BASE_H,
@@ -50,6 +51,7 @@ import {
   useDateFormat,
   useRowH,
   useSettingsStore,
+  useTextScale,
 } from "@/features/settings/useSettingsStore";
 import { resolveHeadDecor } from "@/features/settings/headMarks";
 import { CommitDiffPanel } from "@/features/diff/CommitDiffPanel";
@@ -122,6 +124,13 @@ const DETAIL_DIFF_MIN_W = 320;
  * `SUBJECT_MIN_W`). Clipping alone still let "AUTHOR" run up against "DATE";
  * the padding is what a caption truncates to clear, exactly as a long author
  * name does one row below.
+ *
+ * `paddingRight` here is the ×1 default only — this is a MODULE-LEVEL constant
+ * and cannot call `useTextScale()`, so every usage site below spreads it and
+ * overrides `paddingRight` with `colPad(textScale)`. A spread that skips the
+ * override is how "AUTHORDATE" comes back: the row's own padding scales, the
+ * header's does not, and the caption runs into the one beside it exactly as
+ * before `COL_PAD` existed.
  */
 const HEADER_LABEL: React.CSSProperties = {
   overflow: "hidden",
@@ -131,6 +140,11 @@ const HEADER_LABEL: React.CSSProperties = {
 };
 
 export function HistoryScreen() {
+  // Read once at the top: it feeds both the pane-size floor below
+  // (`commitListMinW`) and the grid template + header padding further down,
+  // and every reader has to agree on the same number or the header drifts
+  // from the rows under it.
+  const textScale = useTextScale();
   const commits = useRepoStore((s) => s.commits);
   const searchResults = useRepoStore((s) => s.searchResults);
   const searching = useRepoStore((s) => s.searching);
@@ -202,7 +216,7 @@ export function HistoryScreen() {
     axis: "width",
     container: layout,
     min: 280,
-    siblingMin: COMMIT_LIST_MIN_W,
+    siblingMin: commitListMinW(textScale),
     storageKey: "pg-history-detail-w",
   });
   const repo = useRepoStore((s) => s.current);
@@ -864,7 +878,7 @@ export function HistoryScreen() {
         data-testid="commit-header"
         style={{
           display: "grid",
-          gridTemplateColumns: commitRowGrid(graphW, dateW),
+          gridTemplateColumns: commitRowGrid(graphW, dateW, textScale),
           height: "calc(24px * var(--row-scale) + var(--row-step))",
           background: "var(--bg-2)",
           borderBottom: "1px solid var(--border-0)",
@@ -880,13 +894,15 @@ export function HistoryScreen() {
             with SHA. The count of lanes that did not fit still belongs here,
             in text: the gutter is a decorative graphic, and Phase 3 (G8)
             marks it aria-hidden, so a fade alone would state this nowhere. */}
-        <span style={{ ...HEADER_LABEL, paddingLeft: 12 }}>
+        <span
+          style={{ ...HEADER_LABEL, paddingLeft: 12, paddingRight: colPad(textScale) }}
+        >
           {hiddenLanes > 0 ? `+${hiddenLanes}` : ""}
         </span>
-        <span style={HEADER_LABEL}>SHA</span>
-        <span style={HEADER_LABEL}>SUBJECT</span>
-        <span style={HEADER_LABEL}>AUTHOR</span>
-        <span style={HEADER_LABEL}>DATE</span>
+        <span style={{ ...HEADER_LABEL, paddingRight: colPad(textScale) }}>SHA</span>
+        <span style={{ ...HEADER_LABEL, paddingRight: colPad(textScale) }}>SUBJECT</span>
+        <span style={{ ...HEADER_LABEL, paddingRight: colPad(textScale) }}>AUTHOR</span>
+        <span style={{ ...HEADER_LABEL, paddingRight: colPad(textScale) }}>DATE</span>
       </div>
       <FocusableScroll
         style={{ flex: 1 }}

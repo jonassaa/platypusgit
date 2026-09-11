@@ -16,13 +16,14 @@ import {
 import {
   useDateColumnWidth,
   useRowH,
+  useTextScale,
 } from "@/features/settings/useSettingsStore";
 import {
   NO_HEAD_DECOR,
   type HeadDecor,
 } from "@/features/settings/headMarks";
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
-import { COL_PAD, GRAPH_PAD, commitRowGrid, laneX } from "./graph-geometry";
+import { GRAPH_PAD, colPad, commitRowGrid, laneX } from "./graph-geometry";
 import type { WindowRange } from "@/lib/useWindowedList";
 import type {
   RebaseAction,
@@ -1632,6 +1633,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
   // every commit row in the app must agree with History's column header, and a
   // prop threaded through two screens is a prop one of them forgets.
   const dateW = useDateColumnWidth();
+  const textScale = useTextScale();
   const h = rowHeight ?? derivedH;
   // One gate for every mark, so "this row is not HEAD" is checked once.
   const d = isHead && !headDecor.bare ? headDecor : NO_HEAD_DECOR;
@@ -1668,7 +1670,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
       onMouseLeave={() => setHover(false)}
       style={{
         display: "grid",
-        gridTemplateColumns: commitRowGrid(graphW, dateW),
+        gridTemplateColumns: commitRowGrid(graphW, dateW, textScale),
         alignItems: "center",
         height: h,
         background,
@@ -1726,7 +1728,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           alignItems: "center",
           gap: 6,
           minWidth: 0,
-          paddingRight: COL_PAD,
+          paddingRight: colPad(textScale),
           // Below SUBJECT_MIN_W the cell is narrower than its contents, and the
           // pills do not shrink (half a pill reads as a different branch), so
           // without this they painted over the author column instead.
@@ -1791,7 +1793,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           // what the name is cut to CLEAR, which is why AUTHOR_MIN_W counts it.
           minWidth: 0,
           overflow: "hidden",
-          paddingRight: COL_PAD,
+          paddingRight: colPad(textScale),
         }}
       >
         <PGAvatar name={author} size={16} />

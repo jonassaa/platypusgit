@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { normalizeHex } from "@/lib/color";
 import type { PullMode } from "@/lib/tauri";
 import { type DateFormat, isDateFormat } from "@/lib/commitDate";
-import { DATE_COL_W } from "@/design/graph-geometry";
+import { dateColW } from "@/design/graph-geometry";
 import type { UpdateChannel, UpdateRefsMode } from "@/lib/types";
 import type { SavedIdentity } from "@/features/commits/identity/identityList";
 import {
@@ -2246,12 +2246,13 @@ export function useDateFormat(): DateFormat {
 }
 
 /**
- * Width the Date column needs for the active format.
+ * Width the Date column needs for the active format, at the active text
+ * scale.
  *
  * PGCommitRow and History's column header both call this, then hand the SAME
  * number to `commitRowGrid` — which is what keeps the header aligned with the
- * rows under it when the format changes.
+ * rows under it when the format OR the text size changes.
  */
 export function useDateColumnWidth(): number {
-  return DATE_COL_W[useDateFormat()];
+  return dateColW(useDateFormat(), useTextScale());
 }
