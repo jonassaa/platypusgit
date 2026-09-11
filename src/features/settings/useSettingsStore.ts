@@ -2201,7 +2201,7 @@ export function useSpacingStep(): number {
  * The active text scale as a FACTOR (0.92 … 1.3), for surfaces that multiply a
  * JS pixel constant by it — windowed row pitches, the SVG graph gutter, and
  * the commit row's text-sized columns. Everything a `calc()` can reach should
- * use the `--row-scale` CSS var instead.
+ * use `var(--row-scale)` instead.
  */
 export function useTextScale(): number {
   return TEXT_SCALE[normalizeTextScale(useSettingsStore((s) => s.uiTextScale))];
