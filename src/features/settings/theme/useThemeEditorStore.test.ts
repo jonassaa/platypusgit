@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { BUILTIN_THEMES, useSettingsStore } from "@/features/settings/useSettingsStore";
 
+import { NO_LOCKS, inferTraits } from "./palette";
 import { useThemeEditorStore } from "./useThemeEditorStore";
 
 const dark = BUILTIN_THEMES.find((t) => t.id === "dark-cool")!;
@@ -182,5 +183,82 @@ describe("useThemeEditorStore", () => {
     expect(ed().colors).toEqual(dark.colors);
     expect(ed().themeMode).toBe("dark");
     expect(rootVar("--bg-0")).toBe(dark.colors.bg0);
+  });
+});
+
+describe("palette traits", () => {
+  beforeEach(() => {
+    useThemeEditorStore.getState().close();
+    useSettingsStore.getState().reset();
+  });
+
+  it("opens a draft on traits that regenerate it unchanged", () => {
+    ed().openEdit(dark);
+    expect(ed().traits.baseId).toBe(dark.id);
+    expect(ed().traits.seed).toBe(dark.colors.accent);
+    expect(ed().traits.strength).toBe(0);
+    expect(ed().colors).toEqual(dark.colors);
+  });
+
+  it("regenerates the palette when a trait moves", () => {
+    ed().openEdit(dark);
+    ed().setTrait("strength", 0.6);
+    expect(ed().colors.bg0).not.toBe(dark.colors.bg0);
+    // The ramp moved; the accent the user picked did not.
+    expect(ed().colors.accent).toBe(dark.colors.accent);
+  });
+
+  it("leaves a locked trait alone through a shuffle", () => {
+    ed().openEdit(dark);
+    ed().toggleLock("seed");
+    const seed = ed().traits.seed;
+    for (let i = 0; i < 20; i++) ed().shuffle();
+    expect(ed().traits.seed).toBe(seed);
+    expect(ed().colors.accent).toBe(seed);
+  });
+
+  it("actually changes the palette when nothing is locked", () => {
+    ed().openEdit(dark);
+    const before = { ...ed().colors };
+    ed().shuffle();
+    expect(ed().colors).not.toEqual(before);
+  });
+
+  it("paints a shuffled palette straight onto :root", () => {
+    ed().openEdit(dark);
+    ed().shuffle();
+    expect(rootVar("--bg-0")).toBe(ed().colors.bg0);
+  });
+
+  it("does not regenerate over a hand-edited slot", () => {
+    // patchColors is the eighteen-slot path. It writes, and nothing more.
+    ed().openEdit(dark);
+    ed().patchColors({ border1: "#ff00ff" });
+    expect(ed().colors.border1).toBe("#ff00ff");
+  });
+
+  it("keeps the shuffled base in step with the mode the draft is in", () => {
+    ed().openEdit(light);
+    for (let i = 0; i < 20; i++) ed().shuffle();
+    expect(ed().themeMode).toBe("light");
+  });
+
+  it("revert puts the traits back too, not just the colours", () => {
+    // Otherwise the palette is the source's again while the traits still
+    // describe the abandoned generation, and the section reads "Custom" against
+    // a palette it could regenerate exactly.
+    ed().openEdit(dark);
+    ed().setTrait("strength", 0.8);
+    ed().setTrait("rule", "complementary");
+    ed().revert();
+    expect(ed().colors).toEqual(dark.colors);
+    expect(ed().traits).toEqual(inferTraits(dark));
+  });
+
+  it("clears traits and locks on close", () => {
+    ed().openEdit(dark);
+    ed().toggleLock("rule");
+    ed().close();
+    expect(ed().locks).toEqual(NO_LOCKS);
   });
 });

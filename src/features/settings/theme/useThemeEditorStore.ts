@@ -8,7 +8,14 @@ import {
   type ThemeDef,
 } from "@/features/settings/useSettingsStore";
 
-import { deriveTheme } from "./deriveTheme";
+import {
+  NO_LOCKS,
+  generate,
+  inferTraits,
+  rollTraits,
+  type PaletteTraits,
+  type TraitLocks,
+} from "./palette";
 
 /**
  * The theme editor's draft, in a store rather than in the component.
@@ -40,6 +47,10 @@ export type ThemeEditorState = {
   originalTheme: ThemeDef | null;
   /** Which theme the guided "Start from" picker is pointing at. */
   baseId: string;
+  /** The four values the palette is generated from. See `palette.ts`. */
+  traits: PaletteTraits;
+  /** Which traits a shuffle must leave alone. Session state, never persisted. */
+  locks: TraitLocks;
 
   openNew: (source: ThemeDef) => void;
   openEdit: (theme: ThemeDef) => void;
@@ -51,6 +62,10 @@ export type ThemeEditorState = {
   setColors: (colors: ThemeColors) => void;
   /** The guided start: take a base theme's palette, keep an accent. */
   applyBase: (baseId: string, accent?: string) => void;
+  setTrait: <K extends keyof PaletteTraits>(key: K, value: PaletteTraits[K]) => void;
+  toggleLock: (key: keyof TraitLocks) => void;
+  /** Re-roll every unlocked trait and regenerate. */
+  shuffle: () => void;
   /** Back to the theme this draft was opened from. */
   revert: () => void;
   /** Persist and leave. Returns the saved theme, or `null` for an empty name. */
@@ -74,6 +89,8 @@ const EMPTY_DRAFT = {
   colors: BUILTIN_THEMES[0].colors,
   originalTheme: null,
   baseId: BUILTIN_THEMES[0].id,
+  traits: inferTraits(BUILTIN_THEMES[0]),
+  locks: NO_LOCKS,
 };
 
 export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
@@ -95,6 +112,26 @@ export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
     });
   };
 
+  /**
+   * Write the traits' palette into the draft and repaint.
+   *
+   * Keeps `baseId` in step with `traits.baseId`: the "Start from" select and the
+   * base-ramp trait are the same choice wearing two names, and letting them
+   * drift is how the dialog ends up showing one theme while generating from
+   * another.
+   */
+  const regenerate = (traits: PaletteTraits) => {
+    const base = allThemes().find((t) => t.id === traits.baseId);
+    if (!base) return;
+    set({
+      traits,
+      baseId: base.id,
+      themeMode: base.mode,
+      colors: generate(base, traits),
+    });
+    preview();
+  };
+
   return {
     ...EMPTY_DRAFT,
 
@@ -105,6 +142,8 @@ export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
         themeMode: source.mode,
         colors: { ...source.colors },
         baseId: source.id,
+        traits: inferTraits(source),
+        locks: NO_LOCKS,
         // Read BEFORE anything is applied, or the "original" is already the draft.
         originalTheme: useSettingsStore.getState().getActiveTheme(),
       });
@@ -118,6 +157,8 @@ export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
         themeMode: theme.mode,
         colors: { ...theme.colors },
         baseId: theme.id,
+        traits: inferTraits(theme),
+        locks: NO_LOCKS,
         originalTheme: useSettingsStore.getState().getActiveTheme(),
       });
       preview();
@@ -163,13 +204,28 @@ export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
       // an existing theme being edited already has a name of its own.
       const from = allThemes().find((t) => t.id === s.baseId);
       const auto = s.open?.mode === "new" && !!from && s.name === autoName(from);
-      set({
-        baseId,
-        themeMode: base.mode,
-        colors: deriveTheme(base, accent ?? base.colors.accent),
-        ...(auto ? { name: autoName(base) } : null),
-      });
-      preview();
+      if (auto) set({ name: autoName(base) });
+      // Through the traits rather than `deriveTheme` directly: the base ramp IS
+      // a trait, and a second path that wrote `colors` without moving
+      // `traits.baseId` would leave the palette section describing a theme the
+      // draft is no longer built from.
+      regenerate({ ...s.traits, baseId, seed: accent ?? base.colors.accent });
+    },
+
+    setTrait(key, value) {
+      const s = get();
+      if (!s.open) return;
+      regenerate({ ...s.traits, [key]: value });
+    },
+
+    toggleLock(key) {
+      set((s) => ({ locks: { ...s.locks, [key]: !s.locks[key] } }));
+    },
+
+    shuffle() {
+      const s = get();
+      if (!s.open) return;
+      regenerate(rollTraits(s.traits, s.locks, s.themeMode, allThemes(), Math.random));
     },
 
     revert() {
@@ -180,6 +236,10 @@ export const useThemeEditorStore = create<ThemeEditorState>((set, get) => {
         themeMode: open.sourceTheme.mode,
         colors: { ...open.sourceTheme.colors },
         baseId: open.sourceTheme.id,
+        // The traits go back too. Restoring only the colours leaves them
+        // describing the abandoned generation, so the palette section reads
+        // "Custom" against a palette it could regenerate exactly.
+        traits: inferTraits(open.sourceTheme),
       });
       preview();
     },
