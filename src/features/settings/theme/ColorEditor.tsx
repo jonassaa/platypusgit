@@ -36,7 +36,10 @@ export function ColorEditor({
   ];
 
   return (
-    <div style={{ padding: "14px 16px 18px" }}>
+    // No horizontal padding: this sits directly in the editor's scrolling
+    // column, so side padding here would inset the rows from the Palette card
+    // above them — and it was what the caller's `0 -16px` bleed was cancelling.
+    <div style={{ padding: "14px 0 18px" }}>
       {groups.map((g) => (
         <div key={g.group} style={{ marginTop: g.group === "background" ? 0 : 16 }}>
           <div
@@ -58,7 +61,12 @@ export function ColorEditor({
               // 190px, not 240: the editor's left column is ~410px, so a 240px
               // minimum fitted exactly ONE field per row and made the list
               // twice as long to scroll as it needs to be.
-              gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+              //
+              // `min(190px, 100%)`, not a bare `190px`: an auto-fill track keeps
+              // its floor even when the container is narrower than it, so the
+              // bare version sidescrolls the whole section once the column
+              // drops under 190px (measured: 38px of overflow at 180px).
+              gridTemplateColumns: "repeat(auto-fill, minmax(min(190px, 100%), 1fr))",
               gap: 8,
             }}
           >

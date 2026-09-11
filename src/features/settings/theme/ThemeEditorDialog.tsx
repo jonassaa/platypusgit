@@ -348,18 +348,22 @@ export function ThemeEditorDialog() {
             </button>
 
             {showAll && (
-              <div style={{ margin: "0 -16px" }}>
-                <ColorEditor
-                  colors={ed.colors}
-                  onPatch={ed.patchColors}
-                  badgeFor={(key) => {
-                    const pair = CONTRAST_PAIRS.find((p) => p.a === key);
-                    return pair ? (
-                      <RatioBadge a={pair.a} b={pair.b} colors={ed.colors} />
-                    ) : null;
-                  }}
-                />
-              </div>
+              // No negative margin here. A bleed out to the modal's own padding
+              // reads as full-width, but this is not a child of the modal — it
+              // is a child of a scrolling COLUMN, so `0 -16px` made the block
+              // 32px wider than its scroll port and the colour section grew a
+              // horizontal scrollbar (measured: scrollWidth 440 / clientWidth
+              // 424). The rows line up with the Palette card instead.
+              <ColorEditor
+                colors={ed.colors}
+                onPatch={ed.patchColors}
+                badgeFor={(key) => {
+                  const pair = CONTRAST_PAIRS.find((p) => p.a === key);
+                  return pair ? (
+                    <RatioBadge a={pair.a} b={pair.b} colors={ed.colors} />
+                  ) : null;
+                }}
+              />
             )}
           </div>
 
