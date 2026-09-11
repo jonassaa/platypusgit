@@ -1,11 +1,13 @@
 import { PGButton, PGButtonGroup, PGIconButton, pgFlash } from "@/design";
 import {
   SPACING_STEP_PX,
+  TEXT_SCALE,
   ZOOM_MAX,
   ZOOM_MIN,
   useSettingsStore,
   type ThemeFollowMode,
   type UiSpacing,
+  type UiTextScale,
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import {
@@ -41,9 +43,14 @@ export const meta: SettingsPageMeta = {
         { id: "appearance.light", label: "Light theme", keywords: "gallery preview swatch add new create custom", when: "themeFollowsSystem" },
         { id: "appearance.dark", label: "Dark theme", keywords: "dark mode gallery preview swatch add new create custom", when: "themeFollowsSystem" },
         { id: "appearance.theme", label: "Theme", keywords: "colors palette custom editor export import gallery preview swatch duplicate contrast add new create", when: "themeFixed" },
-        { id: "appearance.density", label: "UI density", keywords: "compact cozy comfortable row height spacing" },
         { id: "appearance.dateFormat", label: "Date format", keywords: "relative absolute iso timestamp" },
         { id: "appearance.headMarks", label: "Current position (HEAD)", keywords: "bar tint ring marker" },
+        // Text size, Spacing and Zoom sit adjacent here (matching their render
+        // order below) because all three are "how big/roomy is the UI"
+        // controls — reading them as one group is the point, not an accident
+        // of where the old density row used to live.
+        { id: "appearance.textSize", label: "Text size", keywords: "font size text type bigger smaller larger readable accessibility scale" },
+        { id: "appearance.spacing", label: "Spacing", keywords: "density compact cozy comfortable spacious row height breathing room padding" },
         { id: "appearance.zoom", label: "Zoom", keywords: "font size scale text bigger smaller" },
       ],
     },
@@ -180,25 +187,6 @@ export function AppearancePage() {
       </div>
 
       <SettingsRow
-        id="appearance.density"
-        label="UI density"
-        hint={`Compact matches the dense IDE feel; spacious gives every list row ${SPACING_STEP_PX.spacious}px more breathing room.`}
-        control={
-          <PGButtonGroup
-            size="sm"
-            value={s.uiSpacing}
-            onChange={(v) => s.set("uiSpacing", v as UiSpacing)}
-            options={[
-              { value: "compact", label: "Compact" },
-              { value: "cozy", label: "Cozy" },
-              { value: "comfortable", label: "Comfortable" },
-              { value: "spacious", label: "Spacious" },
-            ]}
-          />
-        }
-      />
-
-      <SettingsRow
         id="appearance.dateFormat"
         label="Date format"
         hint={
@@ -235,6 +223,46 @@ export function AppearancePage() {
         label="Current position (HEAD)"
         hint="How History marks the commit you are on. Pick any combination of marks, then set how hard they hit — the preview is the real History row."
         control={<HeadMarksControl />}
+      />
+
+      <SettingsRow
+        id="appearance.textSize"
+        label="Text size"
+        hint={`Scales the type everywhere, code and diffs included — ${Math.round(
+          TEXT_SCALE.larger * 100,
+        )}% at the largest. Rows grow to fit it; icons and borders don’t — use Zoom below for those.`}
+        control={
+          <PGButtonGroup
+            size="sm"
+            value={s.uiTextScale}
+            onChange={(v) => s.set("uiTextScale", v as UiTextScale)}
+            options={[
+              { value: "small", label: "Small" },
+              { value: "default", label: "Default" },
+              { value: "large", label: "Large" },
+              { value: "larger", label: "Larger" },
+            ]}
+          />
+        }
+      />
+
+      <SettingsRow
+        id="appearance.spacing"
+        label="Spacing"
+        hint={`How much breathing room every list row gets — compact is the dense IDE feel, spacious adds ${SPACING_STEP_PX.spacious}px to each row.`}
+        control={
+          <PGButtonGroup
+            size="sm"
+            value={s.uiSpacing}
+            onChange={(v) => s.set("uiSpacing", v as UiSpacing)}
+            options={[
+              { value: "compact", label: "Compact" },
+              { value: "cozy", label: "Cozy" },
+              { value: "comfortable", label: "Comfortable" },
+              { value: "spacious", label: "Spacious" },
+            ]}
+          />
+        }
       />
 
       <SettingsRow

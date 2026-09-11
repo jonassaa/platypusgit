@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { WithDialogs, resetDialogs } from "@/test/dialog";
 import { useSettingsStore } from "@/features/settings/useSettingsStore";
-import { AppearancePage } from "@/features/settings/pages/appearance";
+import { AppearancePage, meta } from "@/features/settings/pages/appearance";
 import { densityPadding } from "@/features/settings/layout/SettingsCard";
 
 /**
@@ -111,5 +111,34 @@ describe("the Appearance control", () => {
     useSettingsStore.getState().setThemeFollowMode("system");
     renderSettings();
     expect(screen.getByText(/Follows the OS — currently dark/)).toBeInTheDocument();
+  });
+});
+
+// Settings is a registry: a row absent from `meta` is a setting the search
+// cannot find, and hints are ReactNode and are NOT indexed -- which is why the
+// words a user would actually type live in `keywords`.
+describe("Appearance size controls", () => {
+  it("indexes both new size rows, and no longer the retired density row", () => {
+    const rows = meta.cards.flatMap((c) => c.rows);
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain("appearance.textSize");
+    expect(ids).toContain("appearance.spacing");
+    expect(ids).not.toContain("appearance.density");
+  });
+
+  // The vocabulary this build no longer displays still has to find its
+  // replacement: someone who learned the word "density" must land on Spacing.
+  it("keeps the retired vocabulary searchable on the spacing row", () => {
+    const row = meta.cards.flatMap((c) => c.rows).find((r) => r.id === "appearance.spacing")!;
+    for (const word of ["density", "compact", "comfortable"]) {
+      expect(row.keywords).toContain(word);
+    }
+  });
+
+  it("keeps font-size vocabulary searchable on the text row", () => {
+    const row = meta.cards.flatMap((c) => c.rows).find((r) => r.id === "appearance.textSize")!;
+    for (const word of ["font", "text", "larger"]) {
+      expect(row.keywords).toContain(word);
+    }
   });
 });
