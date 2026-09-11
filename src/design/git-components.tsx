@@ -15,7 +15,7 @@ import {
 } from "./primitives";
 import {
   useDateColumnWidth,
-  useDensityStep,
+  useSpacingStep,
 } from "@/features/settings/useSettingsStore";
 import {
   NO_HEAD_DECOR,
@@ -267,7 +267,7 @@ export function flattenFileTree(
 /**
  * Base row height in px, matching `--row-h: calc(24px + var(--row-step))`
  * (`index.css`). A windowing caller needs the pitch as a NUMBER and must add
- * `useDensityStep()`; a literal would desync the window from the rows in
+ * `useSpacingStep()`; a literal would desync the window from the rows in
  * comfortable density (#70). Keep in sync with the token.
  */
 export const FILE_TREE_ROW_BASE_H = 24;
@@ -1341,7 +1341,7 @@ const HEAD_RING_R = 6.5;
  * points at `height / 2`), so it cannot read `--row-step` — a default here
  * would silently draw at one pitch while density moved the rows to another,
  * leaving lanes that don't meet between rows. Callers derive the number from
- * `useDensityStep()`; see `PGCommitRow`.
+ * `useSpacingStep()`; see `PGCommitRow`.
  *
  * `width` is REQUIRED for the same reason of principle: it must come from
  * `graphWidth(maxCol)`. The old `width = 140` default is exactly what let lanes
@@ -1627,7 +1627,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
   headDecor = NO_HEAD_DECOR,
 }: PGCommitRowProps) {
   const [hover, setHover] = React.useState(false);
-  const step = useDensityStep();
+  const step = useSpacingStep();
   // Read here rather than passed in, for the same reason as the density step:
   // every commit row in the app must agree with History's column header, and a
   // prop threaded through two screens is a prop one of them forgets.

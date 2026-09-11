@@ -7,6 +7,7 @@ import { render, waitFor } from "@testing-library/react";
 import { RepoBrowserScreen } from "./RepoBrowser";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { mockInvoke } from "@/test/invokeMock";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { FILE_TREE_ROW_BASE_H } from "@/design";
 import type { FileStatus, RepoHandle } from "@/lib/types";
 
@@ -27,6 +28,11 @@ const MANY: FileStatus[] = Array.from({ length: 300 }, (_, i) => ({
 }));
 
 beforeEach(() => {
+  // Pin the axis this file's math assumes: the default preset moved off
+  // compact (#457-era spacing rename), and this suite would otherwise measure
+  // whatever DEFAULTS.uiSpacing happens to be rather than the step-0 case it
+  // documents.
+  useSettingsStore.getState().set("uiSpacing", "compact");
   mockInvoke("list_all_files", () => MANY);
   mockInvoke("get_diff", (args) => ({
     path: args.path as string,

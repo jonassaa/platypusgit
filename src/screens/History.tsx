@@ -48,7 +48,7 @@ import { useNavStore } from "@/features/nav/useNavStore";
 import {
   useDateColumnWidth,
   useDateFormat,
-  useDensityStep,
+  useSpacingStep,
   useSettingsStore,
 } from "@/features/settings/useSettingsStore";
 import { resolveHeadDecor } from "@/features/settings/headMarks";
@@ -315,7 +315,7 @@ export function HistoryScreen() {
 
   // Row pitch MUST come from the density token, not a literal — PGGraphRow
   // draws in SVG user units and the window steps by this same number (#70).
-  const rowH = COMMIT_ROW_BASE_H + useDensityStep();
+  const rowH = COMMIT_ROW_BASE_H + useSpacingStep();
   const win = useWindowedList({ count: visible.length, rowHeight: rowH });
 
   // Fetch the next page as the window reaches the end of the loaded list.

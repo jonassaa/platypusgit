@@ -4,7 +4,7 @@
 // the same helper rather than growing a second implementation.
 //
 // Row pitch is always passed in by the caller — History derives it from
-// COMMIT_ROW_BASE_H + useDensityStep(). A literal here would silently desync
+// COMMIT_ROW_BASE_H + useSpacingStep(). A literal here would silently desync
 // the window from the rows at any non-compact density (#70).
 import React from "react";
 

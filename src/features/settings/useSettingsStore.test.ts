@@ -1,5 +1,5 @@
 // Store-logic tests for the settings store: persistence shape (including the
-// removal migration for dead settings) and the uiDensity CSS-var hook.
+// removal migration for dead settings) and the uiSpacing CSS-var hook.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const STORAGE_KEY = "pg-settings-v2";
@@ -88,7 +88,7 @@ describe("useSettingsStore persistence", () => {
     expect(raw.diffContextMode).toBe("chunks");
   });
 
-  // Same reasoning as the uiDensity clamp below: load() copies a persisted value
+  // Same reasoning as the uiSpacing clamp below: load() copies a persisted value
   // for a known key without validating it, and an unknown mode reaching the
   // renderer would mean "neither branch" — a blank diff pane.
   it("degrades unrecognized persisted diff modes to the defaults", async () => {
@@ -384,50 +384,79 @@ describe("dateFormat", () => {
   });
 });
 
-describe("uiDensity CSS hook", () => {
-  it("applies --row-step from the persisted density at load", async () => {
+describe("uiSpacing CSS hook", () => {
+  it("applies --row-step from the persisted spacing at load", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiSpacing: "spacious" }));
+    await freshStore();
+    expect(rowStep()).toBe("8px");
+  });
+
+  it("re-applies --row-step when the spacing setting changes", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().set("uiSpacing", "comfortable");
+    expect(rowStep()).toBe("4px");
+    useSettingsStore.getState().set("uiSpacing", "compact");
+    expect(rowStep()).toBe("0px");
+  });
+
+  // Compact must stay exactly 0: it is the value that reproduces the
+  // pre-density layout, so every `calc(Npx + var(--row-step))` collapses to Npx.
+  it("keeps compact at zero and orders the four steps", async () => {
+    const { SPACING_STEP_PX } = await freshStore();
+    expect(SPACING_STEP_PX.compact).toBe(0);
+    expect(Object.values(SPACING_STEP_PX)).toEqual([0, 2, 4, 8]);
+  });
+
+  // An unrecognized value would emit `--row-step: undefinedpx`, and one
+  // invalid substitution makes every `calc(Npx + var(--row-step))` compute to
+  // `auto` — collapsing the height of every row in the app at once.
+  it("falls back to the default for an unknown stored spacing", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiSpacing: "roomy" }));
+    await freshStore();
+    expect(rowStep()).toBe("2px");
+  });
+
+  // `in` walks the prototype chain, so a hand-edited "toString" would pass a
+  // membership check and index the table to a FUNCTION — the same undefinedpx
+  // collapse, reached by a value that looks like it was validated.
+  it("rejects an inherited Object property as a spacing value", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiSpacing: "toString" }));
+    await freshStore();
+    expect(rowStep()).toBe("2px");
+  });
+});
+
+describe("uiDensity migration", () => {
+  it("carries a stored comfortable density over to comfortable spacing", async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "comfortable" }));
-    await freshStore();
-    expect(rowStep()).toBe("4px");
-    expect(document.documentElement.dataset.density).toBe("comfortable");
-  });
-
-  it("re-applies --row-step when the density setting changes", async () => {
     const { useSettingsStore } = await freshStore();
-    expect(rowStep()).toBe("0px");
-    useSettingsStore.getState().set("uiDensity", "comfortable");
+    expect(useSettingsStore.getState().uiSpacing).toBe("comfortable");
     expect(rowStep()).toBe("4px");
-    expect(document.documentElement.dataset.density).toBe("comfortable");
-    useSettingsStore.getState().set("uiDensity", "compact");
-    expect(rowStep()).toBe("0px");
-    expect(document.documentElement.dataset.density).toBe("compact");
   });
 
-  it("reset() restores compact density", async () => {
+  // Deliberate: a stored "compact" cannot be told apart from "never touched
+  // it", and the whole point of the change is that the old default was too
+  // dense. Landing an upgraded install on cozy is the same call the
+  // headIndicator -> headMarks migration made one setting over.
+  it("lands an upgraded compact install on cozy", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "compact" }));
     const { useSettingsStore } = await freshStore();
-    useSettingsStore.getState().set("uiDensity", "comfortable");
-    useSettingsStore.getState().reset();
-    expect(rowStep()).toBe("0px");
-    expect(document.documentElement.dataset.density).toBe("compact");
+    expect(useSettingsStore.getState().uiSpacing).toBe("cozy");
   });
 
-  // Compact must be a no-op delta: the pre-density layout is the compact
-  // layout, so every `calc(Npx + var(--row-step))` has to collapse to Npx.
-  it("keeps compact at a zero step so the default layout is unchanged", async () => {
-    const { DENSITY_STEP_PX } = await freshStore();
-    expect(DENSITY_STEP_PX.compact).toBe(0);
+  it("lets a stored uiSpacing win over a stale uiDensity", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ uiDensity: "comfortable", uiSpacing: "compact" }),
+    );
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().uiSpacing).toBe("compact");
   });
 
-  // load() copies any persisted value for a known key without validating it,
-  // so an unrecognized density must degrade to compact rather than emit
-  // `--row-step: undefinedpx` — an invalid substitution makes every
-  // `calc(Npx + var(--row-step))` compute to `auto`, collapsing the height of
-  // every row in the app at once.
-  it("degrades an unrecognized persisted density to compact", async () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "cozy" }));
-    await freshStore();
-    expect(rowStep()).toBe("0px");
-    expect(document.documentElement.dataset.density).toBe("compact");
+  it("drops the retired key from state", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "comfortable" }));
+    const { useSettingsStore } = await freshStore();
+    expect("uiDensity" in useSettingsStore.getState()).toBe(false);
   });
 });
 

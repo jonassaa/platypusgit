@@ -36,7 +36,7 @@ function renderCommitRow() {
 }
 
 beforeEach(() => {
-  useSettingsStore.getState().set("uiDensity", "compact");
+  useSettingsStore.getState().set("uiSpacing", "compact");
 });
 
 describe("PGCommitRow density", () => {
@@ -50,7 +50,7 @@ describe("PGCommitRow density", () => {
   // Literal 30, not COMMIT_ROW_BASE_H + step: if either the base or the step
   // moves, this fails rather than following along silently.
   it("grows row and graph gutter together when density is comfortable", () => {
-    useSettingsStore.getState().set("uiDensity", "comfortable");
+    useSettingsStore.getState().set("uiSpacing", "comfortable");
     const { row, svg } = renderCommitRow();
     expect(row.style.height).toBe("30px");
     expect(svg.getAttribute("height")).toBe("30");
@@ -65,7 +65,7 @@ describe("PGCommitRow density", () => {
     expect(svg.getAttribute("height")).toBe("26");
 
     act(() => {
-      useSettingsStore.getState().set("uiDensity", "comfortable");
+      useSettingsStore.getState().set("uiSpacing", "comfortable");
     });
 
     expect(row.style.height).toBe("30px");

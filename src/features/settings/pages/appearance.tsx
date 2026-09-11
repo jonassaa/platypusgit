@@ -1,10 +1,11 @@
 import { PGButton, PGButtonGroup, PGIconButton, pgFlash } from "@/design";
 import {
-  DENSITY_STEP_PX,
+  SPACING_STEP_PX,
   ZOOM_MAX,
   ZOOM_MIN,
   useSettingsStore,
   type ThemeFollowMode,
+  type UiSpacing,
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import {
@@ -181,15 +182,17 @@ export function AppearancePage() {
       <SettingsRow
         id="appearance.density"
         label="UI density"
-        hint={`Compact matches the dense IDE feel; comfortable gives every list row ${DENSITY_STEP_PX.comfortable}px more breathing room.`}
+        hint={`Compact matches the dense IDE feel; Spacious gives every list row ${SPACING_STEP_PX.spacious}px more breathing room.`}
         control={
           <PGButtonGroup
             size="sm"
-            value={s.uiDensity}
-            onChange={(v) => s.set("uiDensity", v as "compact" | "comfortable")}
+            value={s.uiSpacing}
+            onChange={(v) => s.set("uiSpacing", v as UiSpacing)}
             options={[
               { value: "compact", label: "Compact" },
+              { value: "cozy", label: "Cozy" },
               { value: "comfortable", label: "Comfortable" },
+              { value: "spacious", label: "Spacious" },
             ]}
           />
         }

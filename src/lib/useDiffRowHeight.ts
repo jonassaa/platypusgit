@@ -1,5 +1,5 @@
 import React from "react";
-import { useDensityStep } from "@/features/settings/useSettingsStore";
+import { useSpacingStep } from "@/features/settings/useSettingsStore";
 
 /**
  * Used when --diff-row-h cannot be resolved to px — notably jsdom, which does not
@@ -27,7 +27,7 @@ export function readDiffRowHeight(): number {
  * geometry-adjacent tokens.
  */
 export function useDiffRowHeight(): number {
-  const step = useDensityStep();
+  const step = useSpacingStep();
   const [h, setH] = React.useState(() => readDiffRowHeight());
   React.useEffect(() => {
     setH(readDiffRowHeight());

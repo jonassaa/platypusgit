@@ -100,14 +100,16 @@ describe("readSettingsFile", () => {
   it("hands back the path and contents WITHOUT applying them", async () => {
     useSettingsStore.getState().reset();
     mockDialogOpen("/home/you/settings.json");
-    mockInvoke("read_user_file", () => '{"settings":{"uiDensity":"comfortable"}}');
+    mockInvoke("read_user_file", () => '{"settings":{"uiSpacing":"comfortable"}}');
 
     const picked = await readSettingsFile();
 
     expect(picked?.path).toBe("/home/you/settings.json");
     // Read, not applied: the Backup page confirms first, so nothing may change
-    // before the user has answered.
-    expect(useSettingsStore.getState().uiDensity).toBe("compact");
+    // before the user has answered. Still the post-reset DEFAULT ("cozy"), not
+    // the fixture's "comfortable" — proof the file's contents never touched
+    // the store.
+    expect(useSettingsStore.getState().uiSpacing).toBe("cozy");
   });
 
   it("returns null when the user cancels", async () => {

@@ -39,7 +39,7 @@ import {
 } from "@/features/commits/message";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
-import { useDensityStep, useSettingsStore } from "@/features/settings/useSettingsStore";
+import { useSpacingStep, useSettingsStore } from "@/features/settings/useSettingsStore";
 import {
   PGPane,
   FocusableScroll,
@@ -640,7 +640,7 @@ export function CommitPanelScreen() {
   // No wrap toggle in this pane, so rows are always fixed-pitch and windowing is
   // always on. Row heights are known, so the window needs no measurement.
   const rowH = useDiffRowHeight();
-  const foldH = 22 + useDensityStep();
+  const foldH = 22 + useSpacingStep();
   // Chunked mode only: which folded runs the reader asked to see. Took the place
   // of the per-hunk `collapsed` set, which #157 retired.
   const { expanded: expandedGaps, expand: expandGap } = useExpandedGaps(

@@ -173,8 +173,8 @@
 
   /* ===== DENSITY =====
    * One knob: --row-step, the extra vertical pixels a row spends in
-   * "comfortable" mode. applyDensity() (features/settings/useSettingsStore.ts)
-   * overwrites it on :root from DENSITY_STEP_PX — THE source of truth for the
+   * "comfortable" mode. applySpacing() (features/settings/useSettingsStore.ts)
+   * overwrites it on :root from SPACING_STEP_PX — THE source of truth for the
    * number — so this declaration is only the pre-hydration default.
    *
    * Row surfaces opt in with `calc(<their base>px + var(--row-step))`, or
@@ -190,7 +190,7 @@
    * action strip all read as non-participants.
    *
    * One surface can't use the token: PGGraphRow draws in SVG user units, so
-   * PGCommitRow feeds it the number via useDensityStep(). */
+   * PGCommitRow feeds it the number via useSpacingStep(). */
   --row-step: 0px;
   --row-h: calc(24px + var(--row-step));
 

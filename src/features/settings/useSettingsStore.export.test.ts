@@ -94,7 +94,7 @@ const PORTABLE = [
   // not: that is observed state, it is not in PersistedState at all, and the
   // "no systemAppearance" assertions below pin that.
   "themePreference",
-  "uiDensity",
+  "uiSpacing",
   "uiZoom",
   // The release channel (#237). Portable: "we track the prereleases" is a
   // team decision, not a fact about one machine — the same call
@@ -270,7 +270,7 @@ describe("an export carries no secrets", () => {
 function moveEverything(store: Store) {
   store.useSettingsStore.getState().saveAsNewTheme("House style");
   const set = store.useSettingsStore.getState().set;
-  set("uiDensity", "comfortable");
+  set("uiSpacing", "comfortable");
   set("uiZoom", 1.2);
   set("headMarks", ["badge"]);
   set("headWeight", "subtle");
@@ -483,20 +483,22 @@ describe("import validates like load() does", () => {
     }
   });
 
-  it("degrades unknown diff modes, density and pull mode", async () => {
+  it("degrades unknown diff modes, spacing and pull mode", async () => {
     const store = await freshStore();
     store.useSettingsStore.getState().importSettings(
       payloadOf({
         diffViewMode: "sideways",
         diffContextMode: "everything",
-        uiDensity: "cozy",
+        // "roomy" is invalid, not "cozy": cozy is now one of the four real
+        // presets, so it would no longer exercise the fallback.
+        uiSpacing: "roomy",
         defaultPullMode: "Yolo",
       }),
     );
     const s = store.useSettingsStore.getState();
     expect(s.diffViewMode).toBe("inline");
     expect(s.diffContextMode).toBe("wholeFile");
-    expect(s.uiDensity).toBe("compact");
+    expect(s.uiSpacing).toBe("cozy");
     expect(s.defaultPullMode).toBe("Rebase");
   });
 

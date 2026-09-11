@@ -664,32 +664,43 @@ function activationPatch(
 }
 
 /**
- * Extra vertical pixels each row-ish surface adds for a given density.
+ * Extra vertical pixels each row-ish surface adds, per spacing preset.
  *
  * THE source of truth for the number. `index.css` declares `--row-step: 0px`
  * as a pre-hydration default and derives every row token from it
- * (`--row-h: calc(24px + var(--row-step))`, …); `applyDensity` overwrites the
- * var from this table, so CSS never hardcodes the comfortable delta and cannot
- * drift from the JS one. Compact is 0 by definition — comfortable is opt-in,
- * and the default layout stays pixel-identical to the pre-density one.
+ * (`--row-h: calc(24px * var(--row-scale) + var(--row-step))`, …);
+ * `applySpacing` overwrites the var from this table, so CSS never hardcodes a
+ * step and cannot drift from the JS one. Compact is 0 by definition — it is
+ * the value that reproduces the pre-density layout exactly.
  */
-export const DENSITY_STEP_PX = { compact: 0, comfortable: 4 } as const;
+export const SPACING_STEP_PX = {
+  compact: 0,
+  cozy: 2,
+  comfortable: 4,
+  spacious: 8,
+} as const;
 
-export type UiDensity = keyof typeof DENSITY_STEP_PX;
+export type UiSpacing = keyof typeof SPACING_STEP_PX;
 
 /**
- * Coerce a persisted density into a known one.
+ * Coerce a persisted spacing into a known one.
  *
- * `load()` copies any JSON value for a known key without validating it, so
- * state can hold a density this build has never heard of — a hand-edited
- * `pg-settings-v2`, or a value written by a newer build the user downgraded
- * from. That must degrade to compact: an unknown key would otherwise emit
- * `--row-step: undefinedpx`, and one invalid substitution makes every
- * `calc(Npx + var(--row-step))` compute to `auto`, collapsing the height of
- * every row in the app at once.
+ * `coerceSettings` copies any JSON value for a known key and only type-guards
+ * it against the TYPE of its default, so state can hold a string this build
+ * has never heard of — a hand-edited `pg-settings-v2`, or a value written by a
+ * newer build the user downgraded from. That must degrade to the default: an
+ * unknown key would emit `--row-step: undefinedpx`, and one invalid
+ * substitution makes every `calc(Npx + var(--row-step))` compute to `auto`,
+ * collapsing the height of every row in the app at once.
+ *
+ * `Object.hasOwn`, not `in`: `in` walks the prototype chain, so "toString"
+ * would pass the check and then index the table to a FUNCTION — the same
+ * collapse, reached by a value that looked validated.
  */
-function normalizeDensity(density: UiDensity): UiDensity {
-  return density in DENSITY_STEP_PX ? density : "compact";
+function normalizeSpacing(spacing: unknown): UiSpacing {
+  return typeof spacing === "string" && Object.hasOwn(SPACING_STEP_PX, spacing)
+    ? (spacing as UiSpacing)
+    : DEFAULTS.uiSpacing;
 }
 
 /**
@@ -713,17 +724,17 @@ export function isValidDiffToolName(name: string): boolean {
 }
 
 /**
- * Apply UI density by writing the row-step slot to CSS vars on :root.
+ * Apply the spacing preset by writing the row-step slot to CSS vars on :root.
  *
- * `data-density` is also set — a reserved hook for any future density rule
- * that isn't a simple pixel delta. Nothing reads it today (it's asserted only
- * in useSettingsStore.test.ts); drop it if that stays true.
+ * `data-spacing` is also set — a reserved hook for any future rule that isn't
+ * a simple pixel delta. Nothing reads it today (it's asserted only in
+ * useSettingsStore.test.ts); drop it if that stays true.
  */
-export function applyDensity(density: UiDensity) {
+export function applySpacing(spacing: UiSpacing) {
   const root = document.documentElement;
-  const d = normalizeDensity(density);
-  root.style.setProperty("--row-step", `${DENSITY_STEP_PX[d]}px`);
-  root.dataset.density = d;
+  const s = normalizeSpacing(spacing);
+  root.style.setProperty("--row-step", `${SPACING_STEP_PX[s]}px`);
+  root.dataset.spacing = s;
 }
 
 // ─── HEAD ("you are here") indicator ─────────────────────────────────────────
@@ -832,7 +843,11 @@ interface PersistedState {
   /** Which theme to apply and on whose say-so (#236). See ThemePreference. */
   themePreference: ThemePreference;
   customThemes: ThemeDef[];
-  uiDensity: "compact" | "comfortable";
+  /**
+   * How much breathing room every list row gets (`--row-step`). Replaces the
+   * binary `uiDensity`; `coerceSettings` migrates the old key.
+   */
+  uiSpacing: UiSpacing;
   /**
    * How a commit date is written wherever one is shown (#354) — relative
    * ("3w ago"), the absolute stamp, or both. The hover tooltip carries the
@@ -1091,7 +1106,7 @@ const DEFAULTS: PersistedState = {
   activeThemeId: "dark-cool",
   themePreference: { ...DEFAULT_THEME_PREFERENCE },
   customThemes: [],
-  uiDensity: "compact",
+  uiSpacing: "cozy",
   dateFormat: "relative",
   uiZoom: 1,
   headMarks: ["bar", "tint", "ring"],
@@ -1452,9 +1467,9 @@ function coerceSettings(
 ): CoercedSettings {
   const known = new Set<string>(Object.keys(DEFAULTS));
   const ignored = Object.keys(parsed).filter(
-    // `headIndicator` left the schema but the migration below still reads it,
-    // so it is honoured rather than ignored.
-    (k) => !known.has(k) && k !== "headIndicator",
+    // `headIndicator` and `uiDensity` left the schema but the migrations below
+    // still read them, so they are honoured rather than ignored.
+    (k) => !known.has(k) && k !== "headIndicator" && k !== "uiDensity",
   );
 
   // Only pick keys that still exist in the schema, so settings removed in
@@ -1504,10 +1519,26 @@ function coerceSettings(
   // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
   // factor is rejected by the webview and would leave the UI unzoomable.
   out.uiZoom = normalizeZoom(Number(out.uiZoom));
-  // An unrecognized density would emit `--row-step: undefinedpx`, and an
-  // invalid substitution makes every `calc(Npx + var(--row-step))` compute to
-  // `auto` — collapsing the height of every row in the app at once.
-  out.uiDensity = normalizeDensity(out.uiDensity);
+  // Spacing (#457-era rename). A stored `uiSpacing` wins; otherwise the
+  // pre-rename `uiDensity` is carried over, reading `parsed` rather than `out`
+  // because the old key is gone from the schema and the copy loop above never
+  // picked it up.
+  //
+  // `compact` deliberately lands on `cozy` rather than on `compact`: a stored
+  // "compact" cannot be distinguished from "never touched it" — `load()` fills
+  // missing keys from DEFAULTS and writes the result back — so preserving it
+  // would ship the roomier default to new installs only. Two pixels per row is
+  // mild and one click reversible, and it is the same call the headIndicator
+  // migration below makes one setting over.
+  if (!("uiSpacing" in parsed)) {
+    out.uiSpacing =
+      parsed.uiDensity === "comfortable"
+        ? "comfortable"
+        : parsed.uiDensity === "compact"
+          ? "cozy"
+          : DEFAULTS.uiSpacing;
+  }
+  out.uiSpacing = normalizeSpacing(out.uiSpacing);
   // Same failure one column over: the date format picks the Date column's
   // WIDTH as well as its text, so an unknown mode would emit `undefinedpx` in
   // the row grid and collapse the column on every row at once.
@@ -2000,7 +2031,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     // Everything with an effect outside the store has to be re-applied, or the
     // import lands in state and not on screen.
     applyTheme(findTheme(state, state.activeThemeId) ?? BUILTIN_THEMES[0]);
-    applyDensity(state.uiDensity);
+    applySpacing(state.uiSpacing);
     applyZoom(state.uiZoom);
     return {
       changed,
@@ -2028,8 +2059,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       applyResolved(get());
     }
     persist(snapshot(get()));
-    if (key === "uiDensity") {
-      applyDensity(get().uiDensity);
+    if (key === "uiSpacing") {
+      applySpacing(get().uiSpacing);
     }
     if (key === "uiZoom") {
       applyZoom(get().uiZoom);
@@ -2044,7 +2075,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ ...DEFAULTS });
     persist(DEFAULTS);
     applyTheme(BUILTIN_THEMES[0]);
-    applyDensity(DEFAULTS.uiDensity);
+    applySpacing(DEFAULTS.uiSpacing);
     applyZoom(DEFAULTS.uiZoom);
   },
 }));
@@ -2055,7 +2086,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   const s = useSettingsStore.getState();
   const active = findTheme(s, s.activeThemeId) ?? BUILTIN_THEMES[0];
   applyTheme(active);
-  applyDensity(s.uiDensity);
+  applySpacing(s.uiSpacing);
   applyZoom(s.uiZoom);
 }
 
@@ -2081,13 +2112,14 @@ export function startSystemAppearanceWatch(): () => void {
 export type { Appearance } from "./systemAppearance";
 
 /**
- * The active density's pixel step, for surfaces that need the NUMBER rather
- * than the `--row-step` CSS var — i.e. anything doing geometry math in JS.
- * Prefer the CSS token everywhere it works; this exists for SVG user-unit
- * drawing (see `PGGraphRow`), which a `calc()` cannot reach.
+ * The active spacing preset's pixel step, for surfaces that need the NUMBER
+ * rather than the `--row-step` CSS var — i.e. anything doing geometry math in
+ * JS. Prefer the CSS token everywhere it works; this exists for SVG user-unit
+ * drawing (see `PGGraphRow`) and for windowed lists, neither of which a
+ * `calc()` can reach.
  */
-export function useDensityStep(): number {
-  return DENSITY_STEP_PX[normalizeDensity(useSettingsStore((s) => s.uiDensity))];
+export function useSpacingStep(): number {
+  return SPACING_STEP_PX[normalizeSpacing(useSettingsStore((s) => s.uiSpacing))];
 }
 
 /**
