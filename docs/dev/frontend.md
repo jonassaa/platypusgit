@@ -2121,8 +2121,11 @@ update checks back on for someone who turned them off.
   `height: "calc(<base>px + var(--row-step))"` (or `/ 2` for padding-sized
   rows); `--row-h` for plain 24px rows. `--row-step` is 0 in compact, so each
   surface keeps its base. Chrome and code-line geometry (`--lh-code`) stay
-  fixed. `grep -rn 'var(--row-step)' src/` lists participants. `PGGraphRow`
-  draws in SVG units — `PGCommitRow` feeds it `useDensityStep()`.
+  fixed. `grep -rn 'var(--row-step)' src/` lists participants — but NOT the
+  Settings panel, whose surfaces take the step from one shared helper rather
+  than a literal, so add `-e densityPadding -e SETTINGS_ROW_PADDING` or they
+  read as non-participants. `PGGraphRow` draws in SVG units — `PGCommitRow`
+  feeds it `useDensityStep()`.
   **"Chrome" means the app frame** — the tab strip, the operation bar — and a
   settings card's HEADER, which is the one named exemption inside a content
   pane. It does NOT mean "anything that is not a row": a band sitting between

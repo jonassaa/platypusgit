@@ -181,7 +181,13 @@
    * `calc(<base>px + var(--row-step) / 2)` for vertical padding (top+bottom
    * each take half). Keeping each surface's own base inline means compact
    * (step 0) renders pixel-identically to the pre-density layout, and
-   * `grep -rn 'var(--row-step)' src/` lists every density-aware surface.
+   * `grep -rn 'var(--row-step)' src/` lists every density-aware surface —
+   * EXCEPT the Settings panel, which takes the step from one shared helper
+   * (`densityPadding()` / `SETTINGS_ROW_PADDING` in features/settings/layout/
+   * SettingsCard.tsx) so its row helpers cannot drift apart on height. Add
+   * `-e densityPadding -e SETTINGS_ROW_PADDING` to that grep to see them, or
+   * the Settings rows, the forge account rows and the Appearance page's theme
+   * action strip all read as non-participants.
    *
    * One surface can't use the token: PGGraphRow draws in SVG user units, so
    * PGCommitRow feeds it the number via useDensityStep(). */
