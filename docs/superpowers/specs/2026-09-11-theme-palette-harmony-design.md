@@ -133,11 +133,21 @@ For each of the fourteen ramp slots (`bg0`–`bg4`, `titlebar`, `fg0`–`fg4`,
 `border0`–`border2`):
 
 ```
+if strength == 0: return colors unchanged                            // see below
 o = rgbToOklch(slot)
 h = familyHue === null ? groundHue : o.h + (groundHue − familyHue)   // ROTATE
 c = min(o.c + strength × 0.06, srgbChromaCeiling(o.l, h))
 out = oklchToRgb(o.l, c, h)                                          // o.l HELD
 ```
+
+**The `strength == 0` short-circuit is load-bearing, and was added during
+implementation.** Without it the identity holds only when the ground hue happens
+to equal the base's own family hue — and it almost never does, because the
+ground is `seed + the rule's quantised angle` while a base's real offset is
+whatever it is (dark-cool's is 18.6°, and no rule has that). Rotating a ramp
+that still carries its own chroma changes every slot, so merely opening the
+editor moved `bg0` from `#1a1d24` to `#1b1d24` before the user touched anything.
+The cost is a step at the very bottom of a slider that defaults to 0.35.
 
 Three things in there are load-bearing, and each one is a measurement, not a
 preference.
@@ -170,22 +180,35 @@ ground  = seed.h + rule.groundΔ
 colors  = tintRamp(base.colors, ground, strength)
 accent  = seed                                       // verbatim, never tinted
 accentInk = inkFor(colors, accent)                   // deriveTheme.ts
-logo    = base.logo  at hue seed.h + rule.logoΔ,  chroma clamped to its ceiling
-logo2   = base.logo2 at hue seed.h + rule.logo2Δ, chroma clamped to its ceiling
+if strength > 0:                                     // see below
+  logo  = base.logo  at hue seed.h + rule.logoΔ,  chroma clamped to its ceiling
+  logo2 = base.logo2 at hue seed.h + rule.logo2Δ, chroma clamped to its ceiling
 ```
 
 The logo pair keeps the base's own lightness and chroma and moves only in hue,
-for the same reason the ramp does.
+for the same reason the ramp does — and it is gated on strength for the same
+reason too. A rule places the mark at angles a theme's own logo was never drawn
+at, so without the gate every built-in read as "Custom" the instant it opened.
+
+Gating it buys a property worth stating on its own: **at tint 0 this function
+degenerates to exactly `deriveTheme`**, the accent swap that shipped before it,
+and at tint 1 it is a fully generated palette. Tint is the one master control,
+and `palette.test.ts` asserts the equality against `deriveTheme` itself so the
+two cannot drift into two answers.
 
 ## Measured guarantees
 
 Three properties. Each one is a test in `palette.test.ts`, not a claim in prose.
 
-**1. `strength = 0` at the family hue is the identity.** Verified against all
-nine built-ins: 0 of 14 slots differ, worst channel error 0. Byte-for-byte. The
-generator's neutral position *is* the theme you started from, which is what makes
-the whole panel safe to touch — there is no way to open the editor and silently
-be somewhere else.
+**1. Tint 0 is the identity, under every rule.** Verified against all nine
+built-ins × all five rules: 0 of 14 slots differ, worst channel error 0.
+Byte-for-byte. The generator's neutral position *is* the theme you started from,
+which is what makes the whole panel safe to touch — there is no way to open the
+editor and silently be somewhere else.
+
+The "under every rule" half is not decoration. Written the weak way — picking
+the rule nearest the base's own offset — this test passes against a generator
+that rotates the ramp at tint 0, which is the bug described above.
 
 **2. Tinting never changes a contrast verdict.** Across 9 themes × 24 hues × 5
 strengths × the 3 ramp pairs in `CONTRAST_PAIRS` — **0 band changes out of
@@ -273,6 +296,12 @@ The `"Custom"` readout is **not** a sixth rule and does not come from inference.
 It is `isGenerated(colors, base, traits)` going false — the palette is no longer
 exactly what the traits produce, because a slot was hand-edited.
 
+`isGenerated` compares every slot **except `accentInk`**, which is a consequence
+rather than a choice. The built-ins ship hand-authored inks that `inkFor` would
+not pick off their own ramps — dark-cool carries `#0e1a26` where `inkFor` picks
+`#1a1d24` — so comparing it made every built-in read as "Custom" the moment it
+was opened, which is the opposite of what the readout is for.
+
 Base = the theme itself and tint = 0 means the generator is the identity on
 open. Nothing moves until the user moves something. `themePayload`,
 `normalizeCustomThemes` and `validateTheme` are untouched.
@@ -290,17 +319,24 @@ ramp *is* "Start from" and seed *is* "Accent", grown a harmony picker, a tint
 slider, four locks and a dice.
 
 ```
-┌─ Palette ──────────────────────────────────┐
-│  Base ramp   [ Dark · Cool      ▾ ]     🔓 │
-│  Seed        [ ● #5aa8e8        ]       🔓 │
-│  Harmony     [ Analogous        ▾ ]     🔓 │
-│  Tint        ●────────●────────  35%    🔓 │
-│                                            │
-│  [ 🎲 Shuffle ]                            │
-└────────────────────────────────────────────┘
+┌─ Palette ──────────────────────────  Custom ┐
+│  Base ramp   [ Dark · Cool      ▾ ]      🔓 │
+│  Accent      [ ● #5aa8e8        ]        🔓 │
+│  Harmony     [ Analogous        ▾ ]      🔓 │
+│  Tint        ●────────●────────  35%     🔓 │
+│                                             │
+│  [ 🎲 Shuffle ]  Lock what you want to keep │
+└─────────────────────────────────────────────┘
 
 ▸ All colours (18)
 ```
+
+The seed's row is labelled **Accent**, not "Seed". The seed *becomes* the accent
+verbatim, so the app's own vocabulary is the clearer one and the generator's
+jargon buys nothing; the row's hint carries the "everything else is placed
+around it" meaning. It also keeps the base select on its existing
+`theme-editor-base` test id, so the two dialog tests that already drive the
+guided start keep testing it.
 
 Existing house rules this inherits rather than reinvents: the seed uses
 `PGColorSwatch` (no native `<input type="color">` — guard-tested), the base ramp
