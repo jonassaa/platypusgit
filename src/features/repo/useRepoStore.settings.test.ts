@@ -100,6 +100,51 @@ describe("pull auto-stash", () => {
     });
   });
 
+  // The counterpart to the test above, and the one case that inverts it.
+  // `pull_args` refuses a dash-leading remote or branch BEFORE the repository
+  // path is looked up, so git never ran and the worktree is still exactly what
+  // stashSave left behind — there are no conflicts for the pop to collide
+  // with, which is the only reason the policy above exists. Keeping the stash
+  // here would charge the user their uncommitted work for a rejected argument.
+  it("pops the stash when the pull was refused before git ran", async () => {
+    mockInvoke("stash_save", () => "stash-oid");
+    mockInvoke("pull", () => {
+      throw {
+        kind: "InvalidArgument",
+        message: 'invalid remote name "-evil": a leading dash would be read…',
+      };
+    });
+    mockInvoke("stash_pop", () => null);
+
+    await useRepoStore.getState().pull("-evil", "main", "Merge");
+
+    expect(calls("stash_pop")).toHaveLength(1);
+    // The refusal is still what the user is told about.
+    expect(useRepoStore.getState().error).toMatchObject({
+      kind: "InvalidArgument",
+    });
+  });
+
+  // The pop is the recovery, not the report: if it fails too, the original
+  // refusal must still be the error on screen rather than the pop's own.
+  it("still surfaces the refusal when restoring the stash also fails", async () => {
+    mockInvoke("stash_save", () => "stash-oid");
+    mockInvoke("pull", () => {
+      throw { kind: "InvalidArgument", message: "refused" };
+    });
+    mockInvoke("stash_pop", () => {
+      throw { kind: "Internal", message: "pop failed" };
+    });
+
+    await useRepoStore.getState().pull("-evil", "main", "Merge");
+
+    expect(calls("stash_pop")).toHaveLength(1);
+    expect(useRepoStore.getState().error).toMatchObject({
+      kind: "InvalidArgument",
+      message: "refused",
+    });
+  });
+
   // The stash must survive an auth challenge. The first attempt stashes and then
   // fails on credentials; the retry used to re-enter the closure with a fresh
   // `stashed = null`, find the tree clean (the work being in the stash), pull

@@ -56,7 +56,7 @@ pub async fn lfs_fetch(
 ) -> AppResult<()> {
     let workdir = workdir_of(&state, &RepoId(repo_id)).await?;
     crate::git::lfs::require(&workdir)?;
-    let args = crate::git::lfs::fetch_args(remote.as_deref());
+    let args = crate::git::lfs::fetch_args(remote.as_deref())?;
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     crate::commands::net::run_git_authenticated(&workdir, &borrowed, credentials.as_ref()).await
 }
@@ -71,7 +71,7 @@ pub async fn lfs_pull(
 ) -> AppResult<()> {
     let workdir = workdir_of(&state, &RepoId(repo_id)).await?;
     crate::git::lfs::require(&workdir)?;
-    let args = crate::git::lfs::pull_args(remote.as_deref());
+    let args = crate::git::lfs::pull_args(remote.as_deref())?;
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     crate::commands::net::run_git_authenticated(&workdir, &borrowed, credentials.as_ref()).await
 }

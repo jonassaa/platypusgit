@@ -211,19 +211,26 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   on stdout and prints nothing else.
 - **End option parsing with `--` before any user-supplied value** — a value
   starting with `-` is otherwise an option (`git push --receive-pack=<program>`
-  is argument injection). `push_tag_args`/`push_delete_args`, `fetch_args`,
-  `push_args` and `push_commit_args` all emit it, tested. The force flag and
+  is argument injection). `push_tag_args`/`push_delete_args`, `push_args` and
+  `push_commit_args` all emit it, tested; `fetch_args` emits it on its
+  `Some(remote)` branch, which is the only one that carries a user value —
+  `fetch --all --prune` names nothing and gets no separator. The force flag and
   `--no-verify` moved ahead of the separator to make room for it: after a `--`
   git reads them as refspecs, not options.
-- **`pull` is the exception: the separator alone does not protect it**, so its
-  remote and branch are REFUSED when they start with `-` (`pull_args`). `git
-  pull` parses its own options, consumes the `--`, then re-runs
-  `git fetch <remote> <refspec>` with no separator of its own — so the value
-  reaches that fetch as an option anyway. Verified against git 2.54 with the
-  separator in place. The separator is emitted regardless, since it is the rule
-  and it does end `pull`'s own parsing. Reachable input rather than only ours:
-  git accepts `git remote add -- -evil <url>`, and a repository's config can
-  name a remote anything at all.
+- **Two paths REFUSE a dash-leading value instead, because a separator cannot
+  carry them.** Both answer with `AppError::InvalidArgument`, and both are
+  reachable rather than only ours: git accepts `git remote add -- -evil <url>`,
+  and a cloned repository's config can name a remote anything at all.
+  - `pull_args` — `git pull` parses its own options, consumes the `--`, then
+    re-runs `git fetch <remote> <refspec>` with no separator of its own, so the
+    value reaches that fetch as an option anyway. Verified against git 2.54
+    *with* the separator in place. The separator is emitted regardless, since
+    it is the rule and it does end `pull`'s own parsing.
+  - `git/lfs.rs`'s `fetch_args`/`pull_args` (`checked_remote`) — `git lfs` is a
+    separate binary with its own flag parser, so whether it honours `--` in the
+    remote position is its behaviour to confirm, not ours to assume, and
+    assuming wrong breaks every LFS fetch silently. Refusing the one dangerous
+    shape needs no assumption.
 - `credential_approve` refuses values containing a newline rather than escaping
   them — the credential protocol is line-based, so a newline injects keys and
   could file a password against another host.
