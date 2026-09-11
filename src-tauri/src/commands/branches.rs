@@ -350,7 +350,29 @@ pub async fn unshallow(
 ///
 /// `--progress` for the same reason `fetch_args` carries it: a pull is a fetch,
 /// and the fetch half is the part that takes the time.
-fn pull_args<'a>(mode_flag: &'a str, remote: &'a str, branch: &'a str) -> AppResult<Vec<&'a str>> {
+///
+/// **The branch is named by its FULL ref** — #451 reaches this builder too,
+/// though the issue only reported the push half. The branch is a refspec to
+/// `git pull` as well, so a leading `+` was git's force marker here and the
+/// pull merged a different branch than the one named: measured against git
+/// 2.50.1 with a remote carrying both `main` and `+main`,
+/// `git pull --progress --ff-only -- origin '+main'` reported
+/// `* branch main -> FETCH_HEAD` and fast-forwarded to `main`. Milder than the
+/// push — a local merge of the wrong branch, not remote history loss — and the
+/// same defect.
+///
+/// Only the SRC half, unlike the push builders: a `<src>:<dst>` pair here
+/// names a LOCAL ref for the fetch to update, and git refuses to fetch into
+/// the branch that is checked out. Measured equivalent to the bare name for
+/// all three modes, including the auto-generated merge subject, which stays
+/// `Merge branch 'main' of <url>` byte for byte.
+///
+/// The dash refusal above still stands, and the REMOTE is now the half that
+/// needs it: a prefixed branch cannot begin with `-` any more, so its check is
+/// a clearer error rather than the injection guard it was. Keep both — the
+/// remote's is load-bearing, and one of the two silently becoming decorative
+/// is not a reason to make the pair inconsistent.
+fn pull_args(mode_flag: &str, remote: &str, branch: &str) -> AppResult<Vec<String>> {
     for (what, value) in [("remote", remote), ("branch", branch)] {
         if value.starts_with('-') {
             return Err(AppError::InvalidArgument(format!(
@@ -358,7 +380,14 @@ fn pull_args<'a>(mode_flag: &'a str, remote: &'a str, branch: &'a str) -> AppRes
             )));
         }
     }
-    Ok(vec!["pull", "--progress", mode_flag, "--", remote, branch])
+    Ok(vec![
+        "pull".to_string(),
+        "--progress".to_string(),
+        mode_flag.to_string(),
+        "--".to_string(),
+        remote.to_string(),
+        format!("refs/heads/{branch}"),
+    ])
 }
 
 #[tauri::command]
@@ -379,13 +408,14 @@ pub async fn pull(
     };
     // Before the path lookup: a refused argument must cost nothing.
     let args = pull_args(mode_flag, remote.as_str(), branch.as_str())?;
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let path = get_repo_path(&state, &repo_id).await?;
     let outcome = run_git_progress(
         &app,
         &path,
         &repo_id,
         NetOp::Pull,
-        &args,
+        &arg_refs,
         credentials.as_ref(),
     )
     .await;
@@ -512,6 +542,27 @@ pub async fn fast_forward_all_branches(
 /// `git push --progress -u --force-with-lease -- origin main` pushes normally,
 /// and `-- --receive-pack=/bin/false main` is refused as a strange pathname
 /// instead of running the named program.
+///
+/// **The branch is named in FULL on both sides of the refspec** — the fix for
+/// #451, and the shape `push_commit_args` already uses. `--` ends OPTION
+/// parsing, but the branch lands in REFSPEC position, which has a grammar of
+/// its own, and a leading `+` there is git's force marker. A branch
+/// legitimately named `+main` (git accepts it —
+/// `git check-ref-format --branch '+main'` passes, and a clone can bring one
+/// in) was therefore sent as "force-update `main`": measured against git
+/// 2.50.1 on a diverged remote as
+/// `+ b51af1b...bf589a0 main -> main (forced update)`, with no
+/// `refs/heads/+main` created and no `confirmRewrite` in front of it, because
+/// the app believed it was pushing normally.
+///
+/// Spelling both sides removes the ambiguity rather than detecting it, and
+/// costs nothing — measured equivalent to the bare name for `-u` (sets
+/// `branch.<n>.merge = refs/heads/<n>` identically), `--force-with-lease`
+/// (still refuses with `stale info`), `--force`, branch creation and slashed
+/// names. It also settles two cases the bare name got wrong: `+main` now
+/// reaches `refs/heads/+main`, and a repository holding both a branch and a
+/// tag named `dup` pushes the BRANCH instead of failing with
+/// `src refspec dup matches more than one`.
 fn push_args(
     remote: &str,
     branch: &str,
@@ -539,7 +590,9 @@ fn push_args(
     // user-supplied values after it.
     args.push("--".to_string());
     args.push(remote.to_string());
-    args.push(branch.to_string());
+    // Both sides in full, so no character of the branch name is ever the first
+    // character of the refspec — see the doc comment (#451).
+    args.push(format!("refs/heads/{branch}:refs/heads/{branch}"));
     args
 }
 
@@ -666,11 +719,24 @@ mod push_args_tests {
     fn no_verify_is_added_only_when_asked_and_precedes_the_separator() {
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, false),
-            vec!["push", "--progress", "--", "origin", "main"]
+            vec![
+                "push",
+                "--progress",
+                "--",
+                "origin",
+                "refs/heads/main:refs/heads/main"
+            ]
         );
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, true),
-            vec!["push", "--progress", "--no-verify", "--", "origin", "main"]
+            vec![
+                "push",
+                "--progress",
+                "--no-verify",
+                "--",
+                "origin",
+                "refs/heads/main:refs/heads/main"
+            ]
         );
     }
 
@@ -686,7 +752,7 @@ mod push_args_tests {
                 "--no-verify",
                 "--",
                 "origin",
-                "feat/x"
+                "refs/heads/feat/x:refs/heads/feat/x"
             ]
         );
     }
@@ -749,11 +815,24 @@ mod push_args_tests {
     fn adds_u_only_when_requested() {
         assert_eq!(
             push_args("origin", "main", PushForce::None, true, false),
-            vec!["push", "--progress", "-u", "--", "origin", "main"]
+            vec![
+                "push",
+                "--progress",
+                "-u",
+                "--",
+                "origin",
+                "refs/heads/main:refs/heads/main"
+            ]
         );
         assert_eq!(
             push_args("origin", "main", PushForce::None, false, false),
-            vec!["push", "--progress", "--", "origin", "main"]
+            vec![
+                "push",
+                "--progress",
+                "--",
+                "origin",
+                "refs/heads/main:refs/heads/main"
+            ]
         );
     }
 
@@ -770,7 +849,7 @@ mod push_args_tests {
                 "--force-with-lease",
                 "--",
                 "origin",
-                "main"
+                "refs/heads/main:refs/heads/main"
             ]
         );
         assert_eq!(
@@ -782,9 +861,83 @@ mod push_args_tests {
                 "--force",
                 "--",
                 "origin",
-                "feat/x"
+                "refs/heads/feat/x:refs/heads/feat/x"
             ]
         );
+    }
+
+    // ─── #451: refspec position ─────────────────────────────────────────────
+
+    /// A branch whose name begins with `+` used to force-update a DIFFERENT
+    /// ref. The branch lands in refspec position, where a leading `+` is git's
+    /// force marker, so `+main` pushed local `main` over remote `main` and
+    /// never created `refs/heads/+main`.
+    ///
+    /// Measured against git 2.50.1 with a diverged remote, before this fix:
+    /// `git push --progress -- origin '+main'` answered
+    /// `+ b51af1b...bf589a0 main -> main (forced update)` and
+    /// `git ls-remote origin | grep -c 'heads/+main'` was `0`. Silent history
+    /// loss on the remote's default branch, with no `confirmRewrite` in front
+    /// of it, because as far as the app was concerned this was an ordinary
+    /// push. `--` does not help: it ends OPTION parsing, not refspec parsing.
+    #[test]
+    fn a_plus_leading_branch_pushes_itself_not_a_force_refspec() {
+        let args = push_args("origin", "+main", PushForce::None, false, false);
+        assert_eq!(
+            args,
+            vec![
+                "push",
+                "--progress",
+                "--",
+                "origin",
+                "refs/heads/+main:refs/heads/+main"
+            ]
+        );
+        // The bare name is the spelling git read as a force refspec, so its
+        // absence is the fix — asserting the pair alone would still pass for a
+        // builder that emitted both.
+        assert!(!args.iter().any(|a| a == "+main"), "{args:?}");
+    }
+
+    /// The same for a tag: `push_tag_args` puts the tag name in refspec
+    /// position too. Measured before the fix:
+    /// `git push --progress -- origin '+v1.2.0'` created no `+v1.2.0` and
+    /// force-updated `v1.2.0` instead.
+    #[test]
+    fn a_plus_leading_tag_pushes_itself_not_a_force_refspec() {
+        let args = push_tag_args("origin", "+v1.2.0");
+        assert_eq!(
+            args,
+            ["push", "--", "origin", "refs/tags/+v1.2.0:refs/tags/+v1.2.0"]
+        );
+        assert!(!args.iter().any(|a| *a == "+v1.2.0"), "{args:?}");
+    }
+
+    /// The invariant behind both: every user-supplied ref name is spelled as a
+    /// FULL `refs/…` path on both sides of the refspec, so no character of the
+    /// name is ever the first character of the refspec. That is what makes the
+    /// refspec metacharacters (`+` force, a leading `^` negation) ordinary
+    /// characters of a ref name instead of grammar.
+    #[test]
+    fn a_user_ref_name_is_never_the_start_of_the_refspec() {
+        // `:` and `^` are already illegal in a ref name, but the builders must
+        // not depend on a validator they do not call.
+        for name in ["+main", "^main", "-main", "main", "feat/+x", "+"] {
+            let args = push_args("origin", name, PushForce::None, false, false);
+            let spec = args.last().expect("a refspec is emitted");
+            assert_eq!(
+                *spec,
+                format!("refs/heads/{name}:refs/heads/{name}"),
+                "branch {name:?} must be named in full on both sides"
+            );
+
+            let targs = push_tag_args("origin", name);
+            assert_eq!(
+                *targs.last().expect("a refspec is emitted"),
+                format!("refs/tags/{name}:refs/tags/{name}"),
+                "tag {name:?} must be named in full on both sides"
+            );
+        }
     }
 
     /// #212, audit finding 4: these were the two push builders without an
@@ -814,10 +967,15 @@ mod push_args_tests {
             // PRESENT and after the separator. A bare `if` here would also pass
             // for a builder that dropped the user's value altogether, which is
             // a different bug but not a passing one.
+            // `contains`, not `starts_with`: since #451 the branch is wrapped
+            // in a full refspec, so a hostile branch name is no longer the
+            // start of its argument — which is exactly the protection, but it
+            // also means a `starts_with` probe would quietly find nothing and
+            // leave this guard asserting against an empty set.
             let at: Vec<usize> = args
                 .iter()
                 .enumerate()
-                .filter(|(_, a)| a.starts_with("--receive-pack"))
+                .filter(|(_, a)| a.contains("--receive-pack"))
                 .map(|(i, _)| i)
                 .collect();
             assert_eq!(
@@ -847,7 +1005,14 @@ mod push_args_tests {
         for mode_flag in ["--ff-only", "--no-rebase", "--rebase"] {
             assert_eq!(
                 pull_args(mode_flag, "origin", "main").unwrap(),
-                vec!["pull", "--progress", mode_flag, "--", "origin", "main"]
+                vec![
+                    "pull",
+                    "--progress",
+                    mode_flag,
+                    "--",
+                    "origin",
+                    "refs/heads/main"
+                ]
             );
         }
     }
@@ -874,6 +1039,37 @@ mod push_args_tests {
     #[test]
     fn pull_args_accept_a_dash_that_is_not_leading() {
         assert!(pull_args("--rebase", "my-remote", "feat/-x").is_ok());
+    }
+
+    /// #451 reaches `pull` as well, and the issue did not cover it: the branch
+    /// is a REFSPEC to `git pull` too, so a leading `+` merged a different
+    /// branch than the one named.
+    ///
+    /// Measured against git 2.50.1, with a remote carrying both `main` and
+    /// `+main`: `git pull --progress --ff-only -- origin '+main'` reported
+    /// `* branch main -> FETCH_HEAD` and fast-forwarded to `main`'s tip.
+    /// Milder than the push (it is a local merge of the wrong branch, not
+    /// remote history loss) but the same defect.
+    ///
+    /// The fix here is the SRC half only. A `<src>:<dst>` pair the way the
+    /// push builders use is wrong for pull: the dst would name a local branch
+    /// to update, and git refuses to fetch into the checked-out one.
+    #[test]
+    fn pull_args_name_the_branch_by_its_full_ref() {
+        assert_eq!(
+            pull_args("--ff-only", "origin", "+main").unwrap(),
+            vec!["pull", "--progress", "--ff-only", "--", "origin", "refs/heads/+main"]
+        );
+        // The bare name is the spelling git read as a force refspec.
+        let args = pull_args("--ff-only", "origin", "+main").unwrap();
+        assert!(!args.iter().any(|a| *a == "+main"), "{args:?}");
+
+        // ...and an ordinary branch is named the same way, so there is one
+        // shape rather than a special case that only triggers on `+`.
+        assert_eq!(
+            pull_args("--rebase", "origin", "feat/x").unwrap(),
+            vec!["pull", "--progress", "--rebase", "--", "origin", "refs/heads/feat/x"]
+        );
     }
 }
 
@@ -1034,8 +1230,19 @@ pub async fn checkout_ref(
 /// refspec; with it, git reports `src refspec --receive-pack=… does not match
 /// any`. Same class of finding as the #61 D5 security review's third item, where
 /// `verify_commit` handed an oid straight to `git show`.
-fn push_tag_args<'a>(remote: &'a str, name: &'a str) -> Vec<&'a str> {
-    vec!["push", "--", remote, name]
+///
+/// The tag is named in FULL on both sides for the reason `push_args` gives
+/// (#451): the separator ends option parsing, not refspec parsing, so a tag
+/// named `+v1.2.0` was read as "force-update `v1.2.0`". Measured against git
+/// 2.50.1: `git push --progress -- origin '+v1.2.0'` created no `+v1.2.0` and
+/// updated `v1.2.0` instead; the pair creates `refs/tags/+v1.2.0`.
+fn push_tag_args(remote: &str, name: &str) -> Vec<String> {
+    vec![
+        "push".to_string(),
+        "--".to_string(),
+        remote.to_string(),
+        format!("refs/tags/{name}:refs/tags/{name}"),
+    ]
 }
 
 /// Build `git push --delete <remote> <branch>` args.
@@ -1058,7 +1265,9 @@ pub async fn push_tag(
     credentials: Option<Credentials>,
 ) -> AppResult<()> {
     let path = get_repo_path(&state, &RepoId(repo_id)).await?;
-    run_git_creds(&path, &push_tag_args(&remote, &name), credentials.as_ref()).await
+    let args = push_tag_args(&remote, &name);
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git_creds(&path, &arg_refs, credentials.as_ref()).await
 }
 
 #[tauri::command]
@@ -1129,7 +1338,10 @@ mod tests {
 
     #[test]
     fn push_tag_args_end_options_before_the_user_values() {
-        assert_eq!(push_tag_args("origin", "v1.2.0"), ["push", "--", "origin", "v1.2.0"]);
+        assert_eq!(
+            push_tag_args("origin", "v1.2.0"),
+            ["push", "--", "origin", "refs/tags/v1.2.0:refs/tags/v1.2.0"]
+        );
     }
 
     #[test]
@@ -1146,19 +1358,32 @@ mod tests {
         // The injection this guards: `--receive-pack` names a program git runs
         // for the transport. Both builders must keep every user-supplied value
         // strictly after the `--`.
-        for args in [
+        //
+        // `contains`, not `starts_with`: since #451 the tag builder wraps the
+        // name in a full refspec, so the hostile value is no longer the start
+        // of its argument — which is the point, but it means a `starts_with`
+        // probe would silently stop finding the value and this guard would
+        // pass without checking anything.
+        let sets: Vec<Vec<String>> = vec![
             push_tag_args("--receive-pack=/bin/false", "v1"),
             push_tag_args("origin", "--receive-pack=/bin/false"),
-            push_delete_args("--receive-pack=/bin/false", "main"),
-            push_delete_args("origin", "--receive-pack=/bin/false"),
-        ] {
+            push_delete_args("--receive-pack=/bin/false", "main")
+                .iter()
+                .map(|a| (*a).to_string())
+                .collect(),
+            push_delete_args("origin", "--receive-pack=/bin/false")
+                .iter()
+                .map(|a| (*a).to_string())
+                .collect(),
+        ];
+        for args in sets {
             let sep = args
                 .iter()
-                .position(|a| *a == "--")
+                .position(|a| a == "--")
                 .expect("builders must emit an end-of-options separator");
             let hostile = args
                 .iter()
-                .position(|a| a.starts_with("--receive-pack"))
+                .position(|a| a.contains("--receive-pack"))
                 .expect("test value present");
             assert!(hostile > sep, "{args:?}");
         }

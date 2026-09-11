@@ -217,6 +217,42 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   `fetch --all --prune` names nothing and gets no separator. The force flag and
   `--no-verify` moved ahead of the separator to make room for it: after a `--`
   git reads them as refspecs, not options.
+- **`--` ends OPTION parsing, not REFSPEC parsing — so a value in refspec
+  position is named by its FULL ref on both sides** (#451). The two positions
+  have different grammars, and in refspec position a leading `+` means
+  *force-update*. A branch legitimately named `+main` (git accepts it —
+  `git check-ref-format --branch '+main'` passes, and a clone can bring one in)
+  was therefore sent as "force-update `main`": measured against git 2.50.1 on a
+  diverged remote as `+ b51af1b...bf589a0 main -> main (forced update)`, with no
+  `refs/heads/+main` created and no `confirmRewrite` in front of it, because the
+  app believed it was pushing normally. Silent history loss on the remote's
+  default branch — the worst outcome in the app — and `validate_ref_name` cannot
+  catch it, since `+` is legal in a ref name.
+  - `push_args` sends `refs/heads/<branch>:refs/heads/<branch>` and
+    `push_tag_args` sends `refs/tags/<tag>:refs/tags/<tag>`, the shape
+    `push_commit_args` already used. Spelling both sides REMOVES the ambiguity
+    instead of detecting it, and measured equivalent to the bare name for `-u`
+    (still writes `branch.<n>.merge = refs/heads/<n>`), `--force-with-lease`
+    (still refuses with `stale info`), `--force`, branch creation and slashed
+    names. It also settles two cases the bare name got wrong: `+main` reaches
+    `refs/heads/+main`, and a repository holding both a branch and a tag named
+    `dup` pushes the BRANCH rather than failing with
+    `src refspec dup matches more than one`.
+  - `pull_args` names the SRC half only — `refs/heads/<branch>`. A `<src>:<dst>`
+    pair here would name a LOCAL ref for the fetch to update and git refuses to
+    fetch into the checked-out branch. Pull was in the same class and the issue
+    did not report it: `git pull --ff-only -- origin '+main'` merged `main`.
+    Milder (a local merge of the wrong branch, not remote history loss) and the
+    same defect. The auto-generated merge subject is unchanged —
+    `Merge branch 'main' of <url>` byte for byte.
+  - `push_delete_args` is deliberately NOT changed: `--delete` takes the name
+    literally, measured as `error: unable to delete '+keepme': remote ref does
+    not exist` with `keepme` untouched.
+  - `tests/network.rs` runs REAL git for all three, asserting the bare name's
+    damage as well as the fix. Reverting a builder fails four unit tests in
+    `commands/branches.rs`, but those only assert our own choice back to us —
+    the integration tests are the evidence that the choice is right, which is
+    the half #451 existed for: the grammar had been reasoned about, not run.
 - **Two paths REFUSE a dash-leading value instead, because a separator cannot
   carry them.** Both answer with `AppError::InvalidArgument`, and both are
   reachable rather than only ours: git accepts `git remote add -- -evil <url>`,

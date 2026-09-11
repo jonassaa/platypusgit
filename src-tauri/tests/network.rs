@@ -6,6 +6,7 @@
 mod support;
 
 use platypusgit_lib::git::GitBackend;
+use std::path::PathBuf;
 use support::{BareTempRepo, TempRepo};
 
 // ─────────────────────────────────────────────────────────────
@@ -311,4 +312,247 @@ fn push_with_u_leaves_an_upstream_branches_reports() {
         .find(|b| b.name == "main" && !b.is_remote)
         .expect("main branch");
     assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+}
+
+// ─────────────────────────────────────────────────────────────
+// #451: a ref name beginning with `+` is a FORCE REFSPEC
+// ─────────────────────────────────────────────────────────────
+//
+// The argv `push_args`/`push_tag_args`/`pull_args` build is pinned by the unit
+// tests in `commands/branches.rs`, and reverting a builder to a bare ref name
+// fails four of them. What those cannot do is say whether the pinned string is
+// the RIGHT one: they assert our own choice back to us. These three pin the
+// evidence for that choice — git's behaviour, which is not ours to change and
+// which #451 existed because we had reasoned about rather than run.
+//
+// `--` ends OPTION parsing. The ref lands in REFSPEC position, which has a
+// grammar of its own, and a leading `+` there means *force-update*. So a branch
+// legitimately named `+main` — git accepts it, and a clone can bring one in —
+// was sent as "force-update `main`": the remote's default branch silently
+// overwritten, with no `confirmRewrite` in front of it, because as far as the
+// app was concerned this was an ordinary push.
+//
+// Each test asserts BOTH shapes. The bare-name half is the damage, so reverting
+// the fix fails here with the ref that moved rather than only on a string.
+
+/// Run `git -C <dir> <args…>`; return (success, stderr).
+fn git_at(dir: &std::path::Path, args: &[&str]) -> (bool, String) {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("run git");
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Subject of `HEAD` — which branch a pull actually merged.
+fn head_subject(dir: &std::path::Path) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["log", "-1", "--format=%s"])
+        .output()
+        .expect("run git log");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Does the bare remote carry this exact ref?
+fn bare_has(bare: &std::path::Path, full_ref: &str) -> bool {
+    git2::Repository::open_bare(bare)
+        .expect("open bare")
+        .find_reference(full_ref)
+        .is_ok()
+}
+
+/// Work repo wired to `bare`, with `main` already pushed.
+fn work_against(bare: &BareTempRepo) -> (TempRepo, PathBuf) {
+    let tr = TempRepo::with_initial_commit("hello\n");
+    let work = tr.path_buf();
+    assert!(
+        git_at(&work, &["remote", "add", "origin", bare.path.to_str().unwrap()]).0,
+        "add origin"
+    );
+    assert!(git_at(&work, &["push", "origin", "main"]).0, "seed push");
+    (tr, work)
+}
+
+#[test]
+fn a_bare_plus_branch_name_force_updates_the_branch_without_the_plus() {
+    if !git_available() {
+        eprintln!("SKIP: git not on PATH");
+        return;
+    }
+
+    let bare = BareTempRepo::new();
+    let (_tr, work) = work_against(&bare);
+
+    // git itself accepts the name — which is what makes this reachable at all.
+    assert!(
+        git_at(&work, &["check-ref-format", "--branch", "+main"]).0,
+        "git must accept `+main` as a branch name, or this bug is unreachable"
+    );
+
+    // Diverge local `main` from the remote, so the damage is a REWRITE and not
+    // a fast-forward that could be mistaken for harmless.
+    assert!(git_at(&work, &["commit", "--allow-empty", "-m", "second"]).0);
+    assert!(git_at(&work, &["push", "origin", "main"]).0, "advance main");
+    assert!(git_at(&work, &["branch", "+main"]).0);
+    assert!(git_at(&work, &["reset", "--hard", "HEAD~1"]).0);
+    assert!(git_at(&work, &["commit", "--allow-empty", "-m", "rewritten"]).0);
+
+    // The shape the app used to send.
+    let (ok, err) = git_at(&work, &["push", "--progress", "--", "origin", "+main"]);
+    assert!(ok, "bare `+main` push failed unexpectedly: {err}");
+    assert!(
+        !bare_has(&bare.path, "refs/heads/+main"),
+        "the bare name is supposed to MISS the branch the user picked"
+    );
+    assert!(
+        err.contains("forced update"),
+        "the bare name is supposed to force-update `main` instead: {err}"
+    );
+
+    // The shape the app sends now: named in full on both sides, so the `+` is
+    // an ordinary character of the ref name rather than refspec grammar.
+    let (ok, err) = git_at(
+        &work,
+        &[
+            "push",
+            "--progress",
+            "--",
+            "origin",
+            "refs/heads/+main:refs/heads/+main",
+        ],
+    );
+    assert!(ok, "full-refspec push failed: {err}");
+    assert!(
+        bare_has(&bare.path, "refs/heads/+main"),
+        "the full refspec must create the branch the user picked: {err}"
+    );
+}
+
+/// The tag half. `+v1.2.0` is a force refspec whose SRC is `v1.2.0`, so the
+/// damage depends on whether a `v1.2.0` also exists:
+///
+/// - it does — the common case, since a `+`-prefixed tag is usually a variant
+///   of one — and the wrong tag is pushed, silently, which is what this pins;
+/// - it does not, and git refuses with `src refspec v1.2.0 does not match any`,
+///   which is wrong but at least loud.
+#[test]
+fn a_bare_plus_tag_name_pushes_the_tag_without_the_plus() {
+    if !git_available() {
+        eprintln!("SKIP: git not on PATH");
+        return;
+    }
+
+    let bare = BareTempRepo::new();
+    let (_tr, work) = work_against(&bare);
+    assert!(git_at(&work, &["tag", "v1.2.0"]).0);
+    assert!(git_at(&work, &["commit", "--allow-empty", "-m", "second"]).0);
+    assert!(git_at(&work, &["tag", "+v1.2.0"]).0);
+
+    let (ok, err) = git_at(&work, &["push", "--progress", "--", "origin", "+v1.2.0"]);
+    assert!(ok, "bare `+v1.2.0` push failed unexpectedly: {err}");
+    assert!(
+        !bare_has(&bare.path, "refs/tags/+v1.2.0"),
+        "the bare name is supposed to MISS the tag the user picked"
+    );
+    assert!(
+        bare_has(&bare.path, "refs/tags/v1.2.0"),
+        "...and to push the OTHER tag instead: {err}"
+    );
+
+    let (ok, err) = git_at(
+        &work,
+        &[
+            "push",
+            "--progress",
+            "--",
+            "origin",
+            "refs/tags/+v1.2.0:refs/tags/+v1.2.0",
+        ],
+    );
+    assert!(ok, "full-refspec tag push failed: {err}");
+    assert!(
+        bare_has(&bare.path, "refs/tags/+v1.2.0"),
+        "the full refspec must create the tag the user picked: {err}"
+    );
+}
+
+/// The pull half, which #451 did not report: the branch is a refspec to
+/// `git pull` as well, so a leading `+` merged a DIFFERENT branch than the one
+/// named. Milder than the push — a local merge of the wrong branch rather than
+/// remote history loss — and the same defect.
+///
+/// `pull_args` names the SRC half only. A `<src>:<dst>` pair the way the push
+/// builders use it is wrong here: the dst would name a LOCAL ref for the fetch
+/// to update, and git refuses to fetch into the checked-out branch.
+#[test]
+fn a_bare_plus_branch_name_pulls_the_branch_without_the_plus() {
+    if !git_available() {
+        eprintln!("SKIP: git not on PATH");
+        return;
+    }
+
+    // A remote carrying two DIFFERENT branches, `main` and `+main`, so which
+    // one arrived is visible in the log.
+    let bare = BareTempRepo::new();
+    let (_seed, sp) = work_against(&bare);
+    assert!(git_at(&sp, &["commit", "--allow-empty", "-m", "main only"]).0);
+    assert!(git_at(&sp, &["push", "origin", "main"]).0, "advance main");
+    assert!(git_at(&sp, &["checkout", "-b", "+main", "HEAD~1"]).0);
+    assert!(git_at(&sp, &["commit", "--allow-empty", "-m", "plusmain only"]).0);
+    assert!(
+        git_at(&sp, &["push", "origin", "refs/heads/+main:refs/heads/+main"]).0,
+        "seed the +main branch"
+    );
+
+    // A clone sitting one commit behind `main`, so a pull has work to do.
+    let clone_behind = |dir: &std::path::Path| {
+        let ok = std::process::Command::new("git")
+            .args(["clone", "--quiet"])
+            .arg(&bare.path)
+            .arg(dir)
+            .status()
+            .expect("run git clone")
+            .success();
+        assert!(ok, "clone failed");
+        assert!(git_at(dir, &["checkout", "-B", "work", "origin/main~1"]).0);
+    };
+
+    let a_dir = tempfile::tempdir().expect("tempdir");
+    let a = a_dir.path().join("bare-name");
+    clone_behind(&a);
+    let (ok, err) = git_at(&a, &["pull", "--progress", "--ff-only", "--", "origin", "+main"]);
+    assert!(ok, "bare `+main` pull failed unexpectedly: {err}");
+    assert_eq!(
+        head_subject(&a),
+        "main only",
+        "the bare name is supposed to merge the WRONG branch"
+    );
+
+    let b_dir = tempfile::tempdir().expect("tempdir");
+    let b = b_dir.path().join("full-ref");
+    clone_behind(&b);
+    let (ok, err) = git_at(
+        &b,
+        &[
+            "pull",
+            "--progress",
+            "--ff-only",
+            "--",
+            "origin",
+            "refs/heads/+main",
+        ],
+    );
+    assert!(ok, "full-ref pull failed: {err}");
+    assert_eq!(
+        head_subject(&b),
+        "plusmain only",
+        "the full ref must merge the branch the user picked"
+    );
 }
