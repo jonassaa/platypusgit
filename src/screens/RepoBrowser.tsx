@@ -32,7 +32,7 @@ import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import {
   useDateFormat,
-  useDensityStep,
+  useRowH,
   useSettingsStore,
 } from "@/features/settings/useSettingsStore";
 import { useWindowedList } from "@/lib/useWindowedList";
@@ -363,7 +363,7 @@ export function RepoBrowserScreen() {
   // mounted (#61 A8). This screen owns the window because it already owns both
   // the scroll element and the flattened row order `usePaneList` indexes.
   const treeScrollRef = React.useRef<HTMLDivElement>(null);
-  const treeRowH = FILE_TREE_ROW_BASE_H + useDensityStep();
+  const treeRowH = useRowH(FILE_TREE_ROW_BASE_H);
   const treeWin = useWindowedList({
     count: flatRows.length,
     rowHeight: treeRowH,
@@ -715,7 +715,7 @@ export function RepoBrowserScreen() {
     new: { kind: "worktree" },
   });
   const diffRowH = useDiffRowHeight();
-  const diffFoldH = 22 + useDensityStep();
+  const diffFoldH = useRowH(22);
   const { expanded: expandedGaps, expand: expandGap } = useExpandedGaps(
     selectedFile?.path ?? null,
   );

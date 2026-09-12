@@ -62,8 +62,9 @@ function CompareCommitRow({ commit }: { commit: CommitInfo }) {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        // Density-aware (#70): the Settings toggle must reach this surface.
-        height: "calc(22px + var(--row-step))",
+        // Follows both UI scales (#70): the Settings Spacing and Text size
+        // controls must both reach this surface.
+        height: "calc(22px * var(--row-scale) + var(--row-step))",
         padding: "0 10px",
         fontFamily: "var(--font-mono)",
         fontSize: "var(--fs-12)",

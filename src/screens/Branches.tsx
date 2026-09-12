@@ -623,7 +623,7 @@ export function BranchesScreen() {
               style={{
                 display: "grid",
                 gridTemplateColumns: gridTemplate,
-                height: "calc(24px + var(--row-step))",
+                height: "calc(24px * var(--row-scale) + var(--row-step))",
                 background: "var(--bg-2)",
                 borderBottom: "1px solid var(--border-0)",
                 alignItems: "center",
@@ -706,7 +706,7 @@ export function BranchesScreen() {
                       display: "grid",
                       gridTemplateColumns: gridTemplate,
                       alignItems: "center",
-                      height: "calc(28px + var(--row-step))",
+                      height: "calc(28px * var(--row-scale) + var(--row-step))",
                       background: selected
                         ? undefined
                         : i % 2
@@ -821,7 +821,7 @@ export function BranchesScreen() {
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
                   alignItems: "center",
-                  height: "calc(28px + var(--row-step))",
+                  height: "calc(28px * var(--row-scale) + var(--row-step))",
                   background:
                     selection?.kind === "branch" && selection.name === b.name
                       ? undefined
@@ -978,7 +978,7 @@ export function BranchesScreen() {
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
                   alignItems: "center",
-                  height: "calc(28px + var(--row-step))",
+                  height: "calc(28px * var(--row-scale) + var(--row-step))",
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--fs-12)",
                   borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",
@@ -1070,7 +1070,7 @@ export function BranchesScreen() {
                   display: "grid",
                   gridTemplateColumns: gridTemplate,
                   alignItems: "center",
-                  height: "calc(28px + var(--row-step))",
+                  height: "calc(28px * var(--row-scale) + var(--row-step))",
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--fs-12)",
                   borderBottom: "1px solid oklch(0.22 0.008 260 / 0.3)",

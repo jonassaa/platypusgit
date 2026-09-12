@@ -94,7 +94,11 @@ const PORTABLE = [
   // not: that is observed state, it is not in PersistedState at all, and the
   // "no systemAppearance" assertions below pin that.
   "themePreference",
-  "uiDensity",
+  "uiSpacing",
+  // The type-ramp preset (`--fs-*`, `--row-scale`). Portable for the same
+  // reason uiSpacing is: it says how large the person likes their text, not
+  // anything about this machine's display.
+  "uiTextScale",
   "uiZoom",
   // The release channel (#237). Portable: "we track the prereleases" is a
   // team decision, not a fact about one machine — the same call
@@ -270,7 +274,7 @@ describe("an export carries no secrets", () => {
 function moveEverything(store: Store) {
   store.useSettingsStore.getState().saveAsNewTheme("House style");
   const set = store.useSettingsStore.getState().set;
-  set("uiDensity", "comfortable");
+  set("uiSpacing", "comfortable");
   set("uiZoom", 1.2);
   set("headMarks", ["badge"]);
   set("headWeight", "subtle");
@@ -483,20 +487,22 @@ describe("import validates like load() does", () => {
     }
   });
 
-  it("degrades unknown diff modes, density and pull mode", async () => {
+  it("degrades unknown diff modes, spacing and pull mode", async () => {
     const store = await freshStore();
     store.useSettingsStore.getState().importSettings(
       payloadOf({
         diffViewMode: "sideways",
         diffContextMode: "everything",
-        uiDensity: "cozy",
+        // "roomy" is invalid, not "cozy": cozy is now one of the four real
+        // presets, so it would no longer exercise the fallback.
+        uiSpacing: "roomy",
         defaultPullMode: "Yolo",
       }),
     );
     const s = store.useSettingsStore.getState();
     expect(s.diffViewMode).toBe("inline");
     expect(s.diffContextMode).toBe("wholeFile");
-    expect(s.uiDensity).toBe("compact");
+    expect(s.uiSpacing).toBe("cozy");
     expect(s.defaultPullMode).toBe("Rebase");
   });
 
@@ -582,6 +588,19 @@ describe("import validates like load() does", () => {
     // And the machine-specific key an export can never carry stays put.
     expect(s.lastCreateDir).toBe("/Users/someone/dev");
     expect(s.diffViewMode).toBe("split");
+  });
+
+  // The uiDensity -> uiSpacing migration's `else` arm used to fire whenever
+  // `uiSpacing` was absent from the payload, with no check for whether the
+  // payload mentioned `uiDensity` either -- so a file that spoke to neither
+  // key still overwrote a Spacious machine's preference with "cozy". This is
+  // the case the review found undercovered: the ternary's own default branch
+  // had no test of its own, and it was the one that was wrong.
+  it("keeps a non-default uiSpacing when the payload mentions neither uiSpacing nor uiDensity", async () => {
+    const store = await freshStore();
+    store.useSettingsStore.getState().set("uiSpacing", "spacious");
+    store.useSettingsStore.getState().importSettings(payloadOf({ addSignoff: true }));
+    expect(store.useSettingsStore.getState().uiSpacing).toBe("spacious");
   });
 });
 

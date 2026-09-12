@@ -189,8 +189,10 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   obvious version ships. (`docs/dev/frontend.md`)
 - **Design system lives in `src/design/`**, imported from `@/design`. Do NOT
   add `src/components/ui/`. Never hardcode the accent hue — CSS vars/theme
-  tokens only. New list-row surfaces opt into UI density (`var(--row-step)`).
-  (`docs/dev/frontend.md`)
+  tokens only. New list-row surfaces opt into BOTH UI scales —
+  `calc(<base>px * var(--row-scale) + var(--row-step))`, base multiplied and
+  step added — or `test/uiScale.test.ts` fails the build; JS geometry uses
+  `useRowH()`. (`docs/dev/frontend.md`)
 - **Icons are `lucide-react` behind `PGIcon`** — `src/design/icons.tsx` is the
   ONLY file that may import it, and `PGIcon`'s `strokeWidth` is on a 16-unit
   grid (scaled to lucide's 24), so changing that scale re-weights every icon at

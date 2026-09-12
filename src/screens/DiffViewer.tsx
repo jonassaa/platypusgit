@@ -60,7 +60,7 @@ import { MinimapGutter } from "@/features/diff/DiffMinimap";
 import { DiffFindBar } from "@/features/diff/DiffFindBar";
 import { useDiffFind } from "@/features/diff/useDiffFind";
 import { useDiffRowHeight } from "@/lib/useDiffRowHeight";
-import { useDensityStep } from "@/features/settings/useSettingsStore";
+import { useRowH } from "@/features/settings/useSettingsStore";
 import { pairChangedLines } from "@/lib/pairChangedLines";
 import {
   PGPane,
@@ -236,7 +236,7 @@ export function DiffViewerScreen() {
 
   // ── Windowed rows ────────────────────────────────────────────────────────
   const rowH = useDiffRowHeight();
-  const foldH = 22 + useDensityStep();
+  const foldH = useRowH(22);
   const { expanded: expandedGaps, expand: expandGap } = useExpandedGaps(selectedPath);
 
   const { gaps, text: diffText } = useDiffGaps(syntax);
@@ -568,7 +568,7 @@ export function DiffViewerScreen() {
                 alignItems: "center",
                 gap: 6,
                 padding: "0 10px",
-                height: "calc(24px + var(--row-step))",
+                height: "calc(24px * var(--row-scale) + var(--row-step))",
                 fontFamily: "var(--font-mono)",
                 fontSize: "var(--fs-12)",
                 cursor: "pointer",

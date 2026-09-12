@@ -4,7 +4,8 @@ import { useSettingsFilter } from "./filterContext";
 import { useSettingsHighlight } from "./highlightContext";
 
 /**
- * The UI-density opt-in for a settings surface, as vertical padding.
+ * The opt-in into both UI scales — Spacing and Text size — for a settings
+ * surface, as vertical padding.
  *
  * `--row-step` is the WHOLE extra height a row spends, so padding — applied
  * top AND bottom — takes half of it. Writing `var(--row-step)` here instead
@@ -14,9 +15,12 @@ import { useSettingsHighlight } from "./highlightContext";
  * 12px, the theme action strip 10px) while the STEP must not: two surfaces in
  * one card that grow by different amounts is the same bug as one that does not
  * grow at all.
+ *
+ * `--row-scale` multiplies the BASE and not the step: the step is already the
+ * user's own number in pixels, while the base is what has to hold the text.
  */
 export function densityPadding(basePx: number): string {
-  return `calc(${basePx}px + var(--row-step) / 2) 16px`;
+  return `calc(${basePx}px * var(--row-scale) + var(--row-step) / 2) 16px`;
 }
 
 /**
@@ -134,8 +138,8 @@ export function SettingsRow({
         flexDirection: stacked ? "column" : "row",
         alignItems: stacked ? "stretch" : "flex-start",
         gap: stacked ? 10 : 16,
-        // A list-row surface, so it opts into UI density (#70). The card's
-        // header above stays fixed: that is chrome, not a row.
+        // A list-row surface, so it opts into both UI scales (#70). The
+        // card's header above stays fixed: that is chrome, not a row.
         padding: SETTINGS_ROW_PADDING,
         borderBottom: "1px solid var(--border-0)",
       }}

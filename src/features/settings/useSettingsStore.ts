@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { normalizeHex } from "@/lib/color";
 import type { PullMode } from "@/lib/tauri";
 import { type DateFormat, isDateFormat } from "@/lib/commitDate";
-import { DATE_COL_W } from "@/design/graph-geometry";
+import { dateColW } from "@/design/graph-geometry";
 import type { UpdateChannel, UpdateRefsMode } from "@/lib/types";
 import type { SavedIdentity } from "@/features/commits/identity/identityList";
 import {
@@ -664,32 +664,44 @@ function activationPatch(
 }
 
 /**
- * Extra vertical pixels each row-ish surface adds for a given density.
+ * Extra vertical pixels each row-ish surface adds, per spacing preset.
  *
  * THE source of truth for the number. `index.css` declares `--row-step: 0px`
  * as a pre-hydration default and derives every row token from it
- * (`--row-h: calc(24px + var(--row-step))`, …); `applyDensity` overwrites the
- * var from this table, so CSS never hardcodes the comfortable delta and cannot
- * drift from the JS one. Compact is 0 by definition — comfortable is opt-in,
- * and the default layout stays pixel-identical to the pre-density one.
+ * (`--row-h: calc(24px * var(--row-scale) + var(--row-step))`, …);
+ * `applySpacing` overwrites the var from this table, so CSS never hardcodes a
+ * step and cannot drift from the JS one. Compact is 0 by definition — it is
+ * the value that reproduces the original fixed layout exactly, from before
+ * either a density toggle or this Spacing preset existed.
  */
-export const DENSITY_STEP_PX = { compact: 0, comfortable: 4 } as const;
+export const SPACING_STEP_PX = {
+  compact: 0,
+  cozy: 2,
+  comfortable: 4,
+  spacious: 8,
+} as const;
 
-export type UiDensity = keyof typeof DENSITY_STEP_PX;
+export type UiSpacing = keyof typeof SPACING_STEP_PX;
 
 /**
- * Coerce a persisted density into a known one.
+ * Coerce a persisted spacing into a known one.
  *
- * `load()` copies any JSON value for a known key without validating it, so
- * state can hold a density this build has never heard of — a hand-edited
- * `pg-settings-v2`, or a value written by a newer build the user downgraded
- * from. That must degrade to compact: an unknown key would otherwise emit
- * `--row-step: undefinedpx`, and one invalid substitution makes every
- * `calc(Npx + var(--row-step))` compute to `auto`, collapsing the height of
- * every row in the app at once.
+ * `coerceSettings` copies any JSON value for a known key and only type-guards
+ * it against the TYPE of its default, so state can hold a string this build
+ * has never heard of — a hand-edited `pg-settings-v2`, or a value written by a
+ * newer build the user downgraded from. That must degrade to the default: an
+ * unknown key would emit `--row-step: undefinedpx`, and one invalid
+ * substitution makes every `calc(Npx + var(--row-step))` compute to `auto`,
+ * collapsing the height of every row in the app at once.
+ *
+ * `Object.hasOwn`, not `in`: `in` walks the prototype chain, so "toString"
+ * would pass the check and then index the table to a FUNCTION — the same
+ * collapse, reached by a value that looked validated.
  */
-function normalizeDensity(density: UiDensity): UiDensity {
-  return density in DENSITY_STEP_PX ? density : "compact";
+function normalizeSpacing(spacing: unknown): UiSpacing {
+  return typeof spacing === "string" && Object.hasOwn(SPACING_STEP_PX, spacing)
+    ? (spacing as UiSpacing)
+    : DEFAULTS.uiSpacing;
 }
 
 /**
@@ -713,17 +725,84 @@ export function isValidDiffToolName(name: string): boolean {
 }
 
 /**
- * Apply UI density by writing the row-step slot to CSS vars on :root.
+ * Apply the spacing preset by writing the row-step slot to CSS vars on :root.
  *
- * `data-density` is also set — a reserved hook for any future density rule
- * that isn't a simple pixel delta. Nothing reads it today (it's asserted only
+ * `data-spacing` is also set — a reserved hook for any future rule that isn't
+ * a simple pixel delta. Nothing reads it today (it's asserted only in
+ * useSettingsStore.test.ts); drop it if that stays true.
+ */
+export function applySpacing(spacing: UiSpacing) {
+  const root = document.documentElement;
+  const s = normalizeSpacing(spacing);
+  root.style.setProperty("--row-step", `${SPACING_STEP_PX[s]}px`);
+  root.dataset.spacing = s;
+}
+
+/**
+ * Every step of the type ramp, as the NUMBER in its token name.
+ *
+ * `index.css` declares `--fs-10` … `--fs-40` at these exact px values as the
+ * pre-hydration default; `applyTextScale` overwrites all ten from this list,
+ * so the two cannot drift and a new step is added in one place.
+ */
+export const FS_TOKENS = [10, 11, 12, 13, 14, 15, 17, 20, 28, 40] as const;
+
+/**
+ * How far the type ramp moves, per text-size preset.
+ *
+ * Text size is NOT zoom. Zoom scales the whole UI through the webview —
+ * borders, icons, the titlebar, whitespace — and is the answer to "this app is
+ * too small on my display". This scales type, the row bases that have to hold
+ * it, and the column widths that are sized to text; icons and gaps stay put.
+ * The two compose, which is why both exist.
+ */
+export const TEXT_SCALE = {
+  small: 0.92,
+  default: 1,
+  large: 1.15,
+  larger: 1.3,
+} as const;
+
+export type UiTextScale = keyof typeof TEXT_SCALE;
+
+/** Same contract as `normalizeSpacing`, one setting over — see its comment. */
+function normalizeTextScale(scale: unknown): UiTextScale {
+  return typeof scale === "string" && Object.hasOwn(TEXT_SCALE, scale)
+    ? (scale as UiTextScale)
+    : DEFAULTS.uiTextScale;
+}
+
+/**
+ * Apply the text-size preset by writing the RESOLVED ramp to :root.
+ *
+ * Resolved px rather than `--fs-13: calc(13px * var(--ui-text-scale))`, which
+ * reads better but would make `--diff-row-h: calc(var(--fs-12) *
+ * var(--lh-code))` a nested calc() inside an unregistered custom property —
+ * and `readDiffRowHeight` already carries a fallback for the case where that
+ * value does not resolve to px. Writing px keeps `--diff-row-h` a one-level
+ * calc, unchanged, and keeps the question from arising in the webview at all.
+ *
+ * One decimal, not whole pixels: two steps of the ramp are 1px apart at the
+ * small end, and integer rounding can collapse or reorder them.
+ *
+ * `--row-scale` is the same factor, unitless, for the row bases — every row
+ * surface sets `height`, not `min-height`, so a base that does not grow with
+ * the type clips it.
+ *
+ * `data-text-scale` is also set — a reserved hook for any future rule that
+ * isn't a simple ramp substitution, the same reasoning as `applySpacing`'s
+ * `data-spacing` one setting over. Nothing reads it today (it's asserted only
  * in useSettingsStore.test.ts); drop it if that stays true.
  */
-export function applyDensity(density: UiDensity) {
+export function applyTextScale(scale: UiTextScale) {
   const root = document.documentElement;
-  const d = normalizeDensity(density);
-  root.style.setProperty("--row-step", `${DENSITY_STEP_PX[d]}px`);
-  root.dataset.density = d;
+  const key = normalizeTextScale(scale);
+  const f = TEXT_SCALE[key];
+  for (const base of FS_TOKENS) {
+    root.style.setProperty(`--fs-${base}`, `${Math.round(base * f * 10) / 10}px`);
+  }
+  root.style.setProperty("--row-scale", String(f));
+  root.dataset.textScale = key;
 }
 
 // ─── HEAD ("you are here") indicator ─────────────────────────────────────────
@@ -832,7 +911,16 @@ interface PersistedState {
   /** Which theme to apply and on whose say-so (#236). See ThemePreference. */
   themePreference: ThemePreference;
   customThemes: ThemeDef[];
-  uiDensity: "compact" | "comfortable";
+  /**
+   * How much breathing room every list row gets (`--row-step`). Replaces the
+   * binary `uiDensity`; `coerceSettings` migrates the old key.
+   */
+  uiSpacing: UiSpacing;
+  /**
+   * How large the type is (`--fs-*`) and, with it, the row bases and the
+   * text-sized columns. Independent of `uiZoom`, which scales everything.
+   */
+  uiTextScale: UiTextScale;
   /**
    * How a commit date is written wherever one is shown (#354) — relative
    * ("3w ago"), the absolute stamp, or both. The hover tooltip carries the
@@ -1091,7 +1179,8 @@ const DEFAULTS: PersistedState = {
   activeThemeId: "dark-cool",
   themePreference: { ...DEFAULT_THEME_PREFERENCE },
   customThemes: [],
-  uiDensity: "compact",
+  uiSpacing: "cozy",
+  uiTextScale: "default",
   dateFormat: "relative",
   uiZoom: 1,
   headMarks: ["bar", "tint", "ring"],
@@ -1452,9 +1541,9 @@ function coerceSettings(
 ): CoercedSettings {
   const known = new Set<string>(Object.keys(DEFAULTS));
   const ignored = Object.keys(parsed).filter(
-    // `headIndicator` left the schema but the migration below still reads it,
-    // so it is honoured rather than ignored.
-    (k) => !known.has(k) && k !== "headIndicator",
+    // `headIndicator` and `uiDensity` left the schema but the migrations below
+    // still read them, so they are honoured rather than ignored.
+    (k) => !known.has(k) && k !== "headIndicator" && k !== "uiDensity",
   );
 
   // Only pick keys that still exist in the schema, so settings removed in
@@ -1504,10 +1593,35 @@ function coerceSettings(
   // A hand-edited or newer-build zoom must not survive as-is: an out-of-range
   // factor is rejected by the webview and would leave the UI unzoomable.
   out.uiZoom = normalizeZoom(Number(out.uiZoom));
-  // An unrecognized density would emit `--row-step: undefinedpx`, and an
-  // invalid substitution makes every `calc(Npx + var(--row-step))` compute to
-  // `auto` — collapsing the height of every row in the app at once.
-  out.uiDensity = normalizeDensity(out.uiDensity);
+  // Spacing (#457-era rename). A stored `uiSpacing` wins; otherwise, only if
+  // the payload MENTIONS the pre-rename `uiDensity` key at all, that value is
+  // migrated over (reading `parsed` rather than `out` because the old key is
+  // gone from the schema and the copy loop above never picked it up). The
+  // `"uiDensity" in parsed` half of the guard matters as much as the first:
+  // without it, a payload mentioning NEITHER key still fell through to this
+  // branch and replaced `out.uiSpacing` (already `base`'s value, from the copy
+  // loop above) with the migration's fallback — so importing a file as small
+  // as `{"activeThemeId":"dracula"}` silently reset a Spacious user to Cozy.
+  // Same shape as `mentionsMarks` in the headIndicator -> headMarks migration
+  // below: a migration only fires when the payload speaks to the setting it
+  // migrates, never on a payload that is merely silent about it.
+  //
+  // `compact` deliberately lands on `cozy` rather than on `compact`: a stored
+  // "compact" cannot be distinguished from "never touched it" — `load()` fills
+  // missing keys from DEFAULTS and writes the result back — so preserving it
+  // would ship the roomier default to new installs only. Two pixels per row is
+  // mild and one click reversible, and it is the same call the headIndicator
+  // migration below makes one setting over.
+  if (!("uiSpacing" in parsed) && "uiDensity" in parsed) {
+    out.uiSpacing =
+      parsed.uiDensity === "comfortable"
+        ? "comfortable"
+        : parsed.uiDensity === "compact"
+          ? "cozy"
+          : DEFAULTS.uiSpacing;
+  }
+  out.uiSpacing = normalizeSpacing(out.uiSpacing);
+  out.uiTextScale = normalizeTextScale(out.uiTextScale);
   // Same failure one column over: the date format picks the Date column's
   // WIDTH as well as its text, so an unknown mode would emit `undefinedpx` in
   // the row grid and collapse the column on every row at once.
@@ -2000,7 +2114,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     // Everything with an effect outside the store has to be re-applied, or the
     // import lands in state and not on screen.
     applyTheme(findTheme(state, state.activeThemeId) ?? BUILTIN_THEMES[0]);
-    applyDensity(state.uiDensity);
+    applySpacing(state.uiSpacing);
+    applyTextScale(state.uiTextScale);
     applyZoom(state.uiZoom);
     return {
       changed,
@@ -2028,8 +2143,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       applyResolved(get());
     }
     persist(snapshot(get()));
-    if (key === "uiDensity") {
-      applyDensity(get().uiDensity);
+    if (key === "uiSpacing") {
+      applySpacing(get().uiSpacing);
+    }
+    if (key === "uiTextScale") {
+      applyTextScale(get().uiTextScale);
     }
     if (key === "uiZoom") {
       applyZoom(get().uiZoom);
@@ -2044,18 +2162,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ ...DEFAULTS });
     persist(DEFAULTS);
     applyTheme(BUILTIN_THEMES[0]);
-    applyDensity(DEFAULTS.uiDensity);
+    applySpacing(DEFAULTS.uiSpacing);
+    applyTextScale(DEFAULTS.uiTextScale);
     applyZoom(DEFAULTS.uiZoom);
   },
 }));
 
-// Apply active theme + density on module load so there's no flash before
-// first render.
+// Apply active theme, spacing and text scale on module load so there's no
+// flash before first render.
 {
   const s = useSettingsStore.getState();
   const active = findTheme(s, s.activeThemeId) ?? BUILTIN_THEMES[0];
   applyTheme(active);
-  applyDensity(s.uiDensity);
+  applySpacing(s.uiSpacing);
+  applyTextScale(s.uiTextScale);
   applyZoom(s.uiZoom);
 }
 
@@ -2081,20 +2201,58 @@ export function startSystemAppearanceWatch(): () => void {
 export type { Appearance } from "./systemAppearance";
 
 /**
- * The active density's pixel step, for surfaces that need the NUMBER rather
- * than the `--row-step` CSS var — i.e. anything doing geometry math in JS.
- * Prefer the CSS token everywhere it works; this exists for SVG user-unit
- * drawing (see `PGGraphRow`), which a `calc()` cannot reach.
+ * The active spacing preset's pixel step, for surfaces that need the NUMBER
+ * rather than the `--row-step` CSS var — i.e. anything doing geometry math in
+ * JS. Prefer the CSS token everywhere it works.
+ *
+ * `useRowH` is the arithmetic owner for a windowed row's pitch (SVG user-unit
+ * drawing, windowed lists) — do not call this directly for that; it would
+ * recreate the six-copies problem `useRowH` exists to close. This hook's only
+ * two remaining callers are `useRowH` itself (this is half its input) and
+ * `useDiffRowHeight`, which uses it only as a re-read trigger for a value
+ * `--diff-row-h` computes in CSS.
  */
-export function useDensityStep(): number {
-  return DENSITY_STEP_PX[normalizeDensity(useSettingsStore((s) => s.uiDensity))];
+export function useSpacingStep(): number {
+  return SPACING_STEP_PX[normalizeSpacing(useSettingsStore((s) => s.uiSpacing))];
+}
+
+/**
+ * The active text scale as a FACTOR (0.92 … 1.3), for surfaces that multiply a
+ * JS pixel constant by it. Prefer the CSS token (`var(--row-scale)`)
+ * everywhere it works — this hook's own two remaining callers are `useRowH`
+ * (the row-pitch arithmetic owner; do not call this directly to recompute a
+ * row height) and `useDiffRowHeight`, which uses it only as a re-read trigger
+ * for a value `--diff-row-h` computes in CSS.
+ */
+export function useTextScale(): number {
+  return TEXT_SCALE[normalizeTextScale(useSettingsStore((s) => s.uiTextScale))];
+}
+
+/**
+ * A row's height in px — the JS twin of
+ * `calc(<base>px * var(--row-scale) + var(--row-step))`.
+ *
+ * One owner rather than the expression repeated at each windowed list, because
+ * a window that computes its pitch differently from the rows it measures is
+ * the #70 desync, and six copies is six chances to write it differently. The
+ * base is MULTIPLIED and the step ADDED, for the reason `index.css` gives:
+ * the step is already the user's own number of pixels, the base is what has to
+ * hold the text.
+ *
+ * Rounded to one decimal, matching `applyTextScale`'s own ramp precision:
+ * `basePx * scale` lands on an IEEE754 repeater for ordinary inputs (26 * 1.3
+ * = 33.800000000000004), and an unrounded value would disagree with the CSS
+ * pitch by that same sub-pixel remainder instead of matching it exactly.
+ */
+export function useRowH(basePx: number): number {
+  return Math.round((basePx * useTextScale() + useSpacingStep()) * 10) / 10;
 }
 
 /**
  * The user's date format (#354), for the surfaces that render a commit date.
  *
  * A hook rather than a `getState()` read so switching the format in Settings
- * re-renders the log behind it, the same way density does.
+ * re-renders the log behind it, the same way Spacing and Text size do.
  */
 export function useDateFormat(): DateFormat {
   const mode = useSettingsStore((s) => s.dateFormat);
@@ -2102,12 +2260,13 @@ export function useDateFormat(): DateFormat {
 }
 
 /**
- * Width the Date column needs for the active format.
+ * Width the Date column needs for the active format, at the active text
+ * scale.
  *
  * PGCommitRow and History's column header both call this, then hand the SAME
  * number to `commitRowGrid` — which is what keeps the header aligned with the
- * rows under it when the format changes.
+ * rows under it when the format OR the text size changes.
  */
 export function useDateColumnWidth(): number {
-  return DATE_COL_W[useDateFormat()];
+  return dateColW(useDateFormat(), useTextScale());
 }

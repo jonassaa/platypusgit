@@ -1,6 +1,7 @@
 // Store-logic tests for the settings store: persistence shape (including the
-// removal migration for dead settings) and the uiDensity CSS-var hook.
+// removal migration for dead settings) and the uiSpacing CSS-var hook.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderHook } from "@testing-library/react";
 
 const STORAGE_KEY = "pg-settings-v2";
 
@@ -13,7 +14,18 @@ async function freshStore() {
 
 beforeEach(() => {
   localStorage.clear();
-  document.documentElement.style.removeProperty("--row-step");
+  const rootStyle = document.documentElement.style;
+  rootStyle.removeProperty("--row-step");
+  rootStyle.removeProperty("--row-scale");
+  // applyTextScale overwrites all ten on every call, so nothing can leak
+  // between tests today — but a future test asserting an UNSET --fs-* var
+  // would otherwise silently inherit whatever ramp the previous test applied.
+  // Literal token list, not FS_TOKENS: this file has no static top-level
+  // import of the store module (see freshStore below), so there is nothing to
+  // import it from.
+  for (const n of [10, 11, 12, 13, 14, 15, 17, 20, 28, 40]) {
+    rootStyle.removeProperty(`--fs-${n}`);
+  }
 });
 
 describe("useSettingsStore persistence", () => {
@@ -88,7 +100,7 @@ describe("useSettingsStore persistence", () => {
     expect(raw.diffContextMode).toBe("chunks");
   });
 
-  // Same reasoning as the uiDensity clamp below: load() copies a persisted value
+  // Same reasoning as the uiSpacing clamp below: load() copies a persisted value
   // for a known key without validating it, and an unknown mode reaching the
   // renderer would mean "neither branch" — a blank diff pane.
   it("degrades unrecognized persisted diff modes to the defaults", async () => {
@@ -384,50 +396,82 @@ describe("dateFormat", () => {
   });
 });
 
-describe("uiDensity CSS hook", () => {
-  it("applies --row-step from the persisted density at load", async () => {
+describe("uiSpacing CSS hook", () => {
+  it("applies --row-step from the persisted spacing at load", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiSpacing: "spacious" }));
+    await freshStore();
+    expect(rowStep()).toBe("8px");
+    expect(document.documentElement.dataset.spacing).toBe("spacious");
+  });
+
+  it("re-applies --row-step when the spacing setting changes", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().set("uiSpacing", "comfortable");
+    expect(rowStep()).toBe("4px");
+    expect(document.documentElement.dataset.spacing).toBe("comfortable");
+    useSettingsStore.getState().set("uiSpacing", "compact");
+    expect(rowStep()).toBe("0px");
+    expect(document.documentElement.dataset.spacing).toBe("compact");
+  });
+
+  // Compact must stay exactly 0: it is the value that reproduces the
+  // pre-density layout, so every `calc(Npx + var(--row-step))` collapses to Npx.
+  it("keeps compact at zero and orders the four steps", async () => {
+    const { SPACING_STEP_PX } = await freshStore();
+    expect(SPACING_STEP_PX.compact).toBe(0);
+    expect(Object.values(SPACING_STEP_PX)).toEqual([0, 2, 4, 8]);
+  });
+
+  // An unrecognized value would emit `--row-step: undefinedpx`, and one
+  // invalid substitution makes every `calc(Npx + var(--row-step))` compute to
+  // `auto` — collapsing the height of every row in the app at once.
+  it("falls back to the default for an unknown stored spacing", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiSpacing: "roomy" }));
+    await freshStore();
+    expect(rowStep()).toBe("2px");
+  });
+
+  // `in` walks the prototype chain, so a hand-edited "toString" would pass a
+  // membership check and index the table to a FUNCTION — the same undefinedpx
+  // collapse, reached by a value that looks like it was validated.
+  it("rejects an inherited Object property as a spacing value", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiSpacing: "toString" }));
+    await freshStore();
+    expect(rowStep()).toBe("2px");
+  });
+});
+
+describe("uiDensity migration", () => {
+  it("carries a stored comfortable density over to comfortable spacing", async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "comfortable" }));
-    await freshStore();
-    expect(rowStep()).toBe("4px");
-    expect(document.documentElement.dataset.density).toBe("comfortable");
-  });
-
-  it("re-applies --row-step when the density setting changes", async () => {
     const { useSettingsStore } = await freshStore();
-    expect(rowStep()).toBe("0px");
-    useSettingsStore.getState().set("uiDensity", "comfortable");
+    expect(useSettingsStore.getState().uiSpacing).toBe("comfortable");
     expect(rowStep()).toBe("4px");
-    expect(document.documentElement.dataset.density).toBe("comfortable");
-    useSettingsStore.getState().set("uiDensity", "compact");
-    expect(rowStep()).toBe("0px");
-    expect(document.documentElement.dataset.density).toBe("compact");
   });
 
-  it("reset() restores compact density", async () => {
+  // Deliberate: a stored "compact" cannot be told apart from "never touched
+  // it", and the whole point of the change is that the old default was too
+  // dense. Landing an upgraded install on cozy is the same call the
+  // headIndicator -> headMarks migration made one setting over.
+  it("lands an upgraded compact install on cozy", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "compact" }));
     const { useSettingsStore } = await freshStore();
-    useSettingsStore.getState().set("uiDensity", "comfortable");
-    useSettingsStore.getState().reset();
-    expect(rowStep()).toBe("0px");
-    expect(document.documentElement.dataset.density).toBe("compact");
+    expect(useSettingsStore.getState().uiSpacing).toBe("cozy");
   });
 
-  // Compact must be a no-op delta: the pre-density layout is the compact
-  // layout, so every `calc(Npx + var(--row-step))` has to collapse to Npx.
-  it("keeps compact at a zero step so the default layout is unchanged", async () => {
-    const { DENSITY_STEP_PX } = await freshStore();
-    expect(DENSITY_STEP_PX.compact).toBe(0);
+  it("lets a stored uiSpacing win over a stale uiDensity", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ uiDensity: "comfortable", uiSpacing: "compact" }),
+    );
+    const { useSettingsStore } = await freshStore();
+    expect(useSettingsStore.getState().uiSpacing).toBe("compact");
   });
 
-  // load() copies any persisted value for a known key without validating it,
-  // so an unrecognized density must degrade to compact rather than emit
-  // `--row-step: undefinedpx` — an invalid substitution makes every
-  // `calc(Npx + var(--row-step))` compute to `auto`, collapsing the height of
-  // every row in the app at once.
-  it("degrades an unrecognized persisted density to compact", async () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "cozy" }));
-    await freshStore();
-    expect(rowStep()).toBe("0px");
-    expect(document.documentElement.dataset.density).toBe("compact");
+  it("drops the retired key from state", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiDensity: "comfortable" }));
+    const { useSettingsStore } = await freshStore();
+    expect("uiDensity" in useSettingsStore.getState()).toBe(false);
   });
 });
 
@@ -590,5 +634,131 @@ describe("recentColors", () => {
     useSettingsStore.getState().pushRecentColor("#ff8800");
     const bag = JSON.parse(useSettingsStore.getState().exportSettings());
     expect(JSON.stringify(bag)).not.toContain("ff8800");
+  });
+});
+
+const fsVar = (n: number) =>
+  document.documentElement.style.getPropertyValue(`--fs-${n}`);
+const rowScale = () =>
+  document.documentElement.style.getPropertyValue("--row-scale");
+
+describe("uiTextScale CSS hook", () => {
+  it("applies the resolved ramp from the persisted scale at load", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiTextScale: "larger" }));
+    await freshStore();
+    expect(fsVar(13)).toBe("16.9px");
+    expect(fsVar(40)).toBe("52px");
+    expect(rowScale()).toBe("1.3");
+    expect(document.documentElement.dataset.textScale).toBe("larger");
+  });
+
+  it("re-applies the ramp when the setting changes", async () => {
+    // No static top-level import of useSettingsStore exists in this file (see
+    // freshStore above) — a bare `useSettingsStore.getState()` here throws
+    // ReferenceError, so the instance freshStore() just loaded is used instead.
+    const { useSettingsStore } = await freshStore();
+    expect(fsVar(13)).toBe("13px");
+    useSettingsStore.getState().set("uiTextScale", "large");
+    expect(fsVar(13)).toBe("15px");
+    expect(rowScale()).toBe("1.15");
+    expect(document.documentElement.dataset.textScale).toBe("large");
+  });
+
+  // Rounding is what could break this, and a collapsed or reordered pair would
+  // render two different type roles identically with nothing on screen saying
+  // why. Four presets is a finite set, so assert it rather than sample it.
+  it("keeps the ramp strictly ascending at every preset", async () => {
+    const { TEXT_SCALE, FS_TOKENS, applyTextScale } = await freshStore();
+    for (const key of Object.keys(TEXT_SCALE) as (keyof typeof TEXT_SCALE)[]) {
+      applyTextScale(key);
+      const sizes = FS_TOKENS.map((n) => Number.parseFloat(fsVar(n)));
+      for (let i = 1; i < sizes.length; i++) {
+        expect(sizes[i], `${key}: --fs-${FS_TOKENS[i]}`).toBeGreaterThan(sizes[i - 1]);
+      }
+    }
+  });
+
+  // The clipping guard. Rows set `height`, not `min-height`, so a base that
+  // does not grow with the type clips it -- and no test that only reads the
+  // ramp can see that. --fs-13 x --lh-body must fit the SMALLEST row base in
+  // use (22px, PGBranchRow and the Compare header).
+  it("keeps the smallest row base clear of its own line box at every preset", async () => {
+    const { TEXT_SCALE, applyTextScale } = await freshStore();
+    const SMALLEST_ROW_BASE = 22;
+    const LH_BODY = 1.45;
+    for (const key of Object.keys(TEXT_SCALE) as (keyof typeof TEXT_SCALE)[]) {
+      applyTextScale(key);
+      const lineBox = Number.parseFloat(fsVar(13)) * LH_BODY;
+      const rowH = SMALLEST_ROW_BASE * Number.parseFloat(rowScale());
+      expect(rowH, `${key}`).toBeGreaterThanOrEqual(lineBox);
+    }
+  });
+
+  it("falls back to the default for an unknown stored text scale", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiTextScale: "huge" }));
+    await freshStore();
+    expect(fsVar(13)).toBe("13px");
+    expect(rowScale()).toBe("1");
+  });
+
+  it("rejects an inherited Object property as a text scale", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ uiTextScale: "toString" }));
+    await freshStore();
+    expect(rowScale()).toBe("1");
+  });
+});
+
+// The deleted "reset() restores compact density" case was never replaced when
+// the binary density toggle split into these two independent presets, so
+// nothing asserted that reset() re-applies EITHER one to the DOM. reset()
+// writes DEFAULTS to the store either way -- the bug this guards is
+// `applySpacing`/`applyTextScale` not being called alongside it, which would
+// leave every CSS var at whatever the user had picked while the store itself
+// (and any UI reading it) reported the defaults.
+describe("reset() re-applies both UI scales", () => {
+  it("restores --row-step and the text ramp on the DOM, not just the store fields", async () => {
+    const { useSettingsStore } = await freshStore();
+    useSettingsStore.getState().set("uiSpacing", "spacious");
+    useSettingsStore.getState().set("uiTextScale", "larger");
+    expect(rowStep()).toBe("8px");
+    expect(fsVar(13)).toBe("16.9px");
+
+    useSettingsStore.getState().reset();
+
+    expect(useSettingsStore.getState().uiSpacing).toBe("cozy");
+    expect(useSettingsStore.getState().uiTextScale).toBe("default");
+    expect(rowStep()).toBe("2px");
+    expect(fsVar(13)).toBe("13px");
+    expect(rowScale()).toBe("1");
+  });
+});
+
+describe("useRowH", () => {
+  it("multiplies the base by the text scale and adds the spacing step", async () => {
+    const { useRowH, useSettingsStore: store } = await freshStore();
+    store.getState().set("uiTextScale", "larger");
+    store.getState().set("uiSpacing", "comfortable");
+    const { result } = renderHook(() => useRowH(24));
+    // 24 x 1.3 = 31.2, + comfortable step 4 = 35.2 exactly, even as a raw
+    // double -- this case alone would pass identically with the rounding
+    // deleted, so it pins the ADD-then-SCALE arithmetic, not the rounding.
+    // The case below is the one that pins rounding specifically.
+    expect(result.current).toBe(35.2);
+  });
+
+  // 26 x 1.3 is where the rounding earns its keep: verified with
+  // `node -e "console.log(26*1.3+0)"`, the raw double is
+  // 33.800000000000004, not 33.8 -- unlike the case above, whose inputs
+  // happen to land on an exact double either way. Deleting Math.round from
+  // useRowH turns this assertion red (confirmed by hand before landing it);
+  // that is what makes it a real pin on the hook's rounding contract rather
+  // than a restatement of whatever the implementation currently emits.
+  it("rounds away the float remainder from a base x scale that lands off-grid", async () => {
+    const { useRowH, useSettingsStore: store } = await freshStore();
+    store.getState().set("uiTextScale", "larger");
+    store.getState().set("uiSpacing", "compact");
+    const { result } = renderHook(() => useRowH(26));
+    // 26 x 1.3 = 33.800000000000004 as a raw double, + compact step 0
+    expect(result.current).toBe(33.8);
   });
 });

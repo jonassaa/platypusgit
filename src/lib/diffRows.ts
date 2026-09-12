@@ -1,7 +1,8 @@
 // Flat row model for a file diff, plus an exact variable-height window.
 //
-// A diff mixes two row heights — a fold separator is density-aware chrome, a code
-// row is --fs-12 * --lh-code — so the fixed-pitch useWindowedList does not fit.
+// A diff mixes two row heights — a fold separator is chrome that follows both
+// UI scales, a code row is --fs-12 * --lh-code — so the fixed-pitch
+// useWindowedList does not fit.
 // Nothing needs measuring though: both heights are KNOWN, so prefix sums give an
 // exact window with no DOM reads and no estimation.
 //
@@ -247,7 +248,7 @@ function gapRows(o: {
 export interface FlattenDiffOptions {
   /** Code-row pitch, from `--diff-row-h`. */
   rowH: number;
-  /** Fold-separator height. Chrome, so density-aware — see the surfaces. */
+  /** Fold-separator height. Chrome, so it follows both UI scales — see the surfaces. */
   foldH: number;
   syntax?: { old: SyntaxLine[] | null; new: SyntaxLine[] | null };
   /**
@@ -275,10 +276,11 @@ export interface FlattenDiffOptions {
  * anchor index, cached by the hunks ARRAY's identity.
  *
  * None of it depends on syntax, row heights, or gap mode — yet flattenDiffRows
- * is re-run for every one of those (tokens arriving per side, a gap expanded, a
- * density change), and the word diff's LCS is by far the most expensive step of
- * the flatten. One diff object is flattened several times over its life; its
- * hunks array never changes identity, so this computes the invariant part once.
+ * is re-run for every one of those (tokens arriving per side, a gap expanded,
+ * a Spacing or Text size change), and the word diff's LCS is by far the most
+ * expensive step of the flatten. One diff object is flattened several times
+ * over its life; its hunks array never changes identity, so this computes the
+ * invariant part once.
  * Weak, so a superseded diff's lines go with it.
  */
 const baseLinesCache = new WeakMap<

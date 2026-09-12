@@ -43,12 +43,13 @@ async function clickSettingsToggleRow(labelText: string, settingId: string): Pro
 }
 
 /**
- * Measure the rendered height of one row per density mechanism.
+ * Measure the rendered height of one row per row-geometry mechanism.
  *
  * There is no repo truth for a layout setting, so rendered geometry IS the
  * acceptance here — and it can only be measured in a real webview: the tokens
- * are `calc(Npx + var(--row-step))`, which jsdom does not resolve (the store
- * side is unit-tested in src/features/settings/useSettingsStore.test.ts).
+ * are `calc(Npx * var(--row-scale) + var(--row-step))`, which jsdom does not
+ * resolve (the store side is unit-tested in
+ * src/features/settings/useSettingsStore.test.ts).
  *
  * Measures via `getSize("height")` on the same elements it waits for, so a
  * selector change surfaces as "row never appeared" rather than as a wrong
@@ -245,13 +246,23 @@ describe("settings", () => {
     );
   });
 
-  it("UI density scales every row surface, and compact restores them", async () => {
+  it("Spacing scales every row surface, and compact restores them", async () => {
     repo = dirtyRepo(); // a.txt unstaged, so CommitPanel has a change row
     await openRepo(repo.path);
 
+    // The app's OWN default is "cozy" (Task 1's compact -> cozy migration),
+    // not "compact" — so the zero-step baseline has to be SELECTED, not read
+    // off a freshly opened repo, or this measures cozy's +2 instead of 0.
+    await openSettings("general.appearance");
+    await $("button*=Compact").click();
+    await browser.waitUntil(
+      async () => $('button[aria-pressed="true"]*=Compact').isExisting(),
+      { timeout: 10_000, timeoutMsg: "Compact never became active" },
+    );
+
     const compact = await measureRows();
-    // Compact is the pre-density baseline — pinned so a future token edit
-    // can't silently reflow the default layout.
+    // Compact is the pre-spacing baseline — pinned so a future token edit
+    // can't silently reflow the zero-step layout.
     expect(compact).toEqual({
       changeRow: 24, branchRow: 28, commitRow: 26, graphSvg: 26,
     });
@@ -280,7 +291,7 @@ describe("settings", () => {
   });
 
   /**
-   * The Settings panel's OWN rows resolve the density calc.
+   * The Settings panel's OWN rows resolve the spacing calc.
    *
    * `measureRows` above covers the four surfaces outside Settings. These two
    * are the ones no unit test can reach: jsdom does not resolve `calc()`, so
@@ -296,13 +307,13 @@ describe("settings", () => {
    * It is here because a fixed height there gives ONE card two row pitches,
    * which is the same bug as a forge row that does not scale.
    */
-  it("Settings rows resolve the density calc, by exactly one step", async () => {
-    const STEP = 4; // DENSITY_STEP_PX.comfortable
+  it("Settings rows resolve the spacing calc, by exactly one step", async () => {
+    const STEP = 4; // SPACING_STEP_PX.comfortable
 
     const measureSettings = async () => {
-      const row = $('[data-setting-id="appearance.density"]');
+      const row = $('[data-setting-id="appearance.spacing"]');
       await row.waitForDisplayed({
-        timeout: 10_000, timeoutMsg: "density row never appeared for measurement",
+        timeout: 10_000, timeoutMsg: "spacing row never appeared for measurement",
       });
       const strip = $('[data-testid="theme-actions"]');
       await strip.waitForDisplayed({
@@ -315,6 +326,14 @@ describe("settings", () => {
     };
 
     await openSettings("general.appearance");
+    // The app's own default is "cozy", not "compact" (Task 1's migration) —
+    // select Compact explicitly so the delta below is measured from a true
+    // zero step, not from cozy's already-nonzero one.
+    await $("button*=Compact").click();
+    await browser.waitUntil(
+      async () => $('button[aria-pressed="true"]*=Compact').isExisting(),
+      { timeout: 10_000, timeoutMsg: "Compact never became active" },
+    );
     const compact = await measureSettings();
 
     await $("button*=Comfortable").click();
@@ -335,6 +354,58 @@ describe("settings", () => {
       { timeout: 10_000, timeoutMsg: "Compact never became active" },
     );
     expect(await measureSettings()).toEqual(compact);
+  });
+
+  /**
+   * Text size is the axis no unit test can measure end to end: jsdom does not
+   * resolve `calc()`, so the store side only proves the token STRING is
+   * written (`useSettingsStore.test.ts`), never that a row grown from it
+   * actually clears the bigger type sitting inside it. A real webview is the
+   * only place the scaled `--fs-13` ramp and the scaled row box are
+   * observable together — reuses `measureRows()` rather than restating its
+   * screen-switching, exactly as the spacing case above does.
+   */
+  it("Text size scales the type and the rows that hold it", async () => {
+    repo = dirtyRepo(); // a.txt unstaged, so CommitPanel has a change row
+    await openRepo(repo.path);
+
+    const before = await measureRows();
+    const fsBefore = await browser.execute(() =>
+      getComputedStyle(document.documentElement).getPropertyValue("--fs-13").trim(),
+    );
+    expect(fsBefore).toBe("13px");
+
+    await openSettings("general.appearance");
+    await $("button*=Larger").click();
+    await browser.waitUntil(
+      async () => $('button[aria-pressed="true"]*=Larger').isExisting(),
+      { timeout: 10_000, timeoutMsg: "Larger never became active" },
+    );
+
+    const fsAfter = await browser.execute(() =>
+      getComputedStyle(document.documentElement).getPropertyValue("--fs-13").trim(),
+    );
+    expect(fsAfter).toBe("16.9px");
+
+    // The row has to grow with the type or it clips it — this is the whole
+    // point of --row-scale, and jsdom cannot see it.
+    const after = await measureRows();
+    expect(after.commitRow).toBeGreaterThan(before.commitRow);
+    expect(after.graphSvg).toBeGreaterThan(before.graphSvg);
+    expect(after.changeRow).toBeGreaterThan(before.changeRow);
+    expect(after.branchRow).toBeGreaterThan(before.branchRow);
+
+    await openSettings("general.appearance");
+    await $("button*=Default").click();
+    await browser.waitUntil(
+      async () => $('button[aria-pressed="true"]*=Default').isExisting(),
+      { timeout: 10_000, timeoutMsg: "Default never became active" },
+    );
+    const fsRestored = await browser.execute(() =>
+      getComputedStyle(document.documentElement).getPropertyValue("--fs-13").trim(),
+    );
+    expect(fsRestored).toBe("13px");
+    expect(await measureRows()).toEqual(before);
   });
 
   it("confirmForcePush=off skips the confirm entirely", async () => {

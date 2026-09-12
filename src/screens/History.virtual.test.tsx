@@ -8,6 +8,7 @@ import { HistoryScreen } from "./History";
 import { useRepoStore } from "@/features/repo/useRepoStore";
 import { useNavStore } from "@/features/nav/useNavStore";
 import { useKeymapStore, useFocusStore } from "@/features/keymap";
+import { useSettingsStore } from "@/features/settings/useSettingsStore";
 import { COMMIT_ROW_BASE_H } from "@/design";
 import type { CommitInfo } from "@/lib/types";
 
@@ -26,6 +27,15 @@ const BIG: CommitInfo[] = Array.from({ length: 300 }, (_, i) => ({
 }));
 
 beforeEach(() => {
+  // Pin BOTH scale axes this file's math assumes: the default spacing preset
+  // moved off compact (#457-era spacing rename), and this suite would
+  // otherwise measure whatever DEFAULTS.uiSpacing happens to be rather than
+  // the step-0 case it documents. Text scale gets the same pin, one axis
+  // over — the same fragility the spacing pin was added to close, and a
+  // DEFAULTS.uiTextScale change would silently move this suite's row-height
+  // math otherwise.
+  useSettingsStore.getState().set("uiSpacing", "compact");
+  useSettingsStore.getState().set("uiTextScale", "default");
   useKeymapStore.setState({ handlers: new Map(), lastShiftAt: 0 });
   useKeymapStore.getState().setPreset("rider");
   useFocusStore.setState({

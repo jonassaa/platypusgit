@@ -126,7 +126,7 @@ function readPalette(): MinimapPalette {
  * A store subscription rather than an observer, and BOTH fields are needed:
  * `activeThemeId` covers switching theme, `customThemes` covers editing the live
  * theme's colours — which keeps the same id, so the id alone would miss it.
- * Density arrives separately, through the `rowH` prop.
+ * The row-pitch scaling arrives separately, through the `rowH` prop.
  */
 function useMinimapPalette(): MinimapPalette {
   const activeThemeId = useSettingsStore((s) => s.activeThemeId);

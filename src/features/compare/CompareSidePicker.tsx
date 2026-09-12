@@ -213,8 +213,8 @@ export function CompareSidePicker({
                           display: "flex",
                           alignItems: "center",
                           gap: 8,
-                          // Density-aware, like every other list row (#70).
-                          height: "calc(26px + var(--row-step))",
+                          // Follows both UI scales, like every other list row (#70).
+                          height: "calc(26px * var(--row-scale) + var(--row-step))",
                           padding: "0 10px",
                           cursor: "pointer",
                           fontFamily: "var(--font-mono)",

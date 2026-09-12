@@ -1,10 +1,13 @@
 import { PGButton, PGButtonGroup, PGIconButton, pgFlash } from "@/design";
 import {
-  DENSITY_STEP_PX,
+  SPACING_STEP_PX,
+  TEXT_SCALE,
   ZOOM_MAX,
   ZOOM_MIN,
   useSettingsStore,
   type ThemeFollowMode,
+  type UiSpacing,
+  type UiTextScale,
 } from "@/features/settings/useSettingsStore";
 import { HeadMarksControl } from "@/features/settings/HeadMarksControl";
 import {
@@ -40,9 +43,14 @@ export const meta: SettingsPageMeta = {
         { id: "appearance.light", label: "Light theme", keywords: "gallery preview swatch add new create custom", when: "themeFollowsSystem" },
         { id: "appearance.dark", label: "Dark theme", keywords: "dark mode gallery preview swatch add new create custom", when: "themeFollowsSystem" },
         { id: "appearance.theme", label: "Theme", keywords: "colors palette custom editor export import gallery preview swatch duplicate contrast add new create", when: "themeFixed" },
-        { id: "appearance.density", label: "UI density", keywords: "compact cozy comfortable row height spacing" },
         { id: "appearance.dateFormat", label: "Date format", keywords: "relative absolute iso timestamp" },
         { id: "appearance.headMarks", label: "Current position (HEAD)", keywords: "bar tint ring marker" },
+        // Text size, Spacing and Zoom sit adjacent here (matching their render
+        // order below) because all three are "how big/roomy is the UI"
+        // controls — reading them as one group is the point, not an accident
+        // of where the old density row used to live.
+        { id: "appearance.textSize", label: "Text size", keywords: "font size text type bigger smaller larger readable accessibility scale" },
+        { id: "appearance.spacing", label: "Spacing", keywords: "density compact cozy comfortable spacious row height breathing room padding" },
         { id: "appearance.zoom", label: "Zoom", keywords: "font size scale text bigger smaller" },
       ],
     },
@@ -137,13 +145,14 @@ export function AppearancePage() {
           editor's own "Start from" picker, not a card you had to find first. */}
       <div
         // A geometry hook: only a real webview resolves the calc below, so e2e
-        // measures this strip's height under each density.
+        // measures this strip's height under each Spacing preset.
         data-testid="theme-actions"
         style={{
-          // Density-aware for the same reason its `SettingsRow` neighbours
-          // are: this strip is in the card BODY, between two rows that scale,
-          // so a fixed height here gives one card two row pitches. The chrome
-          // exemption covers a card's HEADER, not a band between its rows.
+          // Follows both UI scales for the same reason its `SettingsRow`
+          // neighbours do: this strip is in the card BODY, between two rows
+          // that scale, so a fixed height here gives one card two row
+          // pitches. The chrome exemption covers a card's HEADER, not a band
+          // between its rows.
           // Its own 10px base is kept — only the step is shared.
           padding: densityPadding(10),
           borderBottom: "1px solid var(--border-0)",
@@ -177,23 +186,6 @@ export function AppearancePage() {
           editor. Import reads a file someone exported.
         </span>
       </div>
-
-      <SettingsRow
-        id="appearance.density"
-        label="UI density"
-        hint={`Compact matches the dense IDE feel; comfortable gives every list row ${DENSITY_STEP_PX.comfortable}px more breathing room.`}
-        control={
-          <PGButtonGroup
-            size="sm"
-            value={s.uiDensity}
-            onChange={(v) => s.set("uiDensity", v as "compact" | "comfortable")}
-            options={[
-              { value: "compact", label: "Compact" },
-              { value: "comfortable", label: "Comfortable" },
-            ]}
-          />
-        }
-      />
 
       <SettingsRow
         id="appearance.dateFormat"
@@ -232,6 +224,46 @@ export function AppearancePage() {
         label="Current position (HEAD)"
         hint="How History marks the commit you are on. Pick any combination of marks, then set how hard they hit — the preview is the real History row."
         control={<HeadMarksControl />}
+      />
+
+      <SettingsRow
+        id="appearance.textSize"
+        label="Text size"
+        hint={`Scales the type across the app, code and diffs included — except the integrated terminal, which keeps its own font. ${Math.round(
+          TEXT_SCALE.larger * 100,
+        )}% at the largest. Rows grow to fit it; icons and borders don’t — use Zoom below for those.`}
+        control={
+          <PGButtonGroup
+            size="sm"
+            value={s.uiTextScale}
+            onChange={(v) => s.set("uiTextScale", v as UiTextScale)}
+            options={[
+              { value: "small", label: "Small" },
+              { value: "default", label: "Default" },
+              { value: "large", label: "Large" },
+              { value: "larger", label: "Larger" },
+            ]}
+          />
+        }
+      />
+
+      <SettingsRow
+        id="appearance.spacing"
+        label="Spacing"
+        hint={`How much breathing room every list row gets — compact is the dense IDE feel, spacious adds ${SPACING_STEP_PX.spacious}px to each row.`}
+        control={
+          <PGButtonGroup
+            size="sm"
+            value={s.uiSpacing}
+            onChange={(v) => s.set("uiSpacing", v as UiSpacing)}
+            options={[
+              { value: "compact", label: "Compact" },
+              { value: "cozy", label: "Cozy" },
+              { value: "comfortable", label: "Comfortable" },
+              { value: "spacious", label: "Spacious" },
+            ]}
+          />
+        }
       />
 
       <SettingsRow

@@ -15,14 +15,15 @@ import {
 } from "./primitives";
 import {
   useDateColumnWidth,
-  useDensityStep,
+  useRowH,
+  useTextScale,
 } from "@/features/settings/useSettingsStore";
 import {
   NO_HEAD_DECOR,
   type HeadDecor,
 } from "@/features/settings/headMarks";
 import { FOLDER_ICON_COLOR, fileIconSpec } from "@/lib/fileIcon";
-import { COL_PAD, GRAPH_PAD, commitRowGrid, laneX } from "./graph-geometry";
+import { GRAPH_PAD, colPad, commitRowGrid, laneX } from "./graph-geometry";
 import type { WindowRange } from "@/lib/useWindowedList";
 import type {
   RebaseAction,
@@ -265,10 +266,10 @@ export function flattenFileTree(
 }
 
 /**
- * Base row height in px, matching `--row-h: calc(24px + var(--row-step))`
- * (`index.css`). A windowing caller needs the pitch as a NUMBER and must add
- * `useDensityStep()`; a literal would desync the window from the rows in
- * comfortable density (#70). Keep in sync with the token.
+ * Base row height in px, matching `--row-h: calc(24px * var(--row-scale) + var(--row-step))`
+ * (`index.css`). A windowing caller needs the pitch as a NUMBER and must get
+ * it from `useRowH()`; a literal would desync the window from the rows at
+ * any preset but the default (#70). Keep in sync with the token.
  */
 export const FILE_TREE_ROW_BASE_H = 24;
 
@@ -1076,14 +1077,14 @@ export function PGHunkActions({
  * regions, named rather than labelled with a `@@` range (#157).
  *
  * Says how much is hidden, where it resumes, and offers to show it. Chrome, not
- * code, so it is density-aware (`--row-step`) — code geometry stays on
- * `--lh-code`. `onExpand` omitted leaves it informational, which is what happens
- * when the file text is not available to expand from.
+ * code, so it follows both UI scales (`--row-scale` and `--row-step`) — code
+ * geometry stays on `--lh-code`. `onExpand` omitted leaves it informational,
+ * which is what happens when the file text is not available to expand from.
  */
 export function PGFoldSeparator({
   hiddenLines,
   fromR,
-  height = "calc(22px + var(--row-step))",
+  height = "calc(22px * var(--row-scale) + var(--row-step))",
   onExpand,
 }: {
   hiddenLines: number;
@@ -1338,10 +1339,10 @@ const HEAD_RING_R = 6.5;
  * `height` is REQUIRED and must be the caller's actual row pitch in px.
  *
  * The lane geometry below is in SVG user units (`y2={height}`, bezier control
- * points at `height / 2`), so it cannot read `--row-step` — a default here
- * would silently draw at one pitch while density moved the rows to another,
- * leaving lanes that don't meet between rows. Callers derive the number from
- * `useDensityStep()`; see `PGCommitRow`.
+ * points at `height / 2`), so it cannot read `--row-step` or `--row-scale` —
+ * a default here would silently draw at one pitch while spacing or text size
+ * moved the rows to another, leaving lanes that don't meet between rows.
+ * Callers derive the number from `useRowH()`; see `PGCommitRow`.
  *
  * `width` is REQUIRED for the same reason of principle: it must come from
  * `graphWidth(maxCol)`. The old `width = 140` default is exactly what let lanes
@@ -1572,7 +1573,7 @@ export interface PGCommitRowProps {
   onRowContext?: (oid: string, e: MouseEvent) => void;
   tagged?: string;
   /**
-   * Row height in px. Defaults to the density-derived height. Unlike every
+   * Row height in px. Defaults to `useRowH`'s scaled height. Unlike every
    * other row surface this can't be a `--row-h` calc: PGGraphRow draws lanes
    * in SVG user units, so the row box and the gutter must share one NUMBER.
    */
@@ -1627,12 +1628,13 @@ export const PGCommitRow = React.memo(function PGCommitRow({
   headDecor = NO_HEAD_DECOR,
 }: PGCommitRowProps) {
   const [hover, setHover] = React.useState(false);
-  const step = useDensityStep();
-  // Read here rather than passed in, for the same reason as the density step:
+  const derivedH = useRowH(COMMIT_ROW_BASE_H);
+  // Read here rather than passed in, for the same reason as the row scale:
   // every commit row in the app must agree with History's column header, and a
   // prop threaded through two screens is a prop one of them forgets.
   const dateW = useDateColumnWidth();
-  const h = rowHeight ?? COMMIT_ROW_BASE_H + step;
+  const textScale = useTextScale();
+  const h = rowHeight ?? derivedH;
   // One gate for every mark, so "this row is not HEAD" is checked once.
   const d = isHead && !headDecor.bare ? headDecor : NO_HEAD_DECOR;
   // Selection outranks the HEAD wash — the selected row must stay obvious even
@@ -1668,7 +1670,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
       onMouseLeave={() => setHover(false)}
       style={{
         display: "grid",
-        gridTemplateColumns: commitRowGrid(graphW, dateW),
+        gridTemplateColumns: commitRowGrid(graphW, dateW, textScale),
         alignItems: "center",
         height: h,
         background,
@@ -1726,7 +1728,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           alignItems: "center",
           gap: 6,
           minWidth: 0,
-          paddingRight: COL_PAD,
+          paddingRight: colPad(textScale),
           // Below SUBJECT_MIN_W the cell is narrower than its contents, and the
           // pills do not shrink (half a pill reads as a different branch), so
           // without this they painted over the author column instead.
@@ -1791,7 +1793,7 @@ export const PGCommitRow = React.memo(function PGCommitRow({
           // what the name is cut to CLEAR, which is why AUTHOR_MIN_W counts it.
           minWidth: 0,
           overflow: "hidden",
-          paddingRight: COL_PAD,
+          paddingRight: colPad(textScale),
         }}
       >
         <PGAvatar name={author} size={16} />
@@ -2053,7 +2055,7 @@ export function PGRebaseRow({
         display: "flex",
         alignItems: "center",
         gap: 8,
-        padding: "calc(6px + var(--row-step) / 2) 10px",
+        padding: "calc(6px * var(--row-scale) + var(--row-step) / 2) 10px",
         // Selection comes from the focus-aware [data-pg-row] CSS, so it must not
         // be overpainted here — only the un-selected row states set a background.
         background: selected ? undefined : dragging ? "var(--bg-3)" : "var(--bg-1)",
@@ -2220,7 +2222,7 @@ export function PGRemoteRow({
       onContextMenu={onContextMenu}
       data-remote={dataRemote}
       style={{
-        padding: "calc(10px + var(--row-step) / 2) 10px",
+        padding: "calc(10px * var(--row-scale) + var(--row-step) / 2) 10px",
         background: "var(--bg-1)",
         border: "1px solid var(--border-0)",
         borderRadius: "var(--r-3)",
@@ -2336,8 +2338,8 @@ export function PGSubmoduleRow({
       onContextMenu={onContextMenu}
       title={state.hint}
       style={{
-        // Density-aware (issue #70): padding-sized row, so half the step per side.
-        padding: "calc(10px + var(--row-step) / 2) 10px",
+        // Follows both UI scales (issue #70): padding-sized row, so half the step per side.
+        padding: "calc(10px * var(--row-scale) + var(--row-step) / 2) 10px",
         background: "var(--bg-1)",
         border: "1px solid var(--border-0)",
         borderRadius: "var(--r-3)",
@@ -2485,7 +2487,7 @@ export function PGWorktreeRow({
       data-current={worktree.isCurrent ? "1" : undefined}
       onContextMenu={onContextMenu}
       style={{
-        padding: "calc(10px + var(--row-step) / 2) 10px",
+        padding: "calc(10px * var(--row-scale) + var(--row-step) / 2) 10px",
         background: "var(--bg-1)",
         // The worktree you are standing in gets the accent edge — without it the
         // list is several near-identical paths and "which one am I in" is a guess.

@@ -93,6 +93,59 @@ export const AUTHOR_MIN_W = 16 + 6 + COL_PAD;
  */
 export const COMMIT_LIST_MIN_W = 420;
 
+// ─── Text-scaled widths ──────────────────────────────────────────────────────
+//
+// Every constant above is sized to TEXT: a sha is seven hex digits of
+// monospace, the Date column is the widest string its format can produce, the
+// subject floor is a readable number of characters. So they all move with the
+// user's Text size preset, or the column truncates the very thing it was sized
+// to hold — and for a sha or a timestamp, truncation destroys the meaning.
+//
+// `scale` defaults to 1 so a caller with no notion of the setting — tests, any
+// surface that never scales — gets exactly the pre-scale numbers. The avatar
+// (16px) and the flex gap after it are NOT type and do not scale; see
+// `authorMinW`.
+//
+// Rounded to a tenth, the same precision applyTextScale writes the ramp at, so
+// a template string never carries a 17-digit float.
+
+const px = (n: number): number => Math.round(n * 10) / 10;
+
+export const shaColW = (scale = 1): number => px(SHA_COL_W * scale);
+export const colPad = (scale = 1): number => px(COL_PAD * scale);
+export const subjectMinW = (scale = 1): number => px(SUBJECT_MIN_W * scale);
+export const authorColW = (scale = 1): number => px(AUTHOR_COL_W * scale);
+/**
+ * Avatar and gap are fixed; only the truncation gutter is type-sized. Reuses
+ * `colPad(scale)` rather than re-deriving `COL_PAD * scale` inline, so the two
+ * agree BY CONSTRUCTION — two expressions of the same scaled pad were only
+ * numerically equal by coincidence of `COL_PAD`'s current value, not by any
+ * guarantee, and a future change to `colPad` (a different rounding rule, a
+ * different pad) would otherwise have to be remembered in a second place.
+ */
+export const authorMinW = (scale = 1): number => px(16 + 6 + colPad(scale));
+export const dateColW = (fmt: DateFormat, scale = 1): number =>
+  px(DATE_COL_W[fmt] * scale);
+
+/**
+ * The narrowest the commit list may be dragged to, at a given text scale.
+ *
+ * Scaled with the columns it is the sum of — a floor that stayed at 420 while
+ * the columns grew would push the Date column off the right edge the moment
+ * someone picked Large, which is exactly the overflow
+ * `git-components.narrow.test.tsx` exists to prevent. `graphWidth` is not in
+ * the scale: lanes are dots and strokes in SVG user units, and they follow row
+ * HEIGHT, not type.
+ */
+export const commitListMinW = (scale = 1): number =>
+  Math.ceil(
+    graphWidth(4) +
+      shaColW(scale) +
+      subjectMinW(scale) +
+      authorMinW(scale) +
+      dateColW("relative", scale),
+  );
+
 /**
  * Grid template shared by PGCommitRow and History's column header, so the two
  * cannot drift. `graphW === 0` drops the graph column entirely — that is
@@ -113,10 +166,18 @@ export const COMMIT_LIST_MIN_W = 420;
  * than a second `fr` — a fractional author track never stops growing, and
  * `fit-content()` sizes each ROW to its own author, which un-aligns the
  * columns from each other and from the header.
+ *
+ * `scale` is the user's Text size preset. It defaults to 1 for the same reason
+ * `dateW` defaults to the relative width — a caller that knows nothing about
+ * the setting gets exactly the old template.
  */
-export const commitRowGrid = (graphW: number, dateW: number = DATE_COL_W.relative): string => {
+export const commitRowGrid = (
+  graphW: number,
+  dateW: number = DATE_COL_W.relative,
+  scale = 1,
+): string => {
   const cols =
-    `${SHA_COL_W}px minmax(${SUBJECT_MIN_W}px, 1fr) ` +
-    `minmax(${AUTHOR_MIN_W}px, ${AUTHOR_COL_W}px) ${dateW}px`;
+    `${shaColW(scale)}px minmax(${subjectMinW(scale)}px, 1fr) ` +
+    `minmax(${authorMinW(scale)}px, ${authorColW(scale)}px) ${dateW}px`;
   return graphW > 0 ? `${graphW}px ${cols}` : cols;
 };
