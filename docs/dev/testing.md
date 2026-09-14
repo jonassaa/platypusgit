@@ -105,7 +105,9 @@ Rules that keep the gates honest:
   head. The push run is the only thing that ever tests `main` itself. `concurrency: cancel-in-progress`
   collapses merge bursts. Revisit only if runner minutes become the constraint.
 
-## Two workflows that are not gates — they exist to buy CI time back
+## Three workflows that are not gates
+
+Two of them buy CI time back. The third reports things no gate would catch.
 
 **`cache-prune.yml` — the Actions cache has a 10 GB ceiling, and going over it
 costs the release five minutes a job.** Over the ceiling GitHub evicts
@@ -159,6 +161,39 @@ described by an older commit's analysis.
 > results from an advanced configuration while default setup is enabled. If
 > code scanning ever goes quiet, check that setting first — re-enabling default
 > setup does not disable this workflow, it just makes it fail.
+
+**`audit.yml` — the security tab was the only thing that knew about
+transitive advisories, and nobody reads it on a schedule.** This is the Group D
+half of #346. It runs weekly on Thursday (offset from Dependabot's Monday, so
+the two report at opposite ends of the week) plus `workflow_dispatch`, and it
+has **no `pull_request` trigger at all** — which is the only reliable way to
+stop a reporting job quietly becoming a gate. A new advisory in a dev-only
+transitive dep must never turn `main` red or block an unrelated PR;
+`e2e-linux` stays the one required check.
+
+What fails is narrow and on purpose. On the npm side only `pnpm audit --prod`
+gates, because `dependencies` is what the shipped bundle is built from; the
+all-scopes run is report-only into the job summary. On the cargo side the
+default gates, because those crates ship.
+
+> ⚠️ **Do not add `--deny warnings` to the `cargo audit` step.** `cargo audit`
+> splits its findings in two and only one sets a non-zero exit: *vulnerabilities*
+> fail, while `unmaintained` and `unsound` advisories are warnings and pass.
+> Measured when this landed: **11 warnings, 0 vulnerabilities, exit 0**. `glib`
+> (RUSTSEC-2024-0429) is one of those warnings, which is why it needs no
+> `--ignore` — it never fails the step. `--deny warnings` would turn all 11
+> into failures, make the job permanently red over advisories nobody can act
+> on, and train everyone to ignore it — the exact failure this workflow exists
+> to end.
+
+**It earned its place on the first run.** `cargo audit` and GitHub's advisory
+database do not agree: the first time it was run against this tree it found two
+HIGH advisories in `quick-xml` 0.38.4 (RUSTSEC-2026-0194 and -0195, quadratic
+parse and unbounded allocation) that **Dependabot had never raised an alert
+for**. They arrived via `plist` <- `tauri`, and `cargo update -p plist` cleared
+both — 1.8.0 -> 1.10.1 carries `quick-xml` to 0.42.0, past the 0.41.0 fix line,
+with no manifest edit. Treat a disagreement between the two sources as the
+normal case, not a surprise.
 
 ## The e2e gate is sharded (issue 189)
 
