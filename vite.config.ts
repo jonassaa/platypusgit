@@ -10,13 +10,13 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: { "@": path.resolve(import.meta.dirname, "./src") },
   },
   clearScreen: false,
   // The syntax tokenizer runs in a module worker (src/lib/syntax/tokenize.worker.ts)
   // and Shiki loads each grammar as a dynamic import, so the worker bundle is
-  // code-split. Vite's default worker format is "iife", which rollup refuses for a
-  // split build — the production build fails outright without this.
+  // code-split. Vite's default worker format is "iife", which the bundler refuses
+  // for a split build — the production build fails outright without this.
   worker: { format: "es" },
   server: {
     port: 1420,

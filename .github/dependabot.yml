@@ -23,6 +23,16 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"
+    # @types/node tracks the RUNTIME, not the newest release. Every workflow
+    # here pins node-version: 22 and CLAUDE.md pins the toolchain to Node 22,
+    # so a major bump would type-check this code against APIs that do not
+    # exist on the Node it is built, tested and shipped with — and tsc would
+    # be green about it. It has sat at ^22 since it was introduced (#26) and
+    # Dependabot has re-proposed the major every week since. Raise this the
+    # day the toolchain moves to a new Node LTS, in the same commit.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       # shiki and @shikijs/langs-precompiled are version-COUPLED — the
       # precompiled grammars are built against one shiki version, which is why

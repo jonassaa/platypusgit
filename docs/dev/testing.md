@@ -334,7 +334,7 @@ Where two majors of one package coexist in the tree, the override MUST use the
 `brace-expansion@2`). A bare `"undici": "^7"` would drag `webdriver`, which
 wants 6.x, across a major and break the runner.
 
-Two entries have a story worth recording so they are not re-litigated:
+Three entries have a story worth recording so they are not re-litigated:
 
 - **`esbuild` was fixed by `vite`, not by an override.** `vite` resolves it as
   a tightly-coupled peer, so forcing it across a minor was likelier to break
@@ -382,6 +382,20 @@ Two entries have a story worth recording so they are not re-litigated:
     both track latest Node 22.x, `yauzl` still resolves for the optional peer,
     and `proxy-agent` going uninstalled only removes proxy support from the
     downloader this repo never calls.
+- **`smol-toml` was tolerated until a patch existed, then became an ordinary
+  floor** (Dependabot alert 67 — again an alert number, not an issue).
+  GHSA-7w5x-hrqm-74c2 is a DoS from malformed TOML documents, and its
+  vulnerable range was `<= 1.7.0` — i.e. *every published version*, so for a
+  while there was genuinely no number to bump to and it sat beside
+  `deepmerge-ts` as the pre-existing pair the extract-zip commit measured and
+  left alone. 1.7.1 shipped the fix, which turns it into a one-line override.
+  Two things make the override the only route: it arrives through
+  `@wdio/native-utils`, the one package this block pins **exactly** (2.5.0, to
+  escape the broken 2.4.0 — see above), so it cannot be bumped out from the
+  parent; and `@wdio/native-utils` declares `smol-toml: ^1.6.0`, so `^1.7.1`
+  resolves **inside its own range** and forces nothing across a major. It is a
+  plain floor entry with a matching override key — no absence guard, no
+  vacuous-pass caveat.
 
 **The trap:** a Dependabot npm PR regenerates the lockfile and drops the whole
 `pnpm.overrides` block. Restore it before merging any such PR, or the merge
