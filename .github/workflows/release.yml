@@ -1290,7 +1290,7 @@ jobs:
       # `apt-verify-live` needs none of this: it runs after the push, so it can
       # be a matrix over native runners.
       - name: Enable arm64 containers
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
@@ -1546,7 +1546,7 @@ jobs:
 
       - name: Setup the Microsoft Store Developer CLI
         if: steps.gate.outputs.have_creds == 'true'
-        uses: microsoft/microsoft-store-apppublisher@v1.1
+        uses: microsoft/microsoft-store-apppublisher@v1.4
 
       # `msstore reconfigure` takes credentials ONLY as flags — there is no env
       # form — so this is the one place in the repo where a secret rides on
