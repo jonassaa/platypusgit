@@ -1,0 +1,139 @@
+name: audit
+
+# Surfaces dependency advisories that nothing else here reports.
+#
+# The gap this closes is the standing finding of issue #346: Dependabot's
+# security updater can only bump a MANIFEST entry, and every npm advisory this
+# repo gets is transitive-only, so for most of them Dependabot opens nothing and
+# the alert sits in the security tab forever. Twenty-four accumulated unnoticed
+# that way. Nothing outside that tab knew, because no workflow here had ever run
+# an audit.
+#
+# It is not only a reporting gap. `cargo audit` and GitHub's advisory database
+# do not agree: when this job was written, `cargo audit` found two HIGH
+# advisories in `quick-xml` (RUSTSEC-2026-0194/0195) that Dependabot had never
+# raised an alert for at all. That is the case this job exists to catch.
+#
+# DELIBERATELY NOT A PR GATE. It has no `pull_request` trigger, which is the
+# only reliable way to keep it from becoming one. A newly published advisory in
+# a dev-only transitive dep is not a reason to turn `main` red or to block
+# someone's unrelated PR — `e2e-linux` stays the one required check. What this
+# job does instead is put the finding where a human sees it on a schedule.
+#
+# `site/` is deliberately out of scope. It is a separate pnpm project whose
+# dependencies are DIRECT, so Dependabot's monthly grouped PR can and does fix
+# them itself — every `site/**` alert has come back `fixed` without anyone
+# writing an override. This job exists for the case Dependabot cannot reach.
+
+on:
+  schedule:
+    # Thursday, deliberately offset from Dependabot's Monday 06:00 run so the
+    # two land at opposite ends of the week rather than restating the same
+    # state twice in one morning.
+    - cron: '17 5 * * 4'
+  workflow_dispatch:
+
+# Read-only. This job reports; it never opens a PR, writes a branch, or files an
+# issue. The RustSec action that files issues was deliberately not used.
+permissions:
+  contents: read
+
+concurrency:
+  group: audit
+  cancel-in-progress: false
+
+jobs:
+  # ── npm, root project ───────────────────────────────────────────────────
+  npm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile on purpose: auditing a lockfile this job had just
+      # re-resolved would audit a tree that exists nowhere else, and would
+      # quietly mask a dropped `pnpm.overrides` block by repairing it first.
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      # THE GATING STEP. `dependencies` is what the shipped frontend bundle is
+      # built from, so an advisory here reaches users and has earned a red run.
+      # At zero since the overrides block landed — if it goes red, that is a
+      # real finding, not noise to route around.
+      - name: Production scope (gating)
+        run: pnpm audit --prod
+
+      # Report-only. Dev-scope advisories reach a developer machine or a CI
+      # runner, never a user install, so they are worth SEEING weekly and not
+      # worth failing on.
+      - name: All scopes (report only)
+        if: always()
+        run: |
+          {
+            echo '## pnpm audit — all scopes (report only)'
+            echo
+            echo '```'
+            pnpm audit 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── cargo, src-tauri ────────────────────────────────────────────────────
+  # Unlike the npm side these crates DO ship, so this one gates on its default.
+  cargo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # From crates.io rather than a third-party setup action: adding an
+      # unaudited action to the job whose whole purpose is supply-chain
+      # reporting is not a trade worth making for a weekly run.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # NO --ignore LIST, and that is deliberate rather than an omission.
+      #
+      # `cargo audit` splits its findings in two and only the first kind sets a
+      # non-zero exit: VULNERABILITIES fail, while `unmaintained` and `unsound`
+      # advisories are reported as WARNINGS and pass. Measured when this landed:
+      # 11 warnings, 0 vulnerabilities, exit 0. `glib` (RUSTSEC-2024-0429) is
+      # one of those warnings — it is the shipped, upstream-blocked advisory
+      # written up in docs/dev/distribution.md, and it does NOT need waiving
+      # because it never fails this step in the first place.
+      #
+      # So do not add `--deny warnings` here. It would turn all 11 into
+      # failures, make the job permanently red for advisories nobody can act
+      # on, and train everyone to ignore it — which is the exact failure this
+      # workflow was written to end.
+      - name: cargo audit
+        working-directory: src-tauri
+        run: cargo audit
+
+      # The warnings the step above passes over, written down where they can be
+      # read without re-running anything.
+      - name: Full report
+        if: always()
+        working-directory: src-tauri
+        run: |
+          {
+            echo '## cargo audit — full report, warnings included'
+            echo
+            echo '```'
+            cargo audit 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
