@@ -52,6 +52,7 @@ import {
 import { stageablePaths } from "@/features/repo/ops";
 import {
   currentBranch,
+  diffPaneWaiting,
   isConflicted,
   isStaged,
   isTextualDiff,
@@ -697,6 +698,21 @@ export function CommitPanelScreen() {
   // itself on the outgoing side's row model (issue 188).
   const selKey = `${selected?.path ?? ""}:${selected?.side ?? ""}`;
   const [diffFor, setDiffFor] = React.useState<string | null>(null);
+  /**
+   * Waiting with NOTHING to show, as opposed to refreshing the file the reader
+   * already has open (#470) — see `diffPaneWaiting` for the whole story.
+   *
+   * The effect below refetches on every status refresh, including the
+   * background ones the filesystem watcher triggers, and the body of the pane
+   * is gated on THIS rather than on `diffLoading` so that such a refresh leaves
+   * the rows (and therefore the scroll position) exactly where they were.
+   */
+  const diffPending = diffPaneWaiting({
+    loading: diffLoading,
+    diffFor,
+    showing: selKey,
+    hasDiff: diff !== null,
+  });
   // The user's own way past the blob ceiling (#396) — see the note beside
   // `oversized` above. Keyed on `selKey`, not just the path: the two sides of
   // one file are two different diffs.
@@ -1586,7 +1602,7 @@ export function CommitPanelScreen() {
           }}
           onContextMenu={(e) => diffCopyMenu.onContextMenu(e, undefined)}
         >
-          {diffLoading && (
+          {diffPending && (
             <div
               style={{
                 padding: 20,
@@ -1597,7 +1613,7 @@ export function CommitPanelScreen() {
               <PGSpinner size={14} />
             </div>
           )}
-          {!diffLoading && diffError && (
+          {!diffPending && diffError && (
             <div
               style={{
                 padding: 20,
@@ -1617,7 +1633,7 @@ export function CommitPanelScreen() {
               image branch, because the preview ceiling (4 MiB) is below the
               diff one and reports `tooLarge`, which suppresses the fallback the
               sentence used to live in (#385/#396). */}
-          {!diffLoading && !diffError && oversized && (
+          {!diffPending && !diffError && oversized && (
             <OversizedDiffEmpty
               diff={diff}
               pending={diffLoading}
@@ -1625,7 +1641,7 @@ export function CommitPanelScreen() {
               onDiffAnyway={() => diff && anyway.diffAnyway(diff)}
             />
           )}
-          {!diffLoading && !diffError && diff && diff.binary && !oversized && (
+          {!diffPending && !diffError && diff && diff.binary && !oversized && (
             <ImageDiffOrEmpty
               repoId={repo?.id ?? null}
               path={diff.path}
@@ -1635,7 +1651,7 @@ export function CommitPanelScreen() {
               Binary diffs aren&apos;t shown.
             </ImageDiffOrEmpty>
           )}
-          {!diffLoading && !diffError && diff?.lfs && (
+          {!diffPending && !diffError && diff?.lfs && (
             <>
               <LfsDiffNotice diff={diff} />
               <ImageDiffView
@@ -1645,7 +1661,7 @@ export function CommitPanelScreen() {
               />
             </>
           )}
-          {!diffLoading && !diffError && isTextualDiff(diff) && diff &&
+          {!diffPending && !diffError && isTextualDiff(diff) && diff &&
             diff.hunks.length === 0 && (
               <PGEmpty icon="file" title="No diff">
                 File is tracked but no hunks were produced.
@@ -1654,8 +1670,8 @@ export function CommitPanelScreen() {
           {/* A waived ceiling gets the blob read; it does not make a million
               rows layoutable, so the backend caps the lines. Say so above them
               — an unmentioned cap reads as a diff that just ends (#396). */}
-          {!diffLoading && !diffError && <TruncatedDiffNotice diff={diff} />}
-          {!diffLoading && !diffError && isTextualDiff(diff) && diff && diff.hunks.length > 0 &&
+          {!diffPending && !diffError && <TruncatedDiffNotice diff={diff} />}
+          {!diffPending && !diffError && isTextualDiff(diff) && diff && diff.hunks.length > 0 &&
             diffMode === "unified" && (
               <PGWindowedDiff
                 rows={rows}
@@ -1674,7 +1690,7 @@ export function CommitPanelScreen() {
                 })}
               />
             )}
-          {!diffLoading && !diffError && isTextualDiff(diff) && diff && diff.hunks.length > 0 &&
+          {!diffPending && !diffError && isTextualDiff(diff) && diff && diff.hunks.length > 0 &&
             diffMode === "split" && split && (
               <PGSideBySideDiff {...split} />
             )}

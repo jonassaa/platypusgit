@@ -71,6 +71,49 @@ export function isTextualDiff(diff: FileDiff | null | undefined): boolean {
 }
 
 /**
+ * Is a diff surface waiting with NOTHING to show — as opposed to refreshing
+ * something the reader is already looking at (#470)?
+ *
+ * A surface that swaps its rows for a spinner on every fetch is fine when the
+ * fetch was a file switch, and wrong when it was a refresh of the file already
+ * open. `CommitPanel` refetches whenever the `status` ARRAY changes identity —
+ * the signal that the selected file's staging state moved (#100) — and
+ * `refreshStatus` replaces that array on EVERY refresh, including the
+ * background ones `useFsWatch` runs for each filesystem event (#239). So on a
+ * machine with steady filesystem activity the pane was being emptied once or
+ * twice a second.
+ *
+ * Emptying it is not just a flash. The scroll container stays mounted while its
+ * children become one spinner, so its content collapses from the whole file to
+ * ~50px, the engine clamps `scrollTop` to 0, and restoring the rows does NOT
+ * restore the position — the reader is returned to the top of the file. That is
+ * both halves of the report: it flickers, and it will not stay scrolled.
+ * MEASURED on WebKitGTK 605 (`diff-live-refresh.e2e.ts`): one no-op filesystem
+ * event took a pane from `scrollTop` 3460 with 52 rows to 0 rows at offset 0.
+ *
+ * The REFETCH is not the bug and must stay. A file can be edited to different
+ * text with every status field identical — change one character on an
+ * already-modified line and the counts do not move — so "nothing in the status
+ * changed" is not "the diff is still right", and suppressing the fetch would
+ * quietly break the live working copy #239 exists to provide.
+ */
+export function diffPaneWaiting(o: {
+  /** A fetch is in flight. */
+  loading: boolean;
+  /** Identity of the file the diff in state was FETCHED for (`diffFor`). */
+  diffFor: string | null | undefined;
+  /** Identity of the file the surface is SHOWING (its `selKey`). */
+  showing: string;
+  /** Whether there is a diff in state at all. */
+  hasDiff: boolean;
+}): boolean {
+  if (!o.loading) return false;
+  // Something correct is already on screen for this exact file: keep it there
+  // until the new one lands, and the refresh is invisible.
+  return !(o.hasDiff && !!o.diffFor && o.diffFor === o.showing);
+}
+
+/**
  * The honest reason a large file has no diff, and its size (#385).
  *
  * The backend caps every diff path at `MAX_WORKDIR_BLOB`, and libgit2's answer
