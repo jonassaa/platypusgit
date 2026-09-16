@@ -733,6 +733,51 @@ for operations the user started and can cancel; this is background upkeep, and
 a status line that flickered on every keystroke in someone's editor would be
 noise. It *reads* `RepoActivity` instead, to know when to stay out of the way.
 
+### A background refresh must not empty what the reader is looking at (#470)
+
+"Background upkeep" is a promise about the UI, not just about the status line,
+and the commit panel broke it in a way neither of its two halves looks wrong on
+its own:
+
+- `CommitPanel`'s diff effect lists the `status` **array** in its deps, as the
+  signal that the selected file's staging state moved. That is #100, and it is a
+  real correctness fix: without it the pane kept the pre-stage diff and the next
+  line selection addressed indices into it, staging lines other than the
+  highlighted ones. It cannot simply be removed.
+- `refreshStatus` REPLACES that array on every refresh. When #100 landed, only a
+  user action ran one. Since #239 the filesystem watcher runs one per event.
+
+So every filesystem event refetched the diff, and the pane's body was gated on
+`diffLoading` — which swapped the rows for a spinner. The scroll container
+itself stays mounted, so its content collapsed from the whole file to ~50px, the
+engine clamped `scrollTop` to 0, and putting the rows back did **not** put the
+reader back: restoring content never restores a clamped scroll offset. Both
+halves of the bug report follow — it flickers, and it will not stay scrolled.
+
+MEASURED, WebKitGTK 605 (`e2e/specs/diff-live-refresh.e2e.ts`): ONE event that
+changed nothing at all — same bytes, new mtime, every status field identical —
+took the pane from `scrollTop` 3460 with 52 rows to **0 rows at offset 0**.
+From the reporter's own screen capture, 13 fully blank episodes in 7.7s.
+
+The fix is `diffPaneWaiting` (`lib/derive.ts`): the body is gated on "waiting
+with nothing to show" rather than on "a fetch is in flight", so a refetch of the
+file already on screen keeps its rows, its height and the reader's position, and
+only a first open or a switch to a different file shows the spinner.
+
+**Do not "fix" this by skipping the refetch instead.** A file can be edited to
+different text with every status field identical — change one character on an
+already-modified line and the counts do not move — so "nothing in the status
+changed" is not "the diff is still right", and suppressing the fetch trades a
+visible flicker for a silently stale diff, which is the feature #239 exists to
+provide. The same reasoning rules out making `refreshStatus` preserve the
+array's identity when the new status is deep-equal: it would fix this pane by
+making every consumer of `status` miss that edit.
+
+`RepoBrowser` and `DiffViewer` never had this: their diff effects key on the
+selection's primitives (`selectedFile?.path`, `current?.path`, …), so a status
+refresh does not refetch there at all. The commit panel is the only surface that
+refetches on a refresh, which is why the report named the Commit tab.
+
 ## Undo the last operation (#242)
 
 `features/repo/undoStack.ts` is the whole model, and it is deliberately small:
