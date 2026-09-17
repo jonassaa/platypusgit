@@ -1616,10 +1616,40 @@ boundary; one prepared walk is merely self-consistent where ten were not. What
 holds either way is the actual contract — every commit exactly once, no parent
 before its child — and that is what the same-second fixture asserts.
 
-**What is NOT cached: the filtered walk.** `log_filtered_page` still prepares
-one walk per page. It can visit far more commits than it returns, so it can run
-off the end of a capped prefix mid-page, and handling that well is a different
-piece of work from this one. The ref-map half already applies to it. See #476.
+**The filtered walk reads the same order.** `log_filtered_page` is commit
+search, and it had both defects for the same reason and in the same two lines.
+It is also where they hurt most: a search that matches nothing recent walks a
+long way before it fills a page, and the next page threw that walk away and
+sorted all of history again.
+
+It cannot go through `page_plan`, and the reason is worth keeping. A filtered
+page visits far more commits than it returns, so it can run off the end of an
+order capped at `MAX_ORDER` in the middle of a page — and a short page there is
+indistinguishable, to the user and to the frontend, from "no more matches
+exist". So `cached_filtered_plan` asks `WalkOrder::serves` with `usize::MAX`,
+which admits any offset into a COMPLETE order and no offset at all into a capped
+one; a miss falls back to the revwalk-per-page the filtered log always had. A
+history past the cap is therefore no worse off than before #473. Filling the
+page from the cached prefix and then continuing into a live walk is the version
+that would help there too, and it needs a frontier the builder can hand back
+mid-page.
+
+It must also not PREPARE a walk to find that out: preparing one and then
+discovering it is capped pays for the topological sort twice, on exactly the
+repositories where that sort is most expensive. `LogCache::has_walk` answers
+"has this walk been prepared before" without counting a hit or moving anything,
+which is a different question from `first_page`'s "can this serve the page in
+hand". The one time a filtered page does prepare and file a walk is when nothing
+is filed for that key at all — the page was going to pay for a walk anyway, and
+a search should not depend on the log having been read first to be fast, even
+though in the app it always has been.
+
+Both sources run one `matches` closure, through the generic `filtered_page`,
+because a search that returned different matches depending on whether a walk
+happened to be cached is the one bug this change must not have. The frontier it
+emits is filed against an offset ONLY when the page came out of a cached order:
+a page that walked for itself ends somewhere no order has an index for, and
+filing that offset would put the next page at the wrong depth.
 
 ## Reading the log (#274)
 

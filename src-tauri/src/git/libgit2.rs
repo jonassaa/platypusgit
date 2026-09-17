@@ -234,6 +234,102 @@ impl Libgit2Backend {
     /// `Ok(None)` is "nothing to walk" — an unborn HEAD, or a cursor whose
     /// every oid is missing from a shallow clone — and the caller returns an
     /// empty page for it, exactly as the walk-per-page version did.
+    /// The prepared walk a FILTERED page can be served from, if one is already
+    /// cached. Never prepares one.
+    ///
+    /// Separate from `page_plan` because a filtered page differs from a plain
+    /// one in two ways that both point here.
+    ///
+    /// **Only a COMPLETE order can answer it.** A search visits far more
+    /// commits than it returns, so it can run off the end of an order capped at
+    /// `MAX_ORDER` in the middle of a page — and a short page there is
+    /// indistinguishable, to the user and to the frontend, from "no more
+    /// matches exist". `usize::MAX` is how that is asked: `WalkOrder::serves`
+    /// admits any offset into a complete order and no offset at all into a
+    /// capped one, which is exactly the question.
+    ///
+    /// **It must not PREPARE one to find out.** Preparing a walk and then
+    /// discovering it is capped would pay for the topological sort twice, on
+    /// precisely the repositories where that sort is most expensive. A miss
+    /// here falls back to the revwalk-per-page the filtered log always had, so
+    /// a repository past the cap is no worse off than before #473 — filling the
+    /// page from the cached prefix and then continuing into a live walk is the
+    /// version that would help there too, and it needs a frontier the builder
+    /// can hand back mid-page.
+    fn cached_filtered_plan(
+        &self,
+        repo_id: &RepoId,
+        repo: &Repository,
+        refspec: Option<&str>,
+        cursor: Option<&[String]>,
+    ) -> AppResult<Option<PagePlan>> {
+        // A continuation. `refspec` is ignored here, as it always has been: the
+        // frontier already encodes the walk this page continues.
+        if let Some(frontier) = cursor.filter(|c| !c.is_empty()) {
+            let mut want = Vec::with_capacity(frontier.len());
+            for raw in frontier {
+                want.push(
+                    git2::Oid::from_str(raw).map_err(|_| AppError::InvalidRef(raw.clone()))?,
+                );
+            }
+            let mut sorted = want.clone();
+            sorted.sort();
+            let Some((key, order, offset)) = self.log_cache.resume(repo_id, &sorted, usize::MAX)
+            else {
+                return Ok(None);
+            };
+            // Seeded with the cursor rather than the walk's own start points: a
+            // lane this page stops short of has to survive into the NEXT
+            // cursor, and at this depth the live lanes are the ones the caller
+            // just handed back.
+            return Ok(Some(PagePlan {
+                order,
+                offset,
+                seed: live_commits(repo, &want),
+                key,
+            }));
+        }
+
+        let starts = resolve_log_starts(repo, refspec)?;
+        if starts.is_empty() {
+            return Ok(None);
+        }
+        let key = WalkKey::new(refspec, &starts);
+        if let Some(order) = self.log_cache.first_page(repo_id, &key, usize::MAX) {
+            return Ok(Some(PagePlan {
+                seed: order.starts.clone(),
+                order,
+                offset: 0,
+                key,
+            }));
+        }
+
+        // Nothing usable filed. If a walk for this key has been prepared
+        // before, the only reason it cannot serve is the cap, and preparing a
+        // second one would rediscover that at full price — so search on past
+        // the cap, exactly as this function did before #473.
+        if self.log_cache.has_walk(repo_id, &key) {
+            return Ok(None);
+        }
+        // Otherwise this is the first anyone has asked, and the page was going
+        // to pay for a walk regardless. Prepare it through the same path the
+        // plain log uses and file it, so the pages behind this one are slices
+        // rather than walks — a search must not depend on the log having been
+        // read first to be fast, even though in the app it always has been.
+        let order = Arc::new(self.prepare_walk(repo, &starts)?);
+        self.log_cache.insert(repo_id, key.clone(), Arc::clone(&order));
+        if !order.complete {
+            return Ok(None);
+        }
+        Ok(Some(PagePlan {
+            seed: order.starts.clone(),
+            order,
+            offset: 0,
+            key,
+        }))
+    }
+
+
     fn page_plan(
         &self,
         repo_id: &RepoId,
@@ -2925,6 +3021,61 @@ fn live_commits(repo: &Repository, want: &[git2::Oid]) -> Vec<git2::Oid> {
 }
 
 /// Which prepared walk a page is a slice of, and where the slice starts.
+/// One page of a FILTERED log, read from whatever is handing out commits.
+///
+/// Generic over the source because there are two and they must behave
+/// identically: a slice of a prepared walk's order, and a revwalk this page
+/// built for itself. Returns the rows, the frontier to resume from, and HOW
+/// MANY commits were read — which is what the caller files the frontier
+/// against, and it is not `commits.len()`, because a search reads far more
+/// than it returns.
+///
+/// Take from `rows` ONLY while there is room for another match.
+/// `for oid in rows { if out.len() >= limit { break } … }` yields an oid first
+/// and discards it on the break, without recording it in the frontier — and a
+/// cursor start-point lost that way is in neither `visited` nor `candidates`,
+/// so `finish` omits it and every commit reachable only through that lane
+/// disappears from the log for good. The plain log sidesteps this by taking
+/// exactly `limit`; a search cannot, because it decides per commit whether one
+/// counts.
+fn filtered_page<I>(
+    repo: &Repository,
+    rows: I,
+    ref_map: &RefMap,
+    seed: &[git2::Oid],
+    limit: usize,
+    mut matches: impl FnMut(&Repository, &git2::Commit<'_>) -> AppResult<bool>,
+) -> AppResult<(Vec<CommitInfo>, Option<Vec<git2::Oid>>, usize)>
+where
+    I: Iterator<Item = AppResult<git2::Oid>>,
+{
+    let mut rows = rows;
+    let mut out = Vec::new();
+    // The frontier tracks every VISITED commit, not just the matches: resuming
+    // from a match's parents would skip the non-matching commits between them
+    // and lose their ancestors entirely.
+    let mut frontier = FrontierBuilder::new(limit.min(4096));
+    frontier.seed(seed);
+    let mut read = 0usize;
+
+    while out.len() < limit {
+        let Some(oid) = rows.next() else { break };
+        let oid = oid?;
+        let commit = repo.find_commit(oid)?;
+        frontier.visit(oid, commit.parent_ids());
+        read += 1;
+        if !matches(repo, &commit)? {
+            continue;
+        }
+        let mut info = commit_to_info(&commit);
+        info.refs = ref_map.get(&oid).cloned().unwrap_or_default();
+        out.push(info);
+    }
+
+    Ok((out, frontier.finish(repo), read))
+}
+
+
 struct PagePlan {
     order: Arc<WalkOrder>,
     offset: usize,
@@ -3986,45 +4137,29 @@ impl GitBackend for Libgit2Backend {
         };
 
         self.with_repo(repo_id, |repo| {
+            // A first page validates the decorations; a continuation reuses
+            // what its first page saw (#473).
             let ref_map = self.ref_map(repo_id, repo, cursor.is_none());
-            let mut walk = repo.revwalk()?;
-            walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-            let starts = push_page_start(repo, &mut walk, refspec, cursor)?;
-            if starts.is_empty() {
-                return Ok(LogPage {
-                    commits: Vec::new(),
-                    next_cursor: None,
-                });
-            }
 
-            let mut out = Vec::new();
-            // The frontier tracks every VISITED commit, not just the matches:
-            // resuming from a match's parents would skip the non-matching
-            // commits between them and lose their ancestors entirely.
-            let mut frontier = FrontierBuilder::new(limit.min(4096));
-            frontier.seed(&starts);
-            // Pull from the walk ONLY while there is room for another match.
-            // `for oid in walk { if out.len() >= limit { break } … }` yields an oid
-            // first and discards it on the break, without recording it in the
-            // frontier — and a cursor start-point lost that way is in neither
-            // `visited` nor `candidates`, so `finish` omits it and every commit
-            // reachable only through that lane disappears from the log for good.
-            // `log_page` sidesteps this with `walk.by_ref().take(limit)`; the
-            // filtered walk cannot, because it decides per commit whether one
-            // counts towards the limit.
-            let mut walk = walk;
-            while out.len() < limit {
-                let Some(oid) = walk.next() else { break };
-                let oid = oid?;
-                let commit = repo.find_commit(oid)?;
-                frontier.visit(oid, commit.parent_ids());
+            // Which commits this page reads, and in what sequence: a prepared
+            // walk the log already paid for when one can answer the question,
+            // and otherwise a revwalk of this page's own — which is what EVERY
+            // filtered page did before #473.
+            let plan = self.cached_filtered_plan(repo_id, repo, refspec, cursor)?;
+
+            // Whether a commit counts towards `limit`. Written once and handed
+            // to whichever source is reading, so the two cannot drift: a search
+            // returning different matches depending on whether a walk happened
+            // to be cached is the one bug this change must not have.
+            let matches = |repo: &Repository, commit: &git2::Commit<'_>| -> AppResult<bool> {
+                let oid = commit.id();
 
                 // sha prefix — cheap, check first. Compared nibble-by-nibble
                 // off the raw bytes: `oid.to_string()` allocated 40 hex chars
                 // for EVERY commit the walk visits, matching or not.
                 if let Some(ref q) = sha_q {
                     if !oid_has_hex_prefix(&oid, q) {
-                        continue;
+                        return Ok(false);
                     }
                 }
 
@@ -4032,12 +4167,12 @@ impl GitBackend for Libgit2Backend {
                 let ts = commit.time().seconds();
                 if let Some(since) = filter.since {
                     if ts < since {
-                        continue;
+                        return Ok(false);
                     }
                 }
                 if let Some(until) = filter.until {
                     if ts > until {
-                        continue;
+                        return Ok(false);
                     }
                 }
 
@@ -4047,7 +4182,7 @@ impl GitBackend for Libgit2Backend {
                     let name = author.name().unwrap_or("").to_lowercase();
                     let email = author.email().unwrap_or("").to_lowercase();
                     if !name.contains(q.as_str()) && !email.contains(q.as_str()) {
-                        continue;
+                        return Ok(false);
                     }
                 }
 
@@ -4055,14 +4190,14 @@ impl GitBackend for Libgit2Backend {
                 if let Some(ref q) = message_q {
                     let msg = commit.message().unwrap_or("").to_lowercase();
                     if !msg.contains(q.as_str()) {
-                        continue;
+                        return Ok(false);
                     }
                 }
 
                 // path — expensive, check late.
                 if let Some(ref p) = path_q {
-                    if !commit_touches_path(repo, &commit, p)? {
-                        continue;
+                    if !commit_touches_path(repo, commit, p)? {
+                        return Ok(false);
                     }
                 }
 
@@ -4070,19 +4205,51 @@ impl GitBackend for Libgit2Backend {
                 // commit, so it runs LAST: an author- or path-scoped search
                 // only diffs the commits every cheaper filter already accepted.
                 if let Some(ref m) = content_m {
-                    if !commit_diff_matches_content(repo, &commit, m, path_q.as_deref())? {
-                        continue;
+                    if !commit_diff_matches_content(repo, commit, m, path_q.as_deref())? {
+                        return Ok(false);
                     }
                 }
 
-                let refs: Vec<RefInfo> = ref_map.get(&oid).cloned().unwrap_or_default();
-                let mut info = commit_to_info(&commit);
-                info.refs = refs;
-                out.push(info);
+                Ok(true)
+            };
+
+            let (commits, next, at, filed) = match &plan {
+                Some(p) => {
+                    let rows = p.order.order[p.offset..].iter().copied().map(Ok);
+                    let (commits, next, read) =
+                        filtered_page(repo, rows, &ref_map, &p.seed, limit, matches)?;
+                    (commits, next, p.offset + read, Some(p.key.clone()))
+                }
+                None => {
+                    let mut walk = repo.revwalk()?;
+                    walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
+                    let starts = push_page_start(repo, &mut walk, refspec, cursor)?;
+                    if starts.is_empty() {
+                        return Ok(LogPage {
+                            commits: Vec::new(),
+                            next_cursor: None,
+                        });
+                    }
+                    self.log_cache.record_walk_prepared();
+                    let rows = walk.map(|r| r.map_err(AppError::from));
+                    let (commits, next, read) =
+                        filtered_page(repo, rows, &ref_map, &starts, limit, matches)?;
+                    (commits, next, read, None)
+                }
+            };
+
+            // File the frontier against where it continues, so the page after
+            // this one slices the same prepared walk. ONLY when this page came
+            // out of a cached order: a page that walked for itself ends
+            // somewhere no order has an index for, and filing that offset
+            // against one would put the next page at the wrong depth.
+            if let (Some(f), Some(key)) = (&next, filed) {
+                self.log_cache.remember_cursor(repo_id, &key, f.clone(), at);
             }
+
             Ok(LogPage {
-                next_cursor: frontier.finish(repo).as_deref().map(cursor_strings),
-                commits: out,
+                next_cursor: next.as_deref().map(cursor_strings),
+                commits,
             })
         })
     }

@@ -247,6 +247,29 @@ impl LogCache {
     }
 
     /// File a freshly prepared walk, evicting the least recently used one.
+    /// Whether a walk for `key` is already filed, whatever it can answer.
+    ///
+    /// Not the same question as `first_page`, and the difference is the point.
+    /// `first_page` says "can this serve the page in hand", and a CAPPED order
+    /// says no to a filtered page every time (see `cached_filtered_plan`). This
+    /// says "has this walk been prepared before", so a search does not prepare
+    /// a second one to rediscover that the history is longer than `MAX_ORDER` —
+    /// which would pay for the topological sort twice on every search, on
+    /// exactly the repositories where it is most expensive.
+    ///
+    /// Deliberately counts no hit and moves nothing: it is a question about the
+    /// cache, not a read from it.
+    pub fn has_walk(&self, repo: &RepoId, key: &WalkKey) -> bool {
+        self.repos
+            .lock()
+            .map(|repos| {
+                repos
+                    .get(repo)
+                    .is_some_and(|e| e.walks.iter().any(|w| &w.key == key))
+            })
+            .unwrap_or(false)
+    }
+
     pub fn insert(&self, repo: &RepoId, key: WalkKey, order: Arc<WalkOrder>) {
         let Ok(mut repos) = self.repos.lock() else {
             return;
