@@ -383,6 +383,7 @@ pub fn run() {
             commands::commits::format_patch,
             commands::branches::push_commit,
             commands::commits::file_history,
+            commands::commits::cancel_walk,
             commands::commits::verify_commit,
             commands::commits::commit_notes,
             commands::commits::get_commit_template,

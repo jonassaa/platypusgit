@@ -52,6 +52,10 @@ function setRepo(partial: Record<string, unknown>) {
     repoState: "Clean",
     rebaseStatus: { inProgress: false, nextIndex: 0, total: 0, pauseReason: null },
     activity: {},
+    // Reset explicitly, or a test that asks for a cancel leaks the flag into
+    // the next one — which is how "Cancel network operation" read "Force stop"
+    // in a test that never clicked anything.
+    cancelRequested: false,
     ...partial,
   } as never);
 }
@@ -198,15 +202,17 @@ describe("buildCommands", () => {
     });
 
     it("appears while a fetch is running and cancels it", () => {
-      const cancelNetworkOps = vi.fn();
-      setRepo({ activity: { fetch: act("Fetching origin…") }, cancelNetworkOps });
+      const cancelActivity = vi.fn();
+      setRepo({ activity: { fetch: act("Fetching origin…") }, cancelActivity });
       const item = buildCommands().find((i) => i.id === "action:cancel-network");
       expect(item).toBeTruthy();
       // Names what it would stop — there can be several ops in flight, and a
       // bare "Cancel" in a palette is a row nobody dares press.
       expect(item!.detail).toBe("Fetching origin…");
       item!.run();
-      expect(cancelNetworkOps).toHaveBeenCalled();
+      // Through `cancelActivity`, which picks the mechanism from the same table
+      // the gate reads (#474) — not straight to the network path.
+      expect(cancelActivity).toHaveBeenCalledWith("fetch");
     });
 
     it("stays away from an op the backend cannot stop", () => {
@@ -215,6 +221,41 @@ describe("buildCommands", () => {
       // row offering to cancel it would be a row that does nothing.
       setRepo({ activity: { rebase: act("Rebasing…") } });
       expect(ids()).not.toContain("action:cancel-network");
+    });
+
+    // #474: `history` is cancellable, but NOT by `cancel_network_op` — there is
+    // no subprocess to signal. Before the mechanism became part of the same
+    // table, the gate said yes and the row called the network path, which is a
+    // Cancel that runs and stops nothing.
+    it("offers its own row for a history search, and routes it by kind", () => {
+      const cancelActivity = vi.fn();
+      setRepo({
+        activity: { history: act("Searching history for src/main.rs…") },
+        cancelActivity,
+      });
+
+      expect(ids()).not.toContain("action:cancel-network");
+      const item = buildCommands().find(
+        (i) => i.id === "action:cancel-history-search",
+      );
+      expect(item).toBeTruthy();
+      expect(item!.detail).toBe("Searching history for src/main.rs…");
+      item!.run();
+      expect(cancelActivity).toHaveBeenCalledWith("history");
+    });
+
+    // A walk polls a flag; asking twice does what asking once did. Borrowing
+    // the network row's "Force stop" would promise an escalation that does not
+    // exist.
+    it("does not promise an escalation the walk has no counterpart for", () => {
+      setRepo({
+        activity: { history: act("Searching history…") },
+        cancelRequested: true,
+      });
+      const item = buildCommands().find(
+        (i) => i.id === "action:cancel-history-search",
+      );
+      expect(item!.label).toBe("Stop searching history");
     });
 
     it("relabels itself once a cancel has been asked for", () => {

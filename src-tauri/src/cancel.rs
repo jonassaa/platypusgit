@@ -1,4 +1,10 @@
-//! Cancelling an in-flight network git subprocess (#234, hardened by #263).
+//! Cancelling an operation in flight (#234, hardened by #263, widened by #474).
+//!
+//! Two kinds of work end up here, and they stop in completely different ways: a
+//! network **subprocess**, which is signalled, and a long in-process libgit2
+//! **walk**, which is asked to notice. One registry for both, because "what is
+//! running that the user might want to stop" is one question — see
+//! [`Scope::Walk`] for what the second kind does not get.
 //!
 //! Before this module a clone, fetch, pull or push that hung could only be
 //! escaped by force-quitting the app — `run_clone` said so in a comment, and
@@ -12,6 +18,15 @@
 //! same reason the credential policy lives in one place: a second cancel path
 //! would be a network op nobody can stop. A new network op inherits
 //! cancellation by using `run_git_authenticated`, with nothing to remember.
+//!
+//! The in-process walk added by #474 registers at its own choke point,
+//! `commands::commits::file_history`, and the command passes the registration's
+//! [`Registration::is_cancelled`] into the backend as the predicate the walk
+//! polls. The backend therefore knows nothing about this module: it is handed a
+//! `&dyn Fn() -> bool` and asks it between commits. That is what keeps the
+//! scope-to-path matching in ONE place — the command resolves the path with
+//! `get_repo_path`, exactly as `cancel_walk` does, so the two cannot drift into
+//! addressing different scopes.
 //!
 //! ## Scope, not op id
 //!
@@ -94,12 +109,35 @@ pub enum Scope {
     /// the ops themselves get their `cwd` — the two must keep agreeing, or a
     /// cancel would silently match nothing.
     Repo(PathBuf),
+    /// Every long in-process libgit2 walk on the repository at this path
+    /// (#474) — today `file_history`.
+    ///
+    /// **The one scope with nothing to signal.** There is no subprocess: the
+    /// work is a revwalk on a blocking thread, so [`cancel`] can only mark the
+    /// entry and the walk itself has to notice — which it does by polling
+    /// [`Registration::is_cancelled`] between commits. These entries never
+    /// `attach` a pid, so `kill_tree` is unreachable for them and the
+    /// SIGTERM→SIGKILL escalation is meaningless here: a second click sets the
+    /// same flag the first one did.
+    ///
+    /// Separate from `Repo` rather than folded into it, even though both are
+    /// keyed by the same path. Cancelling a stalled fetch must not also abandon
+    /// a history search the user is waiting on, and cancelling the search must
+    /// not kill the fetch: they are different waits, and the status bar offers
+    /// Cancel for one of them at a time. `cancel_all` reaches both, which is
+    /// what a closing window wants.
+    Walk(PathBuf),
 }
 
 impl Scope {
     /// The scope for a network op running in `cwd`.
     pub fn repo(cwd: &Path) -> Self {
         Scope::Repo(cwd.to_path_buf())
+    }
+
+    /// The scope for an in-process walk on the repository at `cwd`.
+    pub fn walk(cwd: &Path) -> Self {
+        Scope::Walk(cwd.to_path_buf())
     }
 }
 

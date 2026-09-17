@@ -28,7 +28,8 @@ use super::{
         BlobSource,
         DiffKind,
         DiffToolTarget,
-        DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileStatus, HeadInfo, ImagePreview,
+        DiffLine, DiffLineKind, FastForward, FileContent, FileDiff, FileHistory, FileStatus,
+        HeadInfo, HistoryStop, ImagePreview,
         LfsStatus,
         LogFilter, LogPage,
         OversizedBlob,
@@ -7177,13 +7178,26 @@ impl GitBackend for Libgit2Backend {
         })
     }
 
+    /// See the trait docs for the two ceilings and why the second one exists.
+    ///
+    /// **A READ** (`with_repo_read`, #400/#474). Everything below is object
+    /// reads — a revwalk over the refs, `find_commit`, `Tree::get_path`, and in
+    /// the pathspec case a tree-to-tree diff. Nothing touches the index, the
+    /// worktree, a ref or the odb's write side, so there is no write here to
+    /// interleave with another one. That matters more for this op than for most:
+    /// it is the longest read in the backend, and holding the exclusive lock for
+    /// it queued every other operation on the repository behind a walk that
+    /// could take minutes — the exact failure the read-concurrency work set out
+    /// to remove.
     fn file_history(
         &self,
         repo_id: &RepoId,
         path: &Path,
         limit: usize,
-    ) -> AppResult<Vec<CommitInfo>> {
-        self.with_repo(repo_id, |repo| {
+        visit_limit: Option<usize>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> AppResult<FileHistory> {
+        self.with_repo_read(repo_id, |repo| {
             // Without this the walk runs to completion and returns 0 commits —
             // indistinguishable from a file that genuinely has no history.
             reject_embedded_repo(repo, path)?;
@@ -7195,20 +7209,50 @@ impl GitBackend for Libgit2Backend {
                     Err(e.into())
                 }
             })?;
+            // TIME|TOPOLOGICAL, like every other walk in this file, and
+            // deliberately not the cheaper `Sort::NONE` (#474). libgit2's sorted
+            // revwalk pre-walks the whole graph before it yields anything —
+            // measured at ~14.5 s on `torvalds/linux`, identically for TIME and
+            // for TIME|TOPOLOGICAL, so the sort order is not what made this
+            // slow and dropping TOPOLOGICAL buys nothing. `Sort::NONE` IS
+            // incremental, and unusable: it yields commits in the order the
+            // traversal reaches them, so the first 50,000 of them are not the
+            // newest 50,000 and a capped walk could miss last week's change to
+            // the file while reporting one from 2011. The cap has to mean
+            // "the newest N commits" or it cannot be said out loud.
             revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
 
-            let mut out = Vec::with_capacity(limit);
+            let cap = visit_limit.unwrap_or(usize::MAX);
+            let mut out = Vec::with_capacity(limit.min(1024));
+            let mut visited = 0usize;
+            let mut stopped_at = HistoryStop::Exhausted;
             for oid_res in revwalk {
                 if out.len() >= limit {
+                    stopped_at = HistoryStop::MatchLimit;
                     break;
+                }
+                if visited >= cap {
+                    stopped_at = HistoryStop::VisitLimit;
+                    break;
+                }
+                // Between commits rather than per tree lookup: the check takes a
+                // mutex, and at ~82 µs of work per commit this is already a
+                // sub-millisecond response to a click.
+                if cancelled() {
+                    return Err(AppError::Cancelled);
                 }
                 let oid = oid_res?;
                 let commit = repo.find_commit(oid)?;
+                visited += 1;
                 if commit_touches_path(repo, &commit, path)? {
                     out.push(commit_to_info(&commit));
                 }
             }
-            Ok(out)
+            Ok(FileHistory {
+                commits: out,
+                visited,
+                stopped_at,
+            })
         })
     }
 

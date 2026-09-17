@@ -27,6 +27,7 @@ import type {
   FastForward,
   FileContent,
   FileDiff,
+  FileHistory,
   FileStatus,
   ForgeCheckoutRequest,
   ForgeDetection,
@@ -1381,12 +1382,54 @@ export async function rebaseAcknowledge(repoId: string): Promise<void> {
   return invoke<void>("rebase_acknowledge", { repoId });
 }
 
+/**
+ * The commits that touched one path, newest first, and what bounded the search
+ * (#474).
+ *
+ * Two ceilings, and the result says which one ended the walk. `limit` caps the
+ * MATCHES; the backend separately caps how many commits it will LOOK AT, which
+ * is what stops a file with fewer changes than `limit` from walking to the root
+ * of history — ~1.5 million commits on `torvalds/linux` for one click.
+ *
+ * `searchAll` waives the visit cap, for the user who read the notice and wants
+ * the rest of history searched anyway. It is the old unbounded walk, asked for
+ * deliberately and cancellable with `cancelWalk` — never the default.
+ *
+ * The cap itself is deliberately NOT a constant on this side: the number the
+ * notice shows is `visited`, off the wire, so it cannot drift from the number
+ * that was applied.
+ */
+/**
+ * How many changes one file-history page holds — the MATCH ceiling.
+ *
+ * Exported so the one screen that asks can say the same number the wrapper
+ * defaults to, rather than keeping a second copy of it.
+ */
+export const FILE_HISTORY_LIMIT = 200;
+
 export async function fileHistory(
   repoId: string,
   path: string,
-  limit = 200,
-): Promise<CommitInfo[]> {
-  return invoke<CommitInfo[]>("file_history", { repoId, path, limit });
+  limit = FILE_HISTORY_LIMIT,
+  searchAll = false,
+): Promise<FileHistory> {
+  return invoke<FileHistory>("file_history", { repoId, path, limit, searchAll });
+}
+
+/**
+ * Stop the in-process history walks running on one repository (#474).
+ *
+ * The sibling of `cancelNetworkOp`, for the other kind of long operation: a
+ * `file_history` walk is libgit2 inside one blocking call, with no subprocess
+ * to signal, so cancelling sets a flag the walk itself polls between commits.
+ * Scoped to the repository for the same reason network cancellation is — there
+ * is nothing finer for the user to point at.
+ *
+ * Answers how many walks were signalled. Zero is a normal answer: the walk can
+ * finish between the click and this call.
+ */
+export async function cancelWalk(repoId: string): Promise<number> {
+  return invoke<number>("cancel_walk", { repoId });
 }
 
 export async function appendGitignore(

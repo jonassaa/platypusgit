@@ -76,6 +76,19 @@ export interface RepoActivity {
    * from one that never started.
    */
   action?: ActivityState;
+  /**
+   * Searching one file's history (#474).
+   *
+   * The first entry here that is not a subprocess and not a mutation — it is a
+   * libgit2 revwalk, and it earns an entry for the one reason this module
+   * exists: on a large repository it is a wait long enough to need stopping.
+   * `file_history` walks from HEAD comparing trees at the path, so before the
+   * visit cap a rarely-touched file walked to the root of history — ~1.5
+   * million commits on `torvalds/linux`, for a file the user clicked once, with
+   * a spinner and no way out. The cap bounds it; this is what makes the bounded
+   * wait visible and cancellable.
+   */
+  history?: ActivityState;
 }
 
 export type ActivityKey = keyof RepoActivity;
@@ -99,6 +112,9 @@ export const ACTIVITY_PRIORITY: readonly ActivityKey[] = [
   "stash",
   "branch",
   "forge",
+  // Above difftool because the app really is busy here, below the git ops
+  // because a push the user started outranks a screen filling in behind it.
+  "history",
   "difftool",
   // Below difftool: like it, the app is not busy — someone else's program is —
   // and any real git op running underneath is the more urgent thing to say.
@@ -124,25 +140,40 @@ export function activityCount(activity: RepoActivity): number {
 }
 
 /**
- * The kinds `cancelNetworkOps` can actually stop.
+ * How a kind of operation is stopped — `null` for one that cannot be.
  *
- * Everything here runs as a `git` subprocess through
- * `commands::net::run_git_authenticated`, which registers it under
- * `cancel::Scope::Repo` — so `cancel_network_op` reaches it. The rest are
- * libgit2 work inside one blocking call with nothing to signal: a rebase replay
- * cannot be interrupted at all yet (#296 gap 6), and a checkout or stash is over
- * before a button could be found. Offering Cancel on those would be a button
- * that does nothing, which is worse than no button.
+ * ONE table rather than a set plus a branch at the button, because "can this be
+ * cancelled" and "what cancels it" are the same question asked twice, and two
+ * answers are free to disagree. `useActivityView` reads it to decide both.
+ *
+ * * `"network"` — a `git` subprocess through
+ *   `commands::net::run_git_authenticated`, registered under
+ *   `cancel::Scope::Repo` and stopped by `cancel_network_op` signalling its
+ *   process group.
+ * * `"walk"` — libgit2 inside one blocking call, registered under
+ *   `cancel::Scope::Walk` and stopped by `cancel_walk` setting a flag the walk
+ *   polls between commits (#474). There is no process to signal.
+ *
+ * Everything absent is libgit2 work with nothing to poll: a rebase replay
+ * cannot be interrupted at all yet (#296 gap 6), and a checkout or stash is
+ * over before a button could be found. Offering Cancel on those would be a
+ * button that does nothing, which is worse than no button.
  */
-const CANCELLABLE: ReadonlySet<ActivityKey> = new Set<ActivityKey>([
-  "fetch",
-  "pull",
-  "push",
-  "lfs",
-  "submodule",
-  "forge",
-]);
+const CANCEL_PATH: Partial<Record<ActivityKey, "network" | "walk">> = {
+  fetch: "network",
+  pull: "network",
+  push: "network",
+  lfs: "network",
+  submodule: "network",
+  forge: "network",
+  history: "walk",
+};
+
+/** What stops an operation of this kind, or null when nothing does. */
+export function cancelPath(key: ActivityKey): "network" | "walk" | null {
+  return CANCEL_PATH[key] ?? null;
+}
 
 export function isCancellable(key: ActivityKey): boolean {
-  return CANCELLABLE.has(key);
+  return cancelPath(key) !== null;
 }

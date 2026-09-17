@@ -31,7 +31,7 @@ use types::{
     BisectMark, BisectStatus, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult, ConflictSides,
     DeleteFailure, DiffKind, DiffToolTarget, FileContent,
     BulkFastForward, FastForward,
-    FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
+    FileDiff, FileHistory, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
     BlobSource, ImagePreview,
     RemoteInfo,
     RepoHandle,
@@ -68,6 +68,24 @@ pub fn repo_path_key(path: &Path) -> PathBuf {
     PathBuf::from(trimmed)
 }
 
+/// How many commits a default `file_history` walk will look at (#474).
+///
+/// The number is a budget on the walk's MARGINAL cost, which is the part a cap
+/// can control. Measured on `torvalds/linux` (`docs/dev/performance.md`):
+/// libgit2's sorted revwalk pre-walks the whole graph before yielding anything,
+/// ~14.5 s that no cap can remove, and each visited commit then costs ~82 µs of
+/// tree comparison. So 50,000 visits is ~4 s of work on top of the floor, and
+/// the uncapped walk that this replaces was ~1.5 million of them.
+///
+/// 50,000 is also the scale the rest of this repo already treats as "large": it
+/// is the `deep` benchmark fixture's commit count, chosen because it is where
+/// other git GUIs are reported to fall over. Under it — which is nearly every
+/// repository — this cap never fires and changes nothing.
+///
+/// ONE definition, read by `commands::commits::file_history`. The number the
+/// user is shown is the `visited` count that comes back, never this constant
+/// re-spelled in the frontend, so the sentence cannot drift from the policy.
+pub const FILE_HISTORY_VISIT_LIMIT: usize = 50_000;
 
 pub trait GitBackend: Send + Sync {
     // === existing reads ===
@@ -176,13 +194,33 @@ pub trait GitBackend: Send + Sync {
     /// revspec cannot be resolved to a commit; unrelated histories are a
     /// `merge_base: None`, not an error.
     fn ahead_behind(&self, repo_id: &RepoId, a: &str, b: &str) -> AppResult<AheadBehind>;
-    /// Commits that touched `path`, newest first, up to `limit`.
+    /// Commits that touched `path`, newest first, up to `limit` — and what
+    /// stopped the walk (#474).
+    ///
+    /// **Two ceilings, because one is not enough.** `limit` bounds the MATCHES;
+    /// `visit_limit` bounds how many commits are LOOKED AT. Without the second
+    /// one, a file with fewer changes than `limit` has nothing to stop on and
+    /// the walk runs to the root of history doing a tree comparison at every
+    /// commit — ~1.5 million of them on `torvalds/linux`, for a file the user
+    /// clicked once, which is most files in most large repositories rather than
+    /// a corner case.
+    ///
+    /// `visit_limit: None` is that unbounded walk, and it exists so the user who
+    /// read the notice can ask for it deliberately. It is never the default.
+    ///
+    /// `cancelled` is polled as the walk runs; `Cancelled` when it answers
+    /// true. A capped walk on a kernel-sized repository is still seconds
+    /// (`docs/dev/performance.md` has the figures), and this is the only way out
+    /// of one that is no longer wanted — nothing here is a subprocess, so there
+    /// is nothing for `cancel::cancel` to signal.
     fn file_history(
         &self,
         repo_id: &RepoId,
         path: &Path,
         limit: usize,
-    ) -> AppResult<Vec<CommitInfo>>;
+        visit_limit: Option<usize>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> AppResult<FileHistory>;
     /// Blame `path` as of HEAD (#253).
     ///
     /// `ignore_revs` selects between the two views a repository with a

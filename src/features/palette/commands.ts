@@ -26,7 +26,7 @@ import { usePaletteStore } from "./usePaletteStore";
 import { createBranchInputStep, switchRepoStep } from "./steps";
 import { currentBranch, isConflicted, relativeTime } from "@/lib/derive";
 import { headUpstream, refreshOp, resolveConflictsOp } from "@/features/repo/ops";
-import { isCancellable, primaryActivity } from "@/features/repo/repoActivity";
+import { cancelPath, primaryActivity } from "@/features/repo/repoActivity";
 import type { ActionId } from "@/features/keymap";
 import type { BranchInfo, CommitInfo, FileStatus } from "@/lib/types";
 import type { PaletteItem, PaletteStep } from "./types";
@@ -940,12 +940,29 @@ export function buildCommands(): PaletteItem[] {
   // is: a row that only ever answers "nothing to cancel" is noise the rest of
   // the time, and a Cancel row that does nothing is worse than none.
   //
-  // The gate is `isCancellable` — the same one the status bar uses — so the two
-  // surfaces cannot drift into offering different things. It is the set of ops
-  // that go through `run_git_authenticated`, i.e. exactly what
-  // `cancel_network_op` can reach.
+  // The gate is `cancelPath` — the same table the status bar uses — so the two
+  // surfaces cannot drift into offering different things, and since #474 it
+  // also says WHICH mechanism reaches the op: a network subprocess is signalled
+  // (`cancel_network_op`), an in-process walk is asked to notice
+  // (`cancel_walk`). Both rows below hand that decision to
+  // `repo.cancelActivity`; a row that picked for itself would be a Cancel that
+  // signals a process while a revwalk carried on.
   const running = primaryActivity(repo.activity);
-  if (running && isCancellable(running.key)) {
+  const cancelVia = running ? cancelPath(running.key) : null;
+  if (running && cancelVia === "walk") {
+    items.push({
+      type: "command", id: "action:cancel-history-search",
+      search: "cancel stop abort history search file walk",
+      // ONE label, unlike the network row's two: a walk polls a flag between
+      // commits, so a second ask does exactly what the first did. There is no
+      // SIGTERM→SIGKILL escalation here to warn anyone about.
+      label: "Stop searching history",
+      detail: running.state.label,
+      icon: "x", danger: true,
+      run: direct(() => void repo.cancelActivity(running.key)),
+    });
+  }
+  if (running && cancelVia === "network") {
     items.push({
       type: "command", id: "action:cancel-network",
       search: "Cancel stop abort network operation fetch pull push force",
@@ -961,7 +978,7 @@ export function buildCommands(): PaletteItem[] {
       // showing is the least surprising thing it can say.
       detail: running.state.label,
       icon: "x", danger: true,
-      run: direct(() => void repo.cancelNetworkOps()),
+      run: direct(() => void repo.cancelActivity(running.key)),
     });
   }
 

@@ -3,6 +3,7 @@ import type {
   BranchInfo,
   CommitInfo,
   FileDiff,
+  FileHistory,
   FileStatus,
   RefInfo,
   StatusFlag,
@@ -180,6 +181,62 @@ export function truncatedDiffNotice(
     title: "Diff shortened",
     detail: `Showing the first ${fmt(cut.shown)} of ${fmt(cut.total)} lines — the rest was not sent.`,
   };
+}
+
+/**
+ * What bounded a file's history, when something did (#474).
+ *
+ * A file-history list is the newest commits that touched one path, and it can
+ * end for three completely different reasons: the file has no older changes,
+ * the match limit was reached, or the SEARCH stopped before the history did.
+ * Only the first is "this is the whole answer", and before #474 all three
+ * looked identical — a list that simply ended.
+ *
+ * The third one is the one that matters. `file_history` walks from HEAD and
+ * keeps commits whose tree differs from their parent's at the path, so a file
+ * with fewer matches than the limit had nothing to stop on and walked to the
+ * root of history: ~1.5 million commits and as many tree comparisons on
+ * `torvalds/linux`, for a file the user clicked once. The visit cap is what
+ * ends that, and a cap nobody mentions is the silent wrong answer — so the
+ * number searched is said out loud, and `canSearchAll` is the user's way past
+ * it, exactly as the blob ceiling's "diff it anyway" is past that one.
+ *
+ * `visited` comes off the wire rather than from a constant here, for the reason
+ * `oversizedDiffNotice` gives about the blob ceiling: a second copy of backend
+ * policy is free to drift from the one that was applied.
+ *
+ * The markup lives in `screens/FileHistory.tsx` because that is the only
+ * surface with a file history on it. A second one lifts it out — it does not
+ * write its own sentence.
+ */
+export function fileHistoryNotice(
+  history: FileHistory | null | undefined,
+): { title: string; detail: string; canSearchAll: boolean } | null {
+  if (!history) return null;
+  const fmt = (n: number) => n.toLocaleString();
+  switch (history.stoppedAt) {
+    case "VisitLimit":
+      return {
+        title: `Searched the newest ${fmt(history.visited)} commits`,
+        detail:
+          "This file's history may carry on past that point — the search stopped at its own limit, not at the end of history.",
+        canSearchAll: true,
+      };
+    case "MatchLimit":
+      return {
+        title: `Showing the newest ${fmt(history.commits.length)} changes`,
+        // Deliberately "may be": reaching the match limit means the walk still
+        // had commits left, not that any of them touched this file. Claiming
+        // older changes exist would be saying more than was measured.
+        detail:
+          "The list stops at its own limit rather than at the end of the file's history, so there may be older changes to it.",
+        // Searching further would find more MATCHES, and the list would still
+        // hold the same `limit` of them. The button would change nothing.
+        canSearchAll: false,
+      };
+    default:
+      return null;
+  }
 }
 
 /**
