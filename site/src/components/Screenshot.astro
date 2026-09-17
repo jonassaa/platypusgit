@@ -10,7 +10,7 @@
 // ratio from the srcset below. Without the 2x, every Retina visitor sees a
 // 1.3x upscale of 1x text, which is what made these look blurry.
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 interface Props {
   /** Basename under public/screenshots/, no extension. */
@@ -48,8 +48,19 @@ const RENDER_W = 1040;
 // master gets no @2x rather than an upscale that costs bytes and adds nothing.
 // Resolved from disk so there is no manifest to fall out of sync; this runs at
 // build time in Node, never in the browser.
-const publicDir = fileURLToPath(new URL('../../public/screenshots/', import.meta.url));
-const has2x = existsSync(`${publicDir}${name}@2x.webp`);
+// Resolved from the PROJECT ROOT (process.cwd()), not from import.meta.url.
+//
+// This component is compiled, and at build time `import.meta.url` points at the
+// built chunk -- `new URL('../../public/...', import.meta.url)` resolved to
+// `dist/public/screenshots/`, which does not exist, so `has2x` was ALWAYS false
+// and no figure ever got a srcset. The bug was invisible because it shipped
+// alongside a capture path that never produced a 2x master either: there was
+// nothing for the probe to find, so nothing looked wrong.
+//
+// `astro dev` and `astro build` both run with cwd = site/, which is stable in a
+// way the chunk's location is not.
+const publicDir = resolve(process.cwd(), 'public', 'screenshots');
+const has2x = existsSync(resolve(publicDir, `${name}@2x.webp`));
 
 const src1x = `${base}/screenshots/${name}.webp`;
 const srcset = has2x

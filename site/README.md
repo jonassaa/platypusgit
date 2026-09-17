@@ -12,7 +12,7 @@ pnpm dev          # http://localhost:4321
 pnpm build        # output -> dist/
 pnpm preview      # serve the build locally
 pnpm og           # regenerate public/og.png from scripts/og-image.html
-pnpm capture <n>  # capture a 2x app-window master into screenshots/ (macOS)
+pnpm shoot        # re-render screenshots/*.png from the real app (macOS)
 pnpm screenshots  # re-encode public/screenshots/*.webp from screenshots/*.png
 pnpm installers   # copy ../scripts/install-pgit.* into public/ (dev + build do this)
 ```
@@ -104,26 +104,45 @@ detail was never in the file. The masters have to carry 2x the rendered width.
   the light theme reads as a photograph of an app; it gets a faint accent halo
   behind it so it has something to sit on.
 
-### Replacing a capture
+### Re-rendering the figures
 
 ```bash
-pnpm capture --resize          # size the running app window to 1600x1112 pt
-pnpm capture history-dark      # then click the window; verifies it came out 2x
+pnpm shoot                     # all three, into screenshots/*.png
+pnpm shoot history             # just one
+pnpm shoot history --report    # what fixtures that scene is still missing
 pnpm screenshots               # encode both variants
 ```
 
-`pnpm capture` is macOS-only (only `screencapture -o` returns a window with its
-shadow on transparency) and **rejects a capture that is not 2x** — an external
-1x monitor silently produces a 1x master that looks fine in Preview and blurry
-on the site, which is the whole failure this guards. `--resize` drives the
-window through System Events and needs Accessibility permission for your
-terminal, once; size the window by hand otherwise.
+`pnpm shoot` renders the **real** app — the components in `../src`, the real
+stylesheet — in headless Chrome at device scale factor 2, then composites the
+drop shadow and the three traffic lights. That is the whole native half of a
+figure: the app sets `titleBarStyle: "Overlay"`, so it draws its own titlebar
+and macOS contributes nothing else.
 
-What the script cannot do for you: put the UI in the state the figure is meant
-to show, in dark theme, with nothing personal on screen. Keep the existing
-figure names when replacing one — the `alt` text in `index.astro` /
-`features.astro` describes what is in that specific window, and a different
-window makes it wrong.
+There is no human in the loop, which is the point. The old `pnpm capture` needed
+someone on a Retina display to size a window and click it, and the figures
+consequently went thirty days and 112 `src/` commits out of date — every icon in
+them belonged to a set the app had stopped shipping.
+
+Each figure is a **scene** in `scripts/shoot/scenes/`: the `localStorage` it
+starts from, a frozen clock, and a `cmd -> fixture` map answering the backend.
+That map is the only place a figure's content is decided. The fake `invoke`
+**throws** on a command no scene answers, so `--report` renders the list of what
+is missing rather than leaving you to guess; a scene is done when it reports
+`MISSING (0)`.
+
+Fixtures are typed against `../src/lib/types.ts` on purpose. When the backend
+changes shape, `pnpm exec tsc -p scripts/shoot/tsconfig.json --noEmit` fails
+instead of the rig quietly rendering a picture of a product that no longer
+exists — which is how the hand-built `AppShowcase` replica died.
+
+Keep the existing figure names when changing one: the `alt` text in
+`index.astro` / `features.astro` describes what is in that specific window, and
+a different window makes it wrong.
+
+Not run in CI. The masters and the encoded WebP are committed, so `astro build`
+needs no image pipeline and the deploy installs no Chrome — the same arrangement
+`pnpm og` already uses.
 
 ## Search-engine setup (manual, one-time)
 

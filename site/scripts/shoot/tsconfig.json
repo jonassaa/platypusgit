@@ -1,0 +1,26 @@
+{
+  // Typechecks the rig against the REAL app types. This is what contains the
+  // drift risk the hand-built AppShowcase replica died of: when a backend shape
+  // changes, the fixtures stop compiling instead of quietly rendering a figure
+  // that shows a product which no longer exists.
+  //
+  // Run it with: pnpm exec tsc -p site/scripts/shoot/tsconfig.json --noEmit
+  // (the repo root tsconfig does not cover site/, the same way it excludes e2e/)
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["../../../src/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

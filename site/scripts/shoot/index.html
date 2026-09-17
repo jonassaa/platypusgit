@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- The rig's shell. Mirrors the app's own index.html (the inline dark
+     background, the color-scheme hint) so the figure's first paint matches the
+     real window's, then loads entry.tsx instead of main.tsx.
+
+     The extra part is `html, body { margin: 0 }` plus a fixed #root: the real
+     app fills a Tauri window, and a browser's default 8px body margin would
+     put a light seam around every figure. -->
+<html lang="en" style="background: #0d1013">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark light" />
+    <title>platypusgit — figure</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #0d1013;
+      }
+      /* The app expects to own the whole window. */
+      #root {
+        position: fixed;
+        inset: 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/entry.tsx"></script>
+  </body>
+</html>

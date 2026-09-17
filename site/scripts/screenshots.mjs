@@ -19,7 +19,7 @@
 // This is why MASTERS MUST BE 2x CAPTURES (3200x2224). A 1x master cannot be
 // made sharp here; upscaling it to 2080 would only add bytes. When a master is
 // too small the 2x variant is SKIPPED and a warning is printed, rather than
-// shipping an upscale that pretends to be detail — see `pnpm capture`.
+// shipping an upscale that pretends to be detail — see `pnpm shoot`.
 //
 // Why WebP at q85 and not the PNG: 1741 KB -> 345 KB for the three at the old
 // single 1600px variant, with no visible difference at 1:1 on the smallest text
@@ -28,6 +28,7 @@
 // captures are a window over a TRANSPARENT margin with a baked drop shadow, and
 // that shadow is what lets one dark asset sit on the light theme.
 import { readdirSync, existsSync, statSync, unlinkSync } from 'node:fs';
+import { loadSharp } from './sharp.mjs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -46,32 +47,6 @@ const RENDER_W = 1040;
 // shift the page on load; fail loudly instead.
 const RATIO_W = 1600;
 const RATIO_H = 1112;
-
-// sharp is a dev-machine tool here, not a dependency. It is already on disk
-// after `pnpm install`, because astro declares it as an OPTIONAL dependency
-// for its own image service — but pnpm's isolated node_modules does not hoist
-// it, so a bare `import 'sharp'` cannot see it from this script. Look in both
-// places rather than making the site depend on it: adding it to package.json
-// would put a native binary in the deploy install for images that are already
-// encoded.
-async function loadSharp() {
-  try {
-    return (await import('sharp')).default;
-  } catch {}
-  const pnpmDir = resolve(here, '..', 'node_modules', '.pnpm');
-  if (existsSync(pnpmDir)) {
-    const dir = readdirSync(pnpmDir).find((d) => d.startsWith('sharp@'));
-    if (dir) {
-      const entry = join(pnpmDir, dir, 'node_modules', 'sharp', 'lib', 'index.js');
-      if (existsSync(entry)) return (await import(pathToFileURL(entry).href)).default;
-    }
-  }
-  console.error(
-    'No sharp found. Run `pnpm install` in site/ (astro brings sharp in as an\n' +
-      'optional dependency), or install it yourself: `pnpm add -D sharp`.',
-  );
-  process.exit(1);
-}
 
 const sharp = await loadSharp();
 const files = readdirSync(src)
@@ -115,7 +90,7 @@ for (const file of files) {
     if (existsSync(stale)) unlinkSync(stale);
     console.warn(
       `  ! ${file} is ${master.width}px wide — under ${RENDER_W * 2}px, so NO 2x variant.\n` +
-        `    Retina displays will upscale and the text will look soft. Recapture at 2x: pnpm capture`,
+        `    Retina displays will upscale and the text will look soft. Re-shoot at 2x: pnpm shoot`,
     );
   }
 
@@ -142,6 +117,6 @@ if (lowRes > 0) {
   console.log(
     `\n${lowRes} of ${files.length} master(s) are 1x. Those figures CANNOT be made\n` +
       `sharp by re-encoding — the detail is not in the file. Recapture at 2x\n` +
-      `(${RATIO_W * 2}x${RATIO_H * 2}) with \`pnpm capture\`, then re-run this.`,
+      `(${RATIO_W * 2}x${RATIO_H * 2}) with \`pnpm shoot\`, then re-run this.`,
   );
 }
