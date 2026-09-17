@@ -260,16 +260,20 @@ struct Subject {
     head_oid: String,
     /// The path changed most often in recent history.
     ///
-    /// NOT simply "a path HEAD touched", which is the obvious choice and is
-    /// unusable: `file_history` filters a walk by path and stops at `limit`
-    /// matches, so on a rarely-touched file it never reaches 500 and walks the
-    /// WHOLE history with a tree comparison per commit. On `torvalds/linux`
-    /// that is 1.4 million commits and the benchmark simply does not finish.
+    /// NOT simply "a path HEAD touched", which is the obvious choice and was
+    /// unusable: `file_history` filters a walk by path and stopped at `limit`
+    /// matches only, so on a rarely-touched file it never reached 500 and
+    /// walked the WHOLE history with a tree comparison per commit. On
+    /// `torvalds/linux` that is 1.48 million commits, and the benchmark simply
+    /// did not finish — which is how #474 was found.
     ///
-    /// A hot file is also the honest subject: file history is a thing people
-    /// open on files that change. The pathological case is real and is written
-    /// up in `docs/dev/performance.md` rather than measured here, because
-    /// "unbounded" is not a number.
+    /// The visit cap (#474) bounds that case now: measured at 135.6 s uncapped
+    /// against 18.3 s capped, both in `docs/dev/performance.md`. This is still
+    /// the hot path, for two reasons that outlived the bug. A hot file is the
+    /// honest subject — file history is a thing people open on files that change
+    /// — and it is the only subject whose cost is a property of the REPOSITORY
+    /// rather than of the cap: a cold path now measures the cap, which is a
+    /// constant, so the number would stop tracking anything about the fixture.
     hot_path: Option<PathBuf>,
     /// A path the working tree has modified, if any. `None` on a clean fixture,
     /// which simply skips the worktree diff.
@@ -724,10 +728,22 @@ fn run_suite(subject: &Subject, cfg: &Config) -> Vec<Measured> {
                 "History of one file (500 commits)",
                 subject,
                 cfg,
-                |v: &Vec<platypusgit_lib::git::types::CommitInfo>| {
-                    format!("{} commits", thousands(v.len()))
+                |v: &platypusgit_lib::git::types::FileHistory| {
+                    format!("{} commits", thousands(v.commits.len()))
                 },
-                move |b, id| b.file_history(id, &for_history, PAGE_SIZE).expect("file_history"),
+                // The DEFAULT visit cap, because this measures what a click
+                // costs a user (#474) — not `None`, which is the uncapped walk
+                // that never finished here and is the reason the cap exists.
+                move |b, id| {
+                    b.file_history(
+                        id,
+                        &for_history,
+                        PAGE_SIZE,
+                        Some(platypusgit_lib::git::FILE_HISTORY_VISIT_LIMIT),
+                        &|| false,
+                    )
+                    .expect("file_history")
+                },
             ),
             // Deliberately NOT `--follow`. `Libgit2Backend::file_history` is a
             // plain path filter over the walk — it does not detect renames — so

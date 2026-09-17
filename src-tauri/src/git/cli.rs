@@ -7,7 +7,7 @@ use super::{
         AheadBehind, BisectMark, BisectStatus, BlameResult, BranchInfo, CommitInfo, CommitNote, CommitOptions, CommitResult, ConflictSides,
         DeleteFailure, DiffKind, DiffToolTarget, FileContent,
         BulkFastForward, FastForward,
-        FileDiff, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
+        FileDiff, FileHistory, FileStatus, HeadInfo, LfsStatus, LogFilter, LogPage, RebaseProgressSink, RebaseStatus, RebaseStep, ReflogEntry,
         BlobSource, ImagePreview,
         RemoteInfo, RepoHandle, RepoId, RepoState, ResetMode, ShallowInfo, StashInfo,
         StashSaveOptions,
@@ -108,7 +108,9 @@ impl GitBackend for CliBackend {
         _repo_id: &RepoId,
         _path: &Path,
         _limit: usize,
-    ) -> AppResult<Vec<CommitInfo>> {
+        _visit_limit: Option<usize>,
+        _cancelled: &dyn Fn() -> bool,
+    ) -> AppResult<FileHistory> {
         Err(AppError::NotImplemented)
     }
     fn diff_over_ceiling(

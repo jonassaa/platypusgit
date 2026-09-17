@@ -92,6 +92,44 @@ pub struct LogPage {
     pub next_cursor: Option<Vec<String>>,
 }
 
+/// Why a file-history walk stopped (#474).
+///
+/// The walk has two independent ceilings — how many MATCHES to collect and how
+/// many commits to LOOK AT — and which of them ended it changes what the list
+/// in front of the user means. A list of five commits is either the file's
+/// complete history, or the newest five of many, or every match in the part of
+/// history that was searched with nothing said about the rest. Before #474 all
+/// three were the same answer: a list that simply ended.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub enum HistoryStop {
+    /// The walk reached the end of history. The list is complete.
+    Exhausted,
+    /// `limit` matches were collected. Older changes to the path exist.
+    MatchLimit,
+    /// The VISIT cap was reached first — the walk looked at `visited` commits
+    /// and stopped, so nothing is known about anything older.
+    VisitLimit,
+}
+
+/// One file's history, with what bounded it (#474).
+///
+/// Not a bare `Vec<CommitInfo>`, for the same reason `WorkingTreeDiff` is not a
+/// bare `Vec<FileDiff>`: this walk is BOUNDED and the bound has to be visible.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileHistory {
+    /// Commits that touched the path, newest first.
+    pub commits: Vec<CommitInfo>,
+    /// How many commits the walk examined to find them.
+    ///
+    /// Reported rather than left implicit because it is the number the notice
+    /// puts in front of the user ("searched the newest 50,000 commits"), and a
+    /// copy of the cap in the frontend would be free to drift from the one that
+    /// was applied.
+    pub visited: usize,
+    pub stopped_at: HistoryStop,
+}
+
 /// A whole-tree diff against the WORKING TREE (#131).
 ///
 /// Not a bare `Vec<FileDiff>` because the untracked side has to be BOUNDED and

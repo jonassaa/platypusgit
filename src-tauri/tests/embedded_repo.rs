@@ -248,7 +248,7 @@ fn file_history_rejects_the_embedded_repo_instead_of_returning_nothing() {
 
     for path in ["vendor/lib/", "vendor/lib"] {
         let err = backend
-            .file_history(&handle.id, &PathBuf::from(path), 50)
+            .file_history(&handle.id, &PathBuf::from(path), 50, None, &|| false)
             .unwrap_err();
         assert!(matches!(err, AppError::EmbeddedRepo(p) if p == path));
     }
@@ -267,7 +267,11 @@ fn guards_leave_ordinary_paths_alone() {
         .is_ok());
     assert!(backend.blame_file(&handle.id, &readme, true).is_ok());
     assert_eq!(
-        backend.file_history(&handle.id, &readme, 50).unwrap().len(),
+        backend
+            .file_history(&handle.id, &readme, 50, None, &|| false)
+            .unwrap()
+            .commits
+            .len(),
         1
     );
     assert!(backend.stage(&handle.id, &[readme]).is_ok());

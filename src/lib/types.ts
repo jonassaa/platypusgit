@@ -142,6 +142,38 @@ export interface LogPage {
 }
 
 /**
+ * Why a file-history walk stopped. Mirrors Rust `HistoryStop` (#474).
+ *
+ * The walk has two independent ceilings — how many MATCHES to collect and how
+ * many commits to LOOK AT — and the difference between them is the whole point
+ * of this type. A list of five commits means something completely different
+ * depending on which one ended the walk, and before #474 nothing said which.
+ */
+export type HistoryStop =
+  /** History ran out. The list is every commit that touched the path — complete. */
+  | "Exhausted"
+  /** `limit` matches were collected. Older changes to this path exist. */
+  | "MatchLimit"
+  /**
+   * The visit cap was reached first. The list holds every match in the newest
+   * `visited` commits and says nothing at all about what is older.
+   */
+  | "VisitLimit";
+
+/** One file's history, with what bounded it. Mirrors Rust `FileHistory` (#474). */
+export interface FileHistory {
+  commits: CommitInfo[];
+  /**
+   * How many commits the walk examined. Reported rather than assumed: it is
+   * what the notice puts in front of the user ("searched the last 50,000
+   * commits"), and a copy of the cap on this side would be free to drift from
+   * the one that was actually applied.
+   */
+  visited: number;
+  stoppedAt: HistoryStop;
+}
+
+/**
  * Backend commit-log filter. All set fields are ANDed. String matches are
  * case-insensitive substring matches except `shaPrefix` (matches a prefix of the full OID, hex).
  * Mirrors Rust `LogFilter` in `git/types.rs`.

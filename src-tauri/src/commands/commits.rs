@@ -3,8 +3,8 @@ use tauri::State;
 use crate::{
     error::{AppError, AppResult},
     git::types::{
-        AheadBehind, AuthorOverride, CommitInfo, CommitNote, CommitOptions, CommitResult, LogFilter,
-        LogPage, RepoId,
+        AheadBehind, AuthorOverride, CommitInfo, CommitNote, CommitOptions, CommitResult,
+        FileHistory, LogFilter, LogPage, RepoId,
     },
     state::AppState,
 };
@@ -317,17 +317,74 @@ pub async fn commit_notes(
         .map_err(|e| AppError::Internal(e.to_string()))?
 }
 
+/// The commits that touched one path, newest first — bounded and cancellable
+/// (#474).
+///
+/// This command owns the two things the backend deliberately does not: the
+/// default visit cap, and the walk's registration with `cancel`.
+///
+/// `search_all` waives the cap. Absent means "no" on purpose: the uncapped walk
+/// is the one that took 135 s on `torvalds/linux` for a single click, so it has
+/// to be asked for, and the only thing that asks is the notice's own button
+/// after the user has read what the cap did.
 #[tauri::command]
 pub async fn file_history(
     state: State<'_, AppState>,
     repo_id: String,
     path: String,
     limit: usize,
-) -> AppResult<Vec<CommitInfo>> {
+    search_all: Option<bool>,
+) -> AppResult<FileHistory> {
     let backend = state.backend.clone();
     let repo_id = RepoId(repo_id);
     let path = std::path::PathBuf::from(path);
-    tokio::task::spawn_blocking(move || backend.file_history(&repo_id, &path, limit))
+    let visit_limit = if search_all.unwrap_or(false) {
+        None
+    } else {
+        Some(crate::git::FILE_HISTORY_VISIT_LIMIT)
+    };
+
+    // The same path `cancel_walk` resolves, from the same function, so the two
+    // cannot address different scopes — the agreement `cancel`'s module docs
+    // require. Momentarily exclusive (`repo_path` goes through `with_repo`),
+    // which the walk itself is not.
+    let path_backend = state.backend.clone();
+    let path_id = repo_id.clone();
+    let cwd = tokio::task::spawn_blocking(move || path_backend.repo_path(&path_id))
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(|e| AppError::Internal(e.to_string()))??;
+
+    // Registered before the walk starts and deregistered when the guard drops
+    // with the blocking task: `cancel_walk` can only reach an op on the
+    // register, and an entry outliving its walk would let a later click
+    // "cancel" a walk that had already finished.
+    let registration = crate::cancel::register(crate::cancel::Scope::walk(&cwd));
+    // Cancelled between the click that started this and here — do not begin a
+    // walk nobody is waiting for. Same guard, same reason, as `run_clone`'s.
+    if registration.is_cancelled() {
+        return Err(AppError::Cancelled);
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let cancelled = || registration.is_cancelled();
+        backend.file_history(&repo_id, &path, limit, visit_limit, &cancelled)
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?
+}
+
+/// Stop the in-process walks running on one repository (#474).
+///
+/// The sibling of `cancel_network_op` for work that has no subprocess: this
+/// marks the registry entry, and the walk notices between commits and returns
+/// `Cancelled`. Answers how many walks were signalled; zero is a normal answer,
+/// because the walk can finish between the user clicking Cancel and this call.
+#[tauri::command]
+pub async fn cancel_walk(state: State<'_, AppState>, repo_id: String) -> AppResult<usize> {
+    let backend = state.backend.clone();
+    let id = RepoId(repo_id);
+    let path = tokio::task::spawn_blocking(move || backend.repo_path(&id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))??;
+    Ok(crate::cancel::cancel(&crate::cancel::Scope::walk(&path)))
 }
