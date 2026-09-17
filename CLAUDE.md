@@ -27,6 +27,10 @@ to what you are reading. A new section here needs a reason a pointer cannot serv
   and credentials, signing, stash, spawning processes, bisect, async/threading.
 - `docs/dev/distribution.md` — `pgit` CLI packaging per channel, the launch
   detach, Tauri permissions.
+- `docs/dev/performance.md` — the large-repo benchmark: the fixtures, what each
+  number does and does not include, the baseline it is compared against, and
+  the published results. Read it before touching the log walk, `status`, or
+  the refresh path, and re-run `pnpm bench` when you do.
 - `docs/dev/releasing.md` — what a version number means and when to bump which
   part, the cut-a-release runbook (changelog lands on `main` FIRST), and the
   prerelease-promotion traps. Read it before tagging anything.
@@ -58,6 +62,7 @@ pnpm test                                   # vitest (unit logic + component tes
 pnpm test:e2e:docker                        # e2e — THE way to run e2e (headless, same stack as CI)
 pnpm test:e2e:docker run --spec e2e/specs/X.e2e.ts   # ...one spec against this worktree's snapshot
 pnpm exec tsc -p e2e/tsconfig.json --noEmit # e2e typecheck gate (root tsc excludes e2e/)
+pnpm bench                                  # large-repo benchmark (docs/dev/performance.md)
 ```
 
 **Local production builds need the updater signing key.** `tauri.conf.json`

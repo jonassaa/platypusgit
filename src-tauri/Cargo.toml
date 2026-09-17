@@ -77,6 +77,21 @@ libc = "0.2"
 [features]
 # Compile + wire the WebDriver plugin. Set only by the e2e debug build.
 e2e = ["dep:tauri-plugin-wdio-webdriver"]
+# Compile the large-repo benchmark (#257). Adds no code to the crate itself —
+# it exists only so the `[[bench]]` target below can be gated off, because the
+# Rust CI gate is `cargo test` and a benchmark that links the whole lib would
+# put its link time on every backend PR for a target nobody runs there.
+bench = []
+
+# `scripts/bench.sh` builds and runs this; `docs/dev/performance.md` explains
+# what it measures. `harness = false` because it is a program with its own
+# argument parsing rather than a set of `#[bench]` functions, and `test = false`
+# so `cargo test` cannot decide to execute that program as a test binary.
+[[bench]]
+name = "repo_bench"
+harness = false
+test = false
+required-features = ["bench"]
 
 [dev-dependencies]
 tempfile = "3"
