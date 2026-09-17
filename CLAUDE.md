@@ -264,6 +264,16 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
 - **The log is paged** — `s.commits` is a prefix of history, never the answer
   to "does X exist / is X an ancestor"; ask the backend.
   (`docs/dev/frontend.md`)
+- **…and the backend prepares ONE walk for all those pages** (`git/log_cache.rs`,
+  #473). A sorted libgit2 revwalk materialises the whole ordered list before it
+  yields anything, so a walk per page cost the same per page — 157 s at page ten
+  of the kernel. Everything cached there is derivable from disk, so it must stay
+  a PURE ACCELERATOR: a lock failure is a miss and never a failed page, and the
+  proof is `log_walk_cache.rs` draining the same history warm and cold and
+  comparing. A first page is invalidated by its start oids, a continuation by
+  nothing (commits are immutable), the decorations by a ref fingerprint — add a
+  third cached thing and it needs its own answer to "what makes this wrong?".
+  (`docs/dev/backend.md`, `docs/dev/performance.md`)
 - **A commit row's columns have a YIELD ORDER, and it is the template.** Every
   track in `commitRowGrid` but the subject and the author is a fixed width, so
   a new fixed column — or a wider one — comes straight out of the subject,
