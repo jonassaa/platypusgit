@@ -11,11 +11,9 @@
 // these figures drop into the site without touching Screenshot.astro, which
 // hardcodes the 1600/1112 aspect to reserve the layout box before the bytes
 // arrive.
-import { readdirSync, existsSync } from 'node:fs';
-import { resolve, join, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadSharp } from '../sharp.mjs';
 
-const here = dirname(fileURLToPath(import.meta.url));
+export { loadSharp };
 
 export const GEOM = {
   canvas: { w: 3200, h: 2224 },
@@ -32,42 +30,6 @@ export const GEOM = {
     fill: ['#ff5f57', '#febc2e', '#28c840'],
   },
 };
-
-// sharp is a dev-machine tool, not a site dependency: astro brings it in as an
-// OPTIONAL dependency for its own image service, but pnpm's isolated
-// node_modules does not hoist it, so a bare import cannot see it. Same lookup
-// screenshots.mjs already does.
-export async function loadSharp() {
-  try {
-    return (await import('sharp')).default;
-  } catch {}
-  // Look in site/ and in the repo root — a worktree may have either installed.
-  const roots = [
-    resolve(here, '..', '..', 'node_modules', '.pnpm'),
-    resolve(here, '..', '..', '..', 'node_modules', '.pnpm'),
-  ];
-  for (const pnpmDir of roots) {
-    if (!existsSync(pnpmDir)) continue;
-    // A pnpm dir name carries its peer suffix ("sharp@0.35.4_@types+node@26.5.1"),
-    // so match the prefix and take the newest.
-    const dirs = readdirSync(pnpmDir)
-      .filter((d) => d.startsWith('sharp@'))
-      .sort();
-    for (const dir of dirs.reverse()) {
-      // sharp 0.35 MOVED its entry: lib/index.js became dist/index.mjs. Trying
-      // both is what keeps this working across that bump — the loaders in
-      // screenshots.mjs and capture.mjs hardcode the old path and break on 0.35.
-      for (const rel of [
-        ['dist', 'index.mjs'],
-        ['lib', 'index.js'],
-      ]) {
-        const entry = join(pnpmDir, dir, 'node_modules', 'sharp', ...rel);
-        if (existsSync(entry)) return (await import(pathToFileURL(entry).href)).default;
-      }
-    }
-  }
-  throw new Error('No sharp found. Run `pnpm install` in site/.');
-}
 
 /**
  * @param {Buffer} bodyPng  the browser render, exactly GEOM.window
