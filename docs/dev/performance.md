@@ -224,13 +224,42 @@ it on ref writes.
 
 ### Known characteristics that are not on the tables
 
-* **File history is unbounded on a cold path.** `file_history` stops at `limit`
-  matches, so on a file with fewer than 500 commits it walks to the root of
-  history with a tree comparison per commit. On the kernel that is 1.5 million
-  of them for one click. The benchmark measures the *most frequently changed*
-  path precisely so it terminates; see `hottest_path` in the harness. It also
-  takes the exclusive lock (`with_repo`, not `with_repo_read`), so it blocks
-  every other read on that repository while it runs.
+* **File history was unbounded on a cold path, and is capped since #474.**
+  `file_history` stops at `limit` matches, so on a file with fewer changes than
+  that it had nothing to stop on and walked to the root of history with a tree
+  comparison per commit. Measured on the `linux` fixture, warm, for
+  `arch/powerpc/kernel/iommu.c`:
+
+  | walk | cost |
+  | --- | --- |
+  | uncapped — 1,482,923 commits, every one compared | **135.6 s** |
+  | capped at 50,000 visits (the default since #474) | **18.3 s** |
+  | the revwalk's own preparation, before any tree work | 14.5 s |
+  | 50,000 commits of tree comparison | 4.1 s |
+
+  So the cap removes ~117 s of the 135 s, and what is left is dominated by a
+  fixed cost the cap cannot touch (next bullet). The benchmark measures the
+  *most frequently changed* path precisely so the uncapped walk terminated at
+  all; see `hottest_path` in the harness. #474 also moved it to
+  `with_repo_read`, so it no longer blocks every other read on the repository
+  while it runs, and made it cancellable — 18 s is still a wait worth being
+  able to stop.
+
+* **A sorted libgit2 revwalk pre-walks the whole graph before it yields
+  anything, and the sort order is not why.** Getting the FIRST oid out of a
+  `push_head` walk on the kernel costs 14.2 s; walking 50,000 costs 14.2 s; and
+  walking all 1,482,923 costs 14.7 s — the same number three times, because the
+  traversal has already happened by the time the first one comes back.
+  `Sort::TIME` and `Sort::TIME | Sort::TOPOLOGICAL` were measured within 1% of
+  each other, so dropping `TOPOLOGICAL` buys nothing and the obvious
+  optimisation is a dead end. `Sort::NONE` IS incremental and is unusable for a
+  capped walk: it yields commits in the order the traversal reaches them, so the
+  first 50,000 are not the newest 50,000 and a capped file history could miss
+  last week's change while reporting one from 2011. Every walk in
+  `libgit2.rs` sorts, so this floor is very probably the one behind `log_page`'s
+  first page too — consistent with the commit-graph measurement below, which is
+  the fix git gets for exactly this and we do not, but measured here only for
+  `file_history`.
 * **No fixture carries a commit-graph file, and it would not help us if it
   did.** A fresh clone has none — `git clone` does not write one, and
   `gc --auto` does not fire on a single packfile — so this is what a user gets

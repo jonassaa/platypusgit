@@ -425,7 +425,20 @@ commands/        Thin Tauri handlers, one file per area:
 │                with nothing naming the commit that vanished. NOTE it passes
 │                no `--` before the revision — that separator introduces
 │                PATHSPECS, so `-- <oid>` selects nothing; safe because the oid
-│                is a resolved 40-hex id, not user text), file_history,
+│                is a resolved 40-hex id, not user text), file_history (#474 —
+│                one path's commits, with TWO ceilings: `limit` bounds the
+│                matches and a VISIT cap bounds how many commits are looked at,
+│                because a file with fewer changes than the limit had nothing to
+│                stop on and walked to the root of history — 135 s and 1.48M
+│                tree comparisons on the kernel for one click. The command owns
+│                the default cap (git::FILE_HISTORY_VISIT_LIMIT) and registers
+│                the walk under cancel::Scope::Walk; the backend is handed a
+│                predicate to poll and knows nothing about cancellation.
+│                `searchAll` waives the cap for a user who read the notice.
+│                The result carries `visited` + `stoppedAt`, which is what the
+│                notice says out loud), cancel_walk (#474 — stops those walks on
+│                one repository; cancel_network_op's sibling for work that has
+│                no subprocess to signal, so it sets a flag the walk polls),
 │                verify_commit (SELECTED commit
 │                only, never per row), commit_notes, which is lazy for the
 │                same reason (#253 — the log walk is the hot path, so notes are

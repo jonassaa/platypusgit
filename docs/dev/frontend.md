@@ -1225,6 +1225,52 @@ that is only partly here — which is the whole reason the notice exists.
   included, resets on a closed→open transition — a `--depth 1` chosen for one
   enormous repository must not quietly truncate the next.
 
+## Saying a file's history was only partly searched (#474)
+
+The strip's other half, on the same screen and immediately below it. A shallow
+clone is history the app never had; this is history the app declined to walk.
+
+- **Three stops, three claims, one pure sentence** — `fileHistoryNotice`
+  (`lib/derive.ts`, beside `truncatedDiffNotice`, which is the same idea about a
+  diff's lines). `Exhausted` says nothing at all: the list is the whole answer.
+  `MatchLimit` says the list is full. `VisitLimit` says the SEARCH stopped
+  before history did, which is the one the issue was about — a file with fewer
+  changes than the limit gave the walk nothing to stop on, and it ran to the
+  root of history.
+- **The number comes off the wire (`visited`), never from a constant here.**
+  Same rule as the blob ceiling's: the cap is backend policy
+  (`git::FILE_HISTORY_VISIT_LIMIT`), and a copy of it on this side would go on
+  saying 50,000 after the policy moved.
+- **`canSearchAll` only where more searching would change the screen.** The
+  visit cap gets "Search all of history" — the blob ceiling's "diff it anyway"
+  in another place, and for the same reason: a cap is a guess about intent,
+  usually right, and completely wrong when it is wrong. The match limit gets no
+  button, because walking further finds more matches and the list still holds
+  `limit` of them.
+- **The markup lives in `screens/FileHistory.tsx`**, because that is the only
+  surface with a file history on it, and deliberately mirrors `ShallowNotice`'s
+  layout — the two can stack, and two strips that say the same KIND of thing
+  must not look like two different kinds of thing. A second surface lifts it
+  out rather than writing its own sentence.
+- **The walk joins `RepoActivity` under `history`**, which is where its status
+  line, elapsed clock and Cancel button come from. Before #474 it was a bare
+  `PGSpinner` in the pane — for up to 135 s, with no way out.
+- **Leaving the screen stops the walk.** The effect's cleanup cancels it: an
+  abandoned walk costs a blocking thread and seconds of tree comparisons for an
+  answer nobody will read.
+- **…but the next walk waits for that cancel to land.** `cancel_walk` addresses
+  the REPOSITORY (see `docs/dev/backend.md` — that coarseness is what lets the
+  status bar's one Cancel button work with nothing to point at), so a cancel
+  still in flight would reach whatever is registered when it arrives — which
+  after a file switch is the walk for the file the user just opened. Switching
+  files would cancel its own replacement, at random, depending on which IPC call
+  won. So the screen keeps the cancel's promise in a ref and chains the next
+  request after it: one extra round trip, only when a walk was really running.
+- **A cancellation is an answer, not a failure.** `isCancelledError` routes it to
+  a neutral "Search stopped" line with "Search again" beside it, never the red
+  error text — a red banner would report the user's own click as a fault, and an
+  empty list would be indistinguishable from a file with no history.
+
 ## Checking out a remote branch — `features/branches/checkoutRemote.ts`
 
 A remote-tracking ref is not a branch you can be ON. `checkoutRef("origin/x")`
@@ -1844,6 +1890,21 @@ checkout read as a click that did nothing.
   "Cancelling…" on one click of either one. Its case table is keyed by
   `ActivityKey`, so a kind added later cannot skip it — and a third surface
   lays out this hook rather than reading `activity` itself.
+- **"Can it be cancelled" and "what cancels it" are ONE table** —
+  `cancelPath(key)` in `repoActivity.ts`, since #474. There are now two
+  mechanisms: `"network"` signals a git subprocess (`cancel_network_op`), and
+  `"walk"` sets a flag a libgit2 revwalk polls (`cancel_walk`, for
+  `activity.history`). A set of cancellable keys plus a branch at the button
+  would be the same question answered twice, free to disagree — and the
+  disagreement's shape is a Cancel button that runs and stops nothing.
+  `isCancellable` is now derived from the table rather than beside it.
+- **`history` is the first entry that is neither a subprocess nor a mutation**
+  (#474) — `file_history` searching one file. It earns an entry for the only
+  reason this module exists: on a large repository it is a wait long enough to
+  need stopping (18 s on the kernel with the visit cap, 135 s without it). A
+  long op that keeps its busy state privately gets no status line, no elapsed
+  clock and no Cancel — which is how it sat behind a bare `PGSpinner` until
+  #474.
 - **The strip carries its own test hooks (`activity-strip-*`).** `cancel.e2e.ts`
   waits on `activity-label` and CLICKS `activity-cancel`; WebdriverIO's `$`
   takes the first match in document order, and the strip renders above the

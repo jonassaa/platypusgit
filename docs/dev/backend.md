@@ -271,8 +271,25 @@ Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
   them — the credential protocol is line-based, so a newline injects keys and
   could file a password against another host.
 
-### Cancelling a stalled network op (#234, hardened by #263)
+### Cancelling a stalled network op (#234, hardened by #263, widened by #474)
 
+- **Two kinds of work, one registry.** A network SUBPROCESS is signalled; a long
+  in-process libgit2 WALK is asked to notice. `#474` added the second kind —
+  `Scope::Walk(workdir)`, today `file_history` — and it gets none of the
+  machinery below: no pid is ever attached, so `kill_tree` is unreachable for
+  those entries and the SIGTERM→SIGKILL escalation is meaningless (a second
+  click sets the same flag the first one did). What it gets instead is
+  `Registration::is_cancelled`, which the command hands to the backend as a
+  `&dyn Fn() -> bool` that the walk polls between commits — so the backend knows
+  nothing about this module, and the scope-to-path matching stays in the command
+  layer where `cancel_walk` resolves the same path the same way.
+  **`Walk` is deliberately NOT folded into `Repo`** even though both are keyed by
+  the workdir: cancelling a stalled fetch must not abandon a history search the
+  user is waiting on, and vice versa. `cancel_all` reaches both, which is what a
+  closing window wants. One consequence lands in the frontend: a repository-wide
+  cancel still in flight would reach whatever registers next, so the file-history
+  screen chains its next walk after the cancel it asked for rather than racing it
+  (`docs/dev/frontend.md`).
 - **One cancel path, at the same two choke points as the credential policy.**
   `cancel.rs` is a process-wide registry; `run_git_authenticated` and
   `run_clone` each register for as long as they run, so a network op that uses
@@ -1471,14 +1488,34 @@ against 9,000 ms) rather than a direct measurement.
 **Which ops are shared today:** `status`, `branches`, `tags`, `stashes`,
 `remotes`, `log`/`log_page`, `repo_state`, `rebase_status`, `bisect_status`,
 `head_info`, `shallow_info`, `diff_commit`/`diff_commit_over_ceiling`,
-`verify_commit`, `worktrees`. That is `refreshAll`'s eleven-read fan-out plus the
-ops behind the history-arrowing ladder in #400. Every other read-only op —
-`log_filtered`, `diff`, `diff_commits`, `file_history`, `blame_file`,
+`verify_commit`, `worktrees`, `file_history`. That is `refreshAll`'s eleven-read
+fan-out, plus the ops behind the history-arrowing ladder in #400, plus the one
+op that made the loudest case for itself (below). Every other read-only op —
+`log_filtered`, `diff`, `diff_commits`, `blame_file`,
 `read_file_content*`, `commits_since`, `ahead_behind`, `submodules`,
 `lfs_status`, `commit_notes`, `read_reflog`, `list_all_files`,
 `list_files_at_rev`, `commit_template`, `difftool_plan`, `conflict_sides` — is
 still exclusive. Not because it must be, but because each needs its own proof it
 writes nothing, and moving one is a one-word change.
+
+**`file_history` was the one that mattered most, and it moved in #474.** It is
+the longest read in the backend — 135 s on `torvalds/linux` before the visit
+cap, 18 s after it — and it held the EXCLUSIVE lock for all of it, so one click
+on "File history" queued every other operation on the repository behind a walk
+that could take minutes. That is precisely the failure #400 set out to remove,
+surviving in the op least able to afford it. The proof it writes nothing: a
+revwalk over the refs, `find_commit`, `Tree::get_path`, and a tree-to-tree diff
+in the pathspec case — no index read or write-back, no ref move, no object
+written, no worktree touch. Note what that list does NOT include, because the
+`status` regression is the cautionary tale next door: nothing here reads the
+index, so there is no accidental index refresh for another op to have come to
+depend on.
+
+`tests/file_history.rs` pins the sharing by RENDEZVOUS rather than by timing —
+the walk's cancellation predicate is called with the lock held, so it is a place
+to stand still and check whether another read can get in. Put `with_repo` back
+and that test fails on its bounded wait (verified), while a timing assertion
+would only have got slower.
 
 ## What decorates a log row, and which KIND of ref it is
 
