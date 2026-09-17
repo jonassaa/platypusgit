@@ -166,7 +166,7 @@ not a good answer, and publishing it is the point of the exercise: the user who
 opens a 1.4-million-commit repository and waits is the user this project was
 written for.
 
-### 2. The log walk is not slow — the topological SORT is, and it is re-paid per page
+### 2. The log walk is not slow — the topological SORT is, and it was re-paid per page
 
 The obvious reading of "our 500-commit page takes 252 ms and `git log -500`
 takes 41 ms" is that the walk is six times too slow. It is wrong, and it nearly
@@ -179,8 +179,8 @@ not sort that way. Asked the same question, `git log --topo-order -500` costs
 this benchmark are `--topo-order` for exactly that reason, and the near miss is
 written up in the spec.
 
-What survives is sharper. git pays for that sort **once and then skips**; we pay
-it per page:
+What survived was sharper. git pays for that sort **once and then skips**; we
+paid it again on every page:
 
 | | `deep` (50k commits) | `torvalds/linux` (1.5M commits) |
 | --- | --- | --- |
@@ -188,15 +188,52 @@ it per page:
 | our tenth page | 2.40 s | 157.67 s |
 | `git log --topo-order --skip=4500 -500` | 193 ms | 9.68 s |
 
-The per-page cost is flat in depth — ten pages cost ten times one page — which
-is the signature of restarting the walk rather than continuing it. The cursor
-already carries the frontier, so the walk logically continues; it is the sort
-that is rebuilt.
+The per-page cost was flat in depth — ten pages cost ten times one page — which
+is the signature of restarting the walk rather than continuing one.
 
-### 3. The ref map is rebuilt on every page, too
+#### The measurement the fix rests on
 
-`log_page` calls `collect_ref_map(repo)` per call, enumerating and peeling every
-ref so the page can decorate its 500 commits. Two fixtures isolate it, and the
+Fixed in #473 by preparing the walk once and paging out of what it produced.
+The reason that is affordable is one measurement, and it is worth recording
+because it is the opposite of what "just cache it" usually costs. Draining a
+revwalk that has **already been prepared** is very nearly free, because libgit2
+does the ordering during preparation and then hands commits out of a list it
+already has:
+
+| | prepare + take(500) | drain the whole rest of the order |
+| --- | --- | --- |
+| `deep` (50,000 commits) | 560.2 ms | **1.9 ms** (49,500 more) |
+| `torvalds/linux` (1,482,923 commits) | 31.8 s | **63.4 ms** (1,482,423 more) |
+
+0.2% more buys the entire order, which is why the cache holds a `Vec<Oid>`
+rather than the prepared `Revwalk` — holding the walk would mean holding a
+`git2::Repository` alive between IPC calls, outliving the lock acquisition
+`git/repo_locks.rs` orders every access by, to save that 0.2%. The source-level
+reason it comes out this way is in `src-tauri/src/git/log_cache.rs`:
+`git_revwalk_sorting` sets `walk->limited`, so `prepare_walk` runs `limit_list`
+over the whole reachable graph and `sort_in_topological_order` materialises the
+complete ordered list before the first oid is yielded.
+
+**The tables below have not been re-measured for that change**, and the numbers
+in this section are the "before" they always were. Two sessions were benchmarking
+this repository at once, and `$PGBENCH_HOME` is one shared directory: control
+rows moved 25–30% on operations neither change touches (`wide` status 5.38 s →
+3.92 s, `diff_commit` 1.53 s → 1.12 s), which is not a result, it is two
+programs sharing a machine. Re-measure on a quiet machine, with one session
+running, before publishing an after.
+
+And re-measure **all four fixtures**, or knowingly keep the rest. The renderer
+publishes every result it finds in `$PGBENCH_HOME/results`, which is deliberate
+— it is what stops `pnpm bench --fixture deep` from silently deleting
+`torvalds/linux` from the record — but it also means a one-fixture run
+publishes fresh numbers for that fixture and whatever happens to be sitting
+beside it. `test/benchmark.test.ts` cannot catch that: it checks the markdown
+against the JSON, and both would be wrong together.
+
+### 3. The ref map was rebuilt on every page, too
+
+`log_page` called `collect_ref_map(repo)` per call, enumerating and peeling every
+ref so the page could decorate its 500 commits. Two fixtures isolate it, and the
 variable between them is refs rather than history:
 
 | fixture | history | refs | ours | `git` work | ratio |
@@ -204,9 +241,31 @@ variable between them is refs rather than history:
 | `deep` | 50,000 commits | 1 | 252 ms | 194 ms | 1.3× |
 | `refs` | 2,000 commits | 7,001 | 135 ms | 8.5 ms | **16×** |
 
-Twenty-five times *less* history, and still most of the cost. This one looks
-much cheaper to fix than the sort: cache the map per repository and invalidate
-it on ref writes.
+Twenty-five times *less* history, and still most of the cost.
+
+Fixed in #473 alongside the walk, and two things found on the way are worth
+keeping, because both are counter-intuitive:
+
+* **The peeling is not the expense.** This issue was written as "enumerating and
+  peeling every ref"; measured on `refs`, one enumeration costs 113 ms and the
+  peel inside it costs 10 ms. So the map is validated on a FIRST page and reused
+  by the continuations behind it — revalidating per scroll cost 113 ms of a
+  117 ms page, for a question that cannot have changed.
+* **Do not compute a fingerprint before building the map on a cold cache.** It
+  enumerates every ref twice for an answer that cannot match anything, and it
+  made a cold eleven-read fan-out on `refs` *slower* than the code it replaced
+  (219 ms → 364 ms). It hides, too: `open_screen` builds a fresh backend per
+  sample, so that path is always the cold one. `collect_ref_map` returns the
+  fingerprint from its own pass for this reason.
+
+The same two defects were in `log_filtered_page`, which is commit search — the
+surface where they hurt most, because a search that matches nothing recent walks
+a long way before it fills a page, and the next page threw that walk away. It
+reads the same prepared order now. One limit is deliberate and written down in
+`cached_filtered_plan`: a search visits far more commits than it returns, so
+only an order that is ALL of history can serve one, and a repository past
+`MAX_ORDER` falls back to the walk-per-page it always had rather than to a short
+page that would look like "no more matches exist".
 
 ### What is already good, and worth not breaking
 
