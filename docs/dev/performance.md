@@ -222,6 +222,14 @@ rows moved 25–30% on operations neither change touches (`wide` status 5.38 s �
 programs sharing a machine. Re-measure on a quiet machine, with one session
 running, before publishing an after.
 
+And re-measure **all four fixtures**, or knowingly keep the rest. The renderer
+publishes every result it finds in `$PGBENCH_HOME/results`, which is deliberate
+— it is what stops `pnpm bench --fixture deep` from silently deleting
+`torvalds/linux` from the record — but it also means a one-fixture run
+publishes fresh numbers for that fixture and whatever happens to be sitting
+beside it. `test/benchmark.test.ts` cannot catch that: it checks the markdown
+against the JSON, and both would be wrong together.
+
 ### 3. The ref map was rebuilt on every page, too
 
 `log_page` called `collect_ref_map(repo)` per call, enumerating and peeling every
