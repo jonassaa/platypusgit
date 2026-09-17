@@ -145,6 +145,80 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.11.0',
+    date: '2026-09-17',
+    status: 'feature',
+    summary:
+      'One density toggle becomes two controls. Text size and Spacing are independent now, so the layout can loosen without the type growing, or the type can grow without the layout loosening — and Zoom stays as the third knob, because scaling everything including chrome and borders is a different question from either. One thing changes without being asked: an install that sat on Compact density moves to Cozy, two pixels per row, reversible in a click. Beside it, the fix behind a report that reads like a webview bug and is not one — the Commit tab\'s diff flickered and would not stay scrolled, because a filesystem watcher and a staging-state dependency are each correct alone and together refetched the whole file on every save. Under both, two high-severity advisories that no alert had ever raised, found by auditing this tree for the first time.',
+    sections: [
+      {
+        title: 'New features',
+        items: [
+          {
+            title: 'Text size and Spacing, in place of one density toggle',
+            detail:
+              'UI density was a single binary — Compact or Comfortable, one four-pixel step added to every row — which answers two questions with one control and therefore answers neither. It is two now. Text size runs Small, Default, Large, Larger and scales the whole type ramp by 0.92, 1, 1.15 and 1.3; Spacing runs Compact, Cozy, Comfortable, Spacious and adds 0, 2, 4 and 8 pixels of breathing room per row. Zoom is untouched and stays as a third knob, and the division between the three is deliberate: Zoom scales everything, chrome and icons and borders included; Text size scales type, the row bases that have to hold it, and the column widths that are derived from text; Spacing scales nothing but the room around a row. Each answers something the other two cannot, which is why all three exist rather than one being folded into another. One default moves for existing installs: a stored Compact becomes Cozy. That is the release\'s only unasked-for behaviour change and it is a decision rather than an oversight — a stored Compact cannot be told apart from never having opened the setting, because loading fills missing keys from the defaults and writes the result straight back, so grandfathering it would have shipped the roomier default to new installs only, which is to say to nobody who had already formed the opinion that prompted the change. Two pixels per row, one click back. Comfortable stays Comfortable, and Text size defaults to Default everywhere, so nobody\'s type changes size without being asked. Two things underneath are load-bearing. The ten type tokens are written as resolved pixel values computed in JavaScript, plus one unitless row scale, rather than as a `calc()` in CSS — a `calc()` there would nest inside an unregistered custom property, which is exactly the case the diff row height already carries a fallback for. And every row call site reads its base multiplied by the scale with the step added, never the other way round: the step is already the user\'s own pixel count and must not be scaled, while the base is the thing that has to hold the text. The commit row\'s text-sized columns became functions of the scale for the same reason — the sha column is literally seven hex digits of monospace, and truncating a sha destroys its meaning rather than shortening it — and the list\'s minimum width scales with the columns it is the sum of, so the Date column cannot be pushed off the right edge at Larger. Four guards fail the build rather than leaving any of that to review: a row surface that takes one scale without the other or multiplies twice; a type ramp that stops ascending at some preset; a row base that no longer clears its own line box; and column minimums that no longer fit the narrowest pane, re-derived from the grid template the app actually emits rather than from the formula being checked. Both settings normalizers also reject an inherited object property, which a looser check would have waved through into an undefined row height for every row in the app. The pairing that matters most is only observable in a real webview, since jsdom cannot resolve a `calc()` at all: type growing while the box that holds it does not.',
+          },
+        ],
+      },
+      {
+        title: 'Fixes',
+        items: [
+          {
+            title: 'The Commit tab\'s diff no longer blanks out or loses your place',
+            detail:
+              'Reported from WSL2, and the webview is not the cause. Two correct changes met. The commit panel\'s diff effect depends on the status array, as the signal that the selected file\'s staging state moved, and that dependency is load-bearing: without it the pane kept showing the pre-stage diff while the next line selection addressed indices into it, staging lines other than the highlighted ones. But a status refresh replaces that array wholesale, and the filesystem watcher runs one refresh per filesystem event — so every event refetched the diff. Meanwhile the pane\'s body was gated on "a fetch is in flight" and swapped its rows for a spinner. The scroll container itself stays mounted, so its content collapsed from a whole file to about fifty pixels, the engine clamped the scroll offset to zero, and putting the rows back did not put the reader back, because restoring content never restores a clamped offset. That is both halves of the report from one mechanism: it flickers, and it will not stay scrolled. The body is gated on "waiting with nothing to show" now, so refetching the file already on screen keeps its rows, its height and your position, and only a first open or a switch to another file shows a spinner. The refetch itself deliberately stays: a file can be edited to different text with every status field identical — change one character on an already-modified line and none of the counts move — so "nothing in the status changed" is not "the diff is still right", and suppressing the fetch would have traded a visible flicker for a silently stale diff, which is the opposite of what the watcher exists to provide. Measured on WebKitGTK 605 against one event that changed nothing at all, same bytes and a new mtime: before, the pane went from a scroll offset of 3460 with 52 rows to no rows at offset zero; after, 122 frames with not one blank frame, 52 rows throughout and a single scroll position. The reporter\'s own screen capture showed 13 fully blank episodes in 7.7 seconds. The repo browser and the Diff screen never had this, because their diff effects key on the selection\'s primitives rather than on the status array — the commit panel is the only surface that refetches on a status refresh, which is why the report named the Commit tab.',
+          },
+          {
+            title: 'The theme editor\'s colour section no longer sidescrolls',
+            detail:
+              'New in 0.10.0 and visible the moment the section was scrolled. The block holding all eighteen colour fields carried a negative margin on each side, written as a bleed out to the modal\'s own padding — but it is not a child of the modal. It is a child of the controls column, and that column scrolls. A stretched flex child with sixteen pixels of bleed on each side is thirty-two pixels wider than its own scroll port, so the section grew a horizontal scrollbar: measured at a scroll width of 440 against a 424-pixel port. The bleed is gone, and the horizontal padding comes off the colour editor instead, so the colour rows now line up with the Palette card above them rather than sitting inset from it. A second cause sat in the same block: the colour grid\'s track floor was a flat 190 pixels, and an auto-fill track keeps its floor even when the container is narrower than it, which sidescrolled the section by another 38 pixels once the column dropped below that width. Verified by measuring scroll width against client width in a real browser at three column widths, including the narrowest the window allows — sixteen pixels of overflow before, none at any of the three after. jsdom has no layout and cannot see a scrollbar, so the two guard tests pin the two mechanisms instead, and the bleed guard exempts positioned elements, since the Tint slider centres its thumb with a negative margin and widens nothing.',
+          },
+        ],
+      },
+      {
+        title: 'Build & packaging',
+        items: [
+          {
+            title: 'Two high-severity advisories that no alert had raised',
+            detail:
+              'RUSTSEC-2026-0194 and RUSTSEC-2026-0195, both scored 7.5, against the XML reader that reaches the shipped binary through tauri\'s property-list parser: quadratic run time while checking a start tag for duplicate attribute names, and unbounded namespace-declaration allocation, which is a memory-exhaustion denial of service. Neither had a Dependabot alert. They surfaced from running `cargo audit` against this tree for the first time — GitHub\'s advisory database and the RustSec database do not agree with each other, and this is what fell through the gap. Worth remembering the next time "no open alerts" gets read as "nothing to fix". The fix needed no manifest edit, because tauri\'s own range already admitted a newer property-list crate: updating that one crate carries the XML reader past the version both advisories ask for, and the change is the lockfile and nothing else. Verified as a move from two vulnerabilities found to none, with the Rust suite unchanged at 1334 passing.',
+          },
+          {
+            title: 'Dependency advisories are reported on a schedule now',
+            detail:
+              'No workflow here had ever run an audit, so the security tab was the only thing that knew — and it knew badly, because the security updater only bumps a manifest entry while every npm advisory this repo receives is transitive-only. For most of them it opens nothing at all and the alert simply accumulates; twenty-four had. A scheduled job reports them now, and it is deliberately not a gate: there is no pull-request trigger on it whatsoever, which is the only reliable way to stop a reporting job quietly becoming one, and the Linux e2e run stays the single required check. What can fail is narrow. On the npm side only the production-scope audit fails, since that is what the shipped bundle is built from, while the all-scopes run reports into the job summary and passes. On the cargo side the default fails, because those crates ship. There is no ignore list, and that is a measurement rather than an omission: the cargo audit fails on vulnerabilities and merely warns on unmaintained or unsound crates, so the eleven warnings here — including the one that ships and is blocked upstream — pass on their own. It is also why that step must never be made to deny warnings, which would leave it permanently red over advisories nobody can act on. The site\'s own dependencies are out of scope on purpose: they are direct, so the grouped monthly proposal already fixes them.',
+          },
+          {
+            title: 'The September dependency batch, and a TOML denial of service',
+            detail:
+              'Six dependency proposals folded into one branch, which is the measured-cheaper shape here — the lockfile\'s peer fanout conflicts every other npm proposal on each merge, so merging them one at a time costs a rebase and a CI run apiece. React 19.3, lucide 1.45, the WebdriverIO packages, and Vite 8, which swaps rollup for rolldown: the React plugin already declared the new major so it needs no companion bump, the esbuild floor that closes an older advisory is held by the same range as before, and the production bundle builds clean with an unchanged entry chunk. With them, a high-severity denial of service from malformed TOML documents, which had been left open for a real reason that has now expired — the vulnerable range was every published version, so there was no number to bump to until the fix shipped. It arrives through a package this repo pins exactly, in order to escape a broken release of that package, so it cannot be bumped out from its parent and an override is the only route. It is guarded as a required key and as a floor, because the key assertion catches the case the floor cannot see: delete the key but leave the lockfile alone and the already-resolved version still satisfies its parent\'s own range, so the floor passes vacuously while the advisory is re-opened in silence. One proposal was declined rather than taken. The Node type definitions stay on 22, because they describe the runtime rather than a library: every workflow, the e2e container and the documented toolchain are pinned to Node 22, so types describing Node 26 would let code type-check against APIs that exist nowhere this app is built, tested or shipped, with the type-checker green about it. That decision is recorded as an ignore rule at semver-major only, so patches still flow and the weekly re-proposal stops.',
+          },
+        ],
+      },
+      {
+        title: 'Known limitations',
+        items: [
+          {
+            title: 'Two windows on one repository do not share a lock',
+            detail:
+              'Unchanged from 0.7.0. Each window opens its own handles for a repository, and that is what keeps windows independent — closing a tab in one evicts nothing the other is using. The read/write gate orders one window\'s work against itself, not one window\'s against another\'s, so work you start on the same repository from two windows is still arbitrated by git\'s own `index.lock`, exactly as it is between any two git processes.',
+          },
+          {
+            title: 'A Store update lands hours after the release, not with it',
+            detail:
+              'Unchanged from 0.6.0. Submission is automatic; certification is not instant. Microsoft reviews each update before it reaches the Store, so a Store install trails the `.msi`, Scoop and winget by however long that takes — usually hours. Nothing is wrong when the Store still offers the previous version shortly after a release.',
+          },
+          {
+            title: 'Timestamps are shown in your timezone, not the author\'s',
+            detail:
+              'Unchanged from 0.5.0. Where `git log` prints the offset a commit was authored under, PlatypusGit shows that same instant on your own clock — a commit reaches the interface as unix seconds and nothing else, so matching git here is a change to what the backend sends rather than to how a date is written. The hover names the zone it used, so no stamp is ambiguous about which clock that was.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.10.0',
     date: '2026-09-11',
     status: 'feature',
