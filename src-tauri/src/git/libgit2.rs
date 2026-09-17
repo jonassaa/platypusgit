@@ -199,12 +199,31 @@ impl Libgit2Backend {
     /// page's cost on a repository whose history is short. The fingerprint is
     /// one enumeration with no peeling; the map behind it is shared by `Arc`,
     /// so several concurrent pages read one copy.
-    fn ref_map(&self, repo_id: &RepoId, repo: &Repository) -> Arc<RefMap> {
-        let fingerprint = ref_fingerprint(repo);
-        if let Some(map) = self.log_cache.ref_map(repo_id, fingerprint) {
-            return map;
+    ///
+    /// `validate` is false for a CONTINUATION page, which reuses whatever the
+    /// walk's first page saw without asking again. That is measured, not a
+    /// guess: on the `refs` fixture, validating costs 113 ms of a 117 ms page,
+    /// because enumerating 7,001 loose refs is the whole expense and peeling
+    /// them is 10 ms of it. Paying that once per REFRESH is proportionate —
+    /// `branches` and `tags` beside it in the same fan-out pay 187 ms and 149
+    /// ms for the same enumeration — and once per SCROLL is not. So a
+    /// continuation decorates with the refs its first page saw: a coherent
+    /// snapshot rather than a stale one, since the walk it pages is already a
+    /// snapshot and every refresh starts at a first page.
+    ///
+    /// Note the shape of the cold arm. Nothing cached means going straight to
+    /// `collect_ref_map`, whose own pass yields the fingerprint — asking for
+    /// one first would enumerate every ref twice for an answer that cannot
+    /// match anything, and that made a cold fan-out on `refs` slower than the
+    /// version this replaced.
+    fn ref_map(&self, repo_id: &RepoId, repo: &Repository, validate: bool) -> Arc<RefMap> {
+        if let Some((had, map)) = self.log_cache.ref_map(repo_id) {
+            if !validate || ref_fingerprint(repo) == had {
+                return map;
+            }
         }
-        let map = Arc::new(collect_ref_map(repo));
+        let (map, fingerprint) = collect_ref_map(repo);
+        let map = Arc::new(map);
         self.log_cache
             .put_ref_map(repo_id, fingerprint, Arc::clone(&map));
         map
@@ -2758,15 +2777,34 @@ fn build_walk_order(repo: &Repository, starts: &[git2::Oid]) -> AppResult<WalkOr
 /// than an mtime, because loose refs live in nested directories where no single
 /// timestamp covers them all.
 fn ref_fingerprint(repo: &Repository) -> u64 {
-    use std::hash::{Hash, Hasher};
     let Ok(refs) = repo.references() else {
         // Unreadable refdb: a fingerprint nobody can match, so the map is
         // rebuilt rather than a stale one being served.
         return u64::MAX;
     };
-    let mut total: u64 = 0;
-    let mut count: u64 = 0;
+    let mut fp = RefFingerprint::default();
     for r in refs.flatten() {
+        fp.add(&r);
+    }
+    fp.finish()
+}
+
+/// The running fingerprint, so `ref_fingerprint` and `collect_ref_map` cannot
+/// drift apart.
+///
+/// One definition on purpose: the two have to agree exactly or the map built
+/// by one is rejected by the other on the very next call, and nothing about
+/// that failure is visible except the cache silently never hitting.
+/// `the_two_fingerprint_paths_agree` pins it.
+#[derive(Default)]
+struct RefFingerprint {
+    total: u64,
+    count: u64,
+}
+
+impl RefFingerprint {
+    fn add(&mut self, r: &git2::Reference<'_>) {
+        use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         r.name_bytes().hash(&mut h);
         match r.target() {
@@ -2778,10 +2816,13 @@ fn ref_fingerprint(repo: &Repository) -> u64 {
         // Commutative, so `references()` may hand them over in any order it
         // likes; the count is mixed in separately so that a ref whose hash is
         // zero still moves the answer when it appears or disappears.
-        total = total.wrapping_add(h.finish());
-        count += 1;
+        self.total = self.total.wrapping_add(h.finish());
+        self.count += 1;
     }
-    total.wrapping_mul(31).wrapping_add(count)
+
+    fn finish(self) -> u64 {
+        self.total.wrapping_mul(31).wrapping_add(self.count)
+    }
 }
 
 /// Accumulates the walk frontier while a page is emitted (#68 G11).
@@ -2925,13 +2966,29 @@ fn push_page_start(
     }
 }
 
-/// Map git2's per-ref lookup by target OID. Scans once per log call.
-fn collect_ref_map(repo: &Repository) -> HashMap<git2::Oid, Vec<RefInfo>> {
+/// Map git2's per-ref lookup by target OID, and the fingerprint of the ref
+/// database it was built from.
+///
+/// The fingerprint rides along rather than being asked for separately because
+/// this scan is the expensive thing (#473): on a repository with 7,001 loose
+/// refs, one enumeration is 113 ms and the peeling inside it is 10 ms of that.
+/// A caller that computed a fingerprint first and then called this would
+/// enumerate everything twice.
+///
+/// No longer once per log call — see `Libgit2Backend::ref_map`.
+fn collect_ref_map(repo: &Repository) -> (HashMap<git2::Oid, Vec<RefInfo>>, u64) {
     // A map, not a list: every log walk decorates each of its rows from this,
     // and a linear scan per row was O(refs x rows) with a clone per hit.
     let mut out: HashMap<git2::Oid, Vec<RefInfo>> = HashMap::new();
-    if let Ok(refs) = repo.references() {
+    let mut fp = RefFingerprint::default();
+    let Ok(refs) = repo.references() else {
+        // Unreadable refdb: a fingerprint nobody can match, so this is rebuilt
+        // next time rather than a stale map being served forever.
+        return (out, u64::MAX);
+    };
+    {
         for r in refs.flatten() {
+            fp.add(&r);
             let name = match r.shorthand() {
                 Ok(n) => n.to_string(),
                 Err(_) => continue,
@@ -2974,7 +3031,7 @@ fn collect_ref_map(repo: &Repository) -> HashMap<git2::Oid, Vec<RefInfo>> {
             }
         }
     }
-    out
+    (out, fp.finish())
 }
 
 fn parse_reflog_op(raw_message: &str) -> (ReflogOp, String) {
@@ -3817,7 +3874,9 @@ impl GitBackend for Libgit2Backend {
         limit: usize,
     ) -> AppResult<LogPage> {
         self.with_repo_read(repo_id, |repo| {
-            let ref_map = self.ref_map(repo_id, repo);
+            // A first page validates the decorations; a continuation reuses what
+            // its first page saw (#473).
+            let ref_map = self.ref_map(repo_id, repo, cursor.is_none());
             let Some(plan) = self.page_plan(repo_id, repo, refspec, cursor, limit)? else {
                 return Ok(LogPage {
                     commits: Vec::new(),
@@ -3927,7 +3986,7 @@ impl GitBackend for Libgit2Backend {
         };
 
         self.with_repo(repo_id, |repo| {
-            let ref_map = self.ref_map(repo_id, repo);
+            let ref_map = self.ref_map(repo_id, repo, cursor.is_none());
             let mut walk = repo.revwalk()?;
             walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
             let starts = push_page_start(repo, &mut walk, refspec, cursor)?;
@@ -4030,7 +4089,7 @@ impl GitBackend for Libgit2Backend {
 
     fn commits_since(&self, repo_id: &RepoId, base: &str) -> AppResult<Vec<CommitInfo>> {
         self.with_repo(repo_id, |repo| {
-            let ref_map = self.ref_map(repo_id, repo);
+            let ref_map = self.ref_map(repo_id, repo, true);
 
             let head = match repo.head() {
                 Ok(h) => h.peel_to_commit()?.id(),
@@ -4080,7 +4139,7 @@ impl GitBackend for Libgit2Backend {
         limit: usize,
     ) -> AppResult<Vec<CommitInfo>> {
         self.with_repo(repo_id, |repo| {
-            let ref_map = self.ref_map(repo_id, repo);
+            let ref_map = self.ref_map(repo_id, repo, true);
             // `resolve_commit` maps a failure to InvalidRef with the offending
             // spec, so the UI can name the side the user typed wrong.
             let base_oid = resolve_commit(repo, base)?.id();

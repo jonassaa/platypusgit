@@ -274,6 +274,25 @@ git/
 │                write still excludes everything. Carries its own unit tests
 │                with a fake handle, proving overlap by barrier rather than by
 │                wall clock. See backend.md
+├── log_cache.rs  What `log_page` used to rebuild on every page (#473): the
+│                prepared WALK and the REF MAP. libgit2's topological sort is
+│                not incremental — setting a sort order sets `walk->limited`, so
+│                `prepare_walk` traverses the whole reachable graph and
+│                materialises the complete ordered list before yielding one oid,
+│                which is why 500 commits and 1.5 M cost the same and why a walk
+│                per page paid that price per page (page 10 of the kernel: 157
+│                s). So the walk is prepared once, kept as a `Vec<Oid>` capped at
+│                MAX_ORDER, and later pages are slices. Two different
+│                invalidations on purpose: a FIRST page is keyed by (refspec,
+│                start oids) so a moved ref misses, a CONTINUATION is keyed by
+│                the frontier it was emitted with and consults no refs at all
+│                (the set a frontier reaches is commits, and commits are
+│                immutable). The ref map is keyed by a fingerprint of every ref
+│                name + target, so a `git tag` in a terminal invalidates it like
+│                one made in the app. PURE ACCELERATOR: a poisoned mutex is a
+│                miss, never a failed page, and `close` drops the lot. Carries
+│                its own unit tests; `tests/log_walk_cache.rs` holds the
+│                transparency property end to end. See backend.md, performance.md
 ├── update_refs.rs  Stacked branches (#240) — git's `rebase --update-refs`,
 │                IMPLEMENTED not passed through, because our rebase is our own
 │                libgit2 replay with no `git rebase` process to hand a flag to.

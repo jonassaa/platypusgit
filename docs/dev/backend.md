@@ -1544,6 +1544,83 @@ walk a `Vec<RefInfo>` per commit — `{ name, kind }`, where `kind` is
 - `src-tauri/tests/log_decoration.rs` pins all of it, including a tag and a
   branch of the same name staying two distinct decorations.
 
+`collect_ref_map` no longer runs per page — see below.
+
+## The paged log prepares ONE walk (#473)
+
+`log_page` used to build a fresh revwalk per page. That reads like an obvious
+design until you look at what libgit2 does with a sort order:
+
+- `git_revwalk_sorting` sets `walk->limited` for ANY sorting but `NONE`, so
+  `prepare_walk` runs `limit_list` over the entire reachable graph;
+- `sort_in_topological_order` then materialises the **complete** ordered list,
+  and only afterwards does `git_revwalk_next` start popping it.
+
+So asking that walk for 500 commits and asking it for all 1,482,923 of them
+cost the same thing, and one walk per page paid that price per page. The
+benchmark measured it as a per-page cost *flat in depth*: on `torvalds/linux`
+page one was 15.95 s and page ten 157.67 s — ten times one page. git pays for
+the same sort once and then `--skip`s.
+
+`git/log_cache.rs` keeps the finished sort instead. A walk is prepared once,
+its output kept as a `Vec<Oid>` capped at `MAX_ORDER` (100,000 — two hundred
+pages, 2 MB), and every later page is a slice of it. The cursor contract is
+unchanged: `next_cursor` is still the frontier, still self-describing, and a
+cursor the cache cannot place still prepares its own walk.
+
+**There are two invalidation stories and they are deliberately different.**
+
+- A **first page** is keyed by `(refspec, start oids)`. Any ref that moves
+  changes an oid in the key, so the next first page misses and rebuilds. That
+  is the whole mechanism — there is no write hook to forget to call.
+- A **continuation** is keyed by the frontier it was emitted with, and consults
+  no refs at all. It does not need to: resuming from a cursor has always
+  ignored `refspec` (`push_page_start`), and the set a frontier reaches is made
+  of commits, which are immutable. New history arrives as CHILDREN of what is
+  there, never inside that set. So a walk prepared ten minutes ago has the same
+  tail today.
+
+A cursor is placed by **exact match against the frontier we emitted**, never by
+"find an order containing these oids". Two walks over one repository share
+commits, so containment would happily resolve an `--all` cursor inside a
+single-branch walk and continue the wrong history.
+
+**The ref map goes the same way**, and it was worth as much: `collect_ref_map`
+enumerated and peeled every ref on every page to decorate 500 rows — 16× git's
+own work on a repository with 7,001 refs and 2,000 commits. It is now cached
+against a `ref_fingerprint`: one enumeration of every ref's name and target
+with **no peeling**, combined commutatively so enumeration order cannot change
+it. A fingerprint rather than a write hook, because a `git tag` typed in a
+terminal has to invalidate it exactly like one made in the app; and rather than
+an mtime, because loose refs live in nested directories that no single
+timestamp covers. `commits_since` and `commits_between` read the same cache.
+
+**It is a pure accelerator, and that is a rule, not a description.** Everything
+held is derivable from disk, a poisoned mutex degrades to a miss instead of
+failing the page, and `close` drops the repository's entries. `tests/
+log_walk_cache.rs` holds it down by draining the same history twice — through
+one backend where the cache is hot, and through a fresh backend per page where
+it can never hit — and comparing the two. Those tests pass just as well against
+a cache that never hits, which is why the file also asserts on
+`log_cache_stats()`: eleven pages must prepare exactly one walk and build
+exactly one ref map, and a commit must make the next first page prepare a
+second. All four failure modes were planted and watched go red.
+
+**One behaviour is now visible that was always there.** When two commits share
+a *second*, which lane comes out first is not something either walk promises:
+libgit2 orders the topological queue by time through a `git_pqueue` whose
+comparator is not stable, so the answer depends on insertion order — and a walk
+restarted from a cursor inserts differently from one that ran straight through.
+The walk-per-page version had the same freedom and used it at every page
+boundary; one prepared walk is merely self-consistent where ten were not. What
+holds either way is the actual contract — every commit exactly once, no parent
+before its child — and that is what the same-second fixture asserts.
+
+**What is NOT cached: the filtered walk.** `log_filtered_page` still prepares
+one walk per page. It can visit far more commits than it returns, so it can run
+off the end of a capped prefix mid-page, and handling that well is a different
+piece of work from this one. The ref-map half already applies to it. See #476.
+
 ## Reading the log (#274)
 
 Where it is — `tauri_plugin_log`'s `LogDir` target, i.e. Tauri's `app_log_dir`:

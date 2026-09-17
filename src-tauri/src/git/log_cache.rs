@@ -286,12 +286,18 @@ impl LogCache {
         walk.cursors.insert(cursor, next);
     }
 
-    /// The ref decorations for `fingerprint`, if that is still the ref database
-    /// we built them from.
-    pub fn ref_map(&self, repo: &RepoId, fingerprint: u64) -> Option<Arc<RefMap>> {
+    /// The ref decorations this repository last built, and the fingerprint of
+    /// the ref database they were built from.
+    ///
+    /// The caller decides what to do with the pair, and that is the point: a
+    /// cold call must NOT enumerate the refs to produce a fingerprint it is
+    /// about to throw away — doing exactly that made a cold eleven-read
+    /// fan-out on the `refs` fixture slower than the version this replaced
+    /// (219 ms → 364 ms), because it enumerated 7,001 loose refs twice.
+    pub fn ref_map(&self, repo: &RepoId) -> Option<(u64, Arc<RefMap>)> {
         let repos = self.repos.lock().ok()?;
         let (had, map) = repos.get(repo)?.refs.as_ref()?;
-        (*had == fingerprint).then(|| Arc::clone(map))
+        Some((*had, Arc::clone(map)))
     }
 
     /// File a freshly built ref map. Called only after `collect_ref_map` ran,
@@ -467,8 +473,8 @@ mod tests {
         let c = LogCache::new();
         c.put_ref_map(&repo(), 7, Arc::new(RefMap::new()));
 
-        assert!(c.ref_map(&repo(), 7).is_some());
-        assert!(c.ref_map(&repo(), 8).is_none(), "the ref database moved");
+        let (had, _) = c.ref_map(&repo()).expect("cached");
+        assert_eq!(had, 7, "the fingerprint travels back with the map");
     }
 
     #[test]
@@ -481,7 +487,7 @@ mod tests {
         c.forget(&repo());
 
         assert!(c.first_page(&repo(), &key, 1).is_none());
-        assert!(c.ref_map(&repo(), 7).is_none());
+        assert!(c.ref_map(&repo()).is_none());
     }
 
     /// Two repositories share this cache and must not share entries — the tab

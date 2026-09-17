@@ -313,6 +313,53 @@ fn an_annotated_tag_made_later_shows_up_too() {
     assert!(tagged, "got {:?}", after.commits[0].refs);
 }
 
+/// A continuation decorates with the refs its FIRST page saw, and the next
+/// first page picks the new one up.
+///
+/// This is the one place the cache is visible from outside, and it is a
+/// deliberate trade measured on the `refs` fixture: validating the
+/// decorations costs 113 ms of a 117 ms page there, because enumerating 7,001
+/// loose refs is the whole expense. Once per refresh is proportionate — the
+/// `branches` and `tags` reads beside it in the same fan-out pay 187 ms and
+/// 149 ms for the same enumeration — and once per scroll is not. A scroll
+/// therefore shows one coherent snapshot of the decorations rather than a
+/// different one per page.
+#[test]
+fn a_continuation_keeps_the_decorations_its_first_page_saw() {
+    let tr = TempRepo::with_initial_commit("hi\n");
+    linear_history(&tr, 5);
+    let (be, handle) = tr.open_with_backend();
+
+    let first = be.log_page(&handle.id, None, None, 2).unwrap();
+    let cursor = first.next_cursor.clone().expect("more history");
+
+    // Tag a commit the NEXT page will contain.
+    let target = tr
+        .repo
+        .find_commit(git2::Oid::from_str(&cursor[0]).unwrap())
+        .unwrap();
+    tr.repo
+        .tag_lightweight("mid-scroll", target.as_object(), false)
+        .unwrap();
+
+    let next = be
+        .log_page(&handle.id, None, Some(&cursor), 2)
+        .unwrap();
+    assert!(
+        next.commits[0].refs.iter().all(|r| r.name != "mid-scroll"),
+        "a continuation does not re-read the refs: {:?}",
+        next.commits[0].refs,
+    );
+
+    // …and a refresh — which is always a first page — does pick it up.
+    let refreshed = be.log_page(&handle.id, None, None, 500).unwrap();
+    let tagged = refreshed
+        .commits
+        .iter()
+        .any(|c| c.refs.iter().any(|r| r.name == "mid-scroll"));
+    assert!(tagged, "a first page must validate the decorations");
+}
+
 /// A commit made after a page was cached must appear in the next first page —
 /// the invalidation that matters most, because it happens every time the user
 /// commits.
@@ -448,6 +495,49 @@ fn a_tag_rebuilds_the_ref_map_and_not_the_walk() {
     assert_eq!(
         after.walks_prepared, before.walks_prepared,
         "a tag is not a new walk",
+    );
+}
+
+/// The two places a ref fingerprint is computed must agree.
+///
+/// `collect_ref_map` produces one from its own pass and `ref_fingerprint`
+/// computes one to validate it, and if the two ever disagree the map built by
+/// one is rejected by the other on the very next call. Nothing about that is
+/// visible from outside — pagination stays correct, the decorations stay
+/// correct, and the cache simply never hits again. So it is asserted through
+/// the only door there is: a repository with every shape of ref in it, read
+/// twice, must rebuild nothing the second time.
+#[test]
+fn the_two_fingerprint_paths_agree() {
+    let tr = TempRepo::with_initial_commit("hi\n");
+    linear_history(&tr, 3);
+    {
+        let head = tr.repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        tr.repo.branch("topic", &head, false).unwrap();
+        tr.repo
+            .tag_lightweight("light", head.as_object(), false)
+            .unwrap();
+        tr.repo
+            .tag("heavy", head.as_object(), &sig, "annotated", false)
+            .unwrap();
+        // A symbolic ref has no direct target, so it takes the other arm of the
+        // fingerprint — and of the map.
+        tr.repo
+            .reference_symbolic("refs/remotes/origin/HEAD", "refs/heads/main", true, "probe")
+            .unwrap();
+    }
+    let (be, handle) = tr.open_with_backend();
+
+    be.log_page(&handle.id, Some("--all"), None, 500).unwrap();
+    let first = be.log_cache_stats();
+    be.log_page(&handle.id, Some("--all"), None, 500).unwrap();
+
+    assert_eq!(
+        be.log_cache_stats().ref_maps_built,
+        first.ref_maps_built,
+        "the validating fingerprint disagrees with the one the map was built \
+         with, so the cache can never hit",
     );
 }
 
