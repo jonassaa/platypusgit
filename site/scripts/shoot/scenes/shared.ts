@@ -28,10 +28,22 @@ export const FIGURE_SETTINGS = {
   uiTextScale: "default",
   uiZoom: 1.2,
   dateFormat: "relative",
+  diffViewMode: "inline",
 } as const;
 
-/** `pg-settings-v2` holds a PLAIN object — not a zustand persist envelope. */
-export const SETTINGS_STORAGE = JSON.stringify(FIGURE_SETTINGS);
+/**
+ * `pg-settings-v2` holds a PLAIN object — not a zustand persist envelope, so
+ * this is written straight in with no `{ state, version }` wrapper.
+ *
+ * Takes overrides because the figures genuinely disagree about one setting:
+ * the commit figure shows the SPLIT diff and the history figure the inline one,
+ * which is what each screen's pane width is worth showing.
+ */
+export function settingsStorage(
+  overrides: Partial<Record<keyof typeof FIGURE_SETTINGS, unknown>> = {},
+): string {
+  return JSON.stringify({ ...FIGURE_SETTINGS, ...overrides });
+}
 
 /**
  * Commands the app issues on any start, whatever is open. Each was added

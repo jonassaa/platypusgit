@@ -16,9 +16,12 @@
 import type {
   BranchInfo,
   CommitInfo,
+  CommitTemplate,
   DiffLine,
   FileDiff,
+  FileContent,
   FileStatus,
+  GitIdentity,
   HeadInfo,
   LogPage,
   RefInfo,
@@ -190,41 +193,50 @@ export const HEAD: HeadInfo = {
   headOid: COMMITS[0].oid,
 };
 
-/** The status bar's "4 changed", and the commit screen's file list. */
+/**
+ * The working tree: one staged file and three unstaged, which is the `4 changed`
+ * both figures' status bars report and the STAGED 1 / CHANGES 3 split the
+ * approved commit figure shows.
+ *
+ * Note this is deliberately a different file set from the history figure's diff
+ * pane, and that is not an inconsistency: the commit screen shows the WORKING
+ * TREE, while the history detail shows what one past commit changed.
+ */
 export const STATUS: FileStatus[] = [
+  {
+    // Staged: index differs from HEAD, worktree matches the index.
+    path: "src/parser.ts",
+    embedded: false,
+    worktree: { kind: "Unmodified" },
+    index: { kind: "Modified" },
+    additions: 6,
+    deletions: 0,
+    stagedAdditions: 6,
+    stagedDeletions: 0,
+  },
+  {
+    path: "NOTES.md",
+    embedded: false,
+    worktree: { kind: "Untracked" },
+    index: { kind: "Unmodified" },
+    additions: 6,
+    deletions: 0,
+  },
   {
     path: "src/engine.ts",
     embedded: false,
     worktree: { kind: "Modified" },
     index: { kind: "Unmodified" },
-    additions: 12,
-    deletions: 4,
+    additions: 5,
+    deletions: 5,
   },
   {
-    path: "src/evaluator.ts",
-    embedded: false,
-    worktree: { kind: "Unmodified" },
-    index: { kind: "Modified" },
-    additions: 2,
-    deletions: 7,
-    stagedAdditions: 2,
-    stagedDeletions: 7,
-  },
-  {
-    path: "test/engine.test.ts",
+    path: "tests/lexer.test.ts",
     embedded: false,
     worktree: { kind: "Modified" },
     index: { kind: "Unmodified" },
-    additions: 31,
-    deletions: 0,
-  },
-  {
-    path: "docs/operators.md",
-    embedded: false,
-    worktree: { kind: "Untracked" },
-    index: { kind: "Unmodified" },
-    additions: 0,
-    deletions: 0,
+    additions: 7,
+    deletions: 6,
   },
 ];
 
@@ -412,6 +424,153 @@ export const EVALUATOR_DIFF: FileDiff = {
 };
 
 /**
+ * `src/engine.ts` as the WORKING TREE has it — the diff the commit figure shows
+ * in its centre pane, at +5 −5 to match its row in STATUS.
+ *
+ * The change illustrates itself: the operator table gains explicit descriptions,
+ * which is a believable thing to be part-way through when a screenshot is taken.
+ */
+export const ENGINE_WORKTREE_DIFF: FileDiff = {
+  path: "src/engine.ts",
+  oldPath: null,
+  binary: false,
+  additions: 5,
+  deletions: 5,
+  hunks: [
+    {
+      header: "@@ -2,6 +2,8 @@",
+      oldStart: 2,
+      oldLines: 6,
+      newStart: 2,
+      newLines: 8,
+      lines: [
+        ctx(" * The operator engine: one descriptor per operator, and a dispatcher", 2, 2),
+        ctx(" * that reads them.", 3, 3),
+        ctx(" *", 4, 4),
+        add(" * UNCOMMITTED: descriptions being made explicit about overflow and", 5),
+        add(" * domain errors.", 6),
+        ctx(" * The table is the source of truth. Adding an operator means adding a", 5, 7),
+        ctx(" * row here and a branch in `apply`; the parser reads `PRECEDENCE` off", 6, 8),
+        ctx(" * this table rather than hard-coding its own copy.", 7, 9),
+      ],
+    },
+    {
+      header: "@@ -23,7 +25,7 @@ export const OPERATORS: readonly OpDescriptor[] = [",
+      oldStart: 23,
+      oldLines: 7,
+      newStart: 25,
+      newLines: 7,
+      lines: [
+        ctx('    name: "add",', 23, 25),
+        ctx("    arity: 2,", 24, 26),
+        ctx("    precedence: 1,", 25, 27),
+        del('    description: "sum of both operands",', 26),
+        add(
+          '    description: "sum of both operands; overflows to Infinity",',
+          28,
+        ),
+        ctx("  },", 27, 29),
+        ctx("  {", 28, 30),
+        ctx('    name: "sub",', 29, 31),
+      ],
+    },
+    {
+      header: "@@ -35,7 +37,7 @@ export const OPERATORS: readonly OpDescriptor[] = [",
+      oldStart: 35,
+      oldLines: 7,
+      newStart: 37,
+      newLines: 7,
+      lines: [
+        ctx('    name: "mul",', 35, 37),
+        ctx("    arity: 2,", 36, 38),
+        ctx("    precedence: 3,", 37, 39),
+        del('    description: "product of both operands",', 38),
+        add('    description: "product of both operands; the usual rounding",', 40),
+        ctx("  },", 39, 41),
+        ctx("  {", 40, 42),
+        ctx('    name: "div",', 41, 43),
+      ],
+    },
+    {
+      header: "@@ -47,9 +49,7 @@ export const OPERATORS: readonly OpDescriptor[] = [",
+      oldStart: 47,
+      oldLines: 9,
+      newStart: 49,
+      newLines: 7,
+      lines: [
+        ctx("    arity: 2,", 47, 49),
+        ctx("    precedence: 2,", 48, 50),
+        del("    // TODO: say what happens on a zero divisor. The engine raises,", 49),
+        del("    // but nobody reading this table would guess that.", 50),
+        del('    description: "quotient",', 51),
+        add('    description: "quotient; raises on a zero divisor",', 51),
+        ctx("  },", 52, 52),
+        ctx("];", 53, 53),
+      ],
+    },
+  ],
+};
+
+/**
+ * `src/engine.ts`, whole, on each side of the worktree change.
+ *
+ * Needed because the shipped default for `diffContextMode` is `wholeFile`: the
+ * split view asks for both copies of the file and lays the hunks over them, so
+ * a scene that answered only the hunks would render a diff with nothing around
+ * it. Built from the diff above so the two cannot disagree.
+ */
+function fileAt(side: "old" | "new"): string {
+  const out: string[] = [];
+  for (const h of ENGINE_WORKTREE_DIFF.hunks) {
+    for (const l of h.lines) {
+      const k = l.kind.kind;
+      if (k === "Context") out.push(l.content);
+      else if (k === "Addition" && side === "new") out.push(l.content);
+      else if (k === "Deletion" && side === "old") out.push(l.content);
+    }
+  }
+  return out.join("\n");
+}
+
+const ENGINE_NEW: FileContent = {
+  path: "src/engine.ts",
+  binary: false,
+  text: fileAt("new"),
+  fromHead: false,
+  size: fileAt("new").length,
+};
+
+const ENGINE_OLD: FileContent = {
+  path: "src/engine.ts",
+  binary: false,
+  text: fileAt("old"),
+  fromHead: true,
+  size: fileAt("old").length,
+};
+
+/**
+ * The committer identity the commit panel names. A configured global identity
+ * on purpose: `NoSignature` is a FORM, and a figure showing the app asking for
+ * a name and email would advertise a setup step rather than the product.
+ */
+export const IDENTITY: GitIdentity = {
+  name: { value: "Jonas Aasberg", scope: "global" },
+  email: { value: "jonas@example.com", scope: "global" },
+  globalConfigPath: "/Users/jonas/.gitconfig",
+  localConfigPath: "/Users/jonas/pgit-showcase/.git/config",
+};
+
+/** No `commit.template` — the composer stays `git commit -m`, and the message
+ *  box in the figure shows its placeholder rather than someone's boilerplate. */
+export const COMMIT_TEMPLATE: CommitTemplate = {
+  path: null,
+  body: null,
+  unreadable: false,
+  commentPrefix: "#",
+  cleanup: "default",
+};
+
+/**
  * Handlers for everything the showcase repository answers.
  *
  * A function rather than a constant so each scene gets its own copy and cannot
@@ -442,6 +601,19 @@ export function showcaseHandlers(): Record<string, (args: Record<string, unknown
 
     // The selected commit's detail pane.
     diff_commit: () => [EVALUATOR_DIFF],
+    // The commit screen: the selected row's worktree diff, both copies of the
+    // file for whole-file context, the identity and the (absent) template.
+    // Path-aware, not a constant: answering every path with one file's diff is
+    // how a figure ends up captioned `NOTES.md` over the engine's operator
+    // table. An unknown path gets an empty diff rather than a lie.
+    get_diff: (args) =>
+      args.path === ENGINE_WORKTREE_DIFF.path
+        ? ENGINE_WORKTREE_DIFF
+        : { ...ENGINE_WORKTREE_DIFF, path: String(args.path ?? ""), hunks: [], additions: 0, deletions: 0 },
+    read_file_content: () => ENGINE_NEW,
+    read_file_content_at_index: () => ENGINE_OLD,
+    get_identity: () => IDENTITY,
+    get_commit_template: () => COMMIT_TEMPLATE,
     // Unsigned, and no notes: both would add a badge to the figure that says
     // nothing about what the figure is for.
     verify_commit: () => ({ state: "None", signer: null, key: null }),

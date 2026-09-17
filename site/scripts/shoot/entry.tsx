@@ -53,6 +53,22 @@ ReactDOM.default
   .createRoot(document.getElementById("root") as HTMLElement)
   .render(React.default.createElement(App.default));
 
+// Drive the app into the state this figure shows. Runs after the first render,
+// and a failure is LOUD: a scene that silently did not navigate would shoot the
+// History screen under the commit figure's name, which is exactly the kind of
+// wrong that survives review.
+if (scene.afterMount) {
+  void scene.afterMount().catch((err) => {
+    console.error("[shoot] afterMount failed", err);
+    const el = document.createElement("pre");
+    el.style.cssText =
+      "position:fixed;inset:0;z-index:99999;margin:0;padding:24px;" +
+      "background:#3b0d0d;color:#fff;font:16px/1.5 ui-monospace,Menlo,monospace";
+    el.textContent = `[shoot] scene "${scene.name}" afterMount failed:\n\n${String(err)}`;
+    document.body.appendChild(el);
+  });
+}
+
 // The fixture worklist, on screen.
 //
 // `?report=1` renders every command this scene was asked for and did not have,

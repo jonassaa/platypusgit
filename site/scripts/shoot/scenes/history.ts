@@ -7,7 +7,7 @@
 // Launch always lands on History (AppShell: the old pg-screen restore is gone),
 // so this scene only has to say which repository is open.
 import type { Scene } from "../shim/core";
-import { BOOT_HANDLERS, SETTINGS_STORAGE } from "./shared";
+import { BOOT_HANDLERS, settingsStorage } from "./shared";
 import { SHOWCASE_PATH, showcaseHandlers } from "../fixtures/showcase";
 
 export const history: Scene = {
@@ -18,7 +18,7 @@ export const history: Scene = {
   // approved composition.
   now: "2026-07-28T10:30:00+02:00",
   storage: {
-    "pg-settings-v2": SETTINGS_STORAGE,
+    "pg-settings-v2": settingsStorage(),
     // `{ paths, active }` — the shape tabs.ts::loadOpenRepos reads.
     "pg-open-repos": JSON.stringify({
       paths: [SHOWCASE_PATH],

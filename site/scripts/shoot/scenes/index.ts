@@ -3,8 +3,10 @@
 import type { Scene } from "../shim/core";
 import { welcome } from "./welcome";
 import { history } from "./history";
+import { commit } from "./commit";
 
 export const scenes: Record<string, Scene> = {
   welcome,
   history,
+  commit,
 };

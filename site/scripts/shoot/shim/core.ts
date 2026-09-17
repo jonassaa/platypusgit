@@ -34,7 +34,65 @@ export type Scene = {
   now: string;
   /** cmd -> fixture. A miss throws, which is the fixture worklist. */
   handlers: Record<string, Handler>;
+  /**
+   * Put the mounted app into the state this figure shows — click through to a
+   * screen, select a row, open a pane.
+   *
+   * Needed because not everything the app can show is reachable from storage:
+   * the current screen is React state in AppShell (launch deliberately always
+   * lands on History, and the old `pg-screen` restore is gone), so a figure of
+   * any other screen has to navigate the way a user does. Driving the real UI
+   * also keeps this honest — a scene cannot show a state the app cannot reach.
+   */
+  afterMount?: () => Promise<void>;
 };
+
+/** Wait for a selector and click it. The retry is not paranoia: the scene runs
+ *  as soon as React has rendered once, and a pane further down the tree may
+ *  still be resolving its own data. */
+export async function clickWhenPresent(selector: string, timeoutMs = 8000): Promise<void> {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) {
+      el.click();
+      return;
+    }
+    if (Date.now() > until) {
+      throw new Error(`[shoot] never found "${selector}" to click`);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/**
+ * Click the element matching `selector` whose trimmed text is exactly `text`.
+ *
+ * For controls the design system builds without a stable hook — `PGButtonGroup`
+ * gives its buttons only `aria-pressed`, so Unified/Split can be reached by
+ * label or not at all. Exact match, not substring: "Split" must not also match
+ * a "Split view" somewhere else on screen.
+ */
+export async function clickByText(
+  selector: string,
+  text: string,
+  timeoutMs = 8000,
+): Promise<void> {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const el = [...document.querySelectorAll<HTMLElement>(selector)].find(
+      (e) => e.textContent?.trim() === text,
+    );
+    if (el) {
+      el.click();
+      return;
+    }
+    if (Date.now() > until) {
+      throw new Error(`[shoot] never found a "${selector}" reading "${text}" to click`);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 
 let scene: Scene | null = null;
 
