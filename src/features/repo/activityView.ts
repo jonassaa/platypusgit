@@ -23,7 +23,7 @@ import React from "react";
 
 import {
   activityCount,
-  isCancellable,
+  cancelPath,
   primaryActivity,
   type ActivityKey,
   type ActivityState,
@@ -63,13 +63,23 @@ export interface ActivityView {
 export function useActivityView(): ActivityView | null {
   const activity = useRepoStore((s) => s.activity);
   const cancelRequested = useRepoStore((s) => s.cancelRequested);
+
+  // `primaryActivity` is a pure pick over state already read above — not a hook
+  // — so it is free to run before the early return, and `cancel` needs it: the
+  // two cancellation mechanisms reach different things, and sending a click to
+  // the wrong one is a Cancel button that does nothing.
+  const primary = primaryActivity(activity);
+  const path = primary ? cancelPath(primary.key) : null;
+
   // Above the early return, or a surface that mounts while idle and then sees an
   // operation start renders a different number of hooks on its second pass.
+  // `cancelActivity` picks the mechanism, so this hook and the command palette
+  // cannot drift into cancelling different things for the same entry.
+  const key = primary?.key;
   const cancel = React.useCallback(() => {
-    void useRepoStore.getState().cancelNetworkOps();
-  }, []);
+    if (key) void useRepoStore.getState().cancelActivity(key);
+  }, [key]);
 
-  const primary = primaryActivity(activity);
   if (!primary) return null;
 
   return {
@@ -78,7 +88,7 @@ export function useActivityView(): ActivityView | null {
       ? { ...primary.state, label: "Cancelling…", percent: undefined }
       : primary.state,
     others: activityCount(activity) - 1,
-    cancellable: isCancellable(primary.key),
+    cancellable: path !== null,
     cancelRequested,
     cancel,
   };

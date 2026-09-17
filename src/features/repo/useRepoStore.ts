@@ -97,6 +97,7 @@ import {
   runMergetool as runMergetoolFn,
   restartConflict as restartConflictFn,
   cancelNetworkOp,
+  cancelWalk,
   rememberCredential,
   setRemoteUrl,
   setUpstream as setUpstreamFn,
@@ -135,7 +136,7 @@ import {
   sliceOf,
   type RepoSlice,
 } from "./repoSlice";
-import type { ActivityKey } from "./repoActivity";
+import { cancelPath, type ActivityKey } from "./repoActivity";
 import { resolveUpdateRefs } from "@/features/commits/stackedRefs";
 import {
   checkUndo,
@@ -507,6 +508,31 @@ interface RepoStoreState extends RepoSlice {
    * `setErrorFor` drops and each `finally` clears the spinner for.
    */
   cancelNetworkOps: () => Promise<void>;
+  /**
+   * Stop the in-process history walks running on this repository (#474).
+   *
+   * `cancelNetworkOps` for the other kind of long operation. A `file_history`
+   * walk is libgit2 inside one blocking call with no subprocess to signal, so
+   * the backend sets a flag the walk polls between commits and the call returns
+   * `Cancelled` — which `setErrorFor` drops like any other cancellation.
+   *
+   * Repository-wide for the same reason network cancellation is: there is
+   * nothing finer for the user to point at, and two windows on one repository
+   * queue their walks behind each other anyway.
+   */
+  cancelWalks: () => Promise<void>;
+  /**
+   * Stop the running operation of this KIND, by whatever mechanism reaches it
+   * (#474).
+   *
+   * The ONE place the two cancellation paths are chosen between, because there
+   * are two surfaces offering Cancel — the status bar / history strip via
+   * `useActivityView`, and the command palette — and a surface that picked for
+   * itself would be a Cancel button that signals a process while a revwalk
+   * carries on. `cancelPath` decides; a kind nothing can reach is a no-op,
+   * which no caller should reach because both gate on the same table.
+   */
+  cancelActivity: (key: ActivityKey) => Promise<void>;
   // remote management
   addRemote: (name: string, url: string) => Promise<void>;
   removeRemote: (name: string) => Promise<void>;
@@ -2216,6 +2242,35 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
       // banner: the user is still stuck, and silence would read as "cancelled".
       setErrorFor(repo.id, e);
     });
+  },
+
+  async cancelWalks() {
+    const repo = get().current;
+    if (!repo) return;
+    // Same intent flag as `cancelNetworkOps`, for the same reason: the status
+    // line has to show that the click landed. There is no SIGTERM→SIGKILL
+    // escalation behind this one — a walk polls a flag and stops at the next
+    // commit — but the label is what tells the user to stop clicking, and the
+    // two surfaces must not say different things about the same button.
+    set({ cancelRequested: true });
+    await cancelWalk(repo.id).catch((e) => {
+      // The walk finishing first is the common way this "fails", and it is the
+      // outcome the click wanted. A real failure is worth a banner.
+      setErrorFor(repo.id, e);
+    });
+  },
+
+  async cancelActivity(key) {
+    switch (cancelPath(key)) {
+      case "walk":
+        return get().cancelWalks();
+      case "network":
+        return get().cancelNetworkOps();
+      default:
+        // Nothing reaches this kind. Both surfaces gate on the same table, so
+        // this arm is unreachable by construction rather than by luck.
+        return;
+    }
   },
 
   async addRemote(name, url) {

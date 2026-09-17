@@ -37,6 +37,7 @@ const CASES: Record<ActivityKey, string> = {
   action: "Running Format all…",
   lfs: "Fetching LFS objects…",
   submodule: "Updating submodules…",
+  history: "Searching history for src/main.rs…",
 };
 
 function prime(activity: RepoActivity) {
