@@ -1,7 +1,16 @@
 # Testing — four layers, Docker e2e, CI
 
 Part of the `docs/dev/` set (`architecture`, `testing`, `frontend`, `backend`,
-`distribution`). `test/docs.test.ts` reads this set together with CLAUDE.md.
+`distribution`, `performance`). `test/docs.test.ts` reads this set together with
+CLAUDE.md.
+
+**Performance is measured, not tested** — the large-repo benchmark lives in
+`docs/dev/performance.md` and is a fifth thing, deliberately outside all four
+layers below and outside CI. Its numbers are wall clock, which on a shared
+runner is a flake generator, and its fixtures take minutes to build. It is
+something you run on a quiet machine when you have touched the log walk,
+`status` or the refresh path; the committed results are what make a regression
+in them visible.
 
 ## The four layers
 

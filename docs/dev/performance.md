@@ -1,0 +1,336 @@
+# Performance — the large-repo benchmark
+
+"Slow on big repositories" is the most consistent structural complaint about
+every established GUI client, and being fast is one of the two strongest claims
+this project makes. This file is what turns that claim into a number somebody
+else can check, and what makes a regression in it visible before a stranger
+finds it (#257).
+
+Read the spec for the reasoning behind every choice below:
+`docs/superpowers/specs/2026-09-17-large-repo-benchmark-spec.md`.
+
+## Running it
+
+```bash
+pnpm bench                   # the three generated fixtures, ~1 minute to build
+pnpm bench --linux           # …plus a real clone of torvalds/linux (multi-GB)
+pnpm bench --fixture deep    # one fixture
+pnpm bench --soak 60         # add a 60-minute soak per fixture
+pnpm bench --no-publish      # measure and print; write nothing
+```
+
+Three pieces, each runnable on its own:
+
+| piece | what it does |
+| --- | --- |
+| `scripts/bench-fixtures.mjs` | materialises the repositories under `$PGBENCH_HOME` (default `~/.cache/platypusgit-bench`) |
+| `src-tauri/benches/repo_bench.rs` | measures one repository, writes a JSON document of raw samples |
+| `scripts/bench-report.mjs` | renders those into `benchmark.json` beside this file, and the table block below |
+
+**Run it on a quiet machine.** Every number is wall clock, so a compile in
+another window is recorded as this program being slow — and these are the
+figures a stranger will check.
+
+The harness is behind `--features bench` and `required-features` in
+`src-tauri/Cargo.toml`, so `cargo check` and `cargo test` — the whole Rust CI
+gate — never build or link it.
+
+## The fixtures
+
+Breadth hurts differently from depth, so one "big repo" fixture would give a
+number that cannot say which dimension moved when it regresses. Three generated
+fixtures isolate one dimension each; the fourth is the real thing.
+
+| fixture | shape | isolates |
+| --- | --- | --- |
+| `deep` | 50,000 commits, 16 files | the log walk |
+| `wide` | 50,000 files, all modified, 5,000 untracked | `status` |
+| `refs` | 5,000 branches, 2,000 tags, 2,000 commits | ref enumeration |
+| `linux` | a real clone of `torvalds/linux` | all of it, for real |
+
+The generated three are **deterministic** — fixed seed, fixed timestamps, fixed
+author — so the same parameters produce the same object ids on every machine,
+and they build in seconds from `git fast-import`. That is what makes "a script
+anyone can run" true rather than aspirational: nobody re-runs a benchmark that
+starts with a six-gigabyte download. `linux` is opt-in for exactly that reason,
+and it is not generated because a synthetic repository cannot stand in for 1.4
+million real commits, 90,000 real paths and a real pack layout.
+
+Fixtures are build artifacts. They live under `$PGBENCH_HOME`, never in the
+tree, and a fixture whose recorded shape no longer matches
+`scripts/bench-fixtures.mjs` is regenerated rather than reused — comparing
+today's numbers against a differently-shaped repository is worse than having no
+previous numbers at all.
+
+## What is measured, and what is therefore not
+
+The harness drives `Libgit2Backend` through the real `GitBackend` trait. **No
+number here includes React**, because there is no webview in it. That is a real
+limitation, stated plainly, and it is still the right layer: it is where a big
+repository is actually expensive, it is where a regression lands, and the render
+on top is bounded by the *window* rather than by the repository — the log is
+paged at 500, diff rows are windowed, long lists are virtualised — so it does
+not grow with the fixture.
+
+Two measurements narrow the gap on purpose rather than pretending it is not
+there:
+
+* **`open_screen`** issues the eleven reads `useRepoStore.refreshAll` issues,
+  simultaneously, from separate threads. A composite is the only measurement
+  that can catch "a slow status blocks everything else on that repo" — the trap
+  `git/repo_locks.rs` exists to avoid, and the one an op-at-a-time benchmark is
+  structurally blind to.
+* **`open_screen_ipc`** is the same fan-out plus `serde_json` encoding of every
+  payload, because that encoding is real work on a 500-commit page and it
+  happens before the frontend sees a byte.
+
+### "First" and "repeat", not "cold" and "warm"
+
+**First** is one call on a freshly constructed backend and a freshly opened
+repository — what happens when you open a repository in the app, with libgit2's
+object database, ref database and pack indices all unbuilt. **Repeat** is the
+median over many calls on that handle; the p95 beside it is nearest-rank.
+
+Neither purges the operating system's file cache. The words "cold" and "warm"
+are avoided precisely because they would imply it did. A first-boot number is
+larger than anything below, by an amount that depends on the disk rather than on
+this code.
+
+### The `git` baseline
+
+Every operation a single `git` invocation can answer is measured as that
+invocation too, and the table prints the ratio.
+
+The point is not to win. `git` is the floor, and a ratio near it is the good
+outcome. The point is that **a ratio survives leaving this machine**: a
+millisecond figure from somebody else's laptop tells a reader nothing they can
+check, and a ratio that doubles is a regression even on hardware that got
+faster.
+
+The baselines ask the *same* question, not the cheapest one sharing a name.
+`status` is the clearest case: `GitBackend::status` returns per-file added and
+removed counts, so its baseline is `git status --porcelain` **plus** both
+`--numstat` diffs. Comparing it to a bare `git status` would be comparing it to
+less work than it does. Every baseline command is recorded in
+`docs/dev/benchmark.json` under `gitCommand`, so the comparison can be
+disputed with evidence rather than in the abstract.
+
+## Where the results go
+
+| artifact | committed | what it is |
+| --- | --- | --- |
+| `$PGBENCH_HOME/results/<fixture>.json` | no | raw, every sample — what makes a result checkable |
+| `docs/dev/benchmark.json` | yes | the published record, summary statistics only |
+| the table block below | yes | the same numbers, as a document |
+
+Both committed artifacts are **generated and not hand-editable**.
+`test/benchmark.test.ts` re-renders the markdown from the JSON and fails when
+they disagree. That guard is the point of the whole exercise: the way a measured
+number turns back into an adjective is somebody nudging it in a hurry.
+
+The record sits beside this file rather than under `site/`, and both are covered
+by the `docs/dev/` entry already in the `js` path filter in
+`.github/workflows/tests.yml`. Without that coverage the guard would be
+skippable by exactly the change it polices — the failure mode #210 already
+shipped once.
+
+### The marketing site does not print these yet
+
+#257 asks for a measured figure on the site in place of an adjective, and the
+block to do it is written. It is **deliberately not shipped yet**: the honest
+headline today is that opening `torvalds/linux` takes 15.8 seconds, and the
+right response to that is to fix it rather than to publish it as a selling
+point. It ships once the log-walk work in the findings below lands — at which
+point the record moves to `site/src/data/` beside `comparison.json`, which is
+where this repository keeps published records the site reads.
+
+Until then nothing under `site/**` is touched by a re-measurement, which also
+means `pnpm bench` cannot redeploy the website by accident.
+
+## What the numbers say
+
+The first run of this benchmark found three things. They are recorded here
+because the tables above will move and the reasoning will not, and because a
+number with no reading beside it is a number nobody acts on.
+
+### 1. We are fine until history gets very deep — and then we are not
+
+The whole first screen — the eleven reads `refreshAll` issues, all at once —
+costs **255 ms** on a 50,000-commit repository and **219 ms** on one with 5,001
+branches and 2,000 tags. That is the size at which GitKraken's own users report
+it falling over, and it is a good answer.
+
+On `torvalds/linux` the same screen costs **15.8 seconds**, and scrolling ten
+pages into its history costs **two minutes and thirty-eight seconds**. That is
+not a good answer, and publishing it is the point of the exercise: the user who
+opens a 1.4-million-commit repository and waits is the user this project was
+written for.
+
+### 2. The log walk is not slow — the topological SORT is, and it is re-paid per page
+
+The obvious reading of "our 500-commit page takes 252 ms and `git log -500`
+takes 41 ms" is that the walk is six times too slow. It is wrong, and it nearly
+reached this document.
+
+`log_page` walks with `Sort::TIME | Sort::TOPOLOGICAL`, because the commit
+graph's lane assignment depends on topological order. A default `git log` does
+not sort that way. Asked the same question, `git log --topo-order -500` costs
+284 ms on the `deep` fixture against our 275 ms — **parity**. The baselines in
+this benchmark are `--topo-order` for exactly that reason, and the near miss is
+written up in the spec.
+
+What survives is sharper. git pays for that sort **once and then skips**; we pay
+it per page:
+
+| | `deep` (50k commits) | `torvalds/linux` (1.5M commits) |
+| --- | --- | --- |
+| our first page | 252 ms | 15.95 s |
+| our tenth page | 2.40 s | 157.67 s |
+| `git log --topo-order --skip=4500 -500` | 193 ms | 9.68 s |
+
+The per-page cost is flat in depth — ten pages cost ten times one page — which
+is the signature of restarting the walk rather than continuing it. The cursor
+already carries the frontier, so the walk logically continues; it is the sort
+that is rebuilt.
+
+### 3. The ref map is rebuilt on every page, too
+
+`log_page` calls `collect_ref_map(repo)` per call, enumerating and peeling every
+ref so the page can decorate its 500 commits. Two fixtures isolate it, and the
+variable between them is refs rather than history:
+
+| fixture | history | refs | ours | `git` work | ratio |
+| --- | --- | --- | --- | --- | --- |
+| `deep` | 50,000 commits | 1 | 252 ms | 194 ms | 1.3× |
+| `refs` | 2,000 commits | 7,001 | 135 ms | 8.5 ms | **16×** |
+
+Twenty-five times *less* history, and still most of the cost. This one looks
+much cheaper to fix than the sort: cache the map per repository and invalidate
+it on ref writes.
+
+### What is already good, and worth not breaking
+
+* **Opening a repository is free** — 0.11 ms on the kernel, a fresh libgit2
+  handle and nothing else. Every "first call" number is measured against one.
+* **The concurrent fan-out really is concurrent.** On `wide`, `open_screen`
+  costs 5.42 s and `status` alone costs 5.42 s: eleven reads cost what the
+  slowest one costs, not the sum. That is `git/repo_locks.rs` doing its job, and
+  it is the single thing most worth not regressing.
+* **IPC encoding is not a cost worth optimising.** `open_screen_ipc` is within
+  noise of `open_screen` on every fixture, including a 500-commit page.
+* **`status` tracks git.** 5.42 s against 2.98 s of git's work on 55,000
+  changed entries — 1.8×, on an operation where git itself takes three seconds.
+  It is slow because the question is expensive, not because of how we ask it.
+
+### Known characteristics that are not on the tables
+
+* **File history is unbounded on a cold path.** `file_history` stops at `limit`
+  matches, so on a file with fewer than 500 commits it walks to the root of
+  history with a tree comparison per commit. On the kernel that is 1.5 million
+  of them for one click. The benchmark measures the *most frequently changed*
+  path precisely so it terminates; see `hottest_path` in the harness. It also
+  takes the exclusive lock (`with_repo`, not `with_repo_read`), so it blocks
+  every other read on that repository while it runs.
+* **No fixture carries a commit-graph file, and it would not help us if it
+  did.** A fresh clone has none — `git clone` does not write one, and
+  `gc --auto` does not fire on a single packfile — so this is what a user gets
+  on day one. It matters enormously to git: writing one for the kernel takes 14
+  seconds, and `git log --topo-order -500` then drops from 9.51 s to **21 ms**.
+  It does not measurably help us. With the file present, our first page took
+  63.4 s for four calls against 64.2 s without it: libgit2's revwalk does not
+  read it. That is the most useful single fact this benchmark produced, because
+  it rules out the cheap fix and says where the work actually has to go.
+
+## Results
+
+<!-- BEGIN BENCHMARK RESULTS — generated by scripts/bench.sh, do not edit -->
+
+Measured on Apple M4 Pro (14 cores, 48 GB, macos/aarch64) with git version 2.50.1 (Apple Git-155), on 2026-09-17. Up to 10 repeats per operation, time-boxed to 20s each — so a cheap operation gets the full count and an expensive one gets at least three. The published record records how many each row actually took.
+
+The **`git` work** column is that baseline's wall clock with process start-up subtracted (12.4 ms per invocation on this machine, measured), because we pay none of it — the backend is libgit2, in process. That is deliberately the comparison that makes us look worse: against git's wall clock we would get a ten-millisecond head start on every row. **†** marks a baseline where start-up swamped the work, leaving a remainder too small to divide by; those rows print no ratio rather than a flattering one.
+
+### torvalds/linux
+
+A real clone of the Linux kernel: the repository people mean when they say a git client is slow.
+
+*1,482,923 commits · 96,034 tracked files · 946 tags · 13 changed entries*
+
+| Operation | Result size | First call | Repeat | p95 | `git` work | vs `git` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Open the repository | a fresh handle | 0.26 ms | 0.11 ms | 0.13 ms | † | — |
+| Everything the first screen needs, at once | 11 concurrent reads | 15.91 s | 15.84 s | 15.86 s | — | — |
+| …including encoding it all for the webview | 11 concurrent reads | 15.80 s | 15.82 s | 15.86 s | — | — |
+| Working-tree status | 26 entries | 1.15 s | 989 ms | 1.10 s | 517 ms | 1.9× |
+| First page of history | 500 commits | 15.96 s | 15.95 s | 16.49 s | 9.51 s | 1.7× |
+| Ten pages into history | 500 commits | 156.38 s | 157.67 s | 159.94 s | 9.68 s | 16× |
+| List every branch | 3 branches | 1.65 ms | 0.87 ms | 0.89 ms | † | — |
+| List every tag | 946 tags | 27.1 ms | 19.7 ms | 20.2 ms | 23.7 ms | 0.83× |
+| Diff the selected commit | 3 files | 142 ms | 139 ms | 140 ms | 11.5 ms | 12× |
+| Diff one modified file | 2 hunks | 68.2 ms | 2.14 ms | 2.22 ms | — | — |
+| History of one file | 500 commits | 15.91 s | 15.42 s | 16.06 s | 5.65 s | 2.7× |
+| Browse the whole tree | 96,034 files | 782 ms | 515 ms | 642 ms | 218 ms | 2.4× |
+
+### deep
+
+50,000 commits over a small tree — the size past which GitKraken's own users report native clients beating it.
+
+*50,000 commits · 16 tracked files*
+
+| Operation | Result size | First call | Repeat | p95 | `git` work | vs `git` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Open the repository | a fresh handle | 0.14 ms | 0.11 ms | 0.12 ms | † | — |
+| Everything the first screen needs, at once | 11 concurrent reads | 252 ms | 253 ms | 256 ms | — | — |
+| …including encoding it all for the webview | 11 concurrent reads | 252 ms | 253 ms | 254 ms | — | — |
+| Working-tree status | 0 entries | 0.69 ms | 0.53 ms | 0.55 ms | † | — |
+| First page of history | 500 commits | 261 ms | 249 ms | 251 ms | 193 ms | 1.3× |
+| Ten pages into history | 500 commits | 2.39 s | 2.39 s | 2.40 s | 192 ms | 12× |
+| List every branch | 1 branch | 0.42 ms | 0.28 ms | 0.29 ms | † | — |
+| List every tag | 0 tags | 0.17 ms | 0.15 ms | 0.15 ms | † | — |
+| Diff the selected commit | 1 file | 0.48 ms | 0.34 ms | 0.35 ms | † | — |
+| History of one file | 500 commits | 293 ms | 65.0 ms | 65.7 ms | 319 ms | 0.20× |
+| Browse the whole tree | 16 files | 0.50 ms | 0.13 ms | 0.13 ms | † | — |
+
+**Soak.** 2,344 first-screen fan-outs over 10 minutes. Resident memory 67 MB → 69 MB (peak 69 MB). Median fan-out 252 ms in the first half, 252 ms in the second — -0.2%.
+
+### wide
+
+50,000 tracked files with every one of them modified, plus 5,000 untracked — a monorepo just after a codemod.
+
+*1 commits · 50,000 tracked files · 55,000 changed entries*
+
+| Operation | Result size | First call | Repeat | p95 | `git` work | vs `git` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Open the repository | a fresh handle | 0.25 ms | 0.11 ms | 0.13 ms | † | — |
+| Everything the first screen needs, at once | 11 concurrent reads | 5.42 s | 5.42 s | 5.62 s | — | — |
+| …including encoding it all for the webview | 11 concurrent reads | 5.60 s | 5.43 s | 5.60 s | — | — |
+| Working-tree status | 55,000 entries | 5.38 s | 5.42 s | 5.48 s | 2.98 s | 1.8× |
+| First page of history | 1 commit | 0.35 ms | 0.25 ms | 0.26 ms | † | — |
+| Ten pages into history | 1 commit | 0.31 ms | 0.25 ms | 0.26 ms | † | — |
+| List every branch | 1 branch | 0.35 ms | 0.28 ms | 0.32 ms | † | — |
+| List every tag | 0 tags | 0.17 ms | 0.14 ms | 0.15 ms | † | — |
+| Diff the selected commit | 50,000 files | 1.53 s | 1.51 s | 1.67 s | 510 ms | 3.0× |
+| Diff one modified file | 1 hunk | 17.2 ms | 0.63 ms | 0.64 ms | — | — |
+| History of one file | 1 commit | 0.28 ms | 0.10 ms | 0.10 ms | † | — |
+| Browse the whole tree | 55,000 files | 196 ms | 181 ms | 241 ms | 42.4 ms | 4.3× |
+
+### refs
+
+5,000 branches and 2,000 tags over a short history — a long-lived repository nobody prunes.
+
+*2,000 commits · 32 tracked files · 5,001 branches · 2,000 tags*
+
+| Operation | Result size | First call | Repeat | p95 | `git` work | vs `git` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Open the repository | a fresh handle | 0.15 ms | 0.14 ms | 0.14 ms | † | — |
+| Everything the first screen needs, at once | 11 concurrent reads | 221 ms | 219 ms | 221 ms | — | — |
+| …including encoding it all for the webview | 11 concurrent reads | 221 ms | 220 ms | 224 ms | — | — |
+| Working-tree status | 0 entries | 0.72 ms | 0.55 ms | 0.56 ms | † | — |
+| First page of history | 500 commits | 787 ms | 135 ms | 138 ms | 8.48 ms | 16× |
+| Ten pages into history | 500 commits | 526 ms | 525 ms | 551 ms | 7.25 ms | 72× |
+| List every branch | 5,001 branches | 184 ms | 180 ms | 182 ms | 183 ms | 0.98× |
+| List every tag | 2,000 tags | 148 ms | 148 ms | 151 ms | 43.3 ms | 3.4× |
+| Diff the selected commit | 1 file | 0.40 ms | 0.28 ms | 0.29 ms | † | — |
+| History of one file | 63 commits | 20.7 ms | 9.37 ms | 9.88 ms | 11.9 ms | 0.79× |
+| Browse the whole tree | 32 files | 0.47 ms | 0.16 ms | 0.16 ms | † | — |
+
+<!-- END BENCHMARK RESULTS -->

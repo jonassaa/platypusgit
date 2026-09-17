@@ -171,6 +171,21 @@ Add them alongside the code you change:
 - New component → `*.test.tsx`.
 - New user-facing flow, or a bug that reached the UI → an e2e spec.
 
+### Measuring performance
+
+Performance is measured rather than tested, and it is not a CI gate — wall clock
+on a shared runner is a flake generator.
+
+```bash
+pnpm bench                   # three generated fixtures, built in seconds
+pnpm bench --linux           # …plus a real clone of torvalds/linux (multi-GB)
+```
+
+Run it on a quiet machine if you have touched the log walk, `status` or the
+refresh path, and commit what it writes — `docs/dev/performance.md` explains
+what each number does and does not include, and the figures on the website come
+from the same run.
+
 ## Production bundles
 
 ```bash
