@@ -246,7 +246,6 @@ impl LogCache {
         Some(out)
     }
 
-    /// File a freshly prepared walk, evicting the least recently used one.
     /// Whether a walk for `key` is already filed, whatever it can answer.
     ///
     /// Not the same question as `first_page`, and the difference is the point.
@@ -270,6 +269,7 @@ impl LogCache {
             .unwrap_or(false)
     }
 
+    /// File a freshly prepared walk, evicting the least recently used one.
     pub fn insert(&self, repo: &RepoId, key: WalkKey, order: Arc<WalkOrder>) {
         let Ok(mut repos) = self.repos.lock() else {
             return;
