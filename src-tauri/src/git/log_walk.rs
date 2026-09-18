@@ -46,6 +46,18 @@ use std::path::Path;
 
 use git2::Oid;
 
+/// Environment escape hatch forcing the libgit2 walk.
+///
+/// Two callers, and both matter. `tests/log_walk_fallback.rs` uses it to prove
+/// the fallback still produces correct pages — a fallback nobody exercises is a
+/// fallback that has rotted. And a user whose git is doing something
+/// unexpected has a way to take this path out of the picture without
+/// downgrading, which is worth having for a subprocess on the hottest read in
+/// the app.
+pub fn rev_list_disabled() -> bool {
+    std::env::var_os("PGIT_DISABLE_REV_LIST").is_some()
+}
+
 /// Parse `rev-list` output into oids.
 ///
 /// `None` when anything at all is not an oid. That is deliberately strict:
@@ -84,6 +96,9 @@ pub fn parse_oid_lines(stdout: &str, cap: usize) -> Option<Vec<Oid>> {
 /// Every `None` here means a SLOW page, never a failed one — git missing, git
 /// failing, and output this cannot read all mean the same thing to the caller.
 pub fn rev_list_order(workdir: &Path, starts: &[Oid], cap: usize) -> Option<Vec<Oid>> {
+    if rev_list_disabled() {
+        return None;
+    }
     if starts.is_empty() {
         return Some(Vec::new());
     }
