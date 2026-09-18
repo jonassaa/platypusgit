@@ -122,11 +122,21 @@ disputed with evidence rather than in the abstract.
 | `$PGBENCH_HOME/results/<fixture>.json` | no | raw, every sample — what makes a result checkable |
 | `docs/dev/benchmark.json` | yes | the published record, summary statistics only |
 | the table block below | yes | the same numbers, as a document |
+| `README.md`'s Performance section | yes | the same run, one row per fixture, for a reader who will never open this file |
 
-Both committed artifacts are **generated and not hand-editable**.
-`test/benchmark.test.ts` re-renders the markdown from the JSON and fails when
-they disagree. That guard is the point of the whole exercise: the way a measured
-number turns back into an adjective is somebody nudging it in a hurry.
+All three committed artifacts are **generated and not hand-editable**.
+`test/benchmark.test.ts` re-renders both markdown blocks from the JSON and fails
+when any of them disagree. That guard is the point of the whole exercise: the
+way a measured number turns back into an adjective is somebody nudging it in a
+hurry.
+
+The README block is the same `renderReadme` output the guard re-renders, so
+`pnpm bench` rewrites three files and they are committed together. It prints
+three operations rather than twelve, and those three are `REQUIRED_OPS` minus
+`open` — the ops every fixture is already forced to publish. Widening it to an
+op a fixture may legitimately lack is how the front page starts printing a blank
+cell for the thing that regressed; `test/benchmark.test.ts` asserts every timing
+cell there carries a digit.
 
 The record sits beside this file rather than under `site/`, and both are covered
 by the `docs/dev/` entry already in the `js` path filter in
@@ -134,15 +144,28 @@ by the `docs/dev/` entry already in the `js` path filter in
 skippable by exactly the change it polices — the failure mode #210 already
 shipped once.
 
-### The marketing site does not print these yet
+### The README publishes them; the marketing site still does not
 
-#257 asks for a measured figure on the site in place of an adjective, and the
-block to do it is written. It is **deliberately not shipped yet**: the honest
-headline today is that opening `torvalds/linux` takes 15.8 seconds, and the
-right response to that is to fix it rather than to publish it as a selling
-point. It ships once the log-walk work in the findings below lands — at which
-point the record moves to `site/src/data/` beside `comparison.json`, which is
-where this repository keeps published records the site reads.
+The two are not the same audience and the numbers read differently to each.
+
+The **README** prints them, and leads with the bad case. That file already
+carries a "Where we are behind" paragraph and a "Status" section of known gaps,
+so a table whose worst row is `torvalds/linux` at 15.8 seconds is in keeping
+with it rather than at odds with it — and the sentence under the table says so
+in as many words. It is also where the word "fast" appears in the first line,
+which makes it the single most valuable place for the adjective to be replaced
+by something a reader can check. The block is generated and guarded exactly like
+the one below; the prose around it is hand-written, and
+`test/benchmark.test.ts` fails if a figure is copied into it, because a
+hand-typed number stops moving on the next run.
+
+The **marketing site** is still waiting. #257 asks for a measured figure there
+in place of an adjective and the block to do it is written, but a landing page
+sells, and 15.8 seconds as a selling point is a different claim from 15.8
+seconds as a disclosed limitation. It ships once the log-walk work in the
+findings below lands — at which point the record moves to `site/src/data/`
+beside `comparison.json`, which is where this repository keeps published records
+the site reads.
 
 Until then nothing under `site/**` is touched by a re-measurement, which also
 means `pnpm bench` cannot redeploy the website by accident.

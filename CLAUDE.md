@@ -30,7 +30,9 @@ to what you are reading. A new section here needs a reason a pointer cannot serv
 - `docs/dev/performance.md` — the large-repo benchmark: the fixtures, what each
   number does and does not include, the baseline it is compared against, and
   the published results. Read it before touching the log walk, `status`, or
-  the refresh path, and re-run `pnpm bench` when you do.
+  the refresh path, and re-run `pnpm bench` when you do — it regenerates
+  `README.md`'s Performance block as well as the two under `docs/dev/`, and
+  `test/benchmark.test.ts` fails if any of the three is hand-edited.
 - `docs/dev/releasing.md` — what a version number means and when to bump which
   part, the cut-a-release runbook (changelog lands on `main` FIRST), and the
   prerelease-promotion traps. Read it before tagging anything.
