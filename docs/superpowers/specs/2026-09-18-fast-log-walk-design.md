@@ -196,8 +196,16 @@ Three measured constraints shape how:
    cost the user does not wait for.
 3. **It is a write into the user's repository**, so it obeys them: skip entirely
    when `core.commitGraph` is false, and never write into a repository that is
-   not writable. It joins Settings as one switch, defaulting on, described as
-   what it is.
+   not writable.
+
+**On the Settings switch.** An earlier draft of this spec promised one. It is
+NOT implemented, deliberately: settings in this app are `localStorage` on the
+frontend, and the commit-graph write is a backend decision, so a switch would
+need a new Tauri command to write git config — a new user-facing surface, in a
+change that already touches the hottest read in the app. The opt-out that
+matters exists and is tested: `core.commitGraph`, which is git's own knob,
+which a user may already have set, and which we would have to honour anyway.
+A Settings row that presents it belongs in its own change.
 
 The write is scheduled once per repository per session, on open, behind the
 same cancellation the other long reads use.

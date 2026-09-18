@@ -406,17 +406,31 @@ export function renderReadme(data) {
   const real = data.fixtures.find((f) => f.kind === "real");
   const screen = real && at(real, "open_screen");
   const tenth = real && at(real, "log_page_deep");
-  if (real && screen && tenth) {
+  // The slowest single operation left, named rather than asserted, so this
+  // sentence keeps pointing at whatever is actually worst instead of at
+  // whatever was worst the day it was written. The composites are excluded
+  // because they are made OF the others.
+  const slowest =
+    real &&
+    real.operations
+      .filter((o) => o.op !== "open_screen" && o.op !== "open_screen_ipc")
+      .reduce((a, b) => (b.repeatMedianMs > a.repeatMedianMs ? b : a), {
+        repeatMedianMs: -1,
+      });
+  if (real && screen && tenth && slowest) {
     out.push("");
     out.push(
-      `**${real.title} is the bad case, and publishing it is the point.** The ` +
-        `first screen costs ${fmtMs(screen.repeatMedianMs)} there, and ` +
-        `reaching ten pages into its history costs ` +
-        `${fmtMs(tenth.repeatMedianMs)}: a sorted libgit2 revwalk pre-walks ` +
-        `all ${thousands(real.repository.commits)} commits before it yields ` +
-        "one, and the next page pays for that again. The developer who opens " +
-        "a repository that size and waits is the one this was written for, so " +
-        "the number belongs here rather than in a backlog.",
+      `**${real.title} is the case that matters, and publishing it is the ` +
+        `point.** The first screen costs ${fmtMs(screen.repeatMedianMs)} on ` +
+        `${thousands(real.repository.commits)} commits, and reaching ten ` +
+        `pages into its history costs ${fmtMs(tenth.repeatMedianMs)} — the ` +
+        "log's order comes from git over a commit-graph the app maintains, " +
+        "because libgit2's own sorted revwalk pre-walks the entire graph " +
+        "before it yields a single commit and never reads that file (#483). " +
+        `What is slowest here now is "${slowest.label}" at ` +
+        `${fmtMs(slowest.repeatMedianMs)}, and it is published for the same ` +
+        "reason the fifteen seconds were: the developer who opens a " +
+        "repository this size is the one this was written for.",
     );
   }
 

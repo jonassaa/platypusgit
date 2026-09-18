@@ -343,6 +343,28 @@ function buildLinux(dir) {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Give the fixture the commit-graph the app maintains (#483).
+ *
+ * `log_page` takes its order from `git rev-list --date-order`, which is 188 ms
+ * on the kernel with one of these and 10,123 ms without — so a fixture with no
+ * commit-graph measures a state the app does not leave a repository in. The
+ * backend writes one on open (`git/commit_graph.rs`), the benchmark drives the
+ * backend below that command, so the fixture has to stand in for it.
+ *
+ * `--split`, like the app: the plain form rewrites 97 MB every run.
+ *
+ * **This deliberately speeds up the `git` baselines too.** They are the floor
+ * we are measured against, and handing ourselves a file we withhold from git
+ * would be the kind of baseline this benchmark exists not to publish.
+ *
+ * The FIRST open of a fresh clone has no commit-graph and is not this number;
+ * `docs/dev/performance.md` records that case separately.
+ */
+function ensureCommitGraph(dir) {
+  run("git", ["-C", dir, "commit-graph", "write", "--reachable", "--split"]);
+}
+
 const BUILDERS = { deep: buildDeep, wide: buildWide, refs: buildRefs };
 
 /** The stamp lives BESIDE the repository, never inside it: `wide` is measured
@@ -389,16 +411,22 @@ async function main() {
     const dir = join(home, name);
     if (name === "linux") {
       buildLinux(dir);
+      // Every run, not only after a clone: `--split` costs 60 ms when there is
+      // nothing new, and skipping it would leave a fixture cloned before #483
+      // measuring a repository the app would have fixed on first open.
+      ensureCommitGraph(dir);
       continue;
     }
     if (!BUILDERS[name]) throw new Error(`unknown fixture: ${name}`);
     if (!force && isFresh(name, home)) {
       console.log(`  ${name}: up to date at ${dir}`);
+      ensureCommitGraph(dir);
       continue;
     }
     const started = Date.now();
     console.log(`  ${name}: generating…`);
     await BUILDERS[name](dir);
+    ensureCommitGraph(dir);
     writeFileSync(stampPath(home, name), JSON.stringify(stamp(name, dir), null, 2) + "\n");
     console.log(`  ${name}: ready in ${((Date.now() - started) / 1000).toFixed(1)}s (${dir})`);
   }
