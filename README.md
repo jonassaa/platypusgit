@@ -140,7 +140,7 @@ established git GUI, so "fast" is a claim this project has to back with a number
 somebody else can check. `pnpm bench` builds three deterministic fixtures —
 deep history, a huge working tree, thousands of refs — optionally clones
 `torvalds/linux` on top, drives the real git backend through all of them, and
-prints `git`'s own timing on the same question beside every row.
+records `git`'s own timing on the same question beside every row.
 
 The block below is generated from that run, and `test/benchmark.test.ts`
 re-renders it from the committed record and fails the build when the two

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Render benchmark runs into the two things that get committed (issue 257).
+// Render benchmark runs into the three things that get committed (issue 257).
 //
 // `src-tauri/benches/repo_bench.rs` writes one JSON document per fixture, full
 // of raw samples. This turns the set of them into:
@@ -13,10 +13,11 @@
 //     same run, cut down to one row per fixture, because the README's first
 //     line calls this app fast and that is the sentence the numbers are for.
 //
-// **Both are generated, and neither is hand-editable.** That is the whole point
-// of the exercise: the site is supposed to print a number somebody measured,
-// and the way a measured number turns back into an adjective is somebody
-// nudging it in a hurry.
+// **All three are generated, and none of them is hand-editable.** That is the
+// whole point of the exercise: what gets published is supposed to be a number
+// somebody measured, and the way a measured number turns back into an adjective
+// is somebody nudging it in a hurry. `pnpm bench` writes all three; they are
+// committed together, and `test/benchmark.test.ts` fails on a partial commit.
 //
 // The markdown is rendered from the PUBLISHED record rather than from the raw
 // runs, and that indirection is the guard test's whole leverage: the test
