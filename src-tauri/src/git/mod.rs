@@ -9,6 +9,7 @@ pub mod image;
 pub mod libgit2;
 pub mod lfs;
 pub mod log_cache;
+pub mod log_walk;
 pub mod notes;
 pub mod ownership;
 pub mod rebase_plan;

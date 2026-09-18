@@ -1546,6 +1546,49 @@ walk a `Vec<RefInfo>` per commit — `{ name, kind }`, where `kind` is
 
 `collect_ref_map` no longer runs per page — see below.
 
+## The walk's ORDER comes from git, not from libgit2 (#483)
+
+#473 stopped the sort being re-paid per page. It could not make the sort
+itself cheaper, and on `torvalds/linux` that one preparation is 15.7 s — the
+whole of what a user waits for on open, since everything else the first screen
+needs finishes inside a second.
+
+`git/log_walk.rs` takes the order from `git rev-list` instead. Measured on the
+kernel, the 100,000-oid walk `MAX_ORDER` actually asks for:
+
+| | no commit-graph | with commit-graph |
+| --- | --- | --- |
+| libgit2 `TIME \| TOPOLOGICAL` | 15,743 ms | 15,743 ms (it never reads the file) |
+| `rev-list --date-order` | 10,123 ms | **188 ms** |
+
+**`--date-order`, and never `--topo-order`.** `Sort::TIME | Sort::TOPOLOGICAL`
+is Kahn's algorithm over a time-priority queue, which is precisely what git
+calls `--date-order`. `--topo-order` answers a different question — it also
+refuses to intermix independent lines of history — and on the kernel the two
+share only 1,627 of the first 2,000 oids. It does not reorder the same commits,
+it returns different ones, so taking it would silently change which commits the
+first page shows. #473 and #476 both proposed it.
+`tests/log_walk_ordering.rs` pins the mapping in both directions, and its
+fixture interleaves two branches' commit dates on purpose — one that does not
+produces the same sequence either way and would pass against the mistake.
+
+**Only oids cross over.** Commit metadata still comes from libgit2 via
+`find_commit`, so there is no `--format` string to keep in sync with
+`CommitInfo` and nothing downstream of `WalkOrder` changes.
+
+**Every failure is a slow page, never a failed one.** Git missing, git exiting
+non-zero, or output that does not parse all return `None` and fall through to
+the libgit2 revwalk, which is exactly the code that ran before this existed.
+`PGIT_DISABLE_REV_LIST` forces that path for tests and for support.
+
+The parser requires a FULL-LENGTH hex id rather than leaving it to
+`Oid::from_str`, which accepts an abbreviated string and zero-pads it — so
+output truncated mid-line would otherwise parse into a plausible order naming
+an object that does not exist.
+
+`git/commit_graph.rs` is what keeps this fast; without a commit-graph git is no
+better than we are.
+
 ## The paged log prepares ONE walk (#473)
 
 `log_page` used to build a fresh revwalk per page. That reads like an obvious
