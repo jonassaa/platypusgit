@@ -1586,8 +1586,32 @@ The parser requires a FULL-LENGTH hex id rather than leaving it to
 output truncated mid-line would otherwise parse into a plausible order naming
 an object that does not exist.
 
-`git/commit_graph.rs` is what keeps this fast; without a commit-graph git is no
-better than we are.
+### The commit-graph is not an optimisation on top of this, it IS it
+
+Without one, `rev-list --date-order` costs 10,123 ms on the kernel and the whole
+change buys nothing. A fresh clone has none — `git clone` does not write one and
+`gc --auto` does not fire on a single packfile — so `git/commit_graph.rs` keeps
+one, in the user's own repository, exactly where `git gc` and `git maintenance`
+put it and where it makes the user's own `git log` fast too.
+
+**`--split` is not a preference.** Measured on the kernel:
+
+| | cost |
+| --- | --- |
+| `commit-graph write --reachable`, cold | 14,509 ms |
+| `commit-graph write --reachable`, **already fresh** | 14,305 ms |
+| `commit-graph write --reachable --split`, cold | 14,531 ms |
+| `commit-graph write --reachable --split`, nothing new | **59.9 ms** |
+
+The plain form rewrites everything every time, so scheduling it on open would
+burn fourteen seconds of CPU per open forever.
+
+It is scheduled from `commands/repo.rs` AFTER the open resolves, on the blocking
+pool, and nothing waits for it — the first write on a giant repository is ~14.5 s
+and that open is served by the slow path, which is exactly as slow as it was
+before any of this. It honours `core.commitGraph`: a user who turned git's own
+commit-graph reading off gets no file, because they would get a file they did
+not ask for AND no speedup.
 
 ## The paged log prepares ONE walk (#473)
 

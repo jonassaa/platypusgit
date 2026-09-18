@@ -2,6 +2,7 @@ pub mod auth;
 pub mod bisect;
 pub mod blame;
 pub mod cli;
+pub mod commit_graph;
 pub mod commit_template;
 pub mod difftool;
 pub mod hooks;
