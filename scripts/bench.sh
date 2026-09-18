@@ -16,8 +16,10 @@
 #      JSON document per fixture. It is behind `--features bench` so the Rust CI
 #      gate never builds it.
 #   3. `scripts/bench-report.mjs` renders those documents into
-#      `docs/dev/performance.md` and `docs/dev/benchmark.json`, which is
-#      what `test/benchmark.test.ts` reads.
+#      `docs/dev/benchmark.json`, the table block in `docs/dev/performance.md`
+#      and the summary block in `README.md` — all three generated from one run,
+#      all three re-rendered and compared by `test/benchmark.test.ts`. Commit
+#      them together; a partial commit fails that guard by design.
 #
 # Publishing is the default because a benchmark nobody publishes is a benchmark
 # nobody runs twice. `--no-publish` is for the case you are iterating on the

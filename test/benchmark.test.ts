@@ -12,7 +12,10 @@
 //   * `docs/dev/benchmark.json` is the published record, written by
 //     `scripts/bench-report.mjs`;
 //   * the table block in `docs/dev/performance.md` is RENDERED from that JSON by
-//     the same module.
+//     the same module;
+//   * so is the summary block in `README.md`, which is the one that matters
+//     most: the README's first line calls this app fast, and it is read a
+//     thousand times for every reading of `performance.md`.
 //
 // Re-rendering here and comparing byte for byte means the two can only agree if
 // both came out of one `pnpm bench`. Edit either by hand and this fails, naming
@@ -36,7 +39,10 @@ import {
   BEGIN,
   END,
   OP_ORDER,
+  README_BEGIN,
+  README_END,
   renderMarkdown,
+  renderReadme,
   // @ts-expect-error — plain .mjs with JSDoc types, no .d.ts
 } from "../scripts/bench-report.mjs";
 
@@ -45,6 +51,7 @@ const read = (rel: string) => readFileSync(root(rel), "utf8");
 
 const DATA_PATH = "docs/dev/benchmark.json";
 const DOC_PATH = "docs/dev/performance.md";
+const README_PATH = "README.md";
 
 type Operation = {
   op: string;
@@ -95,6 +102,14 @@ type Published = {
 
 const data: Published = JSON.parse(read(DATA_PATH));
 const doc = read(DOC_PATH);
+const readme = read(README_PATH);
+
+/** The contents of a generated block, or `null` when a marker is missing. */
+function block(text: string, begin: string, end: string): string | null {
+  const a = text.indexOf(begin);
+  const b = text.indexOf(end);
+  return a === -1 || b <= a ? null : text.slice(a + begin.length, b).trim();
+}
 
 /** The operations every fixture must carry. Not the whole of `OP_ORDER`: two
  *  entries are conditional by design — `diff_workdir_file` needs a dirty tree
@@ -116,6 +131,67 @@ describe("the published benchmark numbers", () => {
       `${DOC_PATH} and ${DATA_PATH} disagree. Neither is edited by hand — ` +
         "re-run `pnpm bench` (or `pnpm bench --linux`) and commit both.",
     ).toBe(renderMarkdown(data).trim());
+  });
+
+  it("re-renders exactly the summary block committed in the README", () => {
+    const committed = block(readme, README_BEGIN, README_END);
+    expect(
+      committed,
+      `${README_PATH} is missing its BENCHMARK SUMMARY markers`,
+    ).not.toBeNull();
+    expect(
+      committed,
+      `${README_PATH} and ${DATA_PATH} disagree. The README block is generated ` +
+        "from the same record as the doc — re-run `pnpm bench` (or " +
+        "`pnpm bench --linux`) and commit all three files together.",
+    ).toBe(renderReadme(data).trim());
+  });
+
+  it("prints a real timing in every cell of the README table", () => {
+    // The README carries three operations instead of twelve, and they are ones
+    // `REQUIRED_OPS` already forces every fixture to publish. So a dash in a
+    // timing column there never means "not applicable" — it means a fixture
+    // stopped measuring something and the project's front page went quiet
+    // about it. (The ratio column is exempt: a `git` baseline at the start-up
+    // floor prints no ratio on purpose.)
+    const rows = renderReadme(data)
+      .split("\n")
+      .filter((line: string) => line.startsWith("|"))
+      .filter((line: string) => !/^\|[\s|:-]+\|$/.test(line))
+      .slice(1);
+    expect(rows).toHaveLength(data.fixtures.length);
+    for (const row of rows) {
+      const [name, ...rest] = row
+        .split("|")
+        .slice(1, -1)
+        .map((c: string) => c.trim());
+      for (const cell of rest.slice(0, 3)) {
+        expect(cell, `${name} publishes no timing in the README table`).toMatch(
+          /\d/,
+        );
+      }
+    }
+  });
+
+  it("keeps hand-written numbers out of the README's Performance section", () => {
+    // The prose around the block is written by a person, and a measured figure
+    // copied into it is the exact regression this whole apparatus exists to
+    // stop: the generated block moves on the next run and the sentence above it
+    // does not. Numbers belong inside the markers, where re-rendering moves
+    // them.
+    const start = readme.indexOf("## Performance");
+    expect(start, 'README has no "## Performance" section').toBeGreaterThan(-1);
+    const rest = readme.slice(start + 1);
+    const end = rest.indexOf("\n## ");
+    const section = end === -1 ? rest : rest.slice(0, end);
+    const prose = section.slice(0, section.indexOf(README_BEGIN));
+
+    const figures = prose.match(/\d[\d.,]*\s*(ms|s|×)\b/g) ?? [];
+    expect(
+      figures,
+      "A measured figure is written by hand above the generated block. Put it " +
+        "inside the markers, or say it without a number.",
+    ).toEqual([]);
   });
 
   it("names the machine and the day it was measured", () => {
@@ -245,5 +321,17 @@ describe("CI runs this guard when its inputs change", () => {
       "`docs/dev/` left the `js` filter in tests.yml, so a benchmark-only " +
         "commit now skips the guard that holds its numbers together.",
     ).toContain("docs/dev/");
+  });
+
+  it("has README.md in the js path filter", () => {
+    // Same story, and #210 was literally a README-only PR that ran no suite at
+    // all. The README is now an input of this file too, so the entry it already
+    // has for `comparison.test.ts` is load-bearing twice over.
+    const workflow = read(".github/workflows/tests.yml");
+    expect(
+      workflow,
+      "`README.md` left the `js` filter in tests.yml, so editing the published " +
+        "performance figures by hand now skips the guard that catches it.",
+    ).toMatch(/README\\?\.md\$/);
   });
 });
