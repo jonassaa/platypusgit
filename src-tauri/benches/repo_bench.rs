@@ -594,22 +594,31 @@ fn run_suite(subject: &Subject, cfg: &Config) -> Vec<Measured> {
             },
             |b, id| b.log_page(id, None, None, PAGE_SIZE).expect("log_page"),
         ),
-        // `--topo-order`, because `log_page` walks with
+        // `--date-order`, because `log_page` walks with
         // `Sort::TIME | Sort::TOPOLOGICAL` and the commit graph's lanes depend
         // on it — a plain `git log` is a strictly easier question and quoting
         // it here would be the `status` mistake in the module doc, made the
         // other way round.
         //
         // Measured, not assumed: on the `deep` fixture a default `git log -500`
-        // is 41 ms and `--topo-order` is 284 ms, against our 275 ms. The first
+        // is 41 ms and a sorted one is 284 ms, against our 275 ms. The first
         // page is at PARITY. Comparing against the 41 ms would have published a
         // fourteen-fold regression that does not exist.
+        //
+        // **`--date-order` and not `--topo-order`** (#483). These are different
+        // questions, not two spellings of one: `Sort::TIME | Sort::TOPOLOGICAL`
+        // is Kahn's algorithm over a time-priority queue, which is exactly
+        // `--date-order`, while `--topo-order` additionally refuses to intermix
+        // independent lines of history. On `torvalds/linux` the two share only
+        // 1,627 of the first 2,000 oids. This file quoted `--topo-order` until
+        // the walk was actually taken from git and the difference had to be
+        // settled; `tests/log_walk_ordering.rs` pins it.
         measure_baseline(
             repo,
             cfg,
             &[&[
                 "log",
-                "--topo-order",
+                "--date-order",
                 "--max-count=500",
                 "--format=%H%n%an%n%ae%n%at%n%s",
             ]],
@@ -652,7 +661,7 @@ fn run_suite(subject: &Subject, cfg: &Config) -> Vec<Measured> {
             cfg,
             &[&[
                 "log",
-                "--topo-order",
+                "--date-order",
                 "--skip=4500",
                 "--max-count=500",
                 "--format=%H%n%an%n%ae%n%at%n%s",
@@ -754,7 +763,7 @@ fn run_suite(subject: &Subject, cfg: &Config) -> Vec<Measured> {
                 cfg,
                 &[&[
                     "log",
-                    "--topo-order",
+                    "--date-order",
                     "--max-count=500",
                     "--format=%H%n%an%n%at%n%s",
                     "--",

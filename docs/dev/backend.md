@@ -1546,6 +1546,73 @@ walk a `Vec<RefInfo>` per commit — `{ name, kind }`, where `kind` is
 
 `collect_ref_map` no longer runs per page — see below.
 
+## The walk's ORDER comes from git, not from libgit2 (#483)
+
+#473 stopped the sort being re-paid per page. It could not make the sort
+itself cheaper, and on `torvalds/linux` that one preparation is 15.7 s — the
+whole of what a user waits for on open, since everything else the first screen
+needs finishes inside a second.
+
+`git/log_walk.rs` takes the order from `git rev-list` instead. Measured on the
+kernel, the 100,000-oid walk `MAX_ORDER` actually asks for:
+
+| | no commit-graph | with commit-graph |
+| --- | --- | --- |
+| libgit2 `TIME \| TOPOLOGICAL` | 15,743 ms | 15,743 ms (it never reads the file) |
+| `rev-list --date-order` | 10,123 ms | **188 ms** |
+
+**`--date-order`, and never `--topo-order`.** `Sort::TIME | Sort::TOPOLOGICAL`
+is Kahn's algorithm over a time-priority queue, which is precisely what git
+calls `--date-order`. `--topo-order` answers a different question — it also
+refuses to intermix independent lines of history — and on the kernel the two
+share only 1,627 of the first 2,000 oids. It does not reorder the same commits,
+it returns different ones, so taking it would silently change which commits the
+first page shows. #473 and #476 both proposed it.
+`tests/log_walk_ordering.rs` pins the mapping in both directions, and its
+fixture interleaves two branches' commit dates on purpose — one that does not
+produces the same sequence either way and would pass against the mistake.
+
+**Only oids cross over.** Commit metadata still comes from libgit2 via
+`find_commit`, so there is no `--format` string to keep in sync with
+`CommitInfo` and nothing downstream of `WalkOrder` changes.
+
+**Every failure is a slow page, never a failed one.** Git missing, git exiting
+non-zero, or output that does not parse all return `None` and fall through to
+the libgit2 revwalk, which is exactly the code that ran before this existed.
+`PGIT_DISABLE_REV_LIST` forces that path for tests and for support.
+
+The parser requires a FULL-LENGTH hex id rather than leaving it to
+`Oid::from_str`, which accepts an abbreviated string and zero-pads it — so
+output truncated mid-line would otherwise parse into a plausible order naming
+an object that does not exist.
+
+### The commit-graph is not an optimisation on top of this, it IS it
+
+Without one, `rev-list --date-order` costs 10,123 ms on the kernel and the whole
+change buys nothing. A fresh clone has none — `git clone` does not write one and
+`gc --auto` does not fire on a single packfile — so `git/commit_graph.rs` keeps
+one, in the user's own repository, exactly where `git gc` and `git maintenance`
+put it and where it makes the user's own `git log` fast too.
+
+**`--split` is not a preference.** Measured on the kernel:
+
+| | cost |
+| --- | --- |
+| `commit-graph write --reachable`, cold | 14,509 ms |
+| `commit-graph write --reachable`, **already fresh** | 14,305 ms |
+| `commit-graph write --reachable --split`, cold | 14,531 ms |
+| `commit-graph write --reachable --split`, nothing new | **59.9 ms** |
+
+The plain form rewrites everything every time, so scheduling it on open would
+burn fourteen seconds of CPU per open forever.
+
+It is scheduled from `commands/repo.rs` AFTER the open resolves, on the blocking
+pool, and nothing waits for it — the first write on a giant repository is ~14.5 s
+and that open is served by the slow path, which is exactly as slow as it was
+before any of this. It honours `core.commitGraph`: a user who turned git's own
+commit-graph reading off gets no file, because they would get a file they did
+not ask for AND no speedup.
+
 ## The paged log prepares ONE walk (#473)
 
 `log_page` used to build a fresh revwalk per page. That reads like an obvious

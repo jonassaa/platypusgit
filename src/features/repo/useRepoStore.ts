@@ -1070,6 +1070,34 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
     if (!repo) return;
     set({ loading: true, ...(opts?.preserveError ? {} : { error: null }) });
     const logRef = get().logRef;
+    // The log page is started HERE, beside the others, but it is deliberately
+    // NOT in the `Promise.all` below (#483). On `torvalds/linux` the other ten
+    // reads are done inside a second and this one takes fifteen, so joining
+    // them made the whole screen — status, branches, tags, HEAD — wait on the
+    // slowest read in the set. It lands in its own write further down, and
+    // `loadingTasks` (#296) names it while it runs, so the status bar says
+    // "loading history" over a painted repository instead of an empty one.
+    //
+    // Still started before the fan-out, so the concurrency the benchmark
+    // measures is unchanged: eleven reads in flight, not ten and then one.
+    const commitPagePromise = trackLoad(
+      repo.id,
+      "log",
+      "loading history",
+      getLogPage(repo.id, null, PAGE_SIZE, logRef).catch((e) => {
+        // The browsed ref may have vanished since it was selected (e.g.
+        // the branch was deleted) — fall back to HEAD instead of failing
+        // the whole refresh.
+        if (logRef === null) throw e;
+        setFor(repo.id, { logRef: null });
+        return getLogPage(repo.id, null, PAGE_SIZE);
+      }),
+    );
+    // If the fan-out below rejects first we never reach the `await`, and an
+    // unobserved rejection here would surface as an unhandled one. The real
+    // error is still taken from the await; this only marks it as seen.
+    commitPagePromise.catch(() => {});
+
     try {
       const [
         status,
@@ -1077,7 +1105,6 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         tags,
         stashes,
         remotes,
-        commitPage,
         repoState,
         rebaseStatus,
         bisectStatus,
@@ -1093,19 +1120,6 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
           trackLoad(repo.id, "tags", "listing tags", listTags(repo.id)),
           trackLoad(repo.id, "stashes", "listing stashes", listStashes(repo.id)),
           trackLoad(repo.id, "remotes", "fetching remotes", listRemotes(repo.id)),
-          trackLoad(
-            repo.id,
-            "log",
-            "loading history",
-            getLogPage(repo.id, null, PAGE_SIZE, logRef).catch((e) => {
-              // The browsed ref may have vanished since it was selected (e.g.
-              // the branch was deleted) — fall back to HEAD instead of failing
-              // the whole refresh.
-              if (logRef === null) throw e;
-              setFor(repo.id, { logRef: null });
-              return getLogPage(repo.id, null, PAGE_SIZE);
-            }),
-          ),
           trackLoad(repo.id, "repoState", "reading repository state", repoStateFn(repo.id)),
           trackLoad(repo.id, "rebase", "reading rebase state", rebaseStatusFn(repo.id)),
           // Degrades instead of failing the refresh. `bisect_status` shells out to
@@ -1140,15 +1154,13 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
             shallowInfoFn(repo.id).catch(() => DEFAULT_SHALLOW_INFO),
           ),
         ]);
+      // The repository is usable at this point: everything but history.
       setFor(repo.id, {
         status,
         branches,
         tags,
         stashes,
         remotes,
-        commits: commitPage.commits,
-        // A refresh restarts the walk, so the old resume point is void.
-        commitCursor: commitPage.nextCursor,
         repoState,
         rebaseStatus,
         bisectStatus,
@@ -1161,6 +1173,17 @@ export const useRepoStore = create<RepoStoreState>((set, get) => {
         // the commit panel flicker when it asked `loading` instead.
         statusLoaded: true,
       });
+
+      // History arrives on its own clock. `refreshAll` still does not RESOLVE
+      // until it has, because callers refresh and then read `commits` — the
+      // screen paints early, the promise does not settle early.
+      const commitPage = await commitPagePromise;
+      setFor(repo.id, {
+        commits: commitPage.commits,
+        // A refresh restarts the walk, so the old resume point is void.
+        commitCursor: commitPage.nextCursor,
+      });
+
       // Keep an active search in sync with the refreshed history.
       const activeFilter = get().commitFilter;
       if (!isFilterEmpty(activeFilter)) {
