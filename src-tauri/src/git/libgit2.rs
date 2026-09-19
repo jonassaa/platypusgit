@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::error::{AppError, AppResult};
 use crate::git::image;
 use crate::git::log_cache::{LogCache, RefMap, WalkKey, WalkOrder, MAX_ORDER};
+use crate::git::log_walk;
 use crate::git::ownership;
 use crate::git::repo_locks::RepoLock;
 use crate::git::shallow as shallow_mod;
@@ -2838,7 +2839,29 @@ fn push_log_start(
 /// `MAX_ORDER` bounds the memory; a walk longer than that is kept as a prefix
 /// and marked incomplete, which makes a page past the prefix fall back to
 /// preparing a walk from its cursor — what every page did before this existed.
+///
+/// **The order itself comes from `git rev-list --date-order` where git can
+/// produce it** (#483, `git/log_walk.rs`), because the libgit2 walk below costs
+/// 15.7 s on `torvalds/linux` against git's 188 ms — it pre-walks the entire
+/// reachable graph before yielding one oid, and it never reads the commit-graph
+/// that makes git's answer cheap. The libgit2 path stays as the fallback and is
+/// byte-for-byte what every walk did before: a slow page, never a failed one.
 fn build_walk_order(repo: &Repository, starts: &[git2::Oid]) -> AppResult<WalkOrder> {
+    if let Some(workdir) = repo.workdir() {
+        // One past the cap, so "ended inside the cap" and "was truncated" stay
+        // distinguishable — exactly the question the libgit2 loop answers by
+        // breaking on the MAX_ORDER+1'th item.
+        if let Some(mut order) = log_walk::rev_list_order(workdir, starts, MAX_ORDER + 1) {
+            let complete = order.len() <= MAX_ORDER;
+            order.truncate(MAX_ORDER);
+            return Ok(WalkOrder {
+                starts: starts.to_vec(),
+                order,
+                complete,
+            });
+        }
+    }
+
     let mut walk = repo.revwalk()?;
     walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
     for &oid in starts {

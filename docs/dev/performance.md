@@ -159,13 +159,17 @@ the one below; the prose around it is hand-written, and
 `test/benchmark.test.ts` fails if a figure is copied into it, because a
 hand-typed number stops moving on the next run.
 
-The **marketing site** is still waiting. #257 asks for a measured figure there
-in place of an adjective and the block to do it is written, but a landing page
-sells, and 15.8 seconds as a selling point is a different claim from 15.8
-seconds as a disclosed limitation. It ships once the log-walk work in the
-findings below lands — at which point the record moves to `site/src/data/`
-beside `comparison.json`, which is where this repository keeps published records
-the site reads.
+The **marketing site** is still waiting, and the reason it was waiting has now
+gone. #257 asks for a measured figure there in place of an adjective, and the
+block to do it is written, but a landing page sells, and 15.8 seconds as a
+selling point is a different claim from 15.8 seconds as a disclosed limitation.
+The condition that gated it was the log walk, and #483 landed it: the kernel's
+first screen is **999 ms**. Shipping the site figure is now a matter of moving
+the record to `site/src/data/` beside `comparison.json` — where this repository
+keeps published records the site reads — and it belongs to #257 rather than to
+this file. One caveat for whoever does it: the honest headline is the first
+screen, not "history in 8.7 ms", and the slowest operation on that fixture is
+still `file_history` at 16.9 s.
 
 Until then nothing under `site/**` is touched by a re-measurement, which also
 means `pnpm bench` cannot redeploy the website by accident.
@@ -176,18 +180,33 @@ The first run of this benchmark found three things. They are recorded here
 because the tables above will move and the reasoning will not, and because a
 number with no reading beside it is a number nobody acts on.
 
-### 1. We are fine until history gets very deep — and then we are not
+### 1. History was the whole large-repo problem, and it is no longer the bound
 
-The whole first screen — the eleven reads `refreshAll` issues, all at once —
-costs **255 ms** on a 50,000-commit repository and **219 ms** on one with 5,001
-branches and 2,000 tags. That is the size at which GitKraken's own users report
-it falling over, and it is a good answer.
+The first run of this benchmark found the first screen costing **15.8 seconds**
+on `torvalds/linux`, with ten pages into its history costing **two minutes and
+thirty-eight seconds**. Three changes closed that, and it is worth keeping which
+did what, because two of them are frequently assumed to be one:
 
-On `torvalds/linux` the same screen costs **15.8 seconds**, and scrolling ten
-pages into its history costs **two minutes and thirty-eight seconds**. That is
-not a good answer, and publishing it is the point of the exercise: the user who
-opens a 1.4-million-commit repository and waits is the user this project was
-written for.
+| | first screen, kernel | page ten |
+| --- | --- | --- |
+| as first measured | 15.8 s | 157.67 s |
+| after #479 — one prepared walk, cached ref map | 15.7 s | 112 ms |
+| after #483 — the order comes from git | **999 ms** | **116 ms** |
+
+**#479 fixed paging; it could not fix the first walk**, because nothing inside
+libgit2's revwalk API can. **#483 fixed the first walk** by not using that API.
+Neither is a substitute for the other, and the table above is the argument.
+
+What this means for the shape of the problem: on the kernel the first screen is
+now bounded by `status` (1.03 s) rather than by history (8.7 ms), which is the
+criterion #483 was accepted on. `status` is a different problem and a smaller
+one — it is 1.9× git's own work on a 96,034-file tree, so it needs a cheaper
+question (untracked cache, fsmonitor) rather than a faster answer.
+
+The generated fixtures improved too, and by more than "no regression": `deep`
+went from 255 ms to **59 ms**. `wide` is unmoved at 5.41 s because it has one
+commit and its cost is `status`; `refs` is unmoved at 224 ms because its cost is
+enumerating 7,001 refs.
 
 ### 2. The log walk is not slow — the topological SORT is, and it was re-paid per page
 
@@ -338,25 +357,52 @@ page that would look like "no more matches exist".
   capped walk: it yields commits in the order the traversal reaches them, so the
   first 50,000 are not the newest 50,000 and a capped file history could miss
   last week's change while reporting one from 2011. Every walk in
-  `libgit2.rs` sorts, so this floor is very probably the one behind `log_page`'s
-  first page too — consistent with the commit-graph measurement below, which is
-  the fix git gets for exactly this and we do not, but measured here only for
-  `file_history`.
-* **No fixture carries a commit-graph file, and it would not help us if it
-  did.** A fresh clone has none — `git clone` does not write one, and
-  `gc --auto` does not fire on a single packfile — so this is what a user gets
-  on day one. It matters enormously to git: writing one for the kernel takes 14
-  seconds, and `git log --topo-order -500` then drops from 9.51 s to **21 ms**.
-  It does not measurably help us. With the file present, our first page took
-  63.4 s for four calls against 64.2 s without it: libgit2's revwalk does not
-  read it. That is the most useful single fact this benchmark produced, because
-  it rules out the cheap fix and says where the work actually has to go.
+  `libgit2.rs` sorts, so this floor was the one behind `log_page`'s first page
+  too — confirmed by #483, where replacing exactly that call took the kernel's
+  first screen from 15.7 s to 999 ms. **`file_history` still pays it**: it has
+  its own walk with its own cap and cursor semantics, it is the slowest
+  operation on the kernel fixture at 16.9 s, and it is the obvious next one to
+  move. `log_filtered_page` (commit search) keeps a libgit2 walk on its
+  cache-miss path for the same reason.
+* **The commit-graph is the fix, and libgit2 could never have delivered it.**
+  A fresh clone has none — `git clone` does not write one, and `gc --auto` does
+  not fire on a single packfile — so this was what a user got on day one. It
+  matters enormously to git: writing one for the kernel takes 14 seconds, and a
+  sorted `git log -500` then drops from 9.51 s to **21 ms**.
+
+  It did nothing for us, and that was the most useful single fact this benchmark
+  produced. With the file present, our first page took 63.4 s for four calls
+  against 64.2 s without it, because **libgit2's revwalk does not read it**:
+  `commit_list.c` fills `commit->generation` from the graph, `revwalk.c`
+  contains zero references to either, and across all of libgit2's `src/`
+  `->generation` is read only in `graph.c` and `merge.c`. So the numbers are
+  populated and then ignored by the one code path that would benefit.
+
+  That ruled out the cheap fix ("write a commit-graph in the background") on its
+  own and said where the work had to go: out of libgit2. #483 takes the order
+  from `git rev-list --date-order` and keeps a `--split` commit-graph warm, and
+  the fixtures now carry one because `scripts/bench-fixtures.mjs` writes it —
+  a fixture without one measures a state the app does not leave a repository in.
+  **The `git` baselines get the same file**, which makes several ratios look
+  worse than they did when we withheld it; that is the correct comparison and
+  the point of having a floor at all.
+
+* **`--date-order` is the drop-in, and `--topo-order` is not.** They are
+  different questions rather than two spellings of one:
+  `Sort::TIME | Sort::TOPOLOGICAL` is Kahn's algorithm over a time-priority
+  queue, which is `--date-order`; `--topo-order` additionally refuses to
+  intermix independent lines of history. Measured byte-for-byte on the kernel's
+  first 2,000 oids, libgit2's walk is IDENTICAL to `--date-order` and shares
+  only **1,627 of 2,000** with `--topo-order` — it does not reorder the same
+  commits, it returns different ones. Both #473 and #476 proposed `--topo-order`,
+  and the baselines in this file quoted it until #483 had to settle the
+  question. `tests/log_walk_ordering.rs` pins it in both directions.
 
 ## Results
 
 <!-- BEGIN BENCHMARK RESULTS — generated by scripts/bench.sh, do not edit -->
 
-Measured on Apple M4 Pro (14 cores, 48 GB, macos/aarch64) with git version 2.50.1 (Apple Git-155), on 2026-09-17. Up to 10 repeats per operation, time-boxed to 20s each — so a cheap operation gets the full count and an expensive one gets at least three. The published record records how many each row actually took.
+Measured on Apple M4 Pro (14 cores, 48 GB, macos/aarch64) with git version 2.50.1 (Apple Git-155), on 2026-09-18. Up to 10 repeats per operation, time-boxed to 20s each — so a cheap operation gets the full count and an expensive one gets at least three. The published record records how many each row actually took.
 
 The **`git` work** column is that baseline's wall clock with process start-up subtracted (12.4 ms per invocation on this machine, measured), because we pay none of it — the backend is libgit2, in process. That is deliberately the comparison that makes us look worse: against git's wall clock we would get a ten-millisecond head start on every row. **†** marks a baseline where start-up swamped the work, leaving a remainder too small to divide by; those rows print no ratio rather than a flattering one.
 
@@ -368,18 +414,18 @@ A real clone of the Linux kernel: the repository people mean when they say a git
 
 | Operation | Result size | First call | Repeat | p95 | `git` work | vs `git` |
 | --- | --- | --- | --- | --- | --- | --- |
-| Open the repository | a fresh handle | 0.26 ms | 0.11 ms | 0.13 ms | † | — |
-| Everything the first screen needs, at once | 11 concurrent reads | 15.91 s | 15.84 s | 15.86 s | — | — |
-| …including encoding it all for the webview | 11 concurrent reads | 15.80 s | 15.82 s | 15.86 s | — | — |
-| Working-tree status | 26 entries | 1.15 s | 989 ms | 1.10 s | 517 ms | 1.9× |
-| First page of history | 500 commits | 15.96 s | 15.95 s | 16.49 s | 9.51 s | 1.7× |
-| Ten pages into history | 500 commits | 156.38 s | 157.67 s | 159.94 s | 9.68 s | 16× |
-| List every branch | 3 branches | 1.65 ms | 0.87 ms | 0.89 ms | † | — |
-| List every tag | 946 tags | 27.1 ms | 19.7 ms | 20.2 ms | 23.7 ms | 0.83× |
-| Diff the selected commit | 3 files | 142 ms | 139 ms | 140 ms | 11.5 ms | 12× |
-| Diff one modified file | 2 hunks | 68.2 ms | 2.14 ms | 2.22 ms | — | — |
-| History of one file | 500 commits | 15.91 s | 15.42 s | 16.06 s | 5.65 s | 2.7× |
-| Browse the whole tree | 96,034 files | 782 ms | 515 ms | 642 ms | 218 ms | 2.4× |
+| Open the repository | a fresh handle | 0.27 ms | 0.11 ms | 0.13 ms | † | — |
+| Everything the first screen needs, at once | 11 concurrent reads | 1000 ms | 999 ms | 1.02 s | — | — |
+| …including encoding it all for the webview | 11 concurrent reads | 1.01 s | 1.00 s | 1.02 s | — | — |
+| Working-tree status | 26 entries | 1.06 s | 1.03 s | 1.04 s | 505 ms | 2.0× |
+| First page of history | 500 commits | 222 ms | 8.70 ms | 8.93 ms | 29.1 ms | 0.30× |
+| Ten pages into history | 500 commits | 337 ms | 116 ms | 118 ms | 46.4 ms | 2.5× |
+| List every branch | 3 branches | 1.25 ms | 0.89 ms | 0.98 ms | † | — |
+| List every tag | 946 tags | 27.4 ms | 20.3 ms | 21.8 ms | 32.3 ms | 0.63× |
+| Diff the selected commit | 3 files | 151 ms | 142 ms | 142 ms | 20.5 ms | 6.9× |
+| Diff one modified file | 2 hunks | 61.4 ms | 2.15 ms | 2.34 ms | — | — |
+| History of one file | 500 commits | 16.97 s | 16.88 s | 16.96 s | 130 ms | 130× |
+| Browse the whole tree | 96,034 files | 679 ms | 507 ms | 710 ms | 217 ms | 2.3× |
 
 ### deep
 
@@ -389,19 +435,17 @@ A real clone of the Linux kernel: the repository people mean when they say a git
 
 | Operation | Result size | First call | Repeat | p95 | `git` work | vs `git` |
 | --- | --- | --- | --- | --- | --- | --- |
-| Open the repository | a fresh handle | 0.14 ms | 0.11 ms | 0.12 ms | † | — |
-| Everything the first screen needs, at once | 11 concurrent reads | 252 ms | 253 ms | 256 ms | — | — |
-| …including encoding it all for the webview | 11 concurrent reads | 252 ms | 253 ms | 254 ms | — | — |
-| Working-tree status | 0 entries | 0.69 ms | 0.53 ms | 0.55 ms | † | — |
-| First page of history | 500 commits | 261 ms | 249 ms | 251 ms | 193 ms | 1.3× |
-| Ten pages into history | 500 commits | 2.39 s | 2.39 s | 2.40 s | 192 ms | 12× |
-| List every branch | 1 branch | 0.42 ms | 0.28 ms | 0.29 ms | † | — |
-| List every tag | 0 tags | 0.17 ms | 0.15 ms | 0.15 ms | † | — |
-| Diff the selected commit | 1 file | 0.48 ms | 0.34 ms | 0.35 ms | † | — |
-| History of one file | 500 commits | 293 ms | 65.0 ms | 65.7 ms | 319 ms | 0.20× |
-| Browse the whole tree | 16 files | 0.50 ms | 0.13 ms | 0.13 ms | † | — |
-
-**Soak.** 2,344 first-screen fan-outs over 10 minutes. Resident memory 67 MB → 69 MB (peak 69 MB). Median fan-out 252 ms in the first half, 252 ms in the second — -0.2%.
+| Open the repository | a fresh handle | 0.14 ms | 0.12 ms | 0.12 ms | † | — |
+| Everything the first screen needs, at once | 11 concurrent reads | 60.3 ms | 59.0 ms | 60.1 ms | — | — |
+| …including encoding it all for the webview | 11 concurrent reads | 60.9 ms | 59.2 ms | 62.5 ms | — | — |
+| Working-tree status | 0 entries | 0.67 ms | 0.54 ms | 0.55 ms | † | — |
+| First page of history | 500 commits | 57.9 ms | 3.21 ms | 3.27 ms | † | — |
+| Ten pages into history | 500 commits | 89.7 ms | 31.5 ms | 32.2 ms | 5.58 ms | 5.7× |
+| List every branch | 1 branch | 0.45 ms | 0.28 ms | 0.34 ms | † | — |
+| List every tag | 0 tags | 0.17 ms | 0.14 ms | 0.15 ms | † | — |
+| Diff the selected commit | 1 file | 0.50 ms | 0.34 ms | 0.40 ms | † | — |
+| History of one file | 500 commits | 319 ms | 307 ms | 310 ms | 29.5 ms | 10× |
+| Browse the whole tree | 16 files | 0.48 ms | 0.13 ms | 0.13 ms | † | — |
 
 ### wide
 
@@ -411,18 +455,18 @@ A real clone of the Linux kernel: the repository people mean when they say a git
 
 | Operation | Result size | First call | Repeat | p95 | `git` work | vs `git` |
 | --- | --- | --- | --- | --- | --- | --- |
-| Open the repository | a fresh handle | 0.25 ms | 0.11 ms | 0.13 ms | † | — |
-| Everything the first screen needs, at once | 11 concurrent reads | 5.42 s | 5.42 s | 5.62 s | — | — |
-| …including encoding it all for the webview | 11 concurrent reads | 5.60 s | 5.43 s | 5.60 s | — | — |
-| Working-tree status | 55,000 entries | 5.38 s | 5.42 s | 5.48 s | 2.98 s | 1.8× |
-| First page of history | 1 commit | 0.35 ms | 0.25 ms | 0.26 ms | † | — |
-| Ten pages into history | 1 commit | 0.31 ms | 0.25 ms | 0.26 ms | † | — |
-| List every branch | 1 branch | 0.35 ms | 0.28 ms | 0.32 ms | † | — |
-| List every tag | 0 tags | 0.17 ms | 0.14 ms | 0.15 ms | † | — |
-| Diff the selected commit | 50,000 files | 1.53 s | 1.51 s | 1.67 s | 510 ms | 3.0× |
-| Diff one modified file | 1 hunk | 17.2 ms | 0.63 ms | 0.64 ms | — | — |
-| History of one file | 1 commit | 0.28 ms | 0.10 ms | 0.10 ms | † | — |
-| Browse the whole tree | 55,000 files | 196 ms | 181 ms | 241 ms | 42.4 ms | 4.3× |
+| Open the repository | a fresh handle | 0.26 ms | 0.11 ms | 0.13 ms | † | — |
+| Everything the first screen needs, at once | 11 concurrent reads | 5.41 s | 5.41 s | 5.43 s | — | — |
+| …including encoding it all for the webview | 11 concurrent reads | 5.41 s | 5.38 s | 5.41 s | — | — |
+| Working-tree status | 55,000 entries | 5.37 s | 5.38 s | 5.40 s | 2.95 s | 1.8× |
+| First page of history | 1 commit | 15.4 ms | 0.25 ms | 0.27 ms | † | — |
+| Ten pages into history | 1 commit | 14.9 ms | 0.25 ms | 0.27 ms | † | — |
+| List every branch | 1 branch | 0.38 ms | 0.28 ms | 0.29 ms | † | — |
+| List every tag | 0 tags | 0.17 ms | 0.14 ms | 0.14 ms | † | — |
+| Diff the selected commit | 50,000 files | 1.53 s | 1.51 s | 1.52 s | 515 ms | 2.9× |
+| Diff one modified file | 1 hunk | 18.6 ms | 0.64 ms | 0.64 ms | — | — |
+| History of one file | 1 commit | 0.37 ms | 0.26 ms | 0.28 ms | † | — |
+| Browse the whole tree | 55,000 files | 202 ms | 185 ms | 188 ms | 42.3 ms | 4.4× |
 
 ### refs
 
@@ -432,16 +476,16 @@ A real clone of the Linux kernel: the repository people mean when they say a git
 
 | Operation | Result size | First call | Repeat | p95 | `git` work | vs `git` |
 | --- | --- | --- | --- | --- | --- | --- |
-| Open the repository | a fresh handle | 0.15 ms | 0.14 ms | 0.14 ms | † | — |
-| Everything the first screen needs, at once | 11 concurrent reads | 221 ms | 219 ms | 221 ms | — | — |
-| …including encoding it all for the webview | 11 concurrent reads | 221 ms | 220 ms | 224 ms | — | — |
-| Working-tree status | 0 entries | 0.72 ms | 0.55 ms | 0.56 ms | † | — |
-| First page of history | 500 commits | 787 ms | 135 ms | 138 ms | 8.48 ms | 16× |
-| Ten pages into history | 500 commits | 526 ms | 525 ms | 551 ms | 7.25 ms | 72× |
-| List every branch | 5,001 branches | 184 ms | 180 ms | 182 ms | 183 ms | 0.98× |
-| List every tag | 2,000 tags | 148 ms | 148 ms | 151 ms | 43.3 ms | 3.4× |
-| Diff the selected commit | 1 file | 0.40 ms | 0.28 ms | 0.29 ms | † | — |
-| History of one file | 63 commits | 20.7 ms | 9.37 ms | 9.88 ms | 11.9 ms | 0.79× |
-| Browse the whole tree | 32 files | 0.47 ms | 0.16 ms | 0.16 ms | † | — |
+| Open the repository | a fresh handle | 0.14 ms | 0.12 ms | 0.12 ms | † | — |
+| Everything the first screen needs, at once | 11 concurrent reads | 225 ms | 224 ms | 225 ms | — | — |
+| …including encoding it all for the webview | 11 concurrent reads | 224 ms | 224 ms | 225 ms | — | — |
+| Working-tree status | 0 entries | 0.74 ms | 0.56 ms | 0.57 ms | † | — |
+| First page of history | 500 commits | 188 ms | 121 ms | 123 ms | 4.25 ms | 28× |
+| Ten pages into history | 500 commits | 159 ms | 129 ms | 130 ms | † | — |
+| List every branch | 5,001 branches | 188 ms | 184 ms | 186 ms | 184 ms | 1.0× |
+| List every tag | 2,000 tags | 151 ms | 150 ms | 153 ms | 45.7 ms | 3.3× |
+| Diff the selected commit | 1 file | 0.42 ms | 0.28 ms | 0.30 ms | † | — |
+| History of one file | 63 commits | 21.9 ms | 20.6 ms | 20.8 ms | 7.13 ms | 2.9× |
+| Browse the whole tree | 32 files | 0.46 ms | 0.16 ms | 0.17 ms | † | — |
 
 <!-- END BENCHMARK RESULTS -->

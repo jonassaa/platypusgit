@@ -36,7 +36,8 @@ pub async fn open_repo(
 ) -> AppResult<RepoHandle> {
     let backend = state.backend.clone();
     let path_buf = PathBuf::from(path);
-    tokio::task::spawn_blocking(move || {
+    let graph_path = path_buf.clone();
+    let result = tokio::task::spawn_blocking(move || {
         // Before the open, not after: the value of this line is that it is
         // written even when the call below never returns.
         log::info!("open_repo {}", path_buf.display());
@@ -61,7 +62,23 @@ pub async fn open_repo(
         result
     })
     .await
-    .map_err(|e| AppError::Internal(e.to_string()))?
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // The log's order comes from `git rev-list`, and that is only affordable
+    // with a commit-graph — 188 ms against 10.1 s on `torvalds/linux` (#483).
+    // A fresh clone has none, so the app keeps one, exactly as `git
+    // maintenance` would.
+    //
+    // Spawned HERE rather than inside the blocking closure above, because that
+    // closure runs on the blocking pool with no runtime context to spawn from;
+    // and after the open rather than before it, because nothing on this screen
+    // may wait for it. The first write on a very large repository is ~14.5 s
+    // and no user is blocked on it; every later one is ~60 ms because it is a
+    // `--split` refresh.
+    if result.is_ok() {
+        tokio::task::spawn_blocking(move || crate::git::commit_graph::refresh(&graph_path));
+    }
+    result
 }
 
 /// Forget an opened repository (a closed repository tab).

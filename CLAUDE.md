@@ -276,6 +276,19 @@ Each rule's full story (why, traps, tests that pin it) is in the named doc.
   nothing (commits are immutable), the decorations by a ref fingerprint — add a
   third cached thing and it needs its own answer to "what makes this wrong?".
   (`docs/dev/backend.md`, `docs/dev/performance.md`)
+- **…and the ORDER itself comes from `git rev-list --date-order`**
+  (`git/log_walk.rs`, #483), because that libgit2 walk costs 15.7 s on the
+  kernel and never reads the commit-graph that makes git's answer 188 ms.
+  **`--date-order`, NEVER `--topo-order`:** they are different questions, and
+  on the kernel they share only 1,627 of the first 2,000 oids — swapping them
+  silently changes which commits the first page shows. `log_walk_ordering.rs`
+  pins it, with a fixture whose branches interleave on purpose; one that does
+  not would pass against the mistake. Only oids cross over, commit data still
+  comes from libgit2, and any failure falls back to the libgit2 walk — a slow
+  page, never a failed one. `git/commit_graph.rs` keeps the `--split`
+  commit-graph that makes it fast (the plain `--reachable` form re-pays 14.3 s
+  even when nothing changed) and honours `core.commitGraph`.
+  (`docs/dev/backend.md`, `docs/dev/performance.md`)
 - **A commit row's columns have a YIELD ORDER, and it is the template.** Every
   track in `commitRowGrid` but the subject and the author is a fixed width, so
   a new fixed column — or a wider one — comes straight out of the subject,
