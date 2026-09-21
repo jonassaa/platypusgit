@@ -53,7 +53,7 @@
     "@types/node": "^22",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^5.2.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "@wdio/cli": "^9.31.7",
     "@wdio/globals": "^9.31.3",
     "@wdio/local-runner": "^9.31.7",
